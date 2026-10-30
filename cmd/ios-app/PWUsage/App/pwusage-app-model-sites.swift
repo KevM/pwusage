@@ -32,6 +32,7 @@ extension PWUsageAppModel {
         authService.restoreAuthenticatedSession()
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
+        await forecastService?.activateAccountScope(accountScopeID)
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
@@ -111,5 +112,6 @@ extension PWUsageAppModel {
         accountScopeID = nil
         userDefaults.removeObject(forKey: Self.accountScopeDefaultsKey)
         await forecastStore.activateAccountScope(nil)
+        await forecastService?.activateAccountScope(nil)
     }
 }

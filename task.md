@@ -1119,3 +1119,31 @@ verify preserved samples/summaries, legacy-row refusal, empty-record invariants,
 idempotency and service-only access. Full suite: 1,625 passed, 81 configured skips;
 dev-copy PostgreSQL scripts: 12 passed. Lint and production build passed.
 
+
+
+# Open-Meteo on PR #258
+
+Approved direction: make Open-Meteo the automatic beta provider using the existing provider seam. Solcast retains credential priority; history remains fallback. Fetch irradiance only; port the reference Hay-Davies model to Swift, reuse rolling correction, and refresh opportunistically in the background with Low Data Mode respected.
+
+- [x] Baseline and synthetic pvlib reference fixtures
+- [x] Swift array model and hardened Open-Meteo client
+- [x] Provider integration, attribution and privacy
+- [x] Background refresh, cancellation and locked-device storage
+- [x] Tests, lint, build, commit and push PR #258
+
+
+## Automatic forecast beta takes precedence over Solcast
+
+Approved: beta sites use Open-Meteo regardless of stored Solcast keys. Missing layout or unavailable automatic forecast falls back to history. Legacy settings are hidden for beta, saved credentials stay stored, and non-beta sites retain the legacy path.
+
+- [x] Request-scoped automatic-only service policy and settings/invitation visibility
+- [x] Background refresh without credential metadata preflight
+- [x] Foreground/manual/bill routing and regression tests
+- [x] Full verification and review; signed commit prepared for PR #258
+
+## External solar review follow-up
+
+- [x] Verify all review claims against current code and API semantics
+- [x] Fix provider diagnostics, forecast coverage/cancellation, beta presentation, freshness/lifecycle and attribution
+- [x] Document modeling/calibration limits without leaking hindsight into forecast history
+- [x] Verify tests/lint/builds, review and push PR #258

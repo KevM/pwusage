@@ -103,9 +103,9 @@ extension DashboardCoordinator {
         return elapsed < 0 || elapsed >= interval
     }
 
-    /// Solcast is set up and the bill's energy data is nearly too old for the forecast comparison.
+    /// A forecast is available and measured energy is nearly too old for the comparison.
     func energyDataIsAgingForForecast(at date: Date) -> Bool {
-        guard solarForecastConnection == .ready,
+        guard forecastConnectionForConsumers == .ready,
               let through = bill.response?.sources.energyDataThrough else { return false }
         return date.timeIntervalSince(through) >= Self.forecastEnergyDataRefreshAge
     }

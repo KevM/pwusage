@@ -44,6 +44,7 @@ final class PWUsageAppModel: ObservableObject {
     @Published var siteRequestCount = 0
     var isBatteryHoldNavigationLoading: Bool { pendingBatteryHoldSiteID != nil && siteRequestCount > 0 }
     let forecastStore: any SolarForecastManaging
+    let forecastService: SolarForecastService?
     let coordinatorFactory: CoordinatorFactory
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
@@ -58,6 +59,7 @@ final class PWUsageAppModel: ObservableObject {
         api: any PWUsageApplicationAPI,
         userDefaults: UserDefaults = .standard,
         forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
+        forecastService: SolarForecastService? = nil,
         coordinatorFactory: CoordinatorFactory? = nil,
         cache: DashboardCache? = nil,
         authService: MobileAuthService? = nil,
@@ -70,6 +72,7 @@ final class PWUsageAppModel: ObservableObject {
         self.userDefaults = userDefaults
         self.cache = cache
         self.forecastStore = forecastStore
+        self.forecastService = forecastService
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
@@ -80,14 +83,16 @@ final class PWUsageAppModel: ObservableObject {
                     api: api,
                     planningAPI: api,
                     forecastStore: forecastStore,
-                    accountScopeID: accountScopeID
+                    accountScopeID: accountScopeID,
+                    layoutAPI: api,
+                    forecastService: forecastService
                 )
             }
         }
         self.authService = authService ?? MobileAuthService(
             configuration: configuration,
             api: api,
-            forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore)
+            forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore, service: forecastService)
         )
         if let cachedSites = cache?.snapshot.sites, !cachedSites.isEmpty {
             sites = cachedSites

@@ -6,6 +6,8 @@ enum ForecastAvailability: Equatable {
     case loading
     /// Connected, but the forecast comparison can't run; carries a one-sentence reason.
     case unusable(String)
+    /// Beta automatic setup is unavailable; opens automatic settings rather than Solcast.
+    case automaticUnavailable(String)
     case ready
 }
 
@@ -45,6 +47,7 @@ struct SmartShiftVerdict: Equatable {
         /// `usesHistory`: banks followed the site's last four weeks rather than holding still.
         case connectSolcast(usesHistory: Bool)
         case forecastState(String)
+        case automaticForecast(String)
         case unobservedBalance
     }
 

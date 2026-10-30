@@ -41,14 +41,19 @@ struct BillView: View {
         }
         .refreshable {
             await coordinator.refreshBill(trigger: .userGesture)
-            await coordinator.billOutlookAppeared()
+            await coordinator.billOutlookAppeared(markVisible: false)
         }
         .task(id: "\(site.id)-\(isSelected)") {
-            if isSelected { await coordinator.billOutlookAppeared() }
+            if isSelected { await coordinator.billOutlookAppeared() } else {
+                coordinator.solarSurfaceDisappeared(.bill)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active && isSelected { Task { await coordinator.billOutlookAppeared() } }
+            if phase == .active && isSelected {
+                Task { await coordinator.billOutlookAppeared(markVisible: false) }
+            }
         }
+        .onDisappear { coordinator.solarSurfaceDisappeared(.bill) }
         .background { SectionTheme.bill.screenBackground }
         .navigationTitle("Current Bill")
         .inlineNavigationTitle()
@@ -56,11 +61,11 @@ struct BillView: View {
 
     @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
         let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
-        let batch = coordinator.solarForecastBatch
-        let usesSolar = coordinator.solarForecastState == .enhanced && batch.map {
-            now.timeIntervalSince($0.fetchedAt) >= 0 && now.timeIntervalSince($0.fetchedAt) <= LoadTimingForecastPresentation.maximumForecastAge
+        let fetchedAt = coordinator.publishedForecastFetchedAt
+        let usesSolar = coordinator.solarForecastState == .enhanced && fetchedAt.map {
+            (0 ... LoadTimingForecastPresentation.maximumForecastAge).contains(now.timeIntervalSince($0))
         } == true
-        let forecast = usesSolar ? batch?.intervals ?? [] : []
+        let forecast = usesSolar ? coordinator.publishedForecastIntervals ?? [] : []
         let result: BillOutlook.ProjectionResult = {
             guard let history = response.outlook, let context, context.timeZone == timeZone,
                   !state.isUnavailable else { return .empty }
@@ -108,8 +113,12 @@ struct BillView: View {
                         : "Based on your recent grid history.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let source = coordinator.attributionDescriptor(usesSolar: result.usesSolar) {
+                        SolarForecastAttributionView(descriptor: source)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .contain)
             }
             if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
                 Divider()

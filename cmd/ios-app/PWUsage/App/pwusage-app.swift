@@ -1,3 +1,4 @@
+import BackgroundTasks
 import Combine
 import OSLog
 import SwiftUI
@@ -13,6 +14,7 @@ struct PWUsageApp: App {
         case misconfigured(String)
     }
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var launch: Launch = .starting
     private let launchTask: Task<Launch, Never>
 
@@ -45,6 +47,7 @@ struct PWUsageApp: App {
                 PWUsageAppModel(
                     configuration: configuration,
                     api: api,
+                    forecastService: makeForecastService(),
                     cache: .persistent(apiOrigin: configuration.apiOrigin),
                     controlSiteStore: .shared(),
                     liveActivities: BatteryHoldActivityCoordinator(
@@ -68,6 +71,16 @@ struct PWUsageApp: App {
             PWUsageApp.reportMisconfiguration(error)
             return .misconfigured("pwusage could not finish secure startup. Close the app and try again.")
         }
+    }
+
+    /// Every forecast provider is registered here and nowhere else. Open-Meteo is the
+    /// exclusive automatic provider for beta sites, regardless of saved Solcast credentials.
+    private static func makeForecastService() -> SolarForecastService {
+        SolarForecastService(
+            providers: [SolcastForecastProvider(store: SolarForecastStore.shared), OpenMeteoProvider()],
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
+            history: .shared
+        )
     }
 
     private static func reportMisconfiguration(_ error: Error) {
@@ -94,6 +107,15 @@ struct PWUsageApp: App {
                     action: { Clipboard.copy(message) }
                 )
             }
+        }
+        .backgroundTask(.appRefresh(BackgroundSolarForecastRefresh.identifier)) {
+            BackgroundSolarForecastRefresh.schedule()
+            let prepared = await launchTask.value
+            guard !Task.isCancelled else { return }
+            if case .ready(let model) = prepared { await model.refreshBackgroundForecast() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { BackgroundSolarForecastRefresh.schedule() }
         }
         .commands {
             if case .ready(let model) = launch {

@@ -522,7 +522,7 @@ final class PWUsageAPITests {
         return response
     }
 
-    private static func bodyData(from request: URLRequest) throws -> Data {
+    static func bodyData(from request: URLRequest) throws -> Data {
         if let body = request.httpBody { return body }
         guard let stream = request.httpBodyStream else { throw PWUsageAPIError.invalidResponse }
         stream.open()

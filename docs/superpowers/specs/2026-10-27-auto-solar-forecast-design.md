@@ -1,6 +1,12 @@
 # Auto-configured solar forecast (Forecast.Solar default, Solcast alternative)
 
-Date: 2026-10-27. Status: design, not started.
+Date: 2026-10-27. Original design; implementation started in PR #258.
+
+2026-10-30 update: the owner selected Open-Meteo as the preferred automatic provider,
+with on-device array modelling and opportunistic background refresh. Beta sites use
+this path exclusively, even when Solcast credentials are saved; failures use history. The original
+Forecast.Solar sections below record the earlier design. See the
+[Open-Meteo continuation plan](../../plans/2026-10-30-open-meteo-provider.md).
 
 ## Intent
 

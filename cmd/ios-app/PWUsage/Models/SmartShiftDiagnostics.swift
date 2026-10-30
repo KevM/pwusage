@@ -33,6 +33,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
             case .none: (state, note) = ("none", nil)
             case .loading: (state, note) = ("loading", nil)
             case .unusable(let reason): (state, note) = ("unusable", reason)
+            case .automaticUnavailable(let reason): (state, note) = ("automatic-unavailable", reason)
             case .ready: (state, note) = ("ready", nil)
             }
         }
@@ -67,6 +68,11 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         let lastErrorDescription: String?
         let lastRefreshResult: String?
         let unavailableCause: String?
+        /// The automatic forecast in use, when there is one.
+        var source: SmartShiftForecastSource?
+        var automaticProviderID: String?
+        var automaticRefreshOutcome: String?
+        var automaticDiagnostic: String?
 
         init(batch: SolarForecastBatch?, now: Date, recommendationUsable: Bool, budget: SolarForecastBudget?,
              lastErrorDescription: String?, lastRefresh: SolarForecastRefreshResult?,

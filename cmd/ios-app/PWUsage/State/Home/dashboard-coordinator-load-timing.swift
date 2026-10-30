@@ -4,61 +4,82 @@ import Foundation
 extension DashboardCoordinator {
     /// Handles the retained Smart Shift tab's foreground callback.
     func loadTimingDetailForegrounded(isSelected: Bool) async {
-        guard isSelected else { return }
+        guard isSelected else {
+            solarSurfaceDisappeared(.smartShift)
+            return
+        }
         await loadTimingDetailAppeared()
     }
 
     /// Billing needs a measured snapshot even when solar forecasting is not configured.
     /// The shared planning path reuses context and solar caches without fetching live Tesla data.
-    func billOutlookAppeared() async {
+    func billOutlookAppeared(markVisible: Bool = true) async {
+        guard !Task.isCancelled else { return }
+        if markVisible { solarSurfaceAppeared(.bill) }
         await refreshBill(trigger: .screenAppearance)
-        await loadTimingDetailAppeared()
+        guard !Task.isCancelled else { return }
+        await loadTimingDetailAppeared(surface: nil)
     }
 
-    /// Starts the optional enhancement only when a local credential and array
-    /// selection exist. This path refreshes bill/context data but never live data.
-    func loadTimingDetailAppeared() async {
-        guard canRequestAccountData else { return }
+    /// Beta sites use the automatic provider exclusively; other sites retain Solcast.
+    /// This path refreshes bill/context data but never live data.
+    func loadTimingDetailAppeared(manual: Bool = false, surface: SolarForecastSurface? = .smartShift) async {
+        guard canRequestAccountData, !Task.isCancelled else { return }
+        if let surface { solarSurfaceAppeared(surface) }
         let operation = beginForecastOperation()
+        forecastOperationPending = true
+        defer {
+            if operation == forecastGeneration { forecastOperationPending = false }
+        }
         guard let forecastStore, let planningAPI, let accountScopeID else {
             solarForecastState = .basic
             solarForecastConnection = .notConnected
             return
         }
         let siteID = selectedSiteID
-        guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
-            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-            solarForecastState = .basic
-            solarForecastConnection = .notConnected
-            solarForecastUnavailableCause = nil
-            solarForecastBatch = nil
-            loadPlanningContext = nil
-            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
-            return
-        }
-        guard !credential.resourceIDs.isEmpty else {
-            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-            solarForecastState = .basic
-            solarForecastConnection = .awaitingArraySelection
-            solarForecastUnavailableCause = nil
-            solarForecastBatch = nil
-            loadPlanningContext = nil
-            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
-            return
-        }
+        let status = await solarLayoutLookup(siteID: siteID, operation: operation)
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        if layoutAPI != nil, status != .disabled {
+            await loadAutomaticForecast(
+                siteID: siteID, api: planningAPI, operation: operation, status: status, manual: manual)
+            return
+        }
+        let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+        guard let credential, !credential.resourceIDs.isEmpty else {
+            resetForecastEnhancement(
+                state: .basic, connection: credential == nil ? .notConnected : .awaitingArraySelection)
+            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
+            return
+        }
+        guard canRequestAccountData else { return }
         solarForecastState = .loadingWithBasic
         solarForecastConnection = .ready
         solarForecastUnavailableCause = nil
+        solarForecastPublication = nil
+        solarForecastAttempt = nil
+        await loadSolcastEnhancement(
+            planningAPI: planningAPI, accountScopeID: accountScopeID,
+            siteID: siteID, operation: operation, manual: manual
+        )
+    }
 
+    /// The Solcast half of `loadTimingDetailAppeared`, unchanged apart from beta correction.
+    private func loadSolcastEnhancement(
+        planningAPI: any MobileLoadPlanningDataAPI,
+        accountScopeID: String,
+        siteID: String,
+        operation: Int,
+        manual: Bool
+    ) async {
+        guard let forecastStore else { return }
         let billSuccessBeforeRefresh = billSuccessGeneration
         async let billRefresh: Void = refreshBill(trigger: .screenAppearance)
-        async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: false)
+        async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
         async let contextResult = planningContext(siteID: siteID, api: planningAPI)
         let (refresh, outcome) = await (refreshResult, contextResult)
         let context = outcome.context
         await billRefresh
-
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         solarForecastLastRefresh = refresh
         // Published even when the forecast half fails, so the card can fall back to history.
@@ -108,10 +129,13 @@ extension DashboardCoordinator {
             solarForecastSaveFailure = false
             return
         }
-        solarForecastBatch = batch
+        let published = await correctedSolcastBatch(batch, siteID: siteID, context: context)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+        solarForecastBatch = published
         loadPlanningContext = context
         solarForecastUnavailableReason = nil
         solarForecastState = .enhanced
+        solarForecastSource = .solcast
         solarForecastSaveFailure = saveFailed
     }
 
@@ -204,12 +228,9 @@ extension DashboardCoordinator {
     /// refreshing bill data alone.
     func loadTimingDetailRefreshed() async {
         guard canRequestAccountData else { return }
+        invalidateSolarLayout()
         await refreshBill(trigger: .userGesture)
-        if solarForecastConnection != .notConnected {
-            await refreshSolarForecast(manual: true)
-        } else {
-            await loadTimingDetailAppeared()
-        }
+        await loadTimingDetailAppeared(manual: true, surface: nil)
     }
 
     /// Map the server's wire reason onto our own vocabulary so the note can be

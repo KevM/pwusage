@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 actor SolarForecastStore {
-    static let shared = SolarForecastStore()
+    static let shared = SolarForecastStore(historyRecorder: SolarForecastHistory.shared)
     static let foregroundRefreshThreshold: TimeInterval = 3 * 60 * 60
     static let recommendationFreshness: TimeInterval = 6 * 60 * 60
     static let automaticAttemptsPerUTCDay = 8
@@ -12,6 +12,8 @@ actor SolarForecastStore {
     let keychain: any SolcastCredentialKeychain
     let files: any SolarForecastPersistence
     let transport: (any SolcastTransport)?
+    /// Records every successful fetch raw, whichever path asked for it.
+    let historyRecorder: (any SolarForecastRawHistoryRecording)?
     var state: SolarForecastPersistedState
     var loaded = false
     var generations: [String: Int] = [:]
@@ -36,12 +38,14 @@ actor SolarForecastStore {
         clock: any SolarForecastClock = SystemSolarForecastClock(),
         keychain: any SolcastCredentialKeychain = DeviceSolcastCredentialStore.shared,
         files: (any SolarForecastPersistence)? = nil,
-        transport: (any SolcastTransport)? = nil
+        transport: (any SolcastTransport)? = nil,
+        historyRecorder: (any SolarForecastRawHistoryRecording)? = nil
     ) {
         self.clock = clock
         self.keychain = keychain
         self.files = files ?? DeviceSolarForecastPersistence()
         self.transport = transport
+        self.historyRecorder = historyRecorder
         state = SolarForecastPersistedState()
     }
 

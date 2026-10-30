@@ -46,6 +46,8 @@
 
 ### Task 0: Mark estimated locations (server, `cmd/next-app`)
 
+> Implemented separately in #257 (`feat/solar-location-source`); the iOS side decodes a missing `source` as `device`.
+
 Admin-seeded locations are ZIP or town centres. The phone needs to know a location is approximate so it can offer the user a precise one; without this the app sees a location and never asks.
 
 **Files:**
@@ -76,9 +78,9 @@ Decides whether the correction is switched on for Solcast at launch.
 
 **Files (outside the repo, never committed):** `/Users/kevm/github/pwusage/.forecast-compare/score.py`
 
-- [ ] **Step 1:** Add sources `solcast_corrected` and `fs_fitted_flat_corrected` to `score.py`: for each scored day, compute the Global Constraints correction using only actuals known before that capture (no target-day leakage), from the previous 14 days of that source's own captures (separate same-day and preceding-local-day captures, matching the runtime cohort rules and configuration identity) and the actuals already loaded, apply it to that day's forecast, and score it like the others.
-- [ ] **Step 2:** Run `/Users/kevm/github/pwusage/.forecast-compare/venv/bin/python /Users/kevm/github/pwusage/.forecast-compare/score.py` and record the day-ahead summary rows for `solcast`, `solcast_corrected`, `fs_fitted_flat`, `fs_fitted_flat_corrected`, `history_14d_median` in the PR description, with the number of scored days and qualifying training samples per cohort/site. Also score the former mixed-lead-time correction as a comparison, never as a substitute for day-ahead evidence. Sparse cohorts use identity under the same runtime rules.
-- [ ] **Step 3:** Set `SolarForecastCorrection.appliesToSolcast` (Task 5) to `true` only if `solcast_corrected` beats `solcast` on both daily and hourly error; otherwise `false` and say so in the PR. Fewer than 10 scored days → `false` with a TODO.md note to revisit.
+- [x] **Step 1:** Add sources `solcast_corrected` and `fs_fitted_flat_corrected` to `score.py`: for each scored day, compute the Global Constraints correction using only actuals known before that capture (no target-day leakage), from the previous 14 days of that source's own captures (separate same-day and preceding-local-day captures, matching the runtime cohort rules and configuration identity) and the actuals already loaded, apply it to that day's forecast, and score it like the others.
+- [x] **Step 2:** Run `/Users/kevm/github/pwusage/.forecast-compare/venv/bin/python /Users/kevm/github/pwusage/.forecast-compare/score.py` and record the day-ahead summary rows for `solcast`, `solcast_corrected`, `fs_fitted_flat`, `fs_fitted_flat_corrected`, `history_14d_median` in the PR description, with the number of scored days and qualifying training samples per cohort/site. Also score the former mixed-lead-time correction as a comparison, never as a substitute for day-ahead evidence. Sparse cohorts use identity under the same runtime rules.
+- [x] **Step 3:** Set `SolarForecastCorrection.appliesToSolcast` (Task 5) to `true` only if `solcast_corrected` beats `solcast` on both daily and hourly error; otherwise `false` and say so in the PR. Fewer than 10 scored days → `false` with a TODO.md note to revisit.
 
 ---
 
@@ -97,11 +99,11 @@ Decides whether the correction is switched on for Solcast at launch.
   - `enum MobileSolarActualsResponse: Decodable, Equatable, Sendable { case disabled; case enabled(asOf: Date, hours: [Hour]) }` with nested `struct Hour: Decodable, Equatable, Sendable { let hourStart: Date; let wh: Double; let complete: Bool }`. Layout response also conforms to `Decodable` with a custom version/enabled discriminator decoder.
   - `@MainActor protocol MobileSolarLayoutDataAPI: Sendable { func fetchSolarLayout(siteID: String) async throws -> MobileSolarLayoutResponse; func postSolarLocation(siteID: String, latitude: Double, longitude: Double) async throws; func fetchSolarActuals(siteID: String) async throws -> MobileSolarActualsResponse }`, implemented by `PWUsageAPI`.
 
-- [ ] **Step 1: Failing tests** — decode `{"version":1,"enabled":false}` → `.disabled`; decode a detected two-plane payload → `.enabled` with planes `[(90, 18, 5.6), (270, 18, 4.0)]`, `confidence .high`; decode `reason:"low-confidence"` with `layout:null`; reject `version: 2` with `PWUsageAPIError.invalidResponse`; decode both disabled actuals and enabled actuals with `complete:false`, reject version 2 for both endpoints, accept `detectedAt:null`; decode `source:"estimated"`, and a location without `source` as `.device`; reject invalid/non-finite coordinates, empty or >3-plane layouts, invalid geometry or non-positive clip values; `postSolarLocation` sends JSON with `latitude` and `longitude` rounded to 2 decimals (assert on the captured request body using the existing request-capturing test transport in `PWUsageAPI` tests); accept empty 204 POST without JSON decoding and preserve existing HTTP error mapping for 400/401/403.
-- [ ] **Step 2:** `./run-tests.sh -only-testing:PWUsageTests/MobileSolarLayoutTests` → FAIL.
-- [ ] **Step 3:** Implement with `MobileContractDecoder.make()` (`Shared/mobile-live-contract.swift`) and `makeURL(path:siteID:)` like `fetchLoadPlanningContext`; POST uses `perform(_:)` to share authenticated transport. Update all `PWUsageApplicationAPI` fakes and compile them in this task.
-- [ ] **Step 4:** Repeat Step 2 → PASS.
-- [ ] **Step 5: Commit** — `feat(ios): mobile solar layout, location and actuals API`
+- [x] **Step 1: Failing tests** — decode `{"version":1,"enabled":false}` → `.disabled`; decode a detected two-plane payload → `.enabled` with planes `[(90, 18, 5.6), (270, 18, 4.0)]`, `confidence .high`; decode `reason:"low-confidence"` with `layout:null`; reject `version: 2` with `PWUsageAPIError.invalidResponse`; decode both disabled actuals and enabled actuals with `complete:false`, reject version 2 for both endpoints, accept `detectedAt:null`; decode `source:"estimated"`, and a location without `source` as `.device`; reject invalid/non-finite coordinates, empty or >3-plane layouts, invalid geometry or non-positive clip values; `postSolarLocation` sends JSON with `latitude` and `longitude` rounded to 2 decimals (assert on the captured request body using the existing request-capturing test transport in `PWUsageAPI` tests); accept empty 204 POST without JSON decoding and preserve existing HTTP error mapping for 400/401/403.
+- [x] **Step 2:** `./run-tests.sh -only-testing:PWUsageTests/MobileSolarLayoutTests` → FAIL.
+- [x] **Step 3:** Implement with `MobileContractDecoder.make()` (`Shared/mobile-live-contract.swift`) and `makeURL(path:siteID:)` like `fetchLoadPlanningContext`; POST uses `perform(_:)` to share authenticated transport. Update all `PWUsageApplicationAPI` fakes and compile them in this task.
+- [x] **Step 4:** Repeat Step 2 → PASS.
+- [x] **Step 5: Commit** — `feat(ios): mobile solar layout, location and actuals API`
 
 ---
 
@@ -122,7 +124,7 @@ Decides whether the correction is switched on for Solcast at launch.
   - `enum ForecastSolarForecast { static func intervals(estimates: [ForecastSolarPlaneEstimate], acClipKw: Double?, siteTimeZone: TimeZone, now: Date) throws -> [SolarForecastInterval] }` — one-hour intervals from local midnight today to local midnight after tomorrow in `siteTimeZone`; each period's Wh assigned to the hour(s) it overlaps in proportion; planes summed; clipped to `acClipKw`; throws `SolarForecastError.incompleteCoverage` unless every plane has sorted finite nonnegative periods on both requested local dates, with zero-power sunrise/sunset endpoints in `result.watts` and energy totals matching `result.watt_hours_day` within 1 Wh per day. The sunset period may contain nonzero Wh; preserve it. The first period key per day is a zero-energy sunrise marker; no energy crosses the overnight gap. Reject missing boundary markers, nonzero first periods, duplicate/unresolvable local timestamps, timezone disagreement or mismatched site timezone. Calendar hour boundaries handle DST; reject ambiguous provider keys rather than guessing. Zero-fill gaps only inside a validated day. Energy conservation assertions apply before clipping.
   - `ForecastSolarForecast.forecastSolarAzimuth(compass: Double) -> Int` (static) (90 → −90, 270 → 90, 180 → 0, 0 → 180 or −180 accepted, 350 → 170).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - URL for `(43.39, -87.87)` and plane `(90, 18.4, 5.6)` is `https://api.forecast.solar/estimate/43.39/-87.87/18/-90/5.60`.
   - Decode a wholly synthetic two-day response with timezone `America/Chicago`, zero-power sunrise/sunset endpoints, zero-energy sunrise periods and nonzero final sunset periods, plus matching daily energy totals; do not copy research captures, coordinates or household metadata into fixtures. Assert exact ordered Wh values and timezone; reject negative/NaN, duplicate keys, invalid timezone, missing boundary markers, mismatched daily totals and mismatched timezone.
   - Intervals: contiguous, 48 one-hour intervals on a normal day pair, 47 across the 2026-03-08 spring-forward and 49 across the 2026-11-01 fall-back in `America/Chicago`; night intervals are 0 kW; total energy equals Σ `watt_hours_period` ÷ 1000 within 0.1%.
@@ -131,10 +133,10 @@ Decides whether the correction is switched on for Solcast at launch.
   - Only today's data → throws `SolarForecastError.incompleteCoverage`.
   - `siteTimeZone` `America/Chicago` with the device in `Asia/Tokyo` gives the same intervals (set `TimeZone` explicitly, not `.current`).
   - 429 with `Retry-After: 120` → `.rateLimited(retryAfter: now + 120)`; HTTP-date and body-reset variants choose the later deadline; missing reset defers 1 h. Redirect/foreign-host responses are rejected; no cookies/auth/user identifiers are sent.
-- [ ] **Step 2:** `./run-tests.sh -only-testing:PWUsageTests/ForecastSolarClientTests` → FAIL.
-- [ ] **Step 3:** Implement the Interfaces and Global Constraints above.
-- [ ] **Step 4:** Repeat Step 2 → PASS.
-- [ ] **Step 5: Commit** — `feat(ios): Forecast.Solar client and interval conversion`
+- [x] **Step 2:** `./run-tests.sh -only-testing:PWUsageTests/ForecastSolarClientTests` → FAIL.
+- [x] **Step 3:** Implement the Interfaces and Global Constraints above.
+- [x] **Step 4:** Repeat Step 2 → PASS.
+- [x] **Step 5: Commit** — `feat(ios): Forecast.Solar client and interval conversion`
 
 ---
 
@@ -162,7 +164,7 @@ Decides whether the correction is switched on for Solcast at launch.
 - `SolarForecastHistory.record(identity:intervals:fetchedAt:)` and `pastForecast(identity:cohort:from:to:)` use the Global Constraints identity and lead-time rules. Persist raw batches for 15 days in protected `Application Support/SolarForecast/history.json`, preserving multiple fetches so same-day updates cannot overwrite day-ahead training. Integrate fully covered UTC hours, deduplicate recordings, prune old partitions, and clear account data on sign-out. History-write failures are best-effort and never break a successful forecast refresh. The Solcast hook and service share this recorder and deduplicate by identity/fetch.
 - `SolarForecastTrainingCohort` has same-day and day-ahead values. History returns UTC-hour Wh for one cohort; correction derives separate factors for each.
 
-- [ ] **Step 1: Failing contract tests**
+- [x] **Step 1: Failing contract tests**
   - Run the shared contract suite against Solcast, Forecast.Solar and a synthetic third provider with 30-minute intervals, a longer horizon and different attribution/freshness. Register/select the third provider through composition only; coordinator, correction and consumers require no provider-specific changes.
   - Adapter errors map to shared outcomes; Solcast credential precedence survives empty arrays and failures; unknown provider IDs do not crash cache restoration.
   - Forecast.Solar sends one request per plane; within 3 h returns already fresh; seventh hourly attempt sends nothing; 429 honors deferral. Concurrent sites reserve against one persisted ledger; relaunch/sign-out/configuration changes never replenish it.
@@ -170,10 +172,10 @@ Decides whether the correction is switched on for Solcast at launch.
   - Changed geometry/location/timezone or Solcast resources isolates cache and training; unchanged semantic geometry with a new detectedAt refreshes cache without discarding training. Suspended old-configuration/account completions cannot publish or record.
   - Same-day 05:30 and 10:00 captures use 05:30 for 09:00; day-ahead uses the preceding-local-day capture even if newer same-day captures exist. Missing matching history gives identity, not another provider/configuration/cohort's data. Verify UTC midnight and DST cases.
   - Raw Solcast success is recorded once, including existing refresh paths outside the service. Entries expire after 15 days. Sign-out clears all account data while preserving provider quota ledgers.
-- [ ] **Step 2:** Run `./run-tests.sh SolarForecastProviderTests SolarForecastServiceTests SolarForecastHistoryTests SolarForecastStoreTests` → FAIL for new behavior.
-- [ ] **Step 3:** Implement the contracts, adapters, shared cache and history. Leave correction as identity until Task 5. Update injected auth cleanup and propagate existing cleanup errors.
-- [ ] **Step 4:** Repeat Step 2 → PASS, then `./run-tests.sh MobileAuthServiceTests PWUsageAppModelTests` → PASS.
-- [ ] **Step 5: Commit** — `feat(ios): pluggable forecast providers and scoped raw history`
+- [x] **Step 2:** Run `./run-tests.sh SolarForecastProviderTests SolarForecastServiceTests SolarForecastHistoryTests SolarForecastStoreTests` → FAIL for new behavior.
+- [x] **Step 3:** Implement the contracts, adapters, shared cache and history. Leave correction as identity until Task 5. Update injected auth cleanup and propagate existing cleanup errors.
+- [x] **Step 4:** Repeat Step 2 → PASS, then `./run-tests.sh MobileAuthServiceTests PWUsageAppModelTests` → PASS.
+- [x] **Step 5: Commit** — `feat(ios): pluggable forecast providers and scoped raw history`
 
 ---
 
@@ -191,7 +193,7 @@ Decides whether the correction is switched on for Solcast at launch.
   - `func apply(to intervals: [SolarForecastInterval], siteTimeZone: TimeZone, acClipKw: Double?) -> [SolarForecastInterval]` — scales `powerKw` and `cautiousPowerKw` by the factor of the interval start's local hour; re-clips to `acClipKw`.
   - `static let appliesToSolcast: Bool` — value from Task 1.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - Same-day factors differ from day-ahead factors in a synthetic fixture; tomorrow uses day-ahead, missing cohort samples use identity, and targets beyond the evaluated lead use identity. Reusing a cached batch preserves its original fetch-date cohort.
   - Actual is 80% of forecast in every hour for 14 days → every factor 0.8.
   - Morning hours actual 50% of forecast, afternoon 120% → factors 0.5 and 1.2 for those hours.
@@ -201,10 +203,10 @@ Decides whether the correction is switched on for Solcast at launch.
   - Site `America/Chicago`, device `Asia/Tokyo` → the factor for Chicago's 09:00 hour applies to the interval starting 09:00 Chicago time.
   - `apply` with `acClipKw: 4` never returns more than 4 kW; scale Solcast cautious power by the same factor, preserve nil for Forecast.Solar. For Solcast pass clip nil without an extra layout dependency.
   - Two 30-minute Solcast points integrate to the UTC-hour Wh; use `Asia/Kolkata` to prove local-hour intervals split across UTC buckets correctly. Chicago repeated 01:00 hours remain separate training samples; dates outside the trailing 14 local days, partial forecast hours and future actuals do not train factors. Applying correction twice through refresh/appearance still publishes raw × factor once; history remains raw (Task 6 integration test).
-- [ ] **Step 2:** `./run-tests.sh -only-testing:PWUsageTests/SolarForecastCorrectionTests` → FAIL.
-- [ ] **Step 3:** Implement the Interfaces and Global Constraints above.
-- [ ] **Step 4:** Repeat Step 2 → PASS.
-- [ ] **Step 5: Commit** — `feat(ios): provider-neutral solar forecast correction`
+- [x] **Step 2:** `./run-tests.sh -only-testing:PWUsageTests/SolarForecastCorrectionTests` → FAIL.
+- [x] **Step 3:** Implement the Interfaces and Global Constraints above.
+- [x] **Step 4:** Repeat Step 2 → PASS.
+- [x] **Step 5: Commit** — `feat(ios): provider-neutral solar forecast correction`
 
 ---
 
@@ -225,7 +227,7 @@ Decides whether the correction is switched on for Solcast at launch.
   - The service's single publish path transforms raw envelopes into `SolarForecastPublication`, preserving fetch time, coverage, provider/configuration identity and attribution. It derives correction from matching identity/cohort history and enabled actuals (cache 1 h; filter by now). Disabled/failed actuals means identity. Obtain timezone from planning context. Apply correction once, never mutate raw caches, and never train on corrected output. Coordinator and consumers must not switch on provider IDs or inspect legacy credential fields.
   - Diagnostics uses the selected store and reports provider/factors; do not report the Solcast daily budget as the automatic rolling-hour budget. `solarForecastConnection` remains Solcast connection state; automatic enhancement uses source/batch rather than falsifying `.ready`. Update consumer gates that assume `.ready` means the only usable forecast.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - No Solcast credential, layout enabled + detected → `solarForecastState == .enhanced`, `solarForecastSource == .forecastSolar`.
   - Solcast connected and layout available → Solcast used; the automatic provider adapter receives no refresh.
   - Solcast disconnected after an automatic batch existed → next appearance publishes the automatic batch, never the stale Solcast one; connecting Solcast → next appearance publishes Solcast, never the automatic batch.
@@ -237,10 +239,10 @@ Decides whether the correction is switched on for Solcast at launch.
   - Diagnostics text includes provider ID, configuration revision, fetch age, coverage and separate cohort factors/sample counts; no secrets. The synthetic third provider's metadata reaches settings and forecast attribution unchanged.
   - Advance the fake foreground scheduler through POST → pending → detected without another appearance; assert cancellation/coalescing across background/view/site changes and immediate foreground revalidation.
   - Transient layout failure preserves an eligible unexpired publication; expired batch/eligibility, explicit disabled or access rejection clears it. No transient failure extends fetchedAt or leaks another configuration.
-- [ ] **Step 2:** Run `./run-tests.sh DashboardCoordinatorTests SolarForecastCoordinatorTests` → FAIL for the new behavior.
-- [ ] **Step 3:** Implement the Interfaces and Global Constraints above.
-- [ ] **Step 4:** Repeat Step 2 → PASS, then the full `./run-tests.sh`.
-- [ ] **Step 5: Commit** — `feat(ios): choose solar forecast source and apply correction`
+- [x] **Step 2:** Run `./run-tests.sh DashboardCoordinatorTests SolarForecastCoordinatorTests` → FAIL for the new behavior.
+- [x] **Step 3:** Implement the Interfaces and Global Constraints above.
+- [x] **Step 4:** Repeat Step 2 → PASS, then the full `./run-tests.sh`.
+- [x] **Step 5: Commit** — `feat(ios): choose solar forecast source and apply correction`
 
 ---
 
@@ -260,25 +262,25 @@ Decides whether the correction is switched on for Solcast at launch.
   - Settings sheet: when enabled, a "Solar Forecast" section above the Solcast section: the summary lines; a "Use my home location" button when `needs-location`, which first asks "Are you at <site name> now?" and then posts; on `denied`/`restricted` an explanation with an "Open Settings" button; when the location is `estimated`, a line "Your location is approximate" and a "Use my exact home location" button that runs the same "Are you at <site name> now?" confirmation and post; a footnote "Forecast by Forecast.Solar." when the automatic source is in use. Show source `"Solcast"` when connected while retaining read-only detection/confidence underneath; Solcast setup remains the alternative below. Always retain a settings location/retry button, even after a prior fix, and invalidate/refetch layout after successful 204 (server returns pending until detection). Do not promise a completion time.
   - Add a one-time Smart Shift invitation for enabled users without Solcast whose location is missing or `estimated` (copy for the estimated case: "Your forecast uses an approximate location. Share your exact home location for a better one."). Persist dismissal per account/site; opening settings and inviting must not request permission until the user taps the location action and confirms they are home. Decline/failure never re-prompts automatically. Hide it for disabled users; settings retry remains available.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - `currentRoundedLocation` with a fake manager returning 43.39321, −87.87154 → 43.39, −87.87.
   - Denied authorization → throws `.denied`, nothing posted (coordinator/settings model test with a fake API).
   - `automaticSummary` for planes `[(90, 18, 5.6), (270, 18, 4.0)]` contains `"2 panel faces: east-facing about 5.6 kW, west-facing about 4 kW"`; one plane `(205, 20, 5.2)` → a summary line `"1 panel face: southwest-facing about 5.2 kW"`; include source/confidence lines; each reason → its sentence; `.disabled` → `[]`.
   - Restricted, unavailable, timeout, stale/inaccurate fix or cancellation → nothing posted, history remains usable; only denied/restricted offers Open Settings. Site changes after confirmation → no post.
   - `estimated` location → summary contains "Your location is approximate", the refine button is shown, the invitation appears once, and confirming posts the new fix; after the refetch returns `device`, neither the line nor the button nor the invitation appears. Declining keeps the estimated location and forecast in use.
   - One-time Smart Shift invitation is beta-only, remains dismissed after relaunch, and settings retry is always available. A successful POST forces a fresh pending layout read; Solcast users still see source and read-only detection, and every automatic forecast surface names Forecast.Solar.
-- [ ] **Step 2:** Run `./run-tests.sh HomeLocationProviderTests SolarForecastSettingsStatusTests SolarForecastCoordinatorTests` → FAIL for the new behavior.
-- [ ] **Step 3:** Implement; add previews for each state in `SolarForecastPreviews.swift`.
-- [ ] **Step 4:** Repeat Step 2 → PASS; `./generate.sh` then the full `./run-tests.sh`.
-- [ ] **Step 5:** On-device check list for the owner (in the PR): grant beta role on Dev, seed an estimated location in the admin Solar Beta tab, open settings and confirm the approximate-location prompt, share location, confirm the admin table now shows it came from the phone, wait for a cron run, confirm the layout sentence and that Smart Shift shows the forecast; deny location and confirm the explanation.
-- [ ] **Step 6: Commit** — `feat(ios): home location step and automatic forecast settings`
+- [x] **Step 2:** Run `./run-tests.sh HomeLocationProviderTests SolarForecastSettingsStatusTests SolarForecastCoordinatorTests` → FAIL for the new behavior.
+- [x] **Step 3:** Implement; add previews for each state in `SolarForecastPreviews.swift`.
+- [x] **Step 4:** Repeat Step 2 → PASS; `./generate.sh` then the full `./run-tests.sh`.
+- [ ] **Step 5 (owner, in the PR):** On-device check list for the owner (in the PR): grant beta role on Dev, seed an estimated location in the admin Solar Beta tab, open settings and confirm the approximate-location prompt, share location, confirm the admin table now shows it came from the phone, wait for a cron run, confirm the layout sentence and that Smart Shift shows the forecast; deny location and confirm the explanation.
+- [x] **Step 6: Commit** — `feat(ios): home location step and automatic forecast settings`
 
 
 ## Final verification and release handoff
 
-- [ ] From `cmd/ios-app`, run `./generate.sh`, `./run-tests.sh` (must execute nonzero tests) and from the repository root run `swiftlint --strict`; report existing baseline violations separately, add none. The test script builds the app/test targets; preserve `DEVELOPMENT_TEAM: 6HQGHHRK87`.
-- [ ] From `cmd/next-app`, run `npm run lint`, `npm test -- --run`, `npm run build`; report any environment-dependent blockers without reading `.env*` contents.
-- [ ] Record Task 1 evidence, device checks and the still-pending ≥20-day provider release gate in the implementation PR. Keep rollout beta-only. Confirm the separate server Dev role/location/cron smoke check and measured Supabase egress before expanding the beta. Never commit research data or credentials.
+- [x] From `cmd/ios-app`, run `./generate.sh`, `./run-tests.sh` (must execute nonzero tests) and from the repository root run `swiftlint --strict`; report existing baseline violations separately, add none. The test script builds the app/test targets; preserve `DEVELOPMENT_TEAM: 6HQGHHRK87`.
+- [x] From `cmd/next-app`, run `npm run lint`, `npm test -- --run`, `npm run build`; report any environment-dependent blockers without reading `.env*` contents.
+- [x] Record Task 1 evidence, device checks and the still-pending ≥20-day provider release gate in the implementation PR. Keep rollout beta-only. Confirm the separate server Dev role/location/cron smoke check and measured Supabase egress before expanding the beta. Never commit research data or credentials.
 
 ## Plan self-review (2026-10-28)
 
