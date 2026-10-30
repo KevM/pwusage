@@ -57,24 +57,47 @@ enum BatteryHoldActivityPresentation {
     /// The status line, or nil when the headline and figures already say it all.
     /// One line: a warning wins over a transition, which wins over a deadline.
     static func status(_ attributes: BatteryHoldActivityAttributes, _ state: State, isStale: Bool, now: Date) -> Status? {
+        if let nonActive = nonActiveStatus(state) {
+            return nonActive
+        }
+        return activeStatus(attributes, state, isStale: isStale, now: now)
+    }
+
+    private static func nonActiveStatus(_ state: State) -> Status? {
         let info = { (text: String) in Status(text: text, isWarning: false) }
         switch state.status {
         case .restored:
-            switch state.restoreReason {
-            case .loadEnded: return info("Home use dropped")
-            case .noLoadDetected: return info("No job detected")
-            case .manual: return info("Stopped in pwusage")
-            case .safetyTimeout: return info("8-hour safety limit")
-            case .timerElapsed: return info("Stop time reached")
-            default: return nil
-            }
+            return restoredStatus(state.restoreReason)
         case .cancelled:
-            return info(state.cancelledObservedReserve.map { "Backup reserve set to \($0)% outside pwusage" } ?? "Backup reserve changed outside pwusage")
+            let detail = state.cancelledObservedReserve.map { "Backup reserve set to \($0)% outside pwusage" }
+                ?? "Backup reserve changed outside pwusage"
+            return info(detail)
         case .ended, .unknown:
             return info("Open pwusage for details")
         case .active:
-            break
+            return nil
         }
+    }
+
+    private static func restoredStatus(_ reason: State.RestoreReason?) -> Status? {
+        let info = { (text: String) in Status(text: text, isWarning: false) }
+        switch reason {
+        case .loadEnded: return info("Home use dropped")
+        case .noLoadDetected: return info("No job detected")
+        case .manual: return info("Stopped in pwusage")
+        case .safetyTimeout: return info("8-hour safety limit")
+        case .timerElapsed: return info("Stop time reached")
+        default: return nil
+        }
+    }
+
+    private static func activeStatus(
+        _ attributes: BatteryHoldActivityAttributes,
+        _ state: State,
+        isStale: Bool,
+        now: Date
+    ) -> Status? {
+        let info = { (text: String) in Status(text: text, isWarning: false) }
         if isStale { return Status(text: "Update overdue", isWarning: true) }
         if isRestoring(state) { return info("Confirming with Tesla") }
         switch state.phase {
