@@ -34,7 +34,20 @@ extension SolarForecastStore {
         inFlight[scope] = InFlightRefresh(id: refreshID, task: task)
         let result = await task.value
         if inFlight[scope]?.id == refreshID { inFlight.removeValue(forKey: scope) }
+        if result == .refreshed || result == .failed(.saveFailed) { await recordHistory(scope: scope) }
         return result
+    }
+
+    /// Raw history for correction, recorded once by the caller that started the fetch.
+    /// Best effort: the recorder never fails a refresh.
+    func recordHistory(scope: String) async {
+        guard let recorder = historyRecorder, let credential = state.credentials[scope],
+              let batch = state.caches[scope], batch.credentialID == credential.credentialID else { return }
+        let identity = SolarForecastHistoryIdentity(
+            accountScopeID: credential.accountScopeID, siteID: credential.siteID, providerID: .solcast,
+            fingerprint: SolcastForecastProvider.fingerprint(
+                credentialID: batch.credentialID, resourceIDs: batch.resourceIDs))
+        await recorder.record(identity: identity, intervals: batch.intervals, fetchedAt: batch.fetchedAt)
     }
 
     func performRefresh(scope: String, credential: SolarForecastCredential, generation: Int, manual: Bool) async -> SolarForecastRefreshResult {

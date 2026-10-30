@@ -45,6 +45,7 @@ struct PWUsageApp: App {
                 PWUsageAppModel(
                     configuration: configuration,
                     api: api,
+                    forecastService: makeForecastService(),
                     cache: .persistent(apiOrigin: configuration.apiOrigin),
                     controlSiteStore: .shared(),
                     liveActivities: BatteryHoldActivityCoordinator(
@@ -68,6 +69,16 @@ struct PWUsageApp: App {
             PWUsageApp.reportMisconfiguration(error)
             return .misconfigured("pwusage could not finish secure startup. Close the app and try again.")
         }
+    }
+
+    /// Every forecast provider is registered here and nowhere else. Forecast.Solar is the
+    /// automatic provider for beta sites without Solcast.
+    private static func makeForecastService() -> SolarForecastService {
+        SolarForecastService(
+            providers: [SolcastForecastProvider(store: SolarForecastStore.shared), ForecastSolarProvider()],
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
+            history: .shared
+        )
     }
 
     private static func reportMisconfiguration(_ error: Error) {
