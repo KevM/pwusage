@@ -60,5 +60,14 @@ struct SolarForecastStoreSessionCleanup: SolarForecastSessionCleanup {
     /// Held as the protocol so an injected store is actually used. Bypassing this
     /// would clear the real shared store during tests.
     let store: any SolarForecastManaging
-    func signOut() async throws { try await store.signOut() }
+    /// Clears automatic-provider caches and raw history. Provider request ledgers survive.
+    var service: SolarForecastService?
+
+    /// Both halves always run, so a store failure cannot leave history behind.
+    func signOut() async throws {
+        var firstError: (any Error)?
+        do { try await store.signOut() } catch { firstError = error }
+        do { try await service?.clearAccountData() } catch { firstError = firstError ?? error }
+        if let firstError { throw firstError }
+    }
 }

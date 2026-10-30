@@ -8,29 +8,60 @@ extension DashboardCoordinator {
     func solarForecastDiagnostics() async -> SmartShiftDiagnostics.SolarForecast? {
         guard let forecastStore, let accountScopeID else { return nil }
         let siteID = selectedSiteID
-        let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
-        return SmartShiftDiagnostics.SolarForecast(
+        // An automatic forecast has its own rolling-hour budget; the Solcast daily one says nothing about it.
+        let automatic = solarForecastPublication
+        let legacy = !usesAutomaticSolarForecast
+        let batch = automatic == nil && legacy
+            ? await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) : nil
+        var diagnostics = SmartShiftDiagnostics.SolarForecast(
             batch: batch, now: now(),
-            recommendationUsable: await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
-            budget: await forecastStore.budget(for: accountScopeID, siteID: siteID),
-            lastErrorDescription: await forecastStore.lastErrorDescription,
+            recommendationUsable: legacy
+                ? await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
+                : automatic != nil,
+            budget: automatic == nil && legacy ? await forecastStore.budget(for: accountScopeID, siteID: siteID) : nil,
+            lastErrorDescription: legacy ? await forecastStore.lastErrorDescription : nil,
             lastRefresh: solarForecastLastRefresh, unavailableCause: solarForecastUnavailableCause,
             connection: solarForecastConnection, state: solarForecastState,
             unavailableReason: solarForecastUnavailableReason)
+        diagnostics.automaticProviderID = legacy ? nil : solarForecastAttempt?.providerID?.rawValue
+        diagnostics.automaticRefreshOutcome = legacy ? nil : solarForecastAttempt.map { "\($0.outcome)" }
+        diagnostics.automaticDiagnostic = legacy ? nil : solarForecastAttempt?.diagnostic
+        diagnostics.source = automatic.map { SmartShiftForecastSource(publication: $0, now: now()) }
+        return diagnostics
     }
 
     func refreshSolarForecast(manual: Bool) async {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
-        guard let forecastStore, let accountScopeID else {
+        forecastOperationPending = true
+        defer { if operation == forecastGeneration { forecastOperationPending = false } }
+        guard forecastStore != nil, accountScopeID != nil else {
             solarForecastState = .basic
             return
         }
         let siteID = selectedSiteID
+        let status = await solarLayoutLookup(siteID: siteID, operation: operation)
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        if layoutAPI != nil, status != .disabled {
+            guard let planningAPI else {
+                clearAutomaticPublication()
+                return
+            }
+            await loadAutomaticForecast(
+                siteID: siteID, api: planningAPI, operation: operation, status: status, manual: manual)
+            return
+        }
+        await refreshLegacySolarForecast(manual: manual, siteID: siteID, operation: operation)
+    }
+
+    private func refreshLegacySolarForecast(manual: Bool, siteID: String, operation: Int) async {
+        guard let forecastStore, let accountScopeID else { return }
+        solarForecastPublication = nil
+        solarForecastAttempt = nil
+        solarForecastSource = nil
         guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-            solarForecastState = .basic
-            solarForecastConnection = .notConnected
+            resetForecastEnhancement(state: .basic, connection: .notConnected)
             return
         }
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
@@ -49,7 +80,7 @@ extension DashboardCoordinator {
                 // pull has to actually re-fetch the context. The appearance path
                 // re-derives `solarForecastUnavailableReason`, so a `serverOutdated`
                 // or `contextInvalid` diagnosis survives a repeat failure.
-                await loadTimingDetailAppeared()
+                await loadTimingDetailAppeared(surface: nil)
                 return
             }
             solarForecastState = .failedWithBasic
@@ -69,6 +100,7 @@ extension DashboardCoordinator {
             return
         }
         solarForecastBatch = batch
+        solarForecastSource = .solcast
         solarForecastUnavailableCause = nil
         solarForecastState = .enhanced
         solarForecastSaveFailure = saveFailed
@@ -138,6 +170,7 @@ extension DashboardCoordinator {
     func loadProfileDidEdit() {}
 
     func beginForecastOperation() -> Int {
+        forecastOperationPending = false
         forecastGeneration += 1
         return forecastGeneration
     }
@@ -151,5 +184,8 @@ extension DashboardCoordinator {
         solarForecastUnavailableReason = nil
         solarForecastSaveFailure = false
         solarForecastLastRefresh = nil
+        solarForecastSource = nil
+        solarForecastPublication = nil
+        solarForecastAttempt = nil
     }
 }

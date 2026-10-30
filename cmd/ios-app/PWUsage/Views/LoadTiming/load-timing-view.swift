@@ -117,7 +117,8 @@ struct LoadTimingView: View {
                             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
                             staleRefreshes &+= 1
                         }
-                    metadata(response)
+                    SolarLocationInvitationCard(coordinator: coordinator)
+                    metadata(response, usesSolar: state.evaluation?.projection == .forecast)
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard
                 } else {
@@ -172,6 +173,7 @@ struct LoadTimingView: View {
             }
         }
         .task { await coordinator.loadTimingDetailAppeared() }
+        .onDisappear { coordinator.solarSurfaceDisappeared() }
         .task(id: "\(coordinator.selectedSiteID):\(coordinator.isForeground)") {
             await refreshBatteryHoldWhileVisible()
         }
@@ -323,7 +325,7 @@ struct LoadTimingView: View {
         .presentationDragIndicator(.visible)
     }
 
-    func metadata(_ response: MobileBillResponse) -> some View {
+    func metadata(_ response: MobileBillResponse, usesSolar: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)) – \(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
             Text(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone))
@@ -333,10 +335,13 @@ struct LoadTimingView: View {
                 energyDataThrough: response.sources.energyDataThrough,
                 announcesFreshness: false
             )
+            if let source = coordinator.attributionDescriptor(usesSolar: usesSolar) {
+                SolarForecastAttributionView(descriptor: source)
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }

@@ -72,6 +72,13 @@ struct SmartShiftVerdictView: View {
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.borderless)
             }
+        case .automaticForecast(let message):
+            VStack(alignment: .leading, spacing: 6) {
+                noteText(message)
+                Button("Solar Forecast Settings", systemImage: "sun.max", action: onConnectSolcast)
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.borderless)
+            }
         case .forecastState(let message):
             noteText(message)
         case .unobservedBalance:
