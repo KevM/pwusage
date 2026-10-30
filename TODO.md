@@ -65,7 +65,7 @@ Server side is in: `SiteSolarLayout`, the TypeScript layout detector (`src/lib/s
 
 - [ ] **iOS plan:** provider refactor, `ForecastSolarClient`, location prompt, hourly correction from `/api/mobile/solar-actuals`, settings UI. Not started.
 - [ ] **Provider decision rule:** the forward capture (`.forecast-compare/capture.py`, `score.py`, local only) keeps running until it has 20+ scored days; Open-Meteo is now the preferred automatic beta provider. Before wider release, its matched day-ahead forecasts must beat the 14-day history median on both daily and hourly error; the retrospective fixed-lead Harrison backtest supports the trial but does not replace this gate.
-- [ ] **Grant the beta role** to test users only after the iOS side lands; run detection on Dev for sites with a location and review the confidence spread first.
+- [ ] **Move layout detection on device (decided 2026-10-30):** Swift port of the detector, phone-side history cache from day records, location and layout kept on device and synced through iCloud; then drop `SiteSolarLayout`, the cron and the layout/actuals endpoints. Don't build more on `SiteSolarLayout`. See the [plan](docs/superpowers/plans/2026-10-30-on-device-solar-layout.md).
 - [ ] **Location check threshold:** the solar-noon check flags a location more than 3° of longitude off (not the spec's 1.5°): terrain shifts one research site's sunrise/sunset edges by ~2.4°. Revisit with more sites.
 
 ## Single compact store follow-ups (2026-10-27)
