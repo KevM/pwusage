@@ -74,7 +74,7 @@ struct PWUsageApp: App {
     }
 
     /// Every forecast provider is registered here and nowhere else. Open-Meteo is the
-    /// automatic provider for beta sites without Solcast.
+    /// exclusive automatic provider for beta sites, regardless of saved Solcast credentials.
     private static func makeForecastService() -> SolarForecastService {
         SolarForecastService(
             providers: [SolcastForecastProvider(store: SolarForecastStore.shared), OpenMeteoProvider()],

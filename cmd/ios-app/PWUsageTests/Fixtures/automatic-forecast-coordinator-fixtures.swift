@@ -88,6 +88,7 @@ actor StubAutomaticProvider: SolarForecastProviding {
     private let now: @Sendable () -> Date
     private var cache: [SolarForecastSiteScope: SolarForecastRawBatch] = [:]
     private(set) var refreshes = 0
+    private(set) var requests: [SolarForecastRequest] = []
     var failing = false
 
     init(id: SolarForecastProviderID = .forecastSolar, now: @escaping @Sendable () -> Date) {
@@ -110,6 +111,7 @@ actor StubAutomaticProvider: SolarForecastProviding {
 
     func refresh(_ request: SolarForecastRequest) async -> SolarForecastProviderResult {
         refreshes += 1
+        requests.append(request)
         if failing { return SolarForecastProviderResult(batch: nil, outcome: .failed(.transient)) }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = request.siteTimeZone

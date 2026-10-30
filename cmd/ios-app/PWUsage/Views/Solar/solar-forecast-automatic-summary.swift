@@ -1,6 +1,11 @@
 import Foundation
 
 extension SolarForecastSettingsStatus {
+    /// Until eligibility is known, do not flash legacy setup or read its credential metadata.
+    static func showsSolcastSetup(for status: MobileSolarLayoutResponse?) -> Bool {
+        status == .disabled
+    }
+
     /// Ordered lines for the settings sheet's automatic forecast section: source, panel faces,
     /// then confidence or the reason there is no layout yet. Empty outside the beta. The
     /// source's name comes from its registered descriptor.

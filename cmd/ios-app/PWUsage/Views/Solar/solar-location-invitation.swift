@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The one-time Smart Shift invitation to share (or refine) the home location, for beta
-/// sites without Solcast. It never asks for permission itself: the button opens the same
+/// sites. It never asks for permission itself: the button opens the same
 /// "Are you at …?" confirmation the settings sheet uses.
 enum SolarLocationInvitation {
     enum Kind: Equatable {
@@ -18,8 +18,8 @@ enum SolarLocationInvitation {
         }
     }
 
-    static func kind(status: MobileSolarLayoutResponse?, hasSolcast: Bool) -> Kind? {
-        guard !hasSolcast, case .enabled(let location, _, let reason) = status else { return nil }
+    static func kind(status: MobileSolarLayoutResponse?) -> Kind? {
+        guard case .enabled(let location, _, let reason) = status else { return nil }
         if location?.source == .estimated { return .estimated }
         return location == nil && reason == .needsLocation ? .missing : nil
     }
@@ -46,7 +46,7 @@ struct SolarLocationInvitationCard: View {
 
     private var kind: SolarLocationInvitation.Kind? {
         SolarLocationInvitation.kind(
-            status: coordinator.solarLayoutStatus, hasSolcast: coordinator.solarForecastConnection != .notConnected
+            status: coordinator.solarLayoutStatus
         )
     }
 

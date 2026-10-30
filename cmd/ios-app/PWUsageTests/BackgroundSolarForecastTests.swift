@@ -20,6 +20,42 @@ struct BackgroundSolarForecastTests {
         #expect(!harness.model.sessionVerified)
     }
 
+    @Test("Enabled beta refresh bypasses configured Solcast and locked credential metadata")
+    func automaticProviderIgnoresSavedCredentials() async throws {
+        let harness = try BackgroundForecastHarness()
+        let refreshed = await harness.model.refreshBackgroundForecast(
+            using: harness.api, now: harness.api.solar.now, lowPowerMode: false
+        )
+        #expect(refreshed)
+        #expect(await harness.provider.refreshes == 1)
+        #expect(await harness.credentialProvider.configurationReads == 0)
+        #expect(await harness.credentialProvider.refreshes == 0)
+    }
+
+    @Test("Missing beta layout does not fall through to saved Solcast")
+    func missingLayoutUsesHistory() async throws {
+        let harness = try BackgroundForecastHarness()
+        harness.api.solar.layout = .enabled(location: SolarProviderFixture.location, layout: nil, reason: .pending)
+        #expect(await !harness.model.refreshBackgroundForecast(
+            using: harness.api, now: harness.api.solar.now, lowPowerMode: false
+        ))
+        #expect(await harness.provider.refreshes == 0)
+        #expect(await harness.credentialProvider.configurationReads == 0)
+        #expect(await harness.credentialProvider.refreshes == 0)
+    }
+
+    @Test("An automatic forecast failure does not fall through to saved Solcast")
+    func failedAutomaticUsesHistory() async throws {
+        let harness = try BackgroundForecastHarness()
+        await harness.provider.setFailing(true)
+        #expect(await !harness.model.refreshBackgroundForecast(
+            using: harness.api, now: harness.api.solar.now, lowPowerMode: false
+        ))
+        #expect(await harness.provider.refreshes == 1)
+        #expect(await harness.credentialProvider.configurationReads == 0)
+        #expect(await harness.credentialProvider.refreshes == 0)
+    }
+
     @Test("Low Power Mode and missing account do not issue requests")
     func ineligibleRefresh() async throws {
         let harness = try BackgroundForecastHarness()
@@ -85,6 +121,7 @@ private struct BackgroundForecastHarness {
     let api = BackgroundForecastAPI()
     let defaults: UserDefaults
     let provider: StubAutomaticProvider
+    let credentialProvider = BackgroundCredentialProvider()
     let model: PWUsageAppModel
 
     init() throws {
@@ -98,7 +135,8 @@ private struct BackgroundForecastHarness {
         let clock = api.solar.clock
         provider = StubAutomaticProvider(now: { clock.now() })
         let service = SolarForecastService(
-            providers: [provider], policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
+            providers: [credentialProvider, provider],
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
             history: SolarForecastHistory(file: InMemorySolarFile(), clock: clock), clock: clock
         )
         model = PWUsageAppModel(
@@ -152,36 +190,28 @@ struct BackgroundForecastPolicyTests {
     }
 }
 
-@Suite("Background forecast credential metadata eligibility")
-struct BackgroundForecastEligibilityTests {
-    @Test("A configured Solcast site stays preferred without reading its key")
-    func credentialMetadataWins() async {
-        var state = SolarForecastPersistedState()
-        state.credentials[SolarForecastScope.key("account-a", "site-a")] = SolarForecastCredential(
-            accountScopeID: "account-a", siteID: "site-a", credentialID: "synthetic", resourceIDs: []
-        )
-        let store = SolarForecastStore(files: BackgroundEligibilityFiles(state: state, inaccessible: false))
-        #expect(await !store.allowsAutomaticBackgroundRefresh(accountScopeID: "account-a", siteID: "site-a"))
-        #expect(await store.allowsAutomaticBackgroundRefresh(accountScopeID: "account-a", siteID: "site-b"))
+/// Represents saved Solcast configuration whose protected metadata need not be opened.
+/// Configuration is ready if queried, so a credential-first selection would take it.
+private actor BackgroundCredentialProvider: SolarForecastProviding {
+    nonisolated let descriptor = SolarForecastProviderDescriptor(
+        id: .solcast, displayName: "Solcast", attribution: "Forecast by Solcast.",
+        requirement: .credential, providesCautiousPower: true,
+        refreshThreshold: 3 * 3600, maximumUsableAge: 6 * 3600, modelVersion: "test"
+    )
+    private(set) var configurationReads = 0
+    private(set) var refreshes = 0
+
+    func configuration(for request: SolarForecastRequest) -> SolarForecastConfiguration {
+        configurationReads += 1
+        return SolarForecastConfiguration(readiness: .ready, fingerprint: "saved-solcast", cacheRevision: "saved")
     }
 
-    @Test("Unreadable locked metadata conservatively prevents automatic refresh")
-    func unreadableMetadata() async {
-        let store = SolarForecastStore(files: BackgroundEligibilityFiles(state: .init(), inaccessible: true))
-        #expect(await !store.allowsAutomaticBackgroundRefresh(accountScopeID: "account-a", siteID: "site-a"))
+    func refresh(_ request: SolarForecastRequest) -> SolarForecastProviderResult {
+        refreshes += 1
+        return SolarForecastProviderResult(batch: nil, outcome: .unavailable)
     }
-}
 
-private actor BackgroundEligibilityFiles: SolarForecastPersistence {
-    let state: SolarForecastPersistedState
-    let inaccessible: Bool
-    init(state: SolarForecastPersistedState, inaccessible: Bool) {
-        self.state = state
-        self.inaccessible = inaccessible
-    }
-    func loadState() throws -> SolarForecastPersistedState {
-        if inaccessible { throw CocoaError(.fileReadNoPermission) }
-        return state
-    }
-    func saveState(_ state: SolarForecastPersistedState) {}
+    func cachedForecast(for request: SolarForecastRequest) -> SolarForecastRawBatch? { nil }
+    func activateAccountScope(_ accountScopeID: String?) {}
+    func clearAccountData() {}
 }

@@ -39,130 +39,11 @@ struct SolarForecastSettingsSheet: View {
         NavigationStack {
             Form {
                 SolarForecastAutomaticSection(coordinator: coordinator)
-                Section("Connection") {
-                    // Deliberately no `.textContentType`: the password AutoFill
-                    // flow can offer to save the key into the user's iCloud
-                    // Keychain, which would break the device-only guarantee that
-                    // the Keychain item itself provides.
-                    SecureField("Solcast API key", text: $apiKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .disabled(isWorking)
-                    Button(isConnected ? "Replace key" : "Save key") {
-                        Task { await saveKeyAndDiscover() }
-                    }
-                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
-                    if isConnected {
-                        Label("Connected on this device", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        // Array names are provider data we deliberately do not
-                        // persist, so the selection is shown by ID until someone
-                        // spends a request rediscovering it.
-                        if !selectedResourceIDs.isEmpty {
-                            Text("Selected: \(selectedResourceIDs.sorted().joined(separator: ", "))")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text("No arrays selected yet, so no forecast is requested.")
-                                .font(.footnote)
-                                .foregroundStyle(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Button("Discover arrays") {
-                            Task { await discoverArrays() }
-                        }
-                        .disabled(isWorking)
-                    }
-                    if let statusMessage {
-                        Text(statusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
+                    solcastSections
                 }
-
-                if !discoveredSites.isEmpty {
-                    Section("Solar arrays") {
-                        Text("Select one or two arrays. Each change is saved on this device. Tags are shown only as hints.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        // A configured connection makes discovery the only route
-                        // back to the friendly array list, so it needs its own
-                        // action rather than being a side effect of saving a key.
-                        Text("Rediscovery spends one of this device's requests today.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        ForEach(discoveredSites, id: \.resourceID) { site in
-                            Toggle(isOn: selectionBinding(for: site.resourceID)) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(site.name)
-                                    if !site.tags.isEmpty {
-                                        Text(site.tags.joined(separator: ", "))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                            .disabled(isWorking)
-                        }
-                    }
-                }
-
-                if isConnected && allowsManualIDs {
-                    Section("Manual Solar System IDs") {
-                        Text("Use this when discovery is unavailable. Solar System IDs stay on this device.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        TextField("Solar System 1 ID", text: $manualResourceID1)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .disabled(isWorking)
-                        TextField("Solar System 2 ID (optional)", text: $manualResourceID2)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .disabled(isWorking)
-                        Button("Save manual IDs") {
-                            let ids = [manualResourceID1, manualResourceID2]
-                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                .filter { !$0.isEmpty }
-                            Task { await saveSelection(ids) }
-                        }
-                        .disabled(manualResourceID1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
-                    }
-                }
-
-                Section("Request usage") {
-                    if let budget {
-                        Text("This device has made \(budget.totalAttempts) of \(SolarForecastStore.totalAttemptsPerUTCDay) attempts today (\(budget.automaticAttempts) automatic).")
-                    } else {
-                        Text("Usage on this device will appear after a key is saved.")
-                    }
-                    Text("Other devices or apps may also use your Solcast account quota.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                if isConnected {
-                    Section {
-                        Button("Disconnect Solar forecast", role: .destructive) {
-                            Task {
-                                isWorking = true
-                                defer { isWorking = false }
-                                do {
-                                    try await coordinator.disconnectSolarForecast()
-                                    isConnected = false
-                                    allowsManualIDs = false
-                                    apiKey = ""
-                                    discoveredSites = []
-                                    selectedResourceIDs = []
-                                    statusMessage = "Disconnected. Smart Shift will use your rate plan and bank data."
-                                } catch {
-                                    await applyStatus(error, operation: .disconnect)
-                                }
-                            }
-                        }
-                        .disabled(isWorking)
-                    }
+                if coordinator.solarLayoutStatus == nil {
+                    Section { Text("Checking solar forecast availability…") }
                 }
             }
             .navigationTitle("Solar Forecast")
@@ -175,8 +56,144 @@ struct SolarForecastSettingsSheet: View {
             .overlay {
                 if isWorking { ProgressView().controlSize(.large) }
             }
-            .task { await loadStatus() }
-            .task { await coordinator.solarSettingsAppeared() }
+            .task {
+                await coordinator.solarSettingsAppeared()
+                if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
+                    await loadStatus()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var solcastSections: some View {
+        Section("Connection") {
+            // Deliberately no `.textContentType`: the password AutoFill
+            // flow can offer to save the key into the user's iCloud
+            // Keychain, which would break the device-only guarantee that
+            // the Keychain item itself provides.
+            SecureField("Solcast API key", text: $apiKey)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .disabled(isWorking)
+            Button(isConnected ? "Replace key" : "Save key") {
+                Task { await saveKeyAndDiscover() }
+            }
+            .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
+            if isConnected {
+                Label("Connected on this device", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                // Array names are provider data we deliberately do not
+                // persist, so the selection is shown by ID until someone
+                // spends a request rediscovering it.
+                if !selectedResourceIDs.isEmpty {
+                    Text("Selected: \(selectedResourceIDs.sorted().joined(separator: ", "))")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("No arrays selected yet, so no forecast is requested.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button("Discover arrays") {
+                    Task { await discoverArrays() }
+                }
+                .disabled(isWorking)
+            }
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        if !discoveredSites.isEmpty {
+            Section("Solar arrays") {
+                Text("Select one or two arrays. Each change is saved on this device. Tags are shown only as hints.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                // A configured connection makes discovery the only route
+                // back to the friendly array list, so it needs its own
+                // action rather than being a side effect of saving a key.
+                Text("Rediscovery spends one of this device's requests today.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                ForEach(discoveredSites, id: \.resourceID) { site in
+                    Toggle(isOn: selectionBinding(for: site.resourceID)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(site.name)
+                            if !site.tags.isEmpty {
+                                Text(site.tags.joined(separator: ", "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(isWorking)
+                }
+            }
+        }
+
+        if isConnected && allowsManualIDs {
+            Section("Manual Solar System IDs") {
+                Text("Use this when discovery is unavailable. Solar System IDs stay on this device.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                TextField("Solar System 1 ID", text: $manualResourceID1)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .disabled(isWorking)
+                TextField("Solar System 2 ID (optional)", text: $manualResourceID2)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .disabled(isWorking)
+                Button("Save manual IDs") {
+                    let ids = [manualResourceID1, manualResourceID2]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    Task { await saveSelection(ids) }
+                }
+                .disabled(manualResourceID1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
+            }
+        }
+
+        Section("Request usage") {
+            if let budget {
+                Text("""
+                This device has made \(budget.totalAttempts) of \(SolarForecastStore.totalAttemptsPerUTCDay) \
+                attempts today (\(budget.automaticAttempts) automatic).
+                """)
+            } else {
+                Text("Usage on this device will appear after a key is saved.")
+            }
+            Text("Other devices or apps may also use your Solcast account quota.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+
+        if isConnected {
+            Section {
+                Button("Disconnect Solar forecast", role: .destructive) {
+                    Task {
+                        isWorking = true
+                        defer { isWorking = false }
+                        do {
+                            try await coordinator.disconnectSolarForecast()
+                            isConnected = false
+                            allowsManualIDs = false
+                            apiKey = ""
+                            discoveredSites = []
+                            selectedResourceIDs = []
+                            statusMessage = "Disconnected. Smart Shift will use your rate plan and bank data."
+                        } catch {
+                            await applyStatus(error, operation: .disconnect)
+                        }
+                    }
+                }
+                .disabled(isWorking)
+            }
         }
     }
 

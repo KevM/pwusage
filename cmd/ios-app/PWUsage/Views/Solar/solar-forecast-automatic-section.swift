@@ -8,7 +8,7 @@ struct SolarForecastAutomaticSection: View {
     @State private var outcome: SolarLocationShareResult?
 
     private var sourceDescriptor: SolarForecastProviderDescriptor? {
-        coordinator.solarForecastSource.flatMap { coordinator.forecastService?.descriptor(for: $0) }
+        coordinator.forecastService?.automaticDescriptor
     }
 
     var body: some View {

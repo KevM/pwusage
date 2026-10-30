@@ -12,6 +12,14 @@ struct SolarAutomaticSettingsTests {
         SolarLayout(planes: planes, acClipKw: nil, confidence: confidence, detectedAt: nil)
     }
 
+    @Test("Solcast setup is shown only when the server confirms the site is outside beta")
+    func legacySetupVisibility() {
+        #expect(SolarForecastSettingsStatus.showsSolcastSetup(for: .disabled))
+        #expect(!SolarForecastSettingsStatus.showsSolcastSetup(for: nil))
+        #expect(!SolarForecastSettingsStatus.showsSolcastSetup(
+            for: .enabled(location: nil, layout: nil, reason: .pending)))
+    }
+
     @Test("Two faces, the source and the confidence are summarised")
     func twoFaces() {
         let response = MobileSolarLayoutResponse.enabled(
@@ -63,19 +71,19 @@ struct SolarAutomaticSettingsTests {
         #expect(lines.contains("Your location is approximate"))
     }
 
-    @Test("The invitation is beta-only, skips Solcast users and names the estimated case")
+    @Test("The invitation is beta-only, ignores saved credentials and names the estimated case")
     func invitationKind() {
         let missing = MobileSolarLayoutResponse.enabled(location: nil, layout: nil, reason: .needsLocation)
         let estimated = MobileSolarLayoutResponse.enabled(
             location: SolarHomeLocation(latitude: 1, longitude: 2, source: .estimated), layout: nil, reason: .pending
         )
         let device = MobileSolarLayoutResponse.enabled(location: Self.device, layout: nil, reason: .pending)
-        #expect(SolarLocationInvitation.kind(status: missing, hasSolcast: false) == .missing)
-        #expect(SolarLocationInvitation.kind(status: estimated, hasSolcast: false) == .estimated)
-        #expect(SolarLocationInvitation.kind(status: device, hasSolcast: false) == nil)
-        #expect(SolarLocationInvitation.kind(status: .disabled, hasSolcast: false) == nil)
-        #expect(SolarLocationInvitation.kind(status: nil, hasSolcast: false) == nil)
-        #expect(SolarLocationInvitation.kind(status: missing, hasSolcast: true) == nil)
+        #expect(SolarLocationInvitation.kind(status: missing) == .missing)
+        #expect(SolarLocationInvitation.kind(status: estimated) == .estimated)
+        #expect(SolarLocationInvitation.kind(status: device) == nil)
+        #expect(SolarLocationInvitation.kind(status: .disabled) == nil)
+        #expect(SolarLocationInvitation.kind(status: nil) == nil)
+        #expect(SolarLocationInvitation.kind(status: missing) == .missing)
         #expect(SolarLocationInvitation.Kind.estimated.message
             == "Your forecast uses an approximate location. Share your exact home location for a better one.")
     }

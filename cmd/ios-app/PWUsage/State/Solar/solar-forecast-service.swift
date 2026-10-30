@@ -1,6 +1,7 @@
 import Foundation
 
-/// Which provider a site uses. A credential provider the user has set up always wins, even
+/// Which provider a site uses. Automatic-only beta requests bypass credentials entirely.
+/// For legacy requests, a credential provider wins, even
 /// while it awaits arrays or fails; otherwise the configured automatic provider; otherwise
 /// none, and the caller uses history. A failure never falls through to another provider.
 struct SolarForecastSelectionPolicy: Sendable {
@@ -37,6 +38,10 @@ actor SolarForecastService {
 
     func selectedProviderID(for request: SolarForecastRequest) async -> SolarForecastProviderID? {
         await select(request)?.provider.descriptor.id
+    }
+
+    nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? {
+        policy.automaticProviderID.flatMap { descriptor(for: $0) }
     }
 
     nonisolated var correctsCredentialProviders: Bool { policy.correctsCredentialProviders }
@@ -134,7 +139,7 @@ actor SolarForecastService {
     private func select(
         _ request: SolarForecastRequest
     ) async -> (provider: any SolarForecastProviding, configuration: SolarForecastConfiguration)? {
-        for provider in providers where provider.descriptor.requirement == .credential {
+        for provider in providers where !request.automaticOnly && provider.descriptor.requirement == .credential {
             let configuration = await provider.configuration(for: request)
             if configuration.readiness != .notConfigured { return (provider, configuration) }
         }

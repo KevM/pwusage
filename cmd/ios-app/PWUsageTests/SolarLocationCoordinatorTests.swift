@@ -77,14 +77,14 @@ struct SolarLocationCoordinatorTests {
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
         #expect(SolarLocationInvitation
-            .kind(status: harness.coordinator.solarLayoutStatus, hasSolcast: false) == .estimated)
+            .kind(status: harness.coordinator.solarLayoutStatus) == .estimated)
         harness.api.layout = AutomaticForecastAPISpy.detected
         let result = await harness.coordinator.shareHomeLocation(
             confirmedSiteID: "site-a", provider: StubHomeLocationProvider(.success(Self.home))
         )
         #expect(result == .shared)
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
-        #expect(SolarLocationInvitation.kind(status: harness.coordinator.solarLayoutStatus, hasSolcast: false) == nil)
+        #expect(SolarLocationInvitation.kind(status: harness.coordinator.solarLayoutStatus) == nil)
     }
 
     @Test("A failed post reports failure and posts are never retried automatically")

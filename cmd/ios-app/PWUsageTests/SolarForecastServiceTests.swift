@@ -79,6 +79,35 @@ struct SolarForecastServiceTests {
         #expect(setup.automatic.transport.requests.isEmpty)
     }
 
+    @Test("Beta automatic-only requests ignore saved credentials, including setup and failure")
+    func automaticOnlyIgnoresCredentials() async throws {
+        for arrays in [["r1"], []] {
+            let setup = Self.setup()
+            await setup.solcast.configure(credential: Self.solcastCredential(arrays: arrays), batch: nil)
+            var request = Fixture.request(now: Self.now)
+            request.automaticOnly = true
+            let publication = try #require(await setup.service.publication(for: request))
+            #expect(publication.descriptor.id == .forecastSolar)
+        }
+    }
+
+    @Test("Beta automatic failures and missing layouts never fall through to Solcast")
+    func automaticOnlyHistoryFallback() async {
+        let setup = Self.setup(automaticStatus: 500)
+        let batch = SolarForecastBatch(
+            credentialID: "c", resourceIDs: ["r1"],
+            intervals: Fixture.intervals(from: Self.now, hours: 72, powerKw: 1), fetchedAt: Self.now)
+        await setup.solcast.configure(credential: Self.solcastCredential(), batch: batch)
+        var request = Fixture.request(now: Self.now)
+        request.automaticOnly = true
+        #expect(await setup.service.selectedProviderID(for: request) == .forecastSolar)
+        #expect(await setup.service.publication(for: request) == nil)
+        var noLayout = Fixture.request(now: Self.now, layout: nil)
+        noLayout.automaticOnly = true
+        #expect(await setup.service.selectedProviderID(for: noLayout) == nil)
+        #expect(await setup.service.publication(for: noLayout) == nil)
+    }
+
     @Test("A synthetic third provider works through composition alone")
     func syntheticProvider() async throws {
         let synthetic = SyntheticForecastProvider(clock: MutableSolarClock(Self.now))

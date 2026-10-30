@@ -1130,3 +1130,13 @@ Approved direction: make Open-Meteo the automatic beta provider using the existi
 - [x] Provider integration, attribution and privacy
 - [x] Background refresh, cancellation and locked-device storage
 - [x] Tests, lint, build, commit and push PR #258
+
+
+## Automatic forecast beta takes precedence over Solcast
+
+Approved: beta sites use Open-Meteo regardless of stored Solcast keys. Missing layout or unavailable automatic forecast falls back to history. Legacy settings are hidden for beta, saved credentials stay stored, and non-beta sites retain the legacy path.
+
+- [x] Request-scoped automatic-only service policy and settings/invitation visibility
+- [x] Background refresh without credential metadata preflight
+- [x] Foreground/manual/bill routing and regression tests
+- [x] Full verification and review; signed commit prepared for PR #258

@@ -4,13 +4,7 @@ extension PWUsageAppModel {
     /// A background launch does not bootstrap the dashboard or poll Tesla. Revalidate the
     /// already-saved account/site, then use the same forecast service as the foreground.
     func refreshBackgroundForecast() async {
-        guard let eligibility = forecastStore as? any SolarForecastBackgroundEligibility,
-              let account = userDefaults.string(forKey: Self.accountScopeDefaultsKey),
-              let siteID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey),
-              await eligibility.allowsAutomaticBackgroundRefresh(accountScopeID: account, siteID: siteID),
-              !Task.isCancelled, !isSigningOut,
-              userDefaults.string(forKey: Self.accountScopeDefaultsKey) == account,
-              userDefaults.string(forKey: Self.selectedSiteDefaultsKey) == siteID,
+        guard !Task.isCancelled, !isSigningOut, !ProcessInfo.processInfo.isLowPowerModeEnabled,
               let backgroundAPI = try? BackgroundSolarForecastRefresh.api() else { return }
         _ = await refreshBackgroundForecast(
             using: backgroundAPI, now: Date(), lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -53,10 +47,8 @@ extension PWUsageAppModel {
             let request = SolarForecastRequest(
                 scope: SolarForecastSiteScope(accountScopeID: account, siteID: siteID),
                 siteTimeZone: zone, window: DateInterval(start: now, end: end),
-                manual: false, layout: layout, location: location
+                manual: false, layout: layout, location: location, automaticOnly: true
             )
-            guard isCurrent(), let providerID = await service.selectedProviderID(for: request),
-                  service.descriptor(for: providerID)?.requirement == .detectedLayout else { return false }
             guard isCurrent() else { return false }
             let publication = await service.publication(for: request, actuals: hours)
             return isCurrent() && publication != nil

@@ -7,18 +7,22 @@ extension DashboardCoordinator {
         accountScopeID.map { SolarForecastSiteScope(accountScopeID: $0, siteID: selectedSiteID) }
     }
 
+    /// Unknown beta status stays on history until the server confirms a legacy site.
+    var usesAutomaticSolarForecast: Bool { layoutAPI != nil && solarLayoutStatus != .disabled }
+
     /// What forecast consumers treat as the connection: a published automatic forecast is
     /// ready even though Solcast is not connected.
     var forecastConnectionForConsumers: SolarForecastConnectionState {
-        solarForecastPublication == nil ? solarForecastConnection : .ready
+        if solarForecastPublication != nil { return .ready }
+        return usesAutomaticSolarForecast ? .notConnected : solarForecastConnection
     }
 
     var publishedForecastIntervals: [SolarForecastInterval]? {
-        solarForecastPublication?.intervals ?? solarForecastBatch?.intervals
+        solarForecastPublication?.intervals ?? (usesAutomaticSolarForecast ? nil : solarForecastBatch?.intervals)
     }
 
     var publishedForecastFetchedAt: Date? {
-        solarForecastPublication?.fetchedAt ?? solarForecastBatch?.fetchedAt
+        solarForecastPublication?.fetchedAt ?? (usesAutomaticSolarForecast ? nil : solarForecastBatch?.fetchedAt)
     }
 
     /// Shown wherever an automatic forecast is in use.
@@ -29,11 +33,17 @@ extension DashboardCoordinator {
         return descriptor.attribution
     }
 
-    /// No Solcast key: the automatic forecast when the beta layout allows it, otherwise the
-    /// household pattern alone.
-    func loadForecastWithoutCredential(siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int) async {
-        let status = await solarLayoutLookup(siteID: siteID, operation: operation)
-        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+    /// The already-resolved beta status selects automatic forecasting even with saved credentials.
+    func loadAutomaticForecast(
+        siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int,
+        status: MobileSolarLayoutResponse?, manual: Bool
+    ) async {
+        solarForecastBatch = nil
+        solarForecastConnection = .notConnected
+        solarForecastUnavailableCause = nil
+        solarForecastLastRefresh = nil
+        solarForecastSaveFailure = false
+        solarForecastState = solarForecastPublication == nil ? .basic : .loadingWithBasic
         guard let service = forecastService, let scope = solarScope,
               case .enabled(let location?, let layout?, _) = status else {
             clearAutomaticPublication()
@@ -54,7 +64,7 @@ extension DashboardCoordinator {
             clearAutomaticPublication()
             return
         }
-        let request = solarRequest(scope: scope, timeZone: timeZone, layout: layout, location: location)
+        let request = solarRequest(scope: scope, timeZone: timeZone, layout: layout, location: location, manual: manual)
         let publication = await service.publication(for: request, actuals: await actuals)
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         guard let publication else {
@@ -104,7 +114,8 @@ extension DashboardCoordinator {
         scope: SolarForecastSiteScope,
         timeZone: TimeZone,
         layout: SolarLayout,
-        location: SolarHomeLocation
+        location: SolarHomeLocation,
+        manual: Bool
     ) -> SolarForecastRequest {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -112,11 +123,12 @@ extension DashboardCoordinator {
         let end = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: start)) ?? start
         return SolarForecastRequest(
             scope: scope, siteTimeZone: timeZone, window: DateInterval(start: start, end: max(start, end)),
-            manual: false, layout: layout, location: location
+            manual: manual, layout: layout, location: location, automaticOnly: true
         )
     }
 
     func clearAutomaticPublication() {
+        solarForecastBatch = nil
         solarForecastPublication = nil
         solarForecastSource = nil
         loadPlanningContext = nil

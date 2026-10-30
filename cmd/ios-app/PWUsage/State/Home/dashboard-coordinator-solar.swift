@@ -10,13 +10,16 @@ extension DashboardCoordinator {
         let siteID = selectedSiteID
         // An automatic forecast has its own rolling-hour budget; the Solcast daily one says nothing about it.
         let automatic = solarForecastPublication
-        let batch = automatic == nil
+        let legacy = !usesAutomaticSolarForecast
+        let batch = automatic == nil && legacy
             ? await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) : nil
         var diagnostics = SmartShiftDiagnostics.SolarForecast(
             batch: batch, now: now(),
-            recommendationUsable: await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
-            budget: automatic == nil ? await forecastStore.budget(for: accountScopeID, siteID: siteID) : nil,
-            lastErrorDescription: await forecastStore.lastErrorDescription,
+            recommendationUsable: legacy
+                ? await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
+                : automatic != nil,
+            budget: automatic == nil && legacy ? await forecastStore.budget(for: accountScopeID, siteID: siteID) : nil,
+            lastErrorDescription: legacy ? await forecastStore.lastErrorDescription : nil,
             lastRefresh: solarForecastLastRefresh, unavailableCause: solarForecastUnavailableCause,
             connection: solarForecastConnection, state: solarForecastState,
             unavailableReason: solarForecastUnavailableReason)
@@ -27,11 +30,29 @@ extension DashboardCoordinator {
     func refreshSolarForecast(manual: Bool) async {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
-        guard let forecastStore, let accountScopeID else {
+        guard forecastStore != nil, accountScopeID != nil else {
             solarForecastState = .basic
             return
         }
         let siteID = selectedSiteID
+        let status = await solarLayoutLookup(siteID: siteID, operation: operation)
+        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        if layoutAPI != nil, status != .disabled {
+            guard let planningAPI else {
+                clearAutomaticPublication()
+                return
+            }
+            await loadAutomaticForecast(
+                siteID: siteID, api: planningAPI, operation: operation, status: status, manual: manual)
+            return
+        }
+        await refreshLegacySolarForecast(manual: manual, siteID: siteID, operation: operation)
+    }
+
+    private func refreshLegacySolarForecast(manual: Bool, siteID: String, operation: Int) async {
+        guard let forecastStore, let accountScopeID else { return }
+        solarForecastPublication = nil
+        solarForecastSource = nil
         guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
             solarForecastState = .basic
@@ -74,6 +95,7 @@ extension DashboardCoordinator {
             return
         }
         solarForecastBatch = batch
+        solarForecastSource = .solcast
         solarForecastUnavailableCause = nil
         solarForecastState = .enhanced
         solarForecastSaveFailure = saveFailed
