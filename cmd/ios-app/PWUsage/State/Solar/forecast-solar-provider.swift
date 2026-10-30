@@ -44,15 +44,13 @@ actor ForecastSolarProvider: SolarForecastProviding {
             [
                 String(ForecastSolarForecast.forecastSolarAzimuth(compass: plane.azimuth)),
                 String(Int(plane.tilt.rounded())),
-                String(format: "%.2f", plane.dcKwp)
-            ].joined(separator: ",")
+                String(format: "%.2f", plane.dcKwp)].joined(separator: ",")
         }.sorted()
         let fingerprint = SolarForecastConfiguration.fingerprint([
             descriptor.id.rawValue, descriptor.modelVersion,
             String(format: "%.2f,%.2f", location.latitude, location.longitude),
             planes.joined(separator: ";"), layout.acClipKw.map { String(format: "%.3f", $0) } ?? "none",
-            request.siteTimeZone.identifier
-        ])
+            request.siteTimeZone.identifier])
         let detected = layout.detectedAt.map { String($0.timeIntervalSince1970) } ?? "none"
         return SolarForecastConfiguration(
             readiness: .ready, fingerprint: fingerprint, cacheRevision: "\(fingerprint)@\(detected)"
@@ -67,8 +65,10 @@ actor ForecastSolarProvider: SolarForecastProviding {
         let cached = await cache.batch(
             scope: request.scope, providerID: descriptor.id, cacheRevision: configuration.cacheRevision
         )
+        // Fresh is not enough: after site-local midnight a recent batch can end a day too early.
         if !request.manual, let cached,
-           (0 ..< descriptor.refreshThreshold).contains(clock.now().timeIntervalSince(cached.fetchedAt)) {
+           (0 ..< descriptor.refreshThreshold).contains(clock.now().timeIntervalSince(cached.fetchedAt)),
+           cached.coverage.start <= request.window.start, cached.coverage.end >= request.window.end {
             return SolarForecastProviderResult(batch: cached, outcome: .fresh)
         }
         let scopeKey = SolarForecastScope.key(request.scope.accountScopeID, request.scope.siteID)

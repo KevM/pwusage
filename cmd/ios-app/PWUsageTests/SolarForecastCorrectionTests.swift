@@ -117,8 +117,7 @@ struct SolarForecastCorrectionTests {
                 periodStart: start.addingTimeInterval(1800),
                 periodEnd: start.addingTimeInterval(3600),
                 powerKw: 2
-            )
-        ]
+            )]
         let applied = correction.apply(to: intervals, siteTimeZone: Self.chicago, acClipKw: 4)
         #expect(applied[0].powerKw == 4)
         #expect(abs((applied[0].cautiousPowerKw ?? 0) - 2.8) < 1e-9)

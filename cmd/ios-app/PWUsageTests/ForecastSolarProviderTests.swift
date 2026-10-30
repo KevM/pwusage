@@ -54,8 +54,7 @@ struct ForecastSolarProviderTests {
     private static let now = Fixture.date("2026-10-28 09:00:00")
     private static let twoPlanes = Fixture.layout(planes: [
         SolarLayoutPlane(azimuth: 90, tilt: 18, dcKwp: 5.6),
-        SolarLayoutPlane(azimuth: 270, tilt: 18, dcKwp: 4)
-    ])
+        SolarLayoutPlane(azimuth: 270, tilt: 18, dcKwp: 4)])
 
     private static func harness(status: Int = 200) -> ForecastSolarHarness {
         ForecastSolarHarness(clock: MutableSolarClock(now), body: Fixture.forecastSolarBody(now: now), status: status)
@@ -169,6 +168,24 @@ struct ForecastSolarProviderTests {
         state.entries.append(SolarForecastAutomaticCacheState.Entry(scope: Fixture.scopeA, batch: foreign))
         try await harness.cacheFile.save(state)
         #expect(await harness.relaunched().provider.cachedForecast(for: request) == batch)
+    }
+
+    @Test("A fresh batch that no longer covers the window after midnight is refetched")
+    func freshButUncoveredAfterMidnight() async {
+        let clock = MutableSolarClock(Fixture.date("2026-10-28 23:30:00"))
+        let transport = RecordingForecastSolarTransport { request in
+            let response = HTTPURLResponse(url: request.url ?? URL(fileURLWithPath: "/"), statusCode: 200,
+                                           httpVersion: nil, headerFields: nil)
+            return (Data(Fixture.forecastSolarBody(now: clock.now()).utf8), response ?? URLResponse())
+        }
+        let harness = ForecastSolarHarness(clock: clock, transport: transport)
+        #expect(await harness.provider.refresh(Fixture.request(now: clock.now())).outcome == .refreshed)
+        clock.advance(by: 3600)
+        let afterMidnight = Fixture.request(now: clock.now())
+        let result = await harness.provider.refresh(afterMidnight)
+        #expect(result.outcome == .refreshed)
+        #expect(transport.requests.count == 2)
+        #expect(result.batch.map { $0.coverage.end >= afterMidnight.window.end } == true)
     }
 
     @Test("A completion after the account changes is neither cached nor returned")

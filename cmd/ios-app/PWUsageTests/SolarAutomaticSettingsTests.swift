@@ -21,16 +21,14 @@ struct SolarAutomaticSettingsTests {
                     azimuth: 270,
                     tilt: 18,
                     dcKwp: 4.0
-                )
-            ]),
+                )]),
             reason: nil
         )
         let lines = SolarForecastSettingsStatus.automaticSummary(response: response, source: Self.forecastSolar)
         #expect(lines == [
             "Automatic forecast from Forecast.Solar",
             "2 panel faces: east-facing about 5.6 kW, west-facing about 4 kW",
-            "High confidence"
-        ])
+            "High confidence"])
     }
 
     @Test("One southwest face with medium confidence, read-only under Solcast")

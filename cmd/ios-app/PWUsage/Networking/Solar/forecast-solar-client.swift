@@ -86,8 +86,7 @@ struct ForecastSolarClient: Sendable {
             String(format: "%.2f", location.longitude),
             String(tilt),
             String(azimuth),
-            String(format: "%.2f", plane.dcKwp)
-        ].joined(separator: "/")
+            String(format: "%.2f", plane.dcKwp)].joined(separator: "/")
         return URL(string: "https://\(host)/\(path)")
     }
 

@@ -65,8 +65,7 @@ struct SolarForecastProviderTests {
             (.failed(.rateLimited), .deferred(until: nil)),
             (.failed(.unknownResource), .failed(.configuration)),
             (.failed(.invalidForecast), .failed(.invalidResponse)),
-            (.failed(.saveFailed), .refreshed)
-        ]
+            (.failed(.saveFailed), .refreshed)]
         for (storeResult, outcome) in cases {
             let store = FakeSolcastStore()
             await store.configure(

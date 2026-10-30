@@ -114,8 +114,7 @@ struct ForecastSolarClientTests {
         ForecastSolarFixture.json(days: [Day(date: "2026-10-28", periods: [("07:00:00", 50), ("08:00:00", 100)])]),
         ForecastSolarFixture.json(days: [.normal("2026-10-28")], dayTotals: ["2026-10-28": 6000]),
         ForecastSolarFixture.json(days: [Day(date: "2026-11-01", periods: [("01:30:00", 0), ("08:00:00", 100)])]),
-        ForecastSolarFixture.json(days: [Day(date: "2026-03-08", periods: [("02:30:00", 0), ("08:00:00", 100)])])
-    ]
+        ForecastSolarFixture.json(days: [Day(date: "2026-03-08", periods: [("02:30:00", 0), ("08:00:00", 100)])])]
 
     private typealias Day = ForecastSolarFixture.Day
 

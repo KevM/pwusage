@@ -76,8 +76,7 @@ struct HomeLocationProviderTests {
 
     @Test("Denied and restricted permission end without a request", arguments: [
         (CLAuthorizationStatus.denied, HomeLocationError.denied),
-        (.restricted, .restricted)
-    ])
+        (.restricted, .restricted)])
     func refused(status: CLAuthorizationStatus, expected: HomeLocationError) async {
         let manager = FakeHomeLocationManager(status: status)
         await #expect(throws: expected) { try await Self.provider(manager).currentRoundedLocation() }
@@ -94,8 +93,7 @@ struct HomeLocationProviderTests {
             .success([Self.fix(1, 2, accuracy: 1500)]),
             .success([Self.fix(1, 2, accuracy: -1)]),
             .success([]),
-            .failure(CLError(.locationUnknown))
-        ]
+            .failure(CLError(.locationUnknown))]
         for answer in answers {
             let manager = FakeHomeLocationManager(status: .authorizedWhenInUse)
             manager.answer = answer

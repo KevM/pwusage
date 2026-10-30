@@ -28,6 +28,9 @@ extension DashboardCoordinator {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
             if Self.isTransientLayoutFailure(error), let cached = solarLayoutCache[scope],
                (0 ..< SolarLayoutCacheEntry.validationLifetime).contains(now().timeIntervalSince(cached.validatedAt)) {
+                // The timer that got here has already cleared itself, so a pending status needs
+                // a retry. Its validation time is left alone, so the 6-hour bound still applies.
+                scheduleLayoutRevalidation(for: cached, siteID: siteID, after: SolarLayoutCacheEntry.retryDelay)
                 return cached.response
             }
             solarLayoutCache[scope] = nil
@@ -61,13 +64,18 @@ extension DashboardCoordinator {
 
     /// One coalesced revalidation at the transitional status's expiry, while the app is active
     /// and a solar surface is visible. It never promises detection will have finished.
-    private func scheduleLayoutRevalidation(for entry: SolarLayoutCacheEntry, siteID: String) {
+    private func scheduleLayoutRevalidation(
+        for entry: SolarLayoutCacheEntry,
+        siteID: String,
+        after retryDelay: TimeInterval? = nil
+    ) {
         guard entry.isTransitional, sceneIsActive, solarSurfaceVisible else {
             cancelLayoutRevalidation()
             return
         }
         guard solarLayoutRevalidation == nil else { return }
-        let delay = max(entry.validatedAt.addingTimeInterval(entry.lifetime).timeIntervalSince(now()), 1)
+        let expiry = entry.validatedAt.addingTimeInterval(entry.lifetime).timeIntervalSince(now())
+        let delay = max(retryDelay ?? expiry, 1)
         solarLayoutRevalidation = revalidationScheduler.schedule(after: delay) { [weak self] in
             guard let self else { return }
             solarLayoutRevalidation = nil

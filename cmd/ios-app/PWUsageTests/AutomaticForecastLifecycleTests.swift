@@ -28,6 +28,24 @@ struct AutomaticForecastLifecycleTests {
         #expect(harness.scheduler.pending.isEmpty)
     }
 
+    @Test("A transient failure during pending revalidation schedules a bounded retry")
+    func retryAfterTransientFailure() async {
+        let harness = AutomaticForecastHarness()
+        harness.coordinator.scenePhaseChanged(isActive: true)
+        harness.api.layout = Self.pending
+        await harness.coordinator.loadTimingDetailAppeared()
+        harness.api.layoutError = PWUsageAPIError.recoverableServerError(statusCode: 503)
+        harness.api.clock.advance(by: 15 * 60)
+        await harness.scheduler.fire()
+        #expect(harness.scheduler.pending.map(\.delay) == [SolarLayoutCacheEntry.retryDelay])
+        harness.api.layoutError = nil
+        harness.api.layout = AutomaticForecastAPISpy.detected
+        harness.api.clock.advance(by: SolarLayoutCacheEntry.retryDelay)
+        await harness.scheduler.fire()
+        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        #expect(harness.scheduler.pending.isEmpty)
+    }
+
     @Test("Revalidation is cancelled by leaving the view, backgrounding or switching site")
     func cancellation() async {
         for leave in 0 ..< 3 {

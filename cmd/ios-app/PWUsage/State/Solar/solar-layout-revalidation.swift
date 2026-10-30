@@ -40,6 +40,9 @@ struct SolarLayoutCacheEntry {
     static let transitionalLifetime: TimeInterval = 15 * 60
     /// How long a confirmed status may stand in for one a transient failure prevented.
     static let validationLifetime: TimeInterval = 6 * 60 * 60
+    /// After a transient failure, a pending status is rechecked this soon. Bounded by
+    /// `validationLifetime`, since the status is dropped once that passes.
+    static let retryDelay: TimeInterval = 5 * 60
 
     let response: MobileSolarLayoutResponse
     let validatedAt: Date

@@ -77,8 +77,7 @@ struct AutomaticForecastCoordinatorTests {
     func solcastSetupOrFailureKeepsSolcast() async {
         for (arrays, result) in [
             ([String](), SolarForecastRefreshResult.notConfigured),
-            (["r1"], .failed(.requestFailed))
-        ] {
+            (["r1"], .failed(.requestFailed))] {
             let harness = AutomaticForecastHarness()
             let credential = SolarForecastCredential(
                 accountScopeID: "account-a", siteID: "site-a", credentialID: "cred", resourceIDs: arrays

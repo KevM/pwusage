@@ -11,8 +11,7 @@
             let layout = SolarLayout(
                 planes: [
                     SolarLayoutPlane(azimuth: 90, tilt: 18, dcKwp: 5.6),
-                    SolarLayoutPlane(azimuth: 270, tilt: 18, dcKwp: 4)
-                ],
+                    SolarLayoutPlane(azimuth: 270, tilt: 18, dcKwp: 4)],
                 acClipKw: nil, confidence: .high, detectedAt: nil
             )
             switch self {
