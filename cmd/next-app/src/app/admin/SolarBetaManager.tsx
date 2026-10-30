@@ -20,6 +20,12 @@ export function describePlanes(site: Pick<SolarBetaSite, 'planes' | 'acClipKw'>)
     return site.acClipKw ? `${planes.join(' + ')} (clip ${site.acClipKw.toFixed(1)} kW)` : planes.join(' + ');
 }
 
+/** "from phone" or "estimated" under a stored location; null when no location is stored. */
+export function describeLocationSource(site: Pick<SolarBetaSite, 'latitude' | 'locationSource'>): string | null {
+    if (site.latitude === null) return null;
+    return site.locationSource === 'device' ? 'from phone' : 'estimated';
+}
+
 async function send(method: 'POST' | 'PUT', body: unknown): Promise<string | null> {
     const res = await fetch('/api/admin/solar-beta', {
         method,
@@ -115,7 +121,12 @@ export function SolarBetaManager() {
                                 )}
                             </TableCell>
                             <TableCell className="text-sm">{site.siteName}<div className="text-xs text-gray-400">{site.siteId}</div></TableCell>
-                            <TableCell><LocationEditor key={`${site.latitude},${site.longitude}`} site={site} onSaved={refresh} /></TableCell>
+                            <TableCell>
+                                <LocationEditor key={`${site.latitude},${site.longitude},${site.locationSource}`} site={site} onSaved={refresh} />
+                                {describeLocationSource(site) && (
+                                    <div className="mt-1 text-xs text-gray-400">{describeLocationSource(site)}</div>
+                                )}
+                            </TableCell>
                             <TableCell className="text-sm">
                                 <StatusPill status={site.status ?? 'needs location'} />
                                 {site.confidence && <div className="text-xs text-gray-400">{site.confidence}{site.reasons.length ? ` · ${site.reasons.join(', ')}` : ''}</div>}

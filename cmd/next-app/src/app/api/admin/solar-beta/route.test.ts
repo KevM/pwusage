@@ -84,7 +84,19 @@ describe('/api/admin/solar-beta', () => {
         mocks.siteOwnerHasBeta.mockResolvedValue(true);
         const res = await PUT(request('PUT', { siteId: 's1', latitude: 43.39321, longitude: -87.87154 }));
         expect(res.status).toBe(204);
-        expect(mocks.setLocation).toHaveBeenCalledWith('s1', 43.39321, -87.87154);
+        expect(mocks.setLocation).toHaveBeenCalledWith('s1', 43.39321, -87.87154, 'estimated', { overwriteDevice: false });
+    });
+
+    it('does not replace a phone location unless overwrite is true', async () => {
+        mocks.siteOwnerHasBeta.mockResolvedValue(true);
+        mocks.setLocation.mockResolvedValue('device-location-kept');
+        const res = await PUT(request('PUT', { siteId: 's1', latitude: 1, longitude: 2 }));
+        expect(res.status).toBe(409);
+        expect(await res.json()).toEqual({ error: 'This site already has a location from the phone' });
+
+        mocks.setLocation.mockResolvedValue('stored');
+        expect((await PUT(request('PUT', { siteId: 's1', latitude: 1, longitude: 2, overwrite: true }))).status).toBe(204);
+        expect(mocks.setLocation).toHaveBeenLastCalledWith('s1', 1, 2, 'estimated', { overwriteDevice: true });
     });
 
     it('refuses a location for a site whose owner is not in the beta', async () => {

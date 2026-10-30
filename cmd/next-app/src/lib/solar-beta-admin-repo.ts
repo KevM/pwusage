@@ -1,6 +1,6 @@
 import { pool } from './db';
 import { SOLAR_FORECAST_BETA_ROLE } from './solar-forecast-beta';
-import type { SolarLayoutStatus } from './solar-layout-repo';
+import type { SolarLayoutStatus, SolarLocationSource } from './solar-layout-repo';
 
 export interface SolarBetaSite {
     userId: string;
@@ -10,6 +10,7 @@ export interface SolarBetaSite {
     siteName: string;
     latitude: number | null;
     longitude: number | null;
+    locationSource: SolarLocationSource | null;
     status: SolarLayoutStatus | null;
     confidence: string | null;
     reasons: string[];
@@ -27,7 +28,7 @@ export class SolarBetaAdminRepo {
     async listBetaSites(): Promise<SolarBetaSite[]> {
         const { rows } = await pool.query(`
             SELECT u.id AS user_id, u.email, u.auth_status, s.id AS site_id, s.name AS site_name,
-                   l.latitude, l.longitude, l.status, l.result, l.detected_at, l.attempted_at
+                   l.latitude, l.longitude, l.location_source, l.status, l.result, l.detected_at, l.attempted_at
             FROM "User" u
             JOIN "Site" s ON s.user_id = u.id
             LEFT JOIN "SiteSolarLayout" l ON l.site_id = s.id
@@ -42,6 +43,7 @@ export class SolarBetaAdminRepo {
             siteName: r.site_name,
             latitude: toNumber(r.latitude),
             longitude: toNumber(r.longitude),
+            locationSource: (r.location_source ?? null) as SolarLocationSource | null,
             status: r.status ?? null,
             confidence: r.result?.confidence ?? null,
             reasons: r.result?.reasons ?? [],

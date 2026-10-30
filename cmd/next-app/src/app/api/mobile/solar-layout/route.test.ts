@@ -17,7 +17,8 @@ const URL_BASE = 'https://example.test/api/mobile/solar-layout';
 function row(overrides: Record<string, unknown> = {}) {
     return {
         siteId: 'site-a', latitude: 43.39, longitude: -87.87, locationSetAt: new Date('2026-10-01T00:00:00Z'),
-        result: null, status: 'pending', detectedAt: null, attemptedAt: null, detectorVersion: null, ...overrides,
+        result: null, status: 'pending', detectedAt: null, attemptedAt: null, detectorVersion: null,
+        locationSource: 'estimated', ...overrides,
     };
 }
 
@@ -40,7 +41,7 @@ describe('mobile solar layout route', () => {
         verifyAccessMock.mockResolvedValue(true);
         rolesMock.mockResolvedValue(['solar-forecast-beta']);
         getMock.mockResolvedValue(null);
-        setLocationMock.mockResolvedValue(undefined);
+        setLocationMock.mockResolvedValue('stored');
     });
 
     it('GET requires a siteId and access, with private no-store headers', async () => {
@@ -68,14 +69,14 @@ describe('mobile solar layout route', () => {
     it('GET withholds a low-confidence layout', async () => {
         getMock.mockResolvedValue(row({ status: 'low-confidence', result: { ...detectedResult, status: 'low-confidence', confidence: 'low' } }));
         const body = await (await GET(new Request(`${URL_BASE}?siteId=site-a`))).json();
-        expect(body).toMatchObject({ enabled: true, location: { latitude: 43.39, longitude: -87.87 }, layout: null, reason: 'low-confidence' });
+        expect(body).toMatchObject({ enabled: true, location: { latitude: 43.39, longitude: -87.87, source: 'estimated' }, layout: null, reason: 'low-confidence' });
     });
 
     it('GET serves a detected layout in compass degrees with DC size', async () => {
         getMock.mockResolvedValue(row({ status: 'detected', result: detectedResult, detectedAt: new Date('2026-10-27T12:00:00Z') }));
         const body = await (await GET(new Request(`${URL_BASE}?siteId=site-a`))).json();
         expect(body).toEqual({
-            version: 1, enabled: true, location: { latitude: 43.39, longitude: -87.87 }, reason: null,
+            version: 1, enabled: true, location: { latitude: 43.39, longitude: -87.87, source: 'estimated' }, reason: null,
             layout: {
                 planes: [{ azimuth: 108.9, tilt: 19.3, dcKwp: 5.03 }, { azimuth: 277, tilt: 21, dcKwp: 5.62 }],
                 acClipKw: null, confidence: 'high', detectedAt: '2026-10-27T12:00:00.000Z',
@@ -112,6 +113,6 @@ describe('mobile solar layout route', () => {
     it('POST stores the location rounded to two decimals', async () => {
         const res = await post({ siteId: 'site-a', latitude: 43.39321, longitude: -87.87154 });
         expect(res.status).toBe(204);
-        expect(setLocationMock).toHaveBeenCalledWith('site-a', 43.39, -87.87);
+        expect(setLocationMock).toHaveBeenCalledWith('site-a', 43.39, -87.87, 'device');
     });
 });
