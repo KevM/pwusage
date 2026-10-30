@@ -49,7 +49,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             if (!validCoordinate(body.latitude, 90) || !validCoordinate(body.longitude, 180)) {
                 return json({ error: 'Invalid location' }, 400);
             }
-            await new SolarLayoutRepo().setLocation(body.siteId, roundCoordinate(body.latitude), roundCoordinate(body.longitude));
+            await new SolarLayoutRepo().setLocation(body.siteId, roundCoordinate(body.latitude), roundCoordinate(body.longitude), 'device');
             return new NextResponse(null, { status: 204, headers: { 'Cache-Control': PRIVATE_NO_STORE } });
         } catch (error) {
             console.error('[mobile-solar-layout] location update failed:', error);
