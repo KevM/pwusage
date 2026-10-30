@@ -53,18 +53,29 @@ actor SolarForecastService {
         for request: SolarForecastRequest,
         actuals: [MobileSolarActualsHour]? = nil
     ) async -> SolarForecastPublication? {
+        await publicationAttempt(for: request, actuals: actuals).publication
+    }
+
+    func publicationAttempt(
+        for request: SolarForecastRequest,
+        actuals: [MobileSolarActualsHour]? = nil
+    ) async -> SolarForecastPublicationAttempt {
         let started = generation
         guard let (provider, configuration) = await select(request), configuration.readiness == .ready else {
-            return nil
+            return .init(outcome: .setupRequired, diagnostic: "Automatic forecast is not configured")
         }
         let result = await provider.refresh(request)
-        guard started == generation else { return nil }
+        guard started == generation, !Task.isCancelled else { return .init(outcome: .cancelled) }
         let candidate: SolarForecastRawBatch? = if let batch = result.batch { batch } else {
             await provider.cachedForecast(for: request)
         }
-        guard started == generation, let batch = candidate,
+        guard started == generation, !Task.isCancelled else { return .init(outcome: .cancelled) }
+        guard let batch = candidate,
               batch.fingerprint == configuration.fingerprint,
-              batch.isUsable(for: request, descriptor: provider.descriptor, now: clock.now()) else { return nil }
+              batch.isUsable(for: request, descriptor: provider.descriptor, now: clock.now()) else {
+            return .init(providerID: provider.descriptor.id, outcome: result.outcome, diagnostic: result.diagnostic
+                ?? "No fresh forecast covering the requested period is available")
+        }
         let identity = SolarForecastHistoryIdentity(
             accountScopeID: request.scope.accountScopeID, siteID: request.scope.siteID,
             providerID: batch.providerID, fingerprint: batch.fingerprint
@@ -78,12 +89,14 @@ actor SolarForecastService {
                 batch, identity: identity, siteTimeZone: request.siteTimeZone, actuals: actuals
             )
         }
-        guard started == generation else { return nil }
-        return SolarForecastPublication(
+        guard started == generation, !Task.isCancelled else { return .init(outcome: .cancelled) }
+        let publication = SolarForecastPublication(
             descriptor: provider.descriptor, intervals: intervals, fetchedAt: batch.fetchedAt,
             coverage: batch.coverage, fingerprint: batch.fingerprint, configurationRevision: batch.cacheRevision,
             outcome: result.outcome, diagnostic: result.diagnostic, correction: summary
         )
+        return .init(publication: publication, providerID: provider.descriptor.id,
+                     outcome: result.outcome, diagnostic: result.diagnostic)
     }
 
     /// Raw intervals scaled by factors trained on this identity's own raw history, separately

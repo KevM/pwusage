@@ -56,6 +56,7 @@ struct SolarForecastSettingsSheet: View {
             .overlay {
                 if isWorking { ProgressView().controlSize(.large) }
             }
+            .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
             .task {
                 await coordinator.solarSettingsAppeared()
                 if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
@@ -281,7 +282,7 @@ struct SolarForecastSettingsSheet: View {
             try await coordinator.selectSolarArrays(resourceIDs)
             selectedResourceIDs = Set(resourceIDs)
             statusMessage = "Array selection saved on this device."
-            await coordinator.loadTimingDetailAppeared()
+            await coordinator.loadTimingDetailAppeared(surface: .settings)
         } catch {
             selectedResourceIDs = previous
             await applyStatus(error, operation: .selection)

@@ -195,3 +195,17 @@ struct AutomaticForecastCoordinatorTests {
         #expect(diagnostics.budget == nil, "The Solcast daily budget is not the automatic budget")
     }
 }
+
+extension AutomaticForecastCoordinatorTests {
+    @Test("Automatic provider failures remain available to diagnostics")
+    func failedAutomaticAttemptIsDiagnosable() async throws {
+        let harness = AutomaticForecastHarness()
+        await harness.automatic.setFailing(true)
+        await harness.coordinator.loadTimingDetailAppeared()
+        let diagnostics = try #require(await harness.coordinator.solarForecastDiagnostics())
+        #expect(diagnostics.automaticProviderID == "forecast-solar")
+        #expect(diagnostics.automaticRefreshOutcome != nil)
+        #expect(harness.coordinator.solarForecastUnavailableReason == .forecastNotUsable)
+        #expect(harness.coordinator.publishedForecastIntervals == nil)
+    }
+}

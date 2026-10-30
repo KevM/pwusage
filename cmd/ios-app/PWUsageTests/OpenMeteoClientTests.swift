@@ -143,3 +143,52 @@ struct OpenMeteoClientTests {
         }
     }
 }
+
+extension OpenMeteoClientTests {
+    @Test("Elapsed local-day hours remain available for an earlier balance projection start")
+    func retainsLocalDayForProjection() async throws {
+        let start = SolarProviderFixture.date("2026-10-28 00:00:00")
+        let now = start.addingTimeInterval(10 * 3600 + 4 * 60)
+        let transport = OpenMeteoTestTransport(
+            body: try OpenMeteoFixture.body(start: start.addingTimeInterval(3600), hours: 48))
+        let weather = try await OpenMeteoClient(transport: transport).forecast(location: SolarProviderFixture.location)
+        let intervals = try weather.intervals(
+            layout: SolarProviderFixture.layout(), location: SolarProviderFixture.location,
+            window: DateInterval(start: now, end: start.addingTimeInterval(48 * 3600)),
+            siteTimeZone: SolarProviderFixture.chicago)
+        #expect(intervals.first?.periodStart == start)
+        let projectionStart = start.addingTimeInterval(9 * 3600 + 50 * 60)
+        #expect(intervals.contains { $0.periodStart <= projectionStart && $0.periodEnd > projectionStart })
+    }
+
+    @Test("Missing elapsed radiation is skipped without fabricating zeros or losing future coverage")
+    func skipsMissingElapsedRadiation() async throws {
+        let start = SolarProviderFixture.date("2026-10-28 00:00:00")
+        let now = start.addingTimeInterval(10 * 3600 + 4 * 60)
+        let transport = OpenMeteoTestTransport(
+            body: try OpenMeteoFixture.body(start: start.addingTimeInterval(3600), hours: 48, missing: true))
+        let weather = try await OpenMeteoClient(transport: transport).forecast(location: SolarProviderFixture.location)
+        let intervals = try weather.intervals(
+            layout: SolarProviderFixture.layout(), location: SolarProviderFixture.location,
+            window: DateInterval(start: now, end: start.addingTimeInterval(48 * 3600)),
+            siteTimeZone: SolarProviderFixture.chicago)
+        #expect(intervals.count == 47)
+        #expect(intervals.first?.periodStart == start)
+        #expect(intervals.last?.periodEnd == start.addingTimeInterval(48 * 3600))
+    }
+}
+
+extension OpenMeteoClientTests {
+    @Test("A projection just after local midnight can start in the previous day's final hour")
+    func midnightProjectionKeepsPreviousHour() async throws {
+        let midnight = SolarProviderFixture.date("2026-10-28 00:00:00")
+        let transport = OpenMeteoTestTransport(body: try OpenMeteoFixture.body(start: midnight, hours: 49))
+        let weather = try await OpenMeteoClient(transport: transport).forecast(location: SolarProviderFixture.location)
+        let intervals = try weather.intervals(
+            layout: SolarProviderFixture.layout(), location: SolarProviderFixture.location,
+            window: DateInterval(start: midnight.addingTimeInterval(240), end: midnight.addingTimeInterval(48 * 3600)),
+            siteTimeZone: SolarProviderFixture.chicago)
+        let projectionStart = midnight.addingTimeInterval(-600)
+        #expect(intervals.contains { $0.periodStart <= projectionStart && $0.periodEnd > projectionStart })
+    }
+}

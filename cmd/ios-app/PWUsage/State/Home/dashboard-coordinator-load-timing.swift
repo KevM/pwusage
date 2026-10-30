@@ -4,23 +4,33 @@ import Foundation
 extension DashboardCoordinator {
     /// Handles the retained Smart Shift tab's foreground callback.
     func loadTimingDetailForegrounded(isSelected: Bool) async {
-        guard isSelected else { return }
+        guard isSelected else {
+            solarSurfaceDisappeared(.smartShift)
+            return
+        }
         await loadTimingDetailAppeared()
     }
 
     /// Billing needs a measured snapshot even when solar forecasting is not configured.
     /// The shared planning path reuses context and solar caches without fetching live Tesla data.
-    func billOutlookAppeared() async {
+    func billOutlookAppeared(markVisible: Bool = true) async {
+        guard !Task.isCancelled else { return }
+        if markVisible { solarSurfaceAppeared(.bill) }
         await refreshBill(trigger: .screenAppearance)
-        await loadTimingDetailAppeared()
+        guard !Task.isCancelled else { return }
+        await loadTimingDetailAppeared(surface: nil)
     }
 
     /// Beta sites use the automatic provider exclusively; other sites retain Solcast.
     /// This path refreshes bill/context data but never live data.
-    func loadTimingDetailAppeared(manual: Bool = false) async {
-        guard canRequestAccountData else { return }
+    func loadTimingDetailAppeared(manual: Bool = false, surface: SolarForecastSurface? = .smartShift) async {
+        guard canRequestAccountData, !Task.isCancelled else { return }
+        if let surface { solarSurfaceAppeared(surface) }
         let operation = beginForecastOperation()
-        solarSurfaceVisible = true
+        forecastOperationPending = true
+        defer {
+            if operation == forecastGeneration { forecastOperationPending = false }
+        }
         guard let forecastStore, let planningAPI, let accountScopeID else {
             solarForecastState = .basic
             solarForecastConnection = .notConnected
@@ -47,6 +57,7 @@ extension DashboardCoordinator {
         solarForecastConnection = .ready
         solarForecastUnavailableCause = nil
         solarForecastPublication = nil
+        solarForecastAttempt = nil
         await loadSolcastEnhancement(
             planningAPI: planningAPI, accountScopeID: accountScopeID,
             siteID: siteID, operation: operation, manual: manual
@@ -219,7 +230,7 @@ extension DashboardCoordinator {
         guard canRequestAccountData else { return }
         invalidateSolarLayout()
         await refreshBill(trigger: .userGesture)
-        await loadTimingDetailAppeared(manual: true)
+        await loadTimingDetailAppeared(manual: true, surface: nil)
     }
 
     /// Map the server's wire reason onto our own vocabulary so the note can be

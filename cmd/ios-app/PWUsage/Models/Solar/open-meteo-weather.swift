@@ -31,7 +31,8 @@ struct OpenMeteoWeather: Decodable, Sendable {
     func intervals(
         layout: SolarLayout,
         location: SolarHomeLocation,
-        window: DateInterval
+        window: DateInterval,
+        siteTimeZone: TimeZone = .gmt
     ) throws -> [SolarForecastInterval] {
         let count = hourly.time.count
         let radiationFields = ["shortwave_radiation", "direct_normal_irradiance", "diffuse_radiation"]
@@ -40,6 +41,10 @@ struct OpenMeteoWeather: Decodable, Sendable {
               count > 0, count <= 240,
               hourly.ghi.count == count, hourly.dni.count == count, hourly.dhi.count == count,
               window.duration > 0 else { throw OpenMeteoClientError.invalidResponse }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = siteTimeZone
+        // A fresh balance just after midnight can project from the previous day.
+        let retentionStart = calendar.startOfDay(for: window.start).addingTimeInterval(-3600)
         var result: [SolarForecastInterval] = []
         for index in 0 ..< count {
             let stamp = hourly.time[index]
@@ -50,9 +55,12 @@ struct OpenMeteoWeather: Decodable, Sendable {
             }
             let end = Date(timeIntervalSince1970: stamp)
             let start = end.addingTimeInterval(-3600)
-            guard end > window.start && start < window.end else { continue }
+            guard end > retentionStart && start < window.end else { continue }
             guard let ghi = hourly.ghi[index], let dni = hourly.dni[index], let dhi = hourly.dhi[index],
                   [ghi, dni, dhi].allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 2000 }) else {
+                // Elapsed weather is retained for balance projection, never invented as zero.
+                // Missing optional past data must not hide an otherwise complete future forecast.
+                if end <= window.start { continue }
                 throw OpenMeteoClientError.invalidResponse
             }
             let power = try OpenMeteoArrayModel.powerKw(

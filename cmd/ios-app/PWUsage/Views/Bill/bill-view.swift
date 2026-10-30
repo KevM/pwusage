@@ -41,14 +41,19 @@ struct BillView: View {
         }
         .refreshable {
             await coordinator.refreshBill(trigger: .userGesture)
-            await coordinator.billOutlookAppeared()
+            await coordinator.billOutlookAppeared(markVisible: false)
         }
         .task(id: "\(site.id)-\(isSelected)") {
-            if isSelected { await coordinator.billOutlookAppeared() }
+            if isSelected { await coordinator.billOutlookAppeared() } else {
+                coordinator.solarSurfaceDisappeared(.bill)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active && isSelected { Task { await coordinator.billOutlookAppeared() } }
+            if phase == .active && isSelected {
+                Task { await coordinator.billOutlookAppeared(markVisible: false) }
+            }
         }
+        .onDisappear { coordinator.solarSurfaceDisappeared(.bill) }
         .background { SectionTheme.bill.screenBackground }
         .navigationTitle("Current Bill")
         .inlineNavigationTitle()
@@ -108,8 +113,12 @@ struct BillView: View {
                         : "Based on your recent grid history.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let source = coordinator.attributionDescriptor(usesSolar: result.usesSolar) {
+                        SolarForecastAttributionView(descriptor: source)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .contain)
             }
             if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
                 Divider()

@@ -30,6 +30,7 @@ struct SolarForecastProviderDescriptor: Equatable, Sendable {
     /// Part of every configuration fingerprint, so changing the adapter's conversion starts
     /// new history rather than training on the old one.
     let modelVersion: String
+    var attributionURL: URL?
 }
 
 struct SolarForecastSiteScope: Hashable, Codable, Sendable {
@@ -147,4 +148,26 @@ struct SolarForecastCorrectionSummary: Equatable, Sendable {
     var sameDaySamples = 0
     var dayAheadSamples = 0
     static let identity = SolarForecastCorrectionSummary()
+}
+
+/// Preserves an attempted refresh even when history must be used instead of a forecast.
+struct SolarForecastPublicationAttempt: Sendable {
+    var publication: SolarForecastPublication?
+    var providerID: SolarForecastProviderID?
+    var outcome: SolarForecastRefreshOutcome
+    var diagnostic: String?
+}
+
+extension SolarForecastPublicationAttempt {
+    var unavailableCause: SolarForecastUnavailableCause? {
+        switch outcome {
+        case .failed(.access): .unauthorized
+        case .failed(.invalidResponse), .failed(.configuration): .invalidForecast
+        case .failed(.transient): .requestFailed
+        case .budgetExhausted: .budgetExhausted
+        case .deferred: .deferred
+        case .unavailable: .invalidForecast
+        default: nil
+        }
+    }
 }

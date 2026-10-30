@@ -14,6 +14,10 @@ extension DashboardCoordinator {
     /// ready even though Solcast is not connected.
     var forecastConnectionForConsumers: SolarForecastConnectionState {
         if solarForecastPublication != nil { return .ready }
+        if !usesAutomaticSolarForecast, solarForecastConnection == .ready, solarForecastBatch != nil { return .ready }
+        if forecastOperationPending || (solarLayoutStatus == nil && solarForecastConnection == .checking) {
+            return .checking
+        }
         return usesAutomaticSolarForecast ? .notConnected : solarForecastConnection
     }
 
@@ -31,6 +35,14 @@ extension DashboardCoordinator {
             return nil
         }
         return descriptor.attribution
+    }
+
+    /// Consumers pass the result of their actual projection, rather than the existence
+    /// of cached intervals, so history-only fallbacks never claim weather provenance.
+    func attributionDescriptor(usesSolar: Bool) -> SolarForecastProviderDescriptor? {
+        guard usesSolar, let publication = solarForecastPublication,
+              publication.descriptor.requirement == .detectedLayout else { return nil }
+        return publication.descriptor
     }
 
     /// The already-resolved beta status selects automatic forecasting even with saved credentials.
@@ -62,15 +74,25 @@ extension DashboardCoordinator {
               bill.response?.site.timezone == context.timeZone,
               let timeZone = TimeZone(identifier: context.timeZone) else {
             clearAutomaticPublication()
+            let failure: SolarForecastEnhancementUnavailableReason = outcome.context == nil
+                ? .contextUnavailable : .siteMismatch
+            solarForecastUnavailableReason = outcome.unavailableReason ?? (billSucceeded ? failure : .billUnavailable)
+            solarForecastState = .failedWithBasic
             return
         }
         let request = solarRequest(scope: scope, timeZone: timeZone, layout: layout, location: location, manual: manual)
-        let publication = await service.publication(for: request, actuals: await actuals)
-        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
-        guard let publication else {
+        let attempt = await service.publicationAttempt(for: request, actuals: await actuals)
+        guard operation == forecastGeneration, siteID == selectedSiteID,
+              canRequestAccountData, !Task.isCancelled else { return }
+        guard let publication = attempt.publication else {
             clearAutomaticPublication()
+            solarForecastAttempt = attempt
+            solarForecastUnavailableReason = .forecastNotUsable
+            solarForecastUnavailableCause = attempt.unavailableCause
+            solarForecastState = .failedWithBasic
             return
         }
+        solarForecastAttempt = attempt
         solarForecastPublication = publication
         solarForecastSource = publication.descriptor.id
         loadPlanningContext = context
@@ -128,6 +150,9 @@ extension DashboardCoordinator {
     }
 
     func clearAutomaticPublication() {
+        solarForecastUnavailableReason = nil
+        solarForecastUnavailableCause = nil
+        solarForecastAttempt = nil
         solarForecastBatch = nil
         solarForecastPublication = nil
         solarForecastSource = nil
@@ -137,11 +162,11 @@ extension DashboardCoordinator {
 
     /// Clears the selected site's status, caches and any scheduled revalidation.
     func clearSolarLayoutState() {
+        solarForecastAttempt = nil
         cancelLayoutRevalidation()
         solarLayoutStatus = nil
         solarForecastSource = nil
         solarForecastPublication = nil
-        solarSurfaceVisible = false
     }
 
     // MARK: Actuals

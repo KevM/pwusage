@@ -266,3 +266,17 @@ private actor FailingSignOutStore: SolarForecastManaging {
     func disconnect(accountScopeID: String, siteID: String) async throws {}
     func signOut() async throws { throw CocoaError(.fileWriteNoPermission) }
 }
+
+extension SolarForecastServiceTests {
+    @Test("Failed automatic refresh retains its outcome even with no usable publication")
+    func failedAttemptDiagnostics() async {
+        let setup = Self.setup(automaticStatus: 500)
+        var request = Fixture.request(now: Self.now)
+        request.automaticOnly = true
+        let attempt = await setup.service.publicationAttempt(for: request)
+        #expect(attempt.publication == nil)
+        #expect(attempt.providerID == .forecastSolar)
+        #expect(attempt.outcome == .failed(.transient))
+        #expect(attempt.diagnostic != nil)
+    }
+}

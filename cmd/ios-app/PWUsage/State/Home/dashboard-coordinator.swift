@@ -80,6 +80,7 @@ final class DashboardCoordinator: ObservableObject {
     @Published var solarLayoutStatus: MobileSolarLayoutResponse?
     /// The automatic provider's published forecast, already corrected.
     @Published var solarForecastPublication: SolarForecastPublication?
+    @Published var solarForecastAttempt: SolarForecastPublicationAttempt?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
     /// Whichever endpoint supplies Home's power readings owns their availability:
@@ -97,7 +98,9 @@ final class DashboardCoordinator: ObservableObject {
     var solarActualsCache: [SolarForecastSiteScope: SolarActualsCacheEntry] = [:]
     var solarLayoutRevalidation: SolarLayoutRevalidationHandle?
     var solarLayoutRevalidationRequested = false
-    var solarSurfaceVisible = false
+    var visibleSolarSurfaces: Set<SolarForecastSurface> = []
+    var solarSurfaceVisible: Bool { !visibleSolarSurfaces.isEmpty }
+    @Published var forecastOperationPending = false
     var cache: DashboardCache?
     var sessionVerified = true
     var canRequestAccountData: Bool { sessionVerified && !requiresSignIn }
@@ -321,6 +324,6 @@ final class DashboardCoordinator: ObservableObject {
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the
         // optional enhancement here or the new site stays on the basic estimate.
-        Task { await loadTimingDetailAppeared() }
+        Task { await loadTimingDetailAppeared(surface: nil) }
     }
 }

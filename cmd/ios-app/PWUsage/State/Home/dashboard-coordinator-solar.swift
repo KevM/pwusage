@@ -23,6 +23,9 @@ extension DashboardCoordinator {
             lastRefresh: solarForecastLastRefresh, unavailableCause: solarForecastUnavailableCause,
             connection: solarForecastConnection, state: solarForecastState,
             unavailableReason: solarForecastUnavailableReason)
+        diagnostics.automaticProviderID = legacy ? nil : solarForecastAttempt?.providerID?.rawValue
+        diagnostics.automaticRefreshOutcome = legacy ? nil : solarForecastAttempt.map { "\($0.outcome)" }
+        diagnostics.automaticDiagnostic = legacy ? nil : solarForecastAttempt?.diagnostic
         diagnostics.source = automatic.map { SmartShiftForecastSource(publication: $0, now: now()) }
         return diagnostics
     }
@@ -30,6 +33,8 @@ extension DashboardCoordinator {
     func refreshSolarForecast(manual: Bool) async {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
+        forecastOperationPending = true
+        defer { if operation == forecastGeneration { forecastOperationPending = false } }
         guard forecastStore != nil, accountScopeID != nil else {
             solarForecastState = .basic
             return
@@ -52,11 +57,11 @@ extension DashboardCoordinator {
     private func refreshLegacySolarForecast(manual: Bool, siteID: String, operation: Int) async {
         guard let forecastStore, let accountScopeID else { return }
         solarForecastPublication = nil
+        solarForecastAttempt = nil
         solarForecastSource = nil
         guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
             guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-            solarForecastState = .basic
-            solarForecastConnection = .notConnected
+            resetForecastEnhancement(state: .basic, connection: .notConnected)
             return
         }
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
@@ -75,7 +80,7 @@ extension DashboardCoordinator {
                 // pull has to actually re-fetch the context. The appearance path
                 // re-derives `solarForecastUnavailableReason`, so a `serverOutdated`
                 // or `contextInvalid` diagnosis survives a repeat failure.
-                await loadTimingDetailAppeared()
+                await loadTimingDetailAppeared(surface: nil)
                 return
             }
             solarForecastState = .failedWithBasic
@@ -165,6 +170,7 @@ extension DashboardCoordinator {
     func loadProfileDidEdit() {}
 
     func beginForecastOperation() -> Int {
+        forecastOperationPending = false
         forecastGeneration += 1
         return forecastGeneration
     }
@@ -180,5 +186,6 @@ extension DashboardCoordinator {
         solarForecastLastRefresh = nil
         solarForecastSource = nil
         solarForecastPublication = nil
+        solarForecastAttempt = nil
     }
 }

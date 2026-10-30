@@ -47,14 +47,16 @@ extension DashboardCoordinator {
         }
         guard generation == siteGeneration, confirmedSiteID == selectedSiteID else { return .cancelled }
         invalidateSolarLayout()
-        await loadTimingDetailAppeared()
+        await loadTimingDetailAppeared(surface: nil)
         return .shared
     }
 
     /// Settings always reads a fresh status when it opens.
     func solarSettingsAppeared() async {
+        guard !Task.isCancelled else { return }
+        solarSurfaceAppeared(.settings)
         guard layoutAPI != nil else { return }
         invalidateSolarLayout()
-        await loadTimingDetailAppeared()
+        await loadTimingDetailAppeared(surface: nil)
     }
 }

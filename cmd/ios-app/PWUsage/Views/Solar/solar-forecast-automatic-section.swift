@@ -25,7 +25,11 @@ struct SolarForecastAutomaticSection: View {
             } header: {
                 Text("Solar Forecast")
             } footer: {
-                if let attribution = coordinator.solarForecastAttribution { Text(attribution) }
+                if let source = coordinator.attributionDescriptor(
+                    usesSolar: coordinator.solarForecastPublication != nil
+                ) {
+                    SolarForecastAttributionView(descriptor: source)
+                }
             }
             .solarLocationConfirmation(isPresented: $isConfirming, coordinator: coordinator) { outcome = $0 }
         }

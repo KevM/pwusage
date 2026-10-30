@@ -1140,3 +1140,10 @@ Approved: beta sites use Open-Meteo regardless of stored Solcast keys. Missing l
 - [x] Background refresh without credential metadata preflight
 - [x] Foreground/manual/bill routing and regression tests
 - [x] Full verification and review; signed commit prepared for PR #258
+
+## External solar review follow-up
+
+- [x] Verify all review claims against current code and API semantics
+- [x] Fix provider diagnostics, forecast coverage/cancellation, beta presentation, freshness/lifecycle and attribution
+- [x] Document modeling/calibration limits without leaking hindsight into forecast history
+- [x] Verify tests/lint/builds, review and push PR #258

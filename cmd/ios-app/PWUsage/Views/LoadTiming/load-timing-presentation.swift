@@ -26,7 +26,9 @@ extension LoadTimingView {
             cause: coordinator.solarForecastUnavailableCause,
             reason: coordinator.solarForecastUnavailableReason,
             forecastFetchedAt: coordinator.publishedForecastFetchedAt,
-            now: now
+            now: now,
+            usesAutomaticForecast: coordinator.usesAutomaticSolarForecast,
+            automaticStatus: coordinator.solarLayoutStatus
         )
         // One evaluator per pass, so every Job shares the projection's plan.
         let intervals = coordinator.publishedForecastIntervals

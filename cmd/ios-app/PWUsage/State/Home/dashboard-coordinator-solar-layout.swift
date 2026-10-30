@@ -2,6 +2,8 @@ import Foundation
 
 /// The beta layout status: cached per account and site, revalidated while a solar surface is
 /// on screen, and cleared on rejection so no automatic request follows.
+enum SolarForecastSurface: Hashable { case smartShift, bill, settings }
+
 extension DashboardCoordinator {
     /// The selected site's status, from cache when still valid. A transient failure falls back
     /// to the last status the server confirmed within six hours; an explicit rejection or a
@@ -46,9 +48,13 @@ extension DashboardCoordinator {
         solarLayoutRevalidationRequested = true
     }
 
-    func solarSurfaceDisappeared() {
-        solarSurfaceVisible = false
-        cancelLayoutRevalidation()
+    func solarSurfaceAppeared(_ surface: SolarForecastSurface) {
+        visibleSolarSurfaces.insert(surface)
+    }
+
+    func solarSurfaceDisappeared(_ surface: SolarForecastSurface = .smartShift) {
+        visibleSolarSurfaces.remove(surface)
+        if !solarSurfaceVisible { cancelLayoutRevalidation() }
     }
 
     func cancelLayoutRevalidation() {
@@ -81,7 +87,7 @@ extension DashboardCoordinator {
             solarLayoutRevalidation = nil
             guard siteID == selectedSiteID, sceneIsActive, solarSurfaceVisible, canRequestAccountData else { return }
             invalidateSolarLayout()
-            await loadTimingDetailAppeared()
+            await loadTimingDetailAppeared(surface: nil)
         }
     }
 

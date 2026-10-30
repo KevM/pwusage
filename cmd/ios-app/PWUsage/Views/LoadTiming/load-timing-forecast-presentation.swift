@@ -49,11 +49,15 @@ enum LoadTimingForecastPresentation {
         cause: SolarForecastUnavailableCause?,
         reason: SolarForecastEnhancementUnavailableReason?,
         forecastFetchedAt: Date?,
-        now: Date
+        now: Date,
+        usesAutomaticForecast: Bool = false,
+        automaticStatus: MobileSolarLayoutResponse? = nil
     ) -> ForecastAvailability {
         switch connection {
         case .checking: return .loading
-        case .notConnected: return .none
+        case .notConnected:
+            return usesAutomaticForecast
+                ? .automaticUnavailable(automaticUnavailableNote(status: automaticStatus, reason: reason)) : .none
         case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
         case .ready: break
         }
@@ -66,6 +70,16 @@ enum LoadTimingForecastPresentation {
         if state == .enhanced, isFresh { return .ready }
         if let reason { return .unusable(firstSentence(enhancementDetail(reason))) }
         return .unusable(firstSentence(causeDetail(cause, forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
+    }
+
+    private static func automaticUnavailableNote(
+        status: MobileSolarLayoutResponse?, reason: SolarForecastEnhancementUnavailableReason?
+    ) -> String {
+        if let reason { return firstSentence(enhancementDetail(reason)) }
+        if case .enabled(_, let layout, let setupReason) = status, layout == nil, let setupReason {
+            return SolarForecastSettingsStatus.sentence(for: setupReason)
+        }
+        return "The automatic solar forecast is unavailable. Your estimate uses recent grid history where available."
     }
 
     /// One sentence for a forecast comparison that couldn't run, shown beside the
