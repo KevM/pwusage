@@ -82,29 +82,33 @@ struct MobileSolarLayoutTests {
             == .enabled(location: nil, layout: nil, reason: reason))
     }
 
-    private static func enabled(location: String = "null", layout: String = "null", reason: String = "null") -> String {
+    private static func enabledJSON(
+        location: String = "null", layout: String = "null", reason: String = "null"
+    ) -> String {
         #"{"version":1,"enabled":true,"location":\#(location),"layout":\#(layout),"reason":\#(reason)}"#
     }
 
-    private static func layout(planes: String, clip: String = "null", confidence: String = "high") -> String {
-        enabled(layout: #"{"planes":[\#(planes)],"acClipKw":\#(clip),"confidence":"\#(confidence)","detectedAt":null}"#)
+    private static func layoutJSON(planes: String, clip: String = "null", confidence: String = "high") -> String {
+        enabledJSON(
+            layout: #"{"planes":[\#(planes)],"acClipKw":\#(clip),"confidence":"\#(confidence)","detectedAt":null}"#
+        )
     }
 
-    private static let plane = #"{"azimuth":90,"tilt":18,"dcKwp":1}"#
+    private static let plane: String = #"{"azimuth":90,"tilt":18,"dcKwp":1}"#
 
-    private static let invalidLayouts = [
+    private static let invalidLayouts: [String] = [
         #"{"version":2,"enabled":false}"#,
-        enabled(location: #"{"latitude":91,"longitude":0}"#),
-        enabled(location: #"{"latitude":0,"longitude":-181}"#),
-        enabled(location: #"{"latitude":0,"longitude":0,"source":"guess"}"#),
-        layout(planes: ""),
-        layout(planes: Array(repeating: plane, count: 4).joined(separator: ",")),
-        layout(planes: #"{"azimuth":400,"tilt":18,"dcKwp":1}"#),
-        layout(planes: #"{"azimuth":90,"tilt":95,"dcKwp":1}"#),
-        layout(planes: #"{"azimuth":90,"tilt":18,"dcKwp":0}"#),
-        layout(planes: plane, clip: "0"),
-        layout(planes: plane, confidence: "low"),
-        enabled(reason: #""location-mismatch""#)]
+        enabledJSON(location: #"{"latitude":91,"longitude":0}"#),
+        enabledJSON(location: #"{"latitude":0,"longitude":-181}"#),
+        enabledJSON(location: #"{"latitude":0,"longitude":0,"source":"guess"}"#),
+        layoutJSON(planes: ""),
+        layoutJSON(planes: Array(repeating: plane, count: 4).joined(separator: ",")),
+        layoutJSON(planes: #"{"azimuth":400,"tilt":18,"dcKwp":1}"#),
+        layoutJSON(planes: #"{"azimuth":90,"tilt":95,"dcKwp":1}"#),
+        layoutJSON(planes: #"{"azimuth":90,"tilt":18,"dcKwp":0}"#),
+        layoutJSON(planes: plane, clip: "0"),
+        layoutJSON(planes: plane, confidence: "low"),
+        enabledJSON(reason: #""location-mismatch""#)]
 
     @Test("Unsupported versions and invalid values are rejected", arguments: invalidLayouts)
     func rejected(json: String) {
@@ -127,7 +131,7 @@ struct MobileSolarLayoutTests {
         #expect(response == .enabled(asOf: asOf, hours: hours))
     }
 
-    private static let invalidActuals = [
+    private static let invalidActuals: [String] = [
         #"{"version":2,"enabled":false}"#,
         #"{"version":2,"enabled":true,"asOf":"2026-10-28T15:05:00Z","hours":[]}"#,
         #"{"version":1,"enabled":true,"asOf":"2026-10-28T15:05:00Z","hours":["#
