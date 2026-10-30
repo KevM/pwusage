@@ -8,15 +8,20 @@ extension DashboardCoordinator {
     func solarForecastDiagnostics() async -> SmartShiftDiagnostics.SolarForecast? {
         guard let forecastStore, let accountScopeID else { return nil }
         let siteID = selectedSiteID
-        let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
-        return SmartShiftDiagnostics.SolarForecast(
+        // An automatic forecast has its own rolling-hour budget; the Solcast daily one says nothing about it.
+        let automatic = solarForecastPublication
+        let batch = automatic == nil
+            ? await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID) : nil
+        var diagnostics = SmartShiftDiagnostics.SolarForecast(
             batch: batch, now: now(),
             recommendationUsable: await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID),
-            budget: await forecastStore.budget(for: accountScopeID, siteID: siteID),
+            budget: automatic == nil ? await forecastStore.budget(for: accountScopeID, siteID: siteID) : nil,
             lastErrorDescription: await forecastStore.lastErrorDescription,
             lastRefresh: solarForecastLastRefresh, unavailableCause: solarForecastUnavailableCause,
             connection: solarForecastConnection, state: solarForecastState,
             unavailableReason: solarForecastUnavailableReason)
+        diagnostics.source = automatic.map { SmartShiftForecastSource(publication: $0, now: now()) }
+        return diagnostics
     }
 
     func refreshSolarForecast(manual: Bool) async {
@@ -151,5 +156,7 @@ extension DashboardCoordinator {
         solarForecastUnavailableReason = nil
         solarForecastSaveFailure = false
         solarForecastLastRefresh = nil
+        solarForecastSource = nil
+        solarForecastPublication = nil
     }
 }

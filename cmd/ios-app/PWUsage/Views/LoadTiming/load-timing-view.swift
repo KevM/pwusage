@@ -172,6 +172,7 @@ struct LoadTimingView: View {
             }
         }
         .task { await coordinator.loadTimingDetailAppeared() }
+        .onDisappear { coordinator.solarSurfaceDisappeared() }
         .task(id: "\(coordinator.selectedSiteID):\(coordinator.isForeground)") {
             await refreshBatteryHoldWhileVisible()
         }
@@ -333,6 +334,7 @@ struct LoadTimingView: View {
                 energyDataThrough: response.sources.energyDataThrough,
                 announcesFreshness: false
             )
+            if let attribution = coordinator.solarForecastAttribution { Text(attribution) }
         }
         .font(.caption)
         .foregroundStyle(.secondary)

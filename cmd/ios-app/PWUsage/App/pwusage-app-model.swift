@@ -83,7 +83,9 @@ final class PWUsageAppModel: ObservableObject {
                     api: api,
                     planningAPI: api,
                     forecastStore: forecastStore,
-                    accountScopeID: accountScopeID
+                    accountScopeID: accountScopeID,
+                    layoutAPI: api,
+                    forecastService: forecastService
                 )
             }
         }

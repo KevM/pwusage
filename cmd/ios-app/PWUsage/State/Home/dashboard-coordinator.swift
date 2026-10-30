@@ -73,6 +73,13 @@ final class DashboardCoordinator: ObservableObject {
     /// The household pattern with grid history, published whether or not Solcast
     /// is connected, so Smart Shift can project banks from history alone.
     @Published var householdPattern: LoadTimingForecastEstimator.PlanningContext?
+    /// Which provider's forecast is published, if any. Solcast connection state stays in
+    /// `solarForecastConnection`; an automatic forecast never claims Solcast is ready.
+    @Published var solarForecastSource: SolarForecastProviderID?
+    /// The selected site's beta layout status, for settings and the forecast choice.
+    @Published var solarLayoutStatus: MobileSolarLayoutResponse?
+    /// The automatic provider's published forecast, already corrected.
+    @Published var solarForecastPublication: SolarForecastPublication?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
     /// Whichever endpoint supplies Home's power readings owns their availability:
@@ -83,6 +90,14 @@ final class DashboardCoordinator: ObservableObject {
     let planningAPI: (any MobileLoadPlanningDataAPI)?
     let forecastStore: (any SolarForecastManaging)?
     let accountScopeID: String?
+    let layoutAPI: (any MobileSolarLayoutDataAPI)?
+    let forecastService: SolarForecastService?
+    let revalidationScheduler: any SolarLayoutRevalidationScheduling
+    var solarLayoutCache: [SolarForecastSiteScope: SolarLayoutCacheEntry] = [:]
+    var solarActualsCache: [SolarForecastSiteScope: SolarActualsCacheEntry] = [:]
+    var solarLayoutRevalidation: SolarLayoutRevalidationHandle?
+    var solarLayoutRevalidationRequested = false
+    var solarSurfaceVisible = false
     var cache: DashboardCache?
     var sessionVerified = true
     var canRequestAccountData: Bool { sessionVerified && !requiresSignIn }
@@ -133,7 +148,10 @@ final class DashboardCoordinator: ObservableObject {
         accountScopeID: String? = nil,
         now: @escaping () -> Date = Date.init,
         timerInterval: Duration? = .seconds(30),
-        cache: DashboardCache? = nil
+        cache: DashboardCache? = nil,
+        layoutAPI: (any MobileSolarLayoutDataAPI)? = nil,
+        forecastService: SolarForecastService? = nil,
+        revalidationScheduler: (any SolarLayoutRevalidationScheduling)? = nil
     ) {
         selectedSiteID = siteID
         self.api = api
@@ -143,6 +161,9 @@ final class DashboardCoordinator: ObservableObject {
         self.now = now
         self.timerInterval = timerInterval
         self.cache = cache
+        self.layoutAPI = layoutAPI
+        self.forecastService = forecastService
+        self.revalidationScheduler = revalidationScheduler ?? TaskSolarLayoutRevalidationScheduler()
         if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }
         restoreCachedReadings()
     }
@@ -202,6 +223,7 @@ final class DashboardCoordinator: ObservableObject {
             isForeground = false
             batteryHold.isCurrent = false
             stopTimer()
+            cancelLayoutRevalidation()
             // Keep fast polls in memory; persist the combined snapshot once on
             // backgrounding instead of encoding the entire bill every minute.
             if let snapshot = live.response, let power = power.response {
@@ -269,6 +291,7 @@ final class DashboardCoordinator: ObservableObject {
         requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
         householdPattern = nil
+        clearSolarLayoutState()
     }
 
     func selectSite(_ siteID: String) {
@@ -290,6 +313,7 @@ final class DashboardCoordinator: ObservableObject {
         // Checking, not "not connected": the new site's setup is read next, and
         // until then the card waits rather than showing a forecast-free answer.
         resetForecastEnhancement(state: .basic, connection: .checking)
+        clearSolarLayoutState()
         // The pattern belongs to the old site; connecting or disconnecting
         // Solcast leaves it in place.
         householdPattern = nil

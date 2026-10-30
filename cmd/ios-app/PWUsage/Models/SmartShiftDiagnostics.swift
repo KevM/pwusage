@@ -67,6 +67,8 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         let lastErrorDescription: String?
         let lastRefreshResult: String?
         let unavailableCause: String?
+        /// The automatic forecast in use, when there is one.
+        var source: SmartShiftForecastSource?
 
         init(batch: SolarForecastBatch?, now: Date, recommendationUsable: Bool, budget: SolarForecastBudget?,
              lastErrorDescription: String?, lastRefresh: SolarForecastRefreshResult?,

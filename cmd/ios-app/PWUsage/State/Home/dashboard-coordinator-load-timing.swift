@@ -16,41 +16,60 @@ extension DashboardCoordinator {
     }
 
     /// Starts the optional enhancement only when a local credential and array
-    /// selection exist. This path refreshes bill/context data but never live data.
+    /// selection exist, or, for beta sites without Solcast, an automatic forecast.
+    /// This path refreshes bill/context data but never live data.
     func loadTimingDetailAppeared() async {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
+        solarSurfaceVisible = true
         guard let forecastStore, let planningAPI, let accountScopeID else {
             solarForecastState = .basic
             solarForecastConnection = .notConnected
             return
         }
         let siteID = selectedSiteID
-        guard let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID) else {
-            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-            solarForecastState = .basic
-            solarForecastConnection = .notConnected
+        let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+        guard let credential, !credential.resourceIDs.isEmpty else {
+            // A published automatic forecast keeps pricing the card while it is refreshed.
+            let keepsAutomatic = credential == nil && solarForecastPublication != nil
+            solarForecastState = keepsAutomatic ? .loadingWithBasic : .basic
+            solarForecastConnection = credential == nil ? .notConnected : .awaitingArraySelection
             solarForecastUnavailableCause = nil
             solarForecastBatch = nil
-            loadPlanningContext = nil
-            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
+            if !keepsAutomatic { loadPlanningContext = nil }
+            if credential == nil {
+                await loadForecastWithoutCredential(siteID: siteID, api: planningAPI, operation: operation)
+            } else {
+                solarForecastSource = nil
+                solarForecastPublication = nil
+                async let status: Void = refreshSolarLayoutStatus(siteID: siteID, operation: operation)
+                await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
+                await status
+            }
             return
         }
-        guard !credential.resourceIDs.isEmpty else {
-            guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-            solarForecastState = .basic
-            solarForecastConnection = .awaitingArraySelection
-            solarForecastUnavailableCause = nil
-            solarForecastBatch = nil
-            loadPlanningContext = nil
-            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
-            return
-        }
-        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
+        guard canRequestAccountData else { return }
         solarForecastState = .loadingWithBasic
         solarForecastConnection = .ready
         solarForecastUnavailableCause = nil
+        solarForecastPublication = nil
+        async let status: Void = refreshSolarLayoutStatus(siteID: siteID, operation: operation)
+        await loadSolcastEnhancement(
+            store: forecastStore, planningAPI: planningAPI, accountScopeID: accountScopeID,
+            siteID: siteID, operation: operation
+        )
+        await status
+    }
 
+    /// The Solcast half of `loadTimingDetailAppeared`, unchanged apart from beta correction.
+    private func loadSolcastEnhancement(
+        store forecastStore: any SolarForecastManaging,
+        planningAPI: any MobileLoadPlanningDataAPI,
+        accountScopeID: String,
+        siteID: String,
+        operation: Int
+    ) async {
         let billSuccessBeforeRefresh = billSuccessGeneration
         async let billRefresh: Void = refreshBill(trigger: .screenAppearance)
         async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: false)
@@ -58,7 +77,6 @@ extension DashboardCoordinator {
         let (refresh, outcome) = await (refreshResult, contextResult)
         let context = outcome.context
         await billRefresh
-
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         solarForecastLastRefresh = refresh
         // Published even when the forecast half fails, so the card can fall back to history.
@@ -108,10 +126,13 @@ extension DashboardCoordinator {
             solarForecastSaveFailure = false
             return
         }
-        solarForecastBatch = batch
+        let published = await correctedSolcastBatch(batch, siteID: siteID, context: context)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+        solarForecastBatch = published
         loadPlanningContext = context
         solarForecastUnavailableReason = nil
         solarForecastState = .enhanced
+        solarForecastSource = .solcast
         solarForecastSaveFailure = saveFailed
     }
 
@@ -204,6 +225,7 @@ extension DashboardCoordinator {
     /// refreshing bill data alone.
     func loadTimingDetailRefreshed() async {
         guard canRequestAccountData else { return }
+        invalidateSolarLayout()
         await refreshBill(trigger: .userGesture)
         if solarForecastConnection != .notConnected {
             await refreshSolarForecast(manual: true)

@@ -22,14 +22,14 @@ extension LoadTimingView {
         let profile = selectedProfile
         let availability = LoadTimingForecastPresentation.forecastAvailability(
             state: coordinator.solarForecastState,
-            connection: coordinator.solarForecastConnection,
+            connection: coordinator.forecastConnectionForConsumers,
             cause: coordinator.solarForecastUnavailableCause,
             reason: coordinator.solarForecastUnavailableReason,
-            forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt,
+            forecastFetchedAt: coordinator.publishedForecastFetchedAt,
             now: now
         )
         // One evaluator per pass, so every Job shares the projection's plan.
-        let intervals = coordinator.solarForecastBatch?.intervals
+        let intervals = coordinator.publishedForecastIntervals
         // Without a usable forecast, the household pattern's grid history still projects the banks.
         let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
         let evaluate = SmartShiftPresentation.evaluator(
@@ -88,7 +88,7 @@ extension LoadTimingView {
                 siteId: site.id, app: .current, job: profile, now: state.now, balanceSourceTime: state.balanceSourceTime,
                 billingCycleEnd: state.billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone, timing: state.timing,
                 evaluation: evaluation, intervals: state.intervals, context: state.context,
-                forecastFetchedAt: coordinator.solarForecastBatch?.fetchedAt)
+                forecastFetchedAt: coordinator.publishedForecastFetchedAt)
         }
         return SmartShiftDetailsSnapshot(
             verdict: verdict,
@@ -96,7 +96,7 @@ extension LoadTimingView {
             rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
             breakdowns: breakdowns,
             ruledOutNote: ruledOutNote,
-            forecastFetchedAt: usedForecast ? coordinator.solarForecastBatch?.fetchedAt : nil,
+            forecastFetchedAt: usedForecast ? coordinator.publishedForecastFetchedAt : nil,
             contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,
             capturedAt: state.now,
             diagnostics: diagnostics
