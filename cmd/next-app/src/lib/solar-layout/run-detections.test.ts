@@ -57,6 +57,52 @@ describe('runDueDetections', () => {
         expect(out.sites[0].status).toBe('failed');
     });
 
+    it('clamps each site deadline to the earlier of per-site limit and overall deadline', async () => {
+        const repo = fakeRepo(['s1', 's2']);
+        let mockTime = 100_000;
+        const clock = () => mockTime;
+        const detect = vi.fn((_opts: { deadline?: number }) => {
+            mockTime += 10_000;
+            return {
+                status: 'detected' as const, confidence: 'high' as const, reasons: [], planes: [],
+                acClipKw: null, historyDays: 50, clearDays: 20, firstDay: null, lastDay: null, shading: [],
+            };
+        });
+        // overall deadline is startedAt (100_000) + deadlineMs (25_000) = 125_000
+        // perSiteDeadlineMs is 15_000
+        // s1 starts at 100_000: min(125_000, 100_000 + 15_000) = 115_000
+        // s1 takes 10_000 ms, so s2 starts at 110_000: min(125_000, 110_000 + 15_000 = 125_000) = 125_000
+        await runDueDetections({
+            now, budgetMs: 20_000, repo, loadSamples: async () => [],
+            clock, detect, deadlineMs: 25_000, perSiteDeadlineMs: 15_000,
+        });
+        expect(detect).toHaveBeenCalledTimes(2);
+        expect(detect.mock.calls[0]?.[0]?.deadline).toBe(115_000);
+        expect(detect.mock.calls[1]?.[0]?.deadline).toBe(125_000);
+    });
+
+    it('records failure even when caller ioSignal is already aborted', async () => {
+        const { withIoDeadline, ioSignal } = await import('@/lib/io-deadline');
+        const repo = fakeRepo(['s1']);
+        let recordedInAbortedContext = true;
+        repo.recordFailure = vi.fn(async () => {
+            recordedInAbortedContext = ioSignal()?.aborted ?? false;
+        });
+
+        const controller = new AbortController();
+        const detect = vi.fn(() => {
+            controller.abort();
+            throw new Error('timeout');
+        });
+
+        await withIoDeadline(10_000, async () => {
+            await runDueDetections({ now, budgetMs: 35_000, repo, loadSamples: async () => [], detect });
+        }, controller.signal).catch(() => undefined);
+
+        expect(repo.recordFailure).toHaveBeenCalledWith('s1', { latitude: 43.39, longitude: -87.87 });
+        expect(recordedInAbortedContext).toBe(false);
+    });
+
     it('starts no sites without budget', async () => {
         const repo = fakeRepo(['s1']);
         const loadSamples = vi.fn(async () => []);

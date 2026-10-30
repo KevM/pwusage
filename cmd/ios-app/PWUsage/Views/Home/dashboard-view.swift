@@ -20,7 +20,7 @@ struct DashboardView: View {
     /// Last measured Live card frame and scroll edge. A class box, so scrolling
     /// updates them without redrawing; only the visibility flip redraws.
     @State private var liveCardTracking = LiveCardTracking()
-    static let scrollContentSpace = "homeScrollContent"
+    nonisolated static let scrollContentSpace = "homeScrollContent"
 
     var live: MobileLiveResponse? { coordinator.live.response }
     var power: MobileLivePowerResponse? {

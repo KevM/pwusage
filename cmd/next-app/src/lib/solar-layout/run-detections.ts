@@ -4,13 +4,17 @@
 // previous result and is not retried for 24 hours; the next site still runs.
 // Writes are skipped if the site's location changed while it was detected.
 import { logEvent } from '@/lib/observability';
+import { withIoDeadline } from '@/lib/io-deadline';
 import type { DueSite, SolarLayoutRepo } from '@/lib/solar-layout-repo';
 import { detectSolarLayout, SOLAR_LAYOUT_DETECTOR_VERSION } from './detect';
 
 export const DETECTION_SITES_PER_RUN = 5;
 export const DETECTION_HISTORY_DAYS = 365;
-/** Detection is synchronous CPU work, so it carries its own deadline inside the 50 s I/O deadline. */
-export const DETECTION_DEADLINE_MS = 48_000;
+/** Total detection budget across all sites in a run, leaving margin for failure recording and route wrap-up before the 50 s I/O deadline. */
+export const DETECTION_DEADLINE_MS = 42_000;
+/** Maximum detection CPU time allocated to an individual site. */
+export const PER_SITE_DEADLINE_MS = 35_000;
+export const RECORD_FAILURE_BUDGET_MS = 3_000;
 
 export type DetectionRepo = Pick<SolarLayoutRepo, 'listDue' | 'saveResult' | 'recordFailure'>;
 export type SampleLoader = (siteId: string, timeZone: string, start: Date, end: Date) => Promise<{ timestamp: Date; solarWh: number }[]>;
@@ -18,11 +22,13 @@ export type SampleLoader = (siteId: string, timeZone: string, start: Date, end: 
 export async function runDueDetections(opts: {
     now: Date; budgetMs: number; repo: DetectionRepo; loadSamples: SampleLoader;
     clock?: () => number; detect?: typeof detectSolarLayout; deadlineMs?: number;
+    perSiteDeadlineMs?: number;
 }): Promise<{ sites: { siteId: string; status: string; ms: number }[]; stopped: boolean }> {
     const clock = opts.clock ?? Date.now;
     const detect = opts.detect ?? detectSolarLayout;
     const startedAt = clock();
-    const deadline = startedAt + (opts.deadlineMs ?? DETECTION_DEADLINE_MS);
+    const overallDeadline = startedAt + (opts.deadlineMs ?? DETECTION_DEADLINE_MS);
+    const perSiteDeadlineMs = opts.perSiteDeadlineMs ?? PER_SITE_DEADLINE_MS;
     const sites: { siteId: string; status: string; ms: number }[] = [];
     if (opts.budgetMs <= 0) return { sites, stopped: true };
     const due: DueSite[] = await opts.repo.listDue(DETECTION_SITES_PER_RUN, opts.now);
@@ -38,13 +44,14 @@ export async function runDueDetections(opts: {
             const end = opts.now;
             const start = new Date(end.getTime() - DETECTION_HISTORY_DAYS * 86_400_000);
             const samples = await opts.loadSamples(site.siteId, site.timezone, start, end);
-            const result = detect({ samples, latitude: site.latitude, longitude: site.longitude, timeZone: site.timezone, deadline });
+            const siteDeadline = Math.min(overallDeadline, clock() + perSiteDeadlineMs);
+            const result = detect({ samples, latitude: site.latitude, longitude: site.longitude, timeZone: site.timezone, deadline: siteDeadline });
             await opts.repo.saveResult(site.siteId, result, SOLAR_LAYOUT_DETECTOR_VERSION, location);
             sites.push({ siteId: site.siteId, status: result.status, ms: clock() - siteStarted });
         } catch (error) {
             logEvent('warn', 'cron.detect-solar-layouts.site-failed', { siteId: site.siteId, error });
             try {
-                await opts.repo.recordFailure(site.siteId, location);
+                await withIoDeadline(RECORD_FAILURE_BUDGET_MS, () => opts.repo.recordFailure(site.siteId, location), null);
             } catch (recordError) {
                 logEvent('error', 'cron.detect-solar-layouts.record-failure-failed', { siteId: site.siteId, error: recordError });
             }

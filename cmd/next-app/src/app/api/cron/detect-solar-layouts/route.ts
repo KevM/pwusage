@@ -2,8 +2,8 @@ import { flushLogEvents, logEvent, observeRoute, setLogContext } from '@/lib/obs
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 // Hobby caps maxDuration at 60 s. runDueDetections stops starting new sites at
-// 35 s and each detection carries a 48 s deadline; the I/O deadline cancels a
-// day-record read that is still running at 50 s.
+// 20 s and each detection carries a 35 s per-site deadline (bounded by a 42 s
+// overall detection deadline); the I/O deadline cancels a read still running at 50 s.
 export const maxDuration = 60;
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,7 +12,7 @@ import { withIoDeadline } from '@/lib/io-deadline';
 import { SolarLayoutRepo } from '@/lib/solar-layout-repo';
 import { runDueDetections } from '@/lib/solar-layout/run-detections';
 
-const BUDGET_MS = 35_000;
+const BUDGET_MS = 20_000;
 const HARD_DEADLINE_MS = 50_000;
 
 async function loadSamples(siteId: string, timeZone: string, start: Date, end: Date) {

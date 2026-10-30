@@ -26,12 +26,12 @@ describe('detect-solar-layouts cron', () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
-  it('runs one bounded pass with a 35 s budget and returns its summary', async () => {
+  it('runs one bounded pass with a 20 s budget and returns its summary', async () => {
     const res = await GET(req('Bearer secret') as never);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ success: true, sites: [{ siteId: 'a', status: 'detected' }], stopped: false });
     expect(runMock).toHaveBeenCalledTimes(1);
-    expect(runMock.mock.calls[0][0]).toMatchObject({ budgetMs: 35_000 });
+    expect(runMock.mock.calls[0][0]).toMatchObject({ budgetMs: 20_000 });
   });
 
   it('503 without leaking the error when detection cannot run', async () => {
