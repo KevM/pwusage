@@ -70,13 +70,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 6HQGHHRK87
+        PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
-          PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
           PWUSAGE_APS_ENVIRONMENT: development
-        Release:
-          PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
+        Release: {}
   PWUsageWidgets:
     type: app-extension
     platform: iOS
@@ -106,12 +105,11 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
         PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage
+        PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
-          PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
-        Release:
-          PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
+        Release: {}
   PWUsageTests:
     type: bundle.unit-test
     platform: iOS

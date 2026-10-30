@@ -67,9 +67,9 @@ Uploads use the **Release production API**, `https://pwusage.fm.rodeo`, and skip
 
 ## API origin
 
-Debug builds use `https://pwusagebeta.fm.rodeo` for sign-in and dashboard data. Release builds use `https://pwusage.fm.rodeo`. `AppConfiguration` accepts an injected origin for tests and local development; Release requires HTTPS. To override a Debug build for a local server, set `PWUSAGE_API_ORIGIN` in the Xcode build environment or scheme. Do not commit credentials.
+Both Debug and Release builds use `https://pwusage.fm.rodeo` for sign-in and dashboard data by default. `AppConfiguration` accepts an injected origin for tests and local development; Release requires HTTPS and allowlisted hosts. To override a Debug build for a local server or beta, set `PWUSAGE_API_ORIGIN` (e.g. `http://localhost:5174` or `https://pwusagebeta.fm.rodeo`) in the Xcode build environment or scheme. Do not commit credentials.
 
-When checking a server-side problem by hand, match the host to the build. A Debug build talks to **beta**, so a `curl` against `pwusage.fm.rodeo` describes production and says nothing about what a Debug build sees. Note that a `401` means the route exists but rejected the unauthenticated request, while a `404` means the route is not deployed at that host. The two are easy to conflate when only one host is checked.
+When checking a server-side problem by hand, match the host to what the build is pointed to. Note that a `401` means the route exists but rejected the unauthenticated request, while a `404` means the route is not deployed at that host. The two are easy to conflate when only one host is checked.
 
 ## Server routes the app depends on
 
