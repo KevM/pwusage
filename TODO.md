@@ -340,3 +340,11 @@ not a deadline on that leg, and neither is any number that includes it.
 **Change:** add request timeouts to `tesla-client.ts`. Prefer bounded per-request
 `AbortSignal.timeout` over a whole-request race, which is what PR #118 removed from the
 verification path.
+
+## Solar forecast correction for Solcast (revisit)
+
+`SolarForecastCorrection.appliesToSolcast` is `false` because the 2026-10-30 offline check
+(`.forecast-compare/score.py`, `solcast_corrected` vs `solcast`) had only 4 scored day-ahead
+days for one site — under the 10-day minimum. Re-run the scoring once at least 10 day-ahead
+days exist and switch it on only if the corrected forecast beats raw Solcast on both daily and
+hourly error. This is separate from the ≥20-day Forecast.Solar release gate.
