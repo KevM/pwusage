@@ -58,7 +58,7 @@ export class SolarLayoutRepo {
      * served (status and result) while detection re-runs for the new spot.
      *
      * An admin estimate never replaces a phone location unless `overwriteDevice`
-     * is set; then the outcome is 'device-location-kept' and nothing changes.
+     * is set; without it the outcome is 'device-location-kept' and nothing changes.
      */
     async setLocation(
         siteId: string,
