@@ -3,12 +3,13 @@ import Foundation
 
 enum SolarLayoutCloudMerge {
     static func merge(local: SolarLayoutRecord?, remote: SolarLayoutRecord) -> SolarLayoutRecord {
-        let location = winningLocation(local: local, remote: remote)
-        let candidate = winningResultCandidate(local: local, remote: remote)
-        let validated = validateResult(candidate, for: location.location)
+        let winningLoc = winningLocation(local: local, remote: remote)
+        let localCand = validateResult(candidate(for: local), for: winningLoc.location)
+        let remoteCand = validateResult(candidate(for: remote), for: winningLoc.location)
+        let validated = winningCandidate(local: localCand, remote: remoteCand)
         return SolarLayoutRecord(
-            location: location.location,
-            locationSetAt: location.locationSetAt,
+            location: winningLoc.location,
+            locationSetAt: winningLoc.locationSetAt,
             result: validated?.result,
             detectedAt: validated?.detectedAt,
             attemptedAt: validated?.attemptedAt,
@@ -41,48 +42,22 @@ enum SolarLayoutCloudMerge {
     }
 
     private struct ResultCandidate {
-        let result: DetectedSolarLayout?
+        let result: DetectedSolarLayout
         let detectedAt: Date?
         let attemptedAt: Date?
         let detectorVersion: Int?
         let resultLocation: SolarHomeLocation?
     }
 
-    private static func winningResultCandidate(
-        local: SolarLayoutRecord?, remote: SolarLayoutRecord
-    ) -> ResultCandidate? {
-        let localCand = local?.result.map {
-            ResultCandidate(
-                result: $0,
-                detectedAt: local?.detectedAt,
-                attemptedAt: local?.attemptedAt,
-                detectorVersion: local?.detectorVersion,
-                resultLocation: local?.resultLocation?.rounded
-            )
-        }
-        let remoteCand = remote.result.map {
-            ResultCandidate(
-                result: $0,
-                detectedAt: remote.detectedAt,
-                attemptedAt: remote.attemptedAt,
-                detectorVersion: remote.detectorVersion,
-                resultLocation: remote.resultLocation?.rounded
-            )
-        }
-        guard let localCand else { return remoteCand }
-        guard let remoteCand else { return localCand }
-
-        let localV = localCand.detectorVersion ?? 0
-        let remoteV = remoteCand.detectorVersion ?? 0
-        if remoteV > localV { return remoteCand }
-        if localV > remoteV { return localCand }
-
-        if let rAttempt = remoteCand.attemptedAt, let lAttempt = localCand.attemptedAt {
-            if rAttempt > lAttempt { return remoteCand }
-            return localCand
-        }
-        if remoteCand.attemptedAt != nil { return remoteCand }
-        return localCand
+    private static func candidate(for record: SolarLayoutRecord?) -> ResultCandidate? {
+        guard let record, let result = record.result else { return nil }
+        return ResultCandidate(
+            result: result,
+            detectedAt: record.detectedAt,
+            attemptedAt: record.attemptedAt,
+            detectorVersion: record.detectorVersion,
+            resultLocation: record.resultLocation?.rounded
+        )
     }
 
     private static func validateResult(
@@ -94,6 +69,25 @@ enum SolarLayoutCloudMerge {
             return nil
         }
         return candidate
+    }
+
+    private static func winningCandidate(
+        local: ResultCandidate?, remote: ResultCandidate?
+    ) -> ResultCandidate? {
+        guard let local else { return remote }
+        guard let remote else { return local }
+
+        let localV = local.detectorVersion ?? 0
+        let remoteV = remote.detectorVersion ?? 0
+        if remoteV > localV { return remote }
+        if localV > remoteV { return local }
+
+        if let rAttempt = remote.attemptedAt, let lAttempt = local.attemptedAt {
+            if rAttempt > lAttempt { return remote }
+            return local
+        }
+        if remote.attemptedAt != nil { return remote }
+        return local
     }
 }
 
@@ -122,11 +116,7 @@ enum SolarLayoutCloudRecordSerializer {
         applyLocation(layoutRecord.location?.rounded, to: record)
         record.encryptedValues["locationSetAt"] = layoutRecord.locationSetAt as CKRecordValue?
 
-        if let result = layoutRecord.result {
-            record["result"] = (try? JSONEncoder().encode(result)) as CKRecordValue?
-        } else {
-            record["result"] = nil
-        }
+        record["result"] = layoutRecord.result.flatMap { (try? JSONEncoder().encode($0)) as CKRecordValue? }
         record["detectedAt"] = layoutRecord.detectedAt as CKRecordValue?
         record["attemptedAt"] = layoutRecord.attemptedAt as CKRecordValue?
         record["detectorVersion"] = layoutRecord.detectorVersion as CKRecordValue?
@@ -139,19 +129,16 @@ enum SolarLayoutCloudRecordSerializer {
         _ record: CKRecord
     ) -> (scope: SolarForecastSiteScope, record: SolarLayoutRecord)? {
         guard let scope = parseScope(record) else { return nil }
-        let location = parseLocation(record)
+        let location = parseLocation(in: record)
         let locationSetAt = record.encryptedValues["locationSetAt"] as? Date
 
-        let result: DetectedSolarLayout?
-        if let resultData = record["result"] as? Data {
-            result = try? JSONDecoder().decode(DetectedSolarLayout.self, from: resultData)
-        } else {
-            result = nil
+        let result = (record["result"] as? Data).flatMap {
+            try? JSONDecoder().decode(DetectedSolarLayout.self, from: $0)
         }
         let detectedAt = record["detectedAt"] as? Date
         let attemptedAt = record["attemptedAt"] as? Date
         let detectorVersion = record["detectorVersion"] as? Int
-        let resultLocation = parseResultLocation(record) ?? (result != nil ? location : nil)
+        let resultLocation = parseLocation("result", in: record) ?? (result != nil ? location : nil)
 
         let layoutRecord = SolarLayoutRecord(
             location: location,
@@ -166,27 +153,15 @@ enum SolarLayoutCloudRecordSerializer {
     }
 
     private static func applyLocation(_ location: SolarHomeLocation?, to record: CKRecord) {
-        if let location {
-            record.encryptedValues["latitude"] = location.latitude as CKRecordValue
-            record.encryptedValues["longitude"] = location.longitude as CKRecordValue
-            record.encryptedValues["source"] = location.source.rawValue as CKRecordValue
-        } else {
-            record.encryptedValues["latitude"] = nil
-            record.encryptedValues["longitude"] = nil
-            record.encryptedValues["source"] = nil
-        }
+        record.encryptedValues["latitude"] = location?.latitude as CKRecordValue?
+        record.encryptedValues["longitude"] = location?.longitude as CKRecordValue?
+        record.encryptedValues["source"] = location?.source.rawValue as CKRecordValue?
     }
 
     private static func applyResultLocation(_ location: SolarHomeLocation?, to record: CKRecord) {
-        if let location {
-            record.encryptedValues["resultLatitude"] = location.latitude as CKRecordValue
-            record.encryptedValues["resultLongitude"] = location.longitude as CKRecordValue
-            record.encryptedValues["resultSource"] = location.source.rawValue as CKRecordValue
-        } else {
-            record.encryptedValues["resultLatitude"] = nil
-            record.encryptedValues["resultLongitude"] = nil
-            record.encryptedValues["resultSource"] = nil
-        }
+        record.encryptedValues["resultLatitude"] = location?.latitude as CKRecordValue?
+        record.encryptedValues["resultLongitude"] = location?.longitude as CKRecordValue?
+        record.encryptedValues["resultSource"] = location?.source.rawValue as CKRecordValue?
     }
 
     private static func parseScope(_ record: CKRecord) -> SolarForecastSiteScope? {
@@ -195,28 +170,15 @@ enum SolarLayoutCloudRecordSerializer {
            !account.isEmpty, !site.isEmpty {
             return SolarForecastSiteScope(accountScopeID: account, siteID: site)
         }
-        let name = record.recordID.recordName
-        let parts = name.split(separator: ".", maxSplits: 1)
-        guard parts.count == 2 else { return nil }
-        let account = String(parts[0])
-        let site = String(parts[1])
-        guard !account.isEmpty, !site.isEmpty else { return nil }
-        return SolarForecastSiteScope(accountScopeID: account, siteID: site)
+        let parts = record.recordID.recordName.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+        return SolarForecastSiteScope(accountScopeID: String(parts[0]), siteID: String(parts[1]))
     }
 
-    private static func parseLocation(_ record: CKRecord) -> SolarHomeLocation? {
-        guard let lat = record.encryptedValues["latitude"] as? Double,
-              let lon = record.encryptedValues["longitude"] as? Double else { return nil }
-        let srcStr = record.encryptedValues["source"] as? String
-        let source = srcStr.flatMap(SolarLocationSource.init(rawValue:)) ?? .device
-        let loc = SolarHomeLocation(latitude: lat, longitude: lon, source: source)
-        return loc.isValid ? loc.rounded : nil
-    }
-
-    private static func parseResultLocation(_ record: CKRecord) -> SolarHomeLocation? {
-        guard let lat = record.encryptedValues["resultLatitude"] as? Double,
-              let lon = record.encryptedValues["resultLongitude"] as? Double else { return nil }
-        let srcStr = record.encryptedValues["resultSource"] as? String
+    private static func parseLocation(_ prefix: String = "", in record: CKRecord) -> SolarHomeLocation? {
+        guard let lat = record.encryptedValues[prefix + "latitude"] as? Double,
+              let lon = record.encryptedValues[prefix + "longitude"] as? Double else { return nil }
+        let srcStr = record.encryptedValues[prefix + "source"] as? String
         let source = srcStr.flatMap(SolarLocationSource.init(rawValue:)) ?? .device
         let loc = SolarHomeLocation(latitude: lat, longitude: lon, source: source)
         return loc.isValid ? loc.rounded : nil
@@ -229,21 +191,29 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private let containerIdentifier: String
     private let store: SolarLayoutRecordStore
     private let fileManager: FileManager
+    private let userDefaults: UserDefaults
     private let stateURL: URL
     private var container: CKContainer?
     private var database: CKDatabase?
     private var syncEngine: CKSyncEngine?
     private var isStarted = false
 
+    private var hasSavedZone: Bool {
+        get { userDefaults.bool(forKey: "pwusage.solarLayoutZoneSaved") }
+        set { userDefaults.set(newValue, forKey: "pwusage.solarLayoutZoneSaved") }
+    }
+
     init(
         containerIdentifier: String = "iCloud.fm.rodeo.pwusage",
         store: SolarLayoutRecordStore = .shared,
         fileManager: FileManager = .default,
+        userDefaults: UserDefaults = .standard,
         stateURL: URL? = nil
     ) {
         self.containerIdentifier = containerIdentifier
         self.store = store
         self.fileManager = fileManager
+        self.userDefaults = userDefaults
         self.stateURL = stateURL ?? {
             let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
                 ?? fileManager.temporaryDirectory
@@ -276,12 +246,24 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             )
             let engine = CKSyncEngine(config)
             self.syncEngine = engine
-            let zone = CKRecordZone(zoneName: "SolarLayout")
-            engine.state.add(pendingDatabaseChanges: [.saveZone(zone)])
+            ensureZoneSaved(engine: engine)
             try await engine.fetchChanges()
         } catch {
             // Stay local-only gracefully
         }
+    }
+
+    private func ensureZoneSaved(engine: CKSyncEngine) {
+        let zoneID = SolarLayoutCloudRecordSerializer.zoneID
+        let isPending = engine.state.pendingDatabaseChanges.contains { change in
+            if case .saveZone(let zone) = change {
+                return zone.zoneID == zoneID
+            }
+            return false
+        }
+        guard !hasSavedZone, !isPending else { return }
+        let zone = CKRecordZone(zoneID: zoneID)
+        engine.state.add(pendingDatabaseChanges: [.saveZone(zone)])
     }
 
     func stop() async {
@@ -312,8 +294,16 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             await handleAccountChange(accountEvent.changeType, syncEngine: syncEngine)
         case .fetchedRecordZoneChanges(let fetched):
             await handleFetchedChanges(fetched.modifications.map(\.record))
+        case .sentDatabaseChanges(let sent):
+            handleSentDatabaseChanges(sent)
         default:
             break
+        }
+    }
+
+    private func handleSentDatabaseChanges(_ sent: CKSyncEngine.Event.SentDatabaseChanges) {
+        if sent.savedZones.contains(where: { $0.zoneID == SolarLayoutCloudRecordSerializer.zoneID }) {
+            hasSavedZone = true
         }
     }
 
@@ -377,6 +367,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     private func clearState() {
+        userDefaults.removeObject(forKey: "pwusage.solarLayoutZoneSaved")
         try? fileManager.removeItem(at: stateURL)
     }
 }

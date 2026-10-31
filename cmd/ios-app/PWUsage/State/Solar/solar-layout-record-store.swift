@@ -38,11 +38,19 @@ actor SolarLayoutRecordStore {
 
     private let directory: URL
     private let fileManager: FileManager
+    private let activeAccountScopeProvider: @Sendable () -> String?
     private var cache: [SolarForecastSiteScope: SolarLayoutRecord] = [:]
     private var sync: (any SolarLayoutSyncing)?
 
-    init(fileManager: FileManager = .default, directory: URL? = nil) {
+    init(
+        fileManager: FileManager = .default,
+        directory: URL? = nil,
+        activeAccountScopeProvider: @escaping @Sendable () -> String? = {
+            UserDefaults.standard.string(forKey: "pwusage.localAccountScopeID")
+        }
+    ) {
         self.fileManager = fileManager
+        self.activeAccountScopeProvider = activeAccountScopeProvider
         self.directory = directory ?? (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory).appendingPathComponent("SolarLayout", isDirectory: true)
     }
@@ -125,12 +133,27 @@ actor SolarLayoutRecordStore {
 
     @discardableResult
     func applyRemoteRecord(_ remote: SolarLayoutRecord, scope: SolarForecastSiteScope) throws -> SolarLayoutRecord {
+        let merged = try mergeAndSave(remote, scope: scope)
+        applyToActiveScopeIfNeeded(remote, sourceScope: scope)
+        return merged
+    }
+
+    @discardableResult
+    private func mergeAndSave(_ remote: SolarLayoutRecord, scope: SolarForecastSiteScope) throws -> SolarLayoutRecord {
         let local = try record(scope: scope)
         let merged = SolarLayoutCloudMerge.merge(local: local, remote: remote)
         if merged != local {
             try save(merged, scope: scope)
         }
         return merged
+    }
+
+    private func applyToActiveScopeIfNeeded(_ remote: SolarLayoutRecord, sourceScope: SolarForecastSiteScope) {
+        guard let activeAccount = activeAccountScopeProvider(),
+              !activeAccount.isEmpty,
+              activeAccount != sourceScope.accountScopeID else { return }
+        let activeScope = SolarForecastSiteScope(accountScopeID: activeAccount, siteID: sourceScope.siteID)
+        _ = try? mergeAndSave(remote, scope: activeScope)
     }
 
     private func notifySync(_ scope: SolarForecastSiteScope) {

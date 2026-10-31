@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import SwiftUI
 
 extension PWUsageAppModel {
@@ -103,8 +104,15 @@ extension PWUsageAppModel {
             accountScopeID = existing
             return existing
         }
+        if let cloudExisting = NSUbiquitousKeyValueStore.default.string(forKey: Self.accountScopeDefaultsKey),
+           !cloudExisting.isEmpty {
+            userDefaults.set(cloudExisting, forKey: Self.accountScopeDefaultsKey)
+            accountScopeID = cloudExisting
+            return cloudExisting
+        }
         let created = UUID().uuidString.lowercased()
         userDefaults.set(created, forKey: Self.accountScopeDefaultsKey)
+        NSUbiquitousKeyValueStore.default.set(created, forKey: Self.accountScopeDefaultsKey)
         accountScopeID = created
         return created
     }

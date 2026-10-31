@@ -103,6 +103,39 @@ struct SolarLayoutCloudMergeTests {
         #expect(merged.resultLocation == nil)
     }
 
+    @Test("Valid local result for winning location is retained over newer remote result for obsolete location")
+    func validLocalResultRetainedOverNewerObsoleteRemoteResult() {
+        let tOld = Date(timeIntervalSince1970: 50)
+        let t100 = Date(timeIntervalSince1970: 100)
+        let t110 = Date(timeIntervalSince1970: 110)
+
+        let local = SolarLayoutRecord(
+            location: locB,
+            locationSetAt: t100,
+            result: makeResult(.detected),
+            detectedAt: t100,
+            attemptedAt: t100,
+            detectorVersion: 1,
+            resultLocation: locB
+        )
+        let remote = SolarLayoutRecord(
+            location: locA,
+            locationSetAt: tOld,
+            result: makeResult(.detected),
+            detectedAt: t110,
+            attemptedAt: t110,
+            detectorVersion: 2,
+            resultLocation: locA
+        )
+        let merged = SolarLayoutCloudMerge.merge(local: local, remote: remote)
+        #expect(merged.location == locB)
+        #expect(merged.locationSetAt == t100)
+        #expect(merged.result?.status == .detected)
+        #expect(merged.detectorVersion == 1)
+        #expect(merged.attemptedAt == t100)
+        #expect(merged.resultLocation == locB)
+    }
+
     @Test("Local result kept if location unchanged")
     func localResultKeptIfLocationUnchanged() {
         let date1 = Date(timeIntervalSince1970: 100)
@@ -284,6 +317,36 @@ struct SolarLayoutCloudMergeTests {
 
         try await staysTrue { mockSync.changedScopes.isEmpty }
         #expect(try await store.record(scope: scope)?.result?.status == .detected)
+
+        try await store.removeAll()
+    }
+
+    @Test("Store applies remote record to both source scope and active account scope if different")
+    func storeAppliesRemoteRecordToActiveScope() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = SolarLayoutRecordStore(directory: folder) { "local-active-acc" }
+
+        let remoteScope = SolarForecastSiteScope(accountScopeID: "remote-device-acc", siteID: "site-1")
+        let activeScope = SolarForecastSiteScope(accountScopeID: "local-active-acc", siteID: "site-1")
+
+        let remoteRecord = SolarLayoutRecord(
+            location: locA,
+            locationSetAt: Date(timeIntervalSince1970: 500),
+            result: makeResult(.detected),
+            detectedAt: Date(timeIntervalSince1970: 500),
+            attemptedAt: Date(timeIntervalSince1970: 500),
+            detectorVersion: 1,
+            resultLocation: locA
+        )
+
+        _ = try await store.applyRemoteRecord(remoteRecord, scope: remoteScope)
+
+        let remoteSaved = try await store.record(scope: remoteScope)
+        #expect(remoteSaved?.result?.status == .detected)
+
+        let activeSaved = try await store.record(scope: activeScope)
+        #expect(activeSaved?.result?.status == .detected)
+        #expect(activeSaved?.location == locA)
 
         try await store.removeAll()
     }
