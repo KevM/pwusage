@@ -36,3 +36,13 @@ npx tsx scripts/solar-layout-parity.ts --dir /path/outside/repo
 Differences in the port, by design: altitude 0 and a fixed Linke turbidity of
 3.0 instead of pvlib's lookup tables; a seeded bootstrap; the Marion diffuse
 IAM integrated numerically.
+
+## Swift fixtures
+
+`scripts/solar-layout-fixtures.ts` writes one JSON fixture per synthetic case
+(seeded, test-only data) into `cmd/ios-app/PWUsageTests/Fixtures/SolarLayout`.
+Each holds the input samples as base64 little-endian Float32, the stage values
+(sun, POA, selection, fit) and the final `SolarLayoutResult`, so the Swift port
+can check parity stage by stage. Regenerate with
+`npx tsx scripts/solar-layout-fixtures.ts --out ../ios-app/PWUsageTests/Fixtures/SolarLayout`;
+the output is byte-identical across runs.

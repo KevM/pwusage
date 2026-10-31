@@ -42,7 +42,7 @@ jobs:
             abort "Tag must equal ios-v#{version}" unless ENV.fetch("GITHUB_REF_NAME") == "ios-v#{version}"
           '
       - name: Run native tests
-        run: ./run-tests.sh
+        run: ./run-tests.sh --full
         env:
           TMPDIR: /tmp
       - name: Trust GitHub signing repository host

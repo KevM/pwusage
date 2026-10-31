@@ -35,6 +35,7 @@ EOF
 cat > "$fixture_dir/bin/xcodebuild" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$PWUSAGE_TEST_ARGS"
+echo "env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=${TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY:-}" >> "$PWUSAGE_TEST_ARGS"
 if [[ "${PWUSAGE_TEST_HANG:-0}" == 1 ]]; then
   sleep 30
 fi
@@ -109,6 +110,36 @@ rg -q '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPI
 # Test explicit flag passthrough
 "$script_dir/run-tests.sh" -skip-testing:PWUsageTests/MobileContractsTests
 rg -q '^-skip-testing:PWUsageTests/MobileContractsTests$' "$PWUSAGE_TEST_ARGS"
+
+# --quick skips every suite in quick-test-skips.txt; the full run (no flag) skips none of them.
+"$script_dir/run-tests.sh" --quick
+while IFS= read -r skipped || [[ -n "$skipped" ]]; do
+  if [[ -n "$skipped" ]]; then
+    grep -qxF -- "-skip-testing:$skipped" "$PWUSAGE_TEST_ARGS"
+  fi
+done < "$script_dir/quick-test-skips.txt"
+"$script_dir/run-tests.sh"
+if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+  echo 'The default run skipped tests' >&2
+  exit 1
+fi
+# The default run stays a Debug build without the opt-in year suite.
+if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
+  echo 'The default run changed the optimization level' >&2
+  exit 1
+fi
+rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
+# --full (CI) builds optimized, opens the year-parity gate, and skips nothing.
+"$script_dir/run-tests.sh" --full
+rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+  echo 'The full run skipped tests' >&2
+  exit 1
+fi
+"$script_dir/run-tests.sh" --quick AppConfigurationTests
+rg -q '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
+rg -q '^-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests$' "$PWUSAGE_TEST_ARGS"
 
 export PWUSAGE_TEST_HANG=1
 export PWUSAGE_TEST_TIMEOUT_SECONDS=1
