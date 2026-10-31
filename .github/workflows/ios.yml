@@ -63,7 +63,10 @@ jobs:
       - name: Run iOS Tests
         env:
           TMPDIR: /tmp
-        run: ./run-tests.sh
+          # The optimized build compiles slower than Debug; stays inside the 15-minute job limit.
+          PWUSAGE_TEST_TIMEOUT_SECONDS: 780
+        # --full: optimized build plus the opt-in year-fixture parity suite (see run-tests.sh).
+        run: ./run-tests.sh --full
 
       - name: Upload Test Artifacts
         if: failure()

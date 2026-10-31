@@ -2,17 +2,21 @@ import Foundation
 @testable import PWUsage
 import Testing
 
-/// Fixtures small enough for the default Debug suite. The year fixtures run in
-/// `SolarLayoutDetectorYearParityTests` (opt-in) because unoptimized detection on them takes minutes.
+/// Full detections on the fixtures small enough for the full suite (about two minutes in Debug).
+/// `run-tests.sh --quick` skips this suite; the year fixtures run in `SolarLayoutDetectorYearParityTests`.
 @Suite("Solar layout detector fixture parity")
-struct SolarLayoutDetectorTests {
-    /// `east-west-clipped-60d` is the default suite's clipped, two-plane, detected case.
-    static let fixtureNames = ["east-west-30d", "east-west-clipped-60d", "south-shaded-100d"]
-
-    @Test(arguments: fixtureNames)
+struct SolarLayoutDetectorFixtureParityTests {
+    @Test(arguments: SolarLayoutDetectorTests.fixtureNames)
     func matchesFixture(name: String) throws {
-        try Self.checkFixture(name)
+        try SolarLayoutDetectorTests.checkFixture(name)
     }
+}
+
+/// Fast detector checks, plus the fixture-parity helpers the parity suites share.
+@Suite("Solar layout detector")
+struct SolarLayoutDetectorTests {
+    /// `east-west-clipped-60d` is the full suite's clipped, two-plane, detected case.
+    static let fixtureNames = ["east-west-30d", "east-west-clipped-60d", "south-shaded-100d"]
 
     /// Runs detection once on fixture `name` and checks its result and stages against the recorded
     /// TypeScript values. Returns the detection's wall time in seconds.

@@ -1,7 +1,24 @@
 #!/usr/bin/env bash
+# Usage: ./run-tests.sh [--quick | --full] [test filters...]
+#   --quick    Everyday sniff test for agents: Debug build, skips the suites listed in
+#              quick-test-skips.txt (multi-minute detector parity runs).
+#   (no flag)  Every default suite, Debug build. Run before opening or updating a PR.
+#   --full     What CI runs: builds optimized (-O, still testable) so the numeric parity suites
+#              run in seconds, and turns on the opt-in year-fixture parity suite.
 set -euo pipefail
 
 cd "$(dirname "$0")"
+
+mode=default
+case "${1:-}" in
+  --quick) mode=quick; shift ;;
+  --full) mode=full; shift ;;
+esac
+mode_build_settings=()
+if [[ "$mode" == full ]]; then
+  mode_build_settings=(SWIFT_OPTIMIZATION_LEVEL=-O)
+  export TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1
+fi
 
 timeout_seconds="${PWUSAGE_TEST_TIMEOUT_SECONDS:-600}"
 if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
@@ -80,8 +97,16 @@ for target in "$@"; do
   fi
 done
 
+if [[ "$mode" == quick ]]; then
+  while IFS= read -r skipped || [[ -n "$skipped" ]]; do
+    if [[ -n "$skipped" ]]; then
+      test_filter_args+=("-skip-testing:$skipped")
+    fi
+  done < quick-test-skips.txt
+fi
+
 artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/pwusage-ios-tests.XXXXXX")"
-echo "Testing PWUsage on simulator $simulator_id (limit: ${timeout_seconds}s)"
+echo "Testing PWUsage ($mode run) on simulator $simulator_id (limit: ${timeout_seconds}s)"
 if [[ "${#test_filter_args[@]}" -gt 0 ]]; then
   echo "Filters: ${test_filter_args[*]}"
 fi
@@ -99,6 +124,7 @@ python3 - "$timeout_seconds" xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   "PWUSAGE_FUZZ_STRESS=${PWUSAGE_FUZZ_STRESS:-0}" \
   "PWUSAGE_FUZZ_SEED=${PWUSAGE_FUZZ_SEED:-}" \
+  ${mode_build_settings[@]+"${mode_build_settings[@]}"} \
   ${test_filter_args[@]+"${test_filter_args[@]}"} \
   test <<'PY'
 import os
