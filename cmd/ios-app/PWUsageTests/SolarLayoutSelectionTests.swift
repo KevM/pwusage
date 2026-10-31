@@ -12,7 +12,7 @@ struct SolarLayoutSelectionTests {
         let expected = try #require(fixture.stages.selection)
         let series = try Self.series(for: fixture)
 
-        let producingDays = Set(series.filter { $0.kw > 0 }.map(\.localDay)).count
+        let producingDays = Set(series.filter { $0.powerKw > 0 }.map(\.localDay)).count
         #expect(producingDays == expected.producingDays, "\(name) producingDays")
 
         // The reference only reaches clip detection with at least 42 producing days (detect.ts MIN_HISTORY_DAYS).
@@ -65,13 +65,11 @@ struct SolarLayoutSelectionTests {
 
     static let clipReferences = [
         ClipReference(name: "east-west-30d", limitKw: 7.651, intervals: 41, days: 5),
-        ClipReference(name: "east-west-year", limitKw: nil, intervals: 0, days: 0),
-    ]
+        ClipReference(name: "east-west-year", limitKw: nil, intervals: 0, days: 0)]
 
     static let envelopeReferences = [
         EnvelopeReference(name: "east-west-30d", clearCount: 2765, indexSum: 12_669_175),
-        EnvelopeReference(name: "east-west-year", clearCount: 26667, indexSum: 1_493_046_043),
-    ]
+        EnvelopeReference(name: "east-west-year", clearCount: 26667, indexSum: 1_493_046_043)]
 
     @Test func seriesKeepsDSTSlots() throws {
         var utc = Calendar(identifier: .gregorian)
@@ -88,10 +86,15 @@ struct SolarLayoutSelectionTests {
 
         #expect(series.count == 300)
         #expect(Set(series.map(\.time)).count == 300)
-        #expect(zip(series, series.dropFirst()).allSatisfy { pair in abs(pair.1.time.timeIntervalSince(pair.0.time) - 300) < 1e-6 })
+        let regularSteps = zip(series, series.dropFirst()).allSatisfy { pair in
+            abs(pair.1.time.timeIntervalSince(pair.0.time) - 300) < 1e-6
+        }
+        #expect(regularSteps)
         #expect(series.allSatisfy { $0.localDay == "2026-11-01" })
         // Both 01:00-01:59 hours exist: CDT before the fall-back, CST after it.
-        let repeatedHour = series.filter { $0.time >= start.addingTimeInterval(3600) && $0.time < start.addingTimeInterval(3 * 3600) }
+        let hourStart = start.addingTimeInterval(3600)
+        let hourEnd = start.addingTimeInterval(3 * 3600)
+        let repeatedHour = series.filter { $0.time >= hourStart && $0.time < hourEnd }
         #expect(repeatedHour.count == 24)
     }
 
@@ -108,8 +111,7 @@ struct SolarLayoutSelectionTests {
         let mask = ShadeMask(horizon: horizon, hotBins: [])
         #expect(mask.summary() == [
             ShadeSegment(azimuthFrom: 10, azimuthTo: 180, belowElevation: 10),
-            ShadeSegment(azimuthFrom: 180, azimuthTo: 360, belowElevation: 30),
-        ])
+            ShadeSegment(azimuthFrom: 180, azimuthTo: 360, belowElevation: 30)])
     }
 
     @Test func shadeMaskUsesHorizonAndHotBins() {
@@ -125,8 +127,8 @@ struct SolarLayoutSelectionTests {
     /// The fixture's 5-minute Float32 production, placed on its UTC grid.
     private static func series(for fixture: SolarLayoutFixture) throws -> LayoutSeries {
         let start = fixture.input.start.timeIntervalSince1970
-        let samples = fixture.input.solarWh.enumerated().map { index, wh in
-            (timestamp: Date(timeIntervalSince1970: start + Double(index) * 300), solarWh: Double(wh))
+        let samples = fixture.input.solarWh.enumerated().map { index, energyWh in
+            (timestamp: Date(timeIntervalSince1970: start + Double(index) * 300), solarWh: Double(energyWh))
         }
         return layoutSeries(
             samples: samples, latitude: fixture.input.latitude, longitude: fixture.input.longitude,

@@ -37,7 +37,8 @@ struct SolarLayoutDetectorTests {
             Self.expectAngle(plane.azimuth, want.azimuth, 0.5, "\(name) plane \(index) azimuth")
             Self.expectClose(plane.tilt, want.tilt, 0.5, "\(name) plane \(index) tilt")
             Self.expectClose(plane.dcKwp, want.dcKwp, 0.01 * want.dcKwp, "\(name) plane \(index) dcKwp")
-            Self.expectClose(plane.effectiveKw, want.effectiveKw, 0.01 * want.effectiveKw, "\(name) plane \(index) effectiveKw")
+            Self.expectClose(
+                plane.effectiveKw, want.effectiveKw, 0.01 * want.effectiveKw, "\(name) plane \(index) effectiveKw")
         }
     }
 
@@ -131,7 +132,8 @@ struct SolarLayoutDetectorTests {
         #expect(high == SolarLayout(
             planes: [SolarLayoutPlane(azimuth: 90, tilt: 20, dcKwp: 5)], acClipKw: 4.5,
             confidence: .high, detectedAt: detectedAt))
-        #expect(SolarLayoutDetector.forecastLayout(result(.detected, "medium"), detectedAt: detectedAt)?.confidence == .medium)
+        let medium = SolarLayoutDetector.forecastLayout(result(.detected, "medium"), detectedAt: detectedAt)
+        #expect(medium?.confidence == .medium)
         #expect(SolarLayoutDetector.forecastLayout(result(.lowConfidence, "low"), detectedAt: detectedAt) == nil)
         #expect(SolarLayoutDetector.forecastLayout(result(.detected, "low"), detectedAt: detectedAt) == nil)
         #expect(SolarLayoutDetector.forecastLayout(result(.notEnoughHistory, nil), detectedAt: detectedAt) == nil)
@@ -140,8 +142,8 @@ struct SolarLayoutDetectorTests {
     // MARK: - Helpers
 
     static func samples(_ fixture: SolarLayoutFixture) -> [(timestamp: Date, solarWh: Double)] {
-        fixture.input.solarWh.enumerated().map { index, wh in
-            (timestamp: fixture.input.start.addingTimeInterval(Double(index) * 300), solarWh: Double(wh))
+        fixture.input.solarWh.enumerated().map { index, energyWh in
+            (timestamp: fixture.input.start.addingTimeInterval(Double(index) * 300), solarWh: Double(energyWh))
         }
     }
 
@@ -164,8 +166,9 @@ struct SolarLayoutDetectorTests {
         switch (got, want) {
         case (nil, nil):
             return
-        case let (g?, w?):
-            #expect(abs(g - w) <= tolerance * max(abs(w), 1e-12), "\(label): got \(g), want \(w)")
+        case let (gotValue?, wantValue?):
+            #expect(abs(gotValue - wantValue) <= tolerance * max(abs(wantValue), 1e-12),
+                    "\(label): got \(gotValue), want \(wantValue)")
         default:
             Issue.record("\(label): got \(String(describing: got)), want \(String(describing: want))")
         }
@@ -179,8 +182,12 @@ struct SolarLayoutDetectorTests {
 }
 
 /// Year-sized fixtures: unoptimized detection takes minutes, so this suite runs only when
-/// PWUSAGE_SOLAR_SLOW_PARITY=1 is set. Run it with a long PWUSAGE_TEST_TIMEOUT_SECONDS.
-@Suite("Solar layout detector year parity (opt-in)", .enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_SOLAR_SLOW_PARITY"] == "1"))
+/// PWUSAGE_SOLAR_SLOW_PARITY=1 reaches the test process. xcodebuild forwards only TEST_RUNNER_-prefixed
+/// variables, so run: TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1 PWUSAGE_TEST_TIMEOUT_SECONDS=1800
+/// ./run-tests.sh PWUsageTests/SolarLayoutDetectorYearParityTests
+@Suite(
+    "Solar layout detector year parity (opt-in)",
+    .enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_SOLAR_SLOW_PARITY"] == "1"))
 struct SolarLayoutDetectorYearParityTests {
     static let fixtureNames = ["east-west-year", "south-clipped-year"]
 
@@ -203,5 +210,4 @@ struct SolarLayoutDetectorYearParityTests {
         print("SOLAR_LAYOUT_DETECT_TIMING east-west-year \(String(format: "%.2f", seconds)) s")
         #expect(result.status == .detected)
     }
-
 }

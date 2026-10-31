@@ -3,7 +3,8 @@ import Foundation
 import Testing
 
 /// Local-only parity run for the detector against the Python reference's research sites.
-/// Research data never enters the repo: set PWUSAGE_SOLAR_PARITY_DIR to a folder outside it.
+/// Research data never enters the repo: point PWUSAGE_SOLAR_PARITY_DIR at a folder outside it,
+/// passed through xcodebuild as TEST_RUNNER_PWUSAGE_SOLAR_PARITY_DIR=/abs/path ./run-tests.sh ….
 /// The folder holds site-*.csv (timestamp,solar_wh; UTC interval start, Wh per 5 minutes) and
 /// inputs.json, the same format as scripts/solar-layout-parity.ts. Each site writes
 /// <site>.swift.json beside its CSV. Without the variable the test is disabled.
@@ -41,13 +42,13 @@ struct SolarLayoutResearchParityTests {
     }
 
     private struct Inputs: Decodable {
-        let sites: [String: Site]
+        let sites: [String: ResearchSite]
+    }
 
-        struct Site: Decodable {
-            let timezone: String
-            let lat: Double
-            let lon: Double
-        }
+    private struct ResearchSite: Decodable {
+        let timezone: String
+        let lat: Double
+        let lon: Double
     }
 
     private static func samples(csv url: URL) throws -> [(timestamp: Date, solarWh: Double)] {
@@ -60,10 +61,10 @@ struct SolarLayoutResearchParityTests {
             guard fields.count >= 2 else { throw CocoaError(.fileReadCorruptFile) }
             let timestamp = String(fields[0])
             guard let date = formatter.date(from: timestamp) ?? fractional.date(from: timestamp),
-                  let wh = Double(fields[1]) else {
+                  let energyWh = Double(fields[1]) else {
                 throw CocoaError(.fileReadCorruptFile)
             }
-            return (timestamp: date, solarWh: wh)
+            return (timestamp: date, solarWh: energyWh)
         }
     }
 }

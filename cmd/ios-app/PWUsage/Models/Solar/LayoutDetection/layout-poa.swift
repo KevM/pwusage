@@ -134,11 +134,11 @@ enum LayoutPOA {
             ground: lower.ground + (upper.ground - lower.ground) * fraction)
     }
 
-    /// Smooth min(x, 1) with scale `scale` (reference `_softmin`).
-    static func softmin(_ x: Double, scale: Double = 0.01) -> Double {
-        let z = (x - 1) / scale
-        let logAddExp = z > 0 ? z + log1p(exp(-z)) : log1p(exp(z))
-        return x - scale * logAddExp
+    /// Smooth min(ratio, 1) with scale `scale` (reference `_softmin`).
+    static func softmin(_ ratio: Double, scale: Double = 0.01) -> Double {
+        let scaled = (ratio - 1) / scale
+        let logAddExp = scaled > 0 ? scaled + log1p(exp(-scaled)) : log1p(exp(scaled))
+        return ratio - scale * logAddExp
     }
 
     /// Effective POA irradiance divided by 1000 (kW per kW of effective size) for every row of
@@ -153,30 +153,31 @@ enum LayoutPOA {
         let diffuse = smooth ? diffuseIamSmooth(clampedTilt) : diffuseIam(clampedTilt)
         let isotropicFactor = 0.5 * (1 + cosTilt)
         let groundFactor = albedo * (1 - cosTilt) * 0.5 * diffuse.ground
-        let n = refractiveIndex
+        let refractive = refractiveIndex
         let extinction = 4 * extinctionDepthMetres
-        let normalReflectance = square((1 - n) / (1 + n))
+        let normalReflectance = square((1 - refractive) / (1 + refractive))
         let norm0 = 2 * (1 - normalReflectance) * exp(-extinction)
         var out = [Double](repeating: 0, count: sun.count)
-        for i in 0 ..< sun.count {
-            guard sun.ghi[i] > 0 else { continue }
-            var c = cosTilt * sun.cosZ[i] + sinTilt * sun.sinZ[i] * (sun.cosSaz[i] * cosAzimuth + sun.sinSaz[i] * sinAzimuth)
-            c = c > 1 ? 1 : (c < -1 ? -1 : c)
+        for row in 0 ..< sun.count {
+            guard sun.ghi[row] > 0 else { continue }
+            let azimuthTerm = sun.cosSaz[row] * cosAzimuth + sun.sinSaz[row] * sinAzimuth
+            var cosInc = cosTilt * sun.cosZ[row] + sinTilt * sun.sinZ[row] * azimuthTerm
+            cosInc = cosInc > 1 ? 1 : (cosInc < -1 ? -1 : cosInc)
             var beam = 0.0
-            if c > 0 {
-                let sin2 = sqrt(1 - c * c) / n
+            if cosInc > 0 {
+                let sin2 = sqrt(1 - cosInc * cosInc) / refractive
                 let cos2 = sqrt(1 - sin2 * sin2)
-                let reflectanceS = square((c - n * cos2) / (c + n * cos2))
-                let reflectanceP = square((cos2 - n * c) / (cos2 + n * c))
-                beam = sun.dni[i] * c * ((2 - reflectanceS - reflectanceP) * exp(-extinction / cos2) / norm0)
+                let reflectanceS = square((cosInc - refractive * cos2) / (cosInc + refractive * cos2))
+                let reflectanceP = square((cos2 - refractive * cosInc) / (cos2 + refractive * cosInc))
+                beam = sun.dni[row] * cosInc * ((2 - reflectanceS - reflectanceP) * exp(-extinction / cos2) / norm0)
             }
-            let anisotropy = sun.anis[i]
-            let isotropic = sun.dhi[i] * (1 - anisotropy) * isotropicFactor
-            let circumsolar = c > 0 ? sun.dhi[i] * anisotropy * c / sun.rbDen[i] : 0
-            var effective = beam + (max(isotropic, 0) + max(circumsolar, 0)) * diffuse.sky + sun.ghi[i] * groundFactor
+            let anisotropy = sun.anis[row]
+            let isotropic = sun.dhi[row] * (1 - anisotropy) * isotropicFactor
+            let circumsolar = cosInc > 0 ? sun.dhi[row] * anisotropy * cosInc / sun.rbDen[row] : 0
+            var effective = beam + (max(isotropic, 0) + max(circumsolar, 0)) * diffuse.sky + sun.ghi[row] * groundFactor
             if effective < 0 { effective = 0 }
-            out[i] = effective * (1 - temperatureCoefficient * effective / 1000) / (1 - temperatureCoefficient)
-                * sun.tfac[i] / 1000
+            out[row] = effective * (1 - temperatureCoefficient * effective / 1000) / (1 - temperatureCoefficient)
+                * sun.tfac[row] / 1000
         }
         return out
     }

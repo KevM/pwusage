@@ -14,30 +14,25 @@ struct SolarLayoutFitTests {
             onePlane: [16.638800913734826, 6.396857729276779, 8.835797812914267],
             twoPlanes: [
                 90.00000011117316, 19.999999984357554, 5.000000003702334,
-                270.0000001461078, 20.00000001772456, 3.9999999963247994,
-            ]),
+                270.0000001461078, 20.00000001772456, 3.9999999963247994]),
         FitReference(
             name: "east-west-year",
             onePlane: [85.42112023432622, 1.843988257705627, 8.509121643557934],
             twoPlanes: [
                 90.0000000000291, 19.999999998097614, 5.000000000249034,
-                269.99999999994884, 19.999999999932687, 3.9999999996844773,
-            ]),
+                269.99999999994884, 19.999999999932687, 3.9999999996844773]),
         FitReference(
             name: "south-clipped-year",
             onePlane: [85.42112023432622, 1.843988257705627, 8.509121643557934],
             twoPlanes: [
                 90.0000000000291, 19.999999998097614, 5.000000000249034,
-                269.99999999994884, 19.999999999932687, 3.9999999996844773,
-            ]),
+                269.99999999994884, 19.999999999932687, 3.9999999996844773]),
         FitReference(
             name: "south-shaded-100d",
             onePlane: [34.351771707686794, 3.6326473899237848, 8.639022005816944],
             twoPlanes: [
                 90.00000002024461, 19.999999992597623, 5.000000001542716,
-                270.00000003730224, 20.000000007357507, 3.999999998555364,
-            ]),
-    ]
+                270.00000003730224, 20.000000007357507, 3.999999998555364])]
 
     struct FitReference: Sendable {
         let name: String
@@ -53,8 +48,7 @@ struct SolarLayoutFitTests {
             0.011704753153026104, 0.06195825757458806, 0.97690763277933,
             0.6990287057124078, 0.5214452685322613, 0.4055216880515218,
             0.4662326325196773, 0.23992518591694534, 0.5533256039489061,
-            0.729822089895606,
-        ]
+            0.729822089895606]
         let rng = LayoutFit.seededRng(7)
         for (index, value) in expected.enumerated() {
             #expect(rng() == value, "draw \(index)")
@@ -65,7 +59,8 @@ struct SolarLayoutFitTests {
     func fitMatchesTypeScriptOnFixtureRows(reference: FitReference) throws {
         let rows = try Self.rows(for: SolarLayoutFixture.load(reference.name))
         let gram = try #require(LayoutFit.groupGrams(
-            LayoutFit.gridColumns(rows), y: rows.y, group: LayoutFit.fitMaskGroup(rows, clipKw: nil) { _ in 0 }, groups: 1
+            LayoutFit.gridColumns(rows), powerKw: rows.powerKw,
+            group: LayoutFit.fitMaskGroup(rows, clipKw: nil) { _ in 0 }, groups: 1
         ).first)
 
         let one = LayoutFit.fitFromGram(rows, gram: gram, clipKw: nil, planes: 1, starts: 3)
@@ -90,7 +85,8 @@ struct SolarLayoutFitTests {
             for (plane, expected) in zip(boot, truth) {
                 expectClose(plane.azimuth, expected.azimuth, 0.01, "\(name) bootstrap azimuth")
                 expectClose(plane.tilt, expected.tilt, 0.01, "\(name) bootstrap tilt")
-                expectClose(plane.effectiveKw, expected.effectiveKw, 0.001 * expected.effectiveKw, "\(name) bootstrap kW")
+                expectClose(
+                    plane.effectiveKw, expected.effectiveKw, 0.001 * expected.effectiveKw, "\(name) bootstrap kW")
             }
         }
     }
@@ -139,10 +135,10 @@ struct SolarLayoutFitTests {
     private static func rows(for fixture: SolarLayoutFixture) throws -> LayoutFit.Rows {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: fixture.input.timeZone))
-        let points = zip(fixture.stages.sun, fixture.stages.poa.kw).map { row, kw in
+        let points = zip(fixture.stages.sun, fixture.stages.poa.kw).map { row, powerKw in
             let parts = calendar.dateComponents([.year, .month, .day], from: row.timestamp)
             return LayoutSeriesPoint(
-                time: row.timestamp, kw: kw,
+                time: row.timestamp, powerKw: powerKw,
                 sun: LayoutSunSample(
                     apparentZenith: row.apparentZenith, elevation: row.elevation, azimuth: row.azimuth,
                     dniExtra: row.dniExtra, ghi: row.ghi, dni: row.dni, dhi: row.dhi,

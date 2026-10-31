@@ -10,7 +10,7 @@ private let azimuthBinCount = 36
 struct LayoutSeriesPoint: Equatable, Sendable {
     let time: Date
     /// Production in kW with the night baseline removed; NaN where no sample exists.
-    let kw: Double
+    let powerKw: Double
     let sun: LayoutSunSample
     /// Site-local calendar day, `yyyy-MM-dd`.
     let localDay: String
@@ -114,15 +114,15 @@ func layoutSeries(
             at: Date(timeIntervalSince1970: (slotMs + stepMs / 2) / 1000), latitude: latitude, longitude: longitude)
         let parts = calendar.dateComponents([.year, .month, .day], from: time)
         let localDay = String(format: "%04ld-%02ld-%02ld", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
-        rows.append(SeriesRow(time: time, kw: raw.isFinite ? raw : .nan, sun: sun, localDay: localDay))
+        rows.append(SeriesRow(time: time, powerKw: raw.isFinite ? raw : .nan, sun: sun, localDay: localDay))
         slotMs += stepMs
     }
 
-    let night = rows.filter { $0.sun.elevation < -6 && $0.kw.isFinite }.map(\.kw)
+    let night = rows.filter { $0.sun.elevation < -6 && $0.powerKw.isFinite }.map(\.powerKw)
     let baseline = max(night.isEmpty ? 0 : median(night), 0)
     let points = rows.map { row in
         LayoutSeriesPoint(
-            time: row.time, kw: row.kw.isFinite ? max(row.kw - baseline, 0) : .nan,
+            time: row.time, powerKw: row.powerKw.isFinite ? max(row.powerKw - baseline, 0) : .nan,
             sun: row.sun, localDay: row.localDay)
     }
     return LayoutSeries(points: points)
@@ -130,7 +130,7 @@ func layoutSeries(
 
 private struct SeriesRow {
     let time: Date
-    let kw: Double
+    let powerKw: Double
     let sun: LayoutSunSample
     let localDay: String
 }
@@ -138,9 +138,9 @@ private struct SeriesRow {
 /// AC clip plateau: many daylight intervals at the same maximum, in runs of 3+ on 5+ days.
 func detectClip(_ series: LayoutSeries) -> ClipDetection? {
     let total = series.count
-    let daylight = series.map { $0.sun.elevation > 10 && $0.kw.isFinite }
+    let daylight = series.map { $0.sun.elevation > 10 && $0.powerKw.isFinite }
     var values: [Double] = []
-    for index in 0 ..< total where daylight[index] { values.append(series[index].kw) }
+    for index in 0 ..< total where daylight[index] { values.append(series[index].powerKw) }
     guard values.count >= 500 else { return nil }
     let high = quantile(values, 0.9999)
     let candidates = Array(
@@ -150,28 +150,9 @@ func detectClip(_ series: LayoutSeries) -> ClipDetection? {
 
     var best: ClipDetection?
     for candidate in candidates {
-        let tolerance = max(0.004 * candidate, 0.013)
-        var near = [Bool](repeating: false, count: total)
-        var count = 0
-        for index in 0 ..< total where daylight[index] && abs(series[index].kw - candidate) <= tolerance {
-            near[index] = true
-            count += 1
-        }
+        let (near, count) = clipNearMask(series, daylight: daylight, level: candidate)
         guard count >= 30 else { continue }
-        var runDays = Set<Int>()
-        var start = 0
-        while start < total {
-            guard near[start] else {
-                start += 1
-                continue
-            }
-            var end = start
-            while end < total && near[end] { end += 1 }
-            if end - start >= 3 {
-                for member in start ..< end { runDays.insert(utcDayKey(series[member].time)) }
-            }
-            start = end
-        }
+        let runDays = clipRunDays(series, near: near)
         let fraction = Double(count) / Double(values.count)
         let above = values.filter { $0 > candidate * 1.015 + 0.013 }.count
         if runDays.count >= 5, fraction > 0.003, Double(above) < 0.05 * Double(count),
@@ -181,12 +162,48 @@ func detectClip(_ series: LayoutSeries) -> ClipDetection? {
     }
     guard let found = best else { return nil }
     let limit = found.limitKw
-    let tolerance = max(0.004 * limit, 0.013)
     var band: [Double] = []
-    for index in 0 ..< total where daylight[index] && abs(series[index].kw - limit) <= tolerance {
-        band.append(series[index].kw)
+    for index in 0 ..< total where daylight[index] && abs(series[index].powerKw - limit) <= clipTolerance(limit) {
+        band.append(series[index].powerKw)
     }
     return ClipDetection(limitKw: jsRound(median(band) * 1000) / 1000, intervals: found.intervals, days: found.days)
+}
+
+/// The match tolerance around a clip level.
+private func clipTolerance(_ level: Double) -> Double {
+    max(0.004 * level, 0.013)
+}
+
+/// Daylight intervals within tolerance of `level`, and how many there are.
+private func clipNearMask(_ series: LayoutSeries, daylight: [Bool], level: Double) -> (near: [Bool], count: Int) {
+    let tolerance = clipTolerance(level)
+    var near = [Bool](repeating: false, count: series.count)
+    var count = 0
+    for index in 0 ..< series.count where daylight[index] && abs(series[index].powerKw - level) <= tolerance {
+        near[index] = true
+        count += 1
+    }
+    return (near, count)
+}
+
+/// UTC days that contain a run of 3+ consecutive near-plateau intervals.
+private func clipRunDays(_ series: LayoutSeries, near: [Bool]) -> Set<Int> {
+    let total = series.count
+    var runDays = Set<Int>()
+    var start = 0
+    while start < total {
+        guard near[start] else {
+            start += 1
+            continue
+        }
+        var end = start
+        while end < total && near[end] { end += 1 }
+        if end - start >= 3 {
+            for member in start ..< end { runDays.insert(utcDayKey(series[member].time)) }
+        }
+        start = end
+    }
+    return runDays
 }
 
 /// Rolling max (window 7, centred, min 5 finite) of the scaled second difference.
@@ -222,17 +239,33 @@ func envelopeClear(_ series: LayoutSeries, peakKw: Double) -> [Bool] {
     for index in 0 ..< total {
         let point = series[index]
         guard point.sun.elevation > 2 else { continue }
-        let value = point.kw / max(point.sun.ghi, 30)
+        let value = point.powerKw / max(point.sun.ghi, 30)
         normalised[index] = value
         let cell = (utcDayKey(point.time) - firstDay) * slots + utcSlot(point.time)
         if grid[cell].isNaN { grid[cell] = value }
     }
-    // Rolling 0.85 quantile over 15 days (centred, min 4 finite), then a 3-slot mean.
+    let smooth = smoothedEnvelope(grid, dayCount: dayCount, slots: slots)
+    let curvature = smoothness(series.map(\.powerKw), scale: peakKw)
+    var out = [Bool](repeating: false, count: total)
+    for index in 0 ..< total {
+        let point = series[index]
+        guard point.sun.elevation > 5, normalised[index].isFinite else { continue }
+        let reference = smooth[(utcDayKey(point.time) - firstDay) * slots + utcSlot(point.time)]
+        let ratio = normalised[index] / reference
+        out[index] = ratio > 0.92 && ratio < 1.06 && curvature[index] < 0.03
+            && reference * max(point.sun.ghi, 30) > 0.03 * peakKw
+    }
+    return out
+}
+
+/// Rolling 0.85 quantile over 15 days (centred, min 4 finite) per slot, then a 3-slot mean.
+private func smoothedEnvelope(_ grid: [Double], dayCount: Int, slots: Int) -> [Double] {
     var envelope = [Double](repeating: .nan, count: dayCount * slots)
     for slot in 0 ..< slots {
         for day in 0 ..< dayCount {
             var buffer: [Double] = []
-            for neighbour in max(0, day - 7) ... min(dayCount - 1, day + 7) where grid[neighbour * slots + slot].isFinite {
+            for neighbour in max(0, day - 7) ... min(dayCount - 1, day + 7)
+                where grid[neighbour * slots + slot].isFinite {
                 buffer.append(grid[neighbour * slots + slot])
             }
             if buffer.count >= 4 { envelope[day * slots + slot] = quantile(buffer, 0.85) }
@@ -251,36 +284,26 @@ func envelopeClear(_ series: LayoutSeries, peakKw: Double) -> [Bool] {
             if count > 0 { smooth[day * slots + slot] = sum / Double(count) }
         }
     }
-    let curvature = smoothness(series.map(\.kw), scale: peakKw)
-    var out = [Bool](repeating: false, count: total)
-    for index in 0 ..< total {
-        let point = series[index]
-        guard point.sun.elevation > 5, normalised[index].isFinite else { continue }
-        let reference = smooth[(utcDayKey(point.time) - firstDay) * slots + utcSlot(point.time)]
-        let ratio = normalised[index] / reference
-        out[index] = ratio > 0.92 && ratio < 1.06 && curvature[index] < 0.03
-            && reference * max(point.sun.ghi, 30) > 0.03 * peakKw
-    }
-    return out
+    return smooth
 }
 
 /// Curtailment-like flat runs: measured constant (and below model) while the model moves.
-func flatRuns(kw: [Double], model: [Double], clipKw: Double?) -> [Bool] {
-    let total = kw.count
+func flatRuns(powerKw: [Double], model: [Double], clipKw: Double?) -> [Bool] {
+    let total = powerKw.count
     guard total > 0 else { return [] }
     var maxMeasured = -Double.infinity
     var maxModel = -Double.infinity
     for index in 0 ..< total {
-        if kw[index] > maxMeasured { maxMeasured = kw[index] }
+        if powerKw[index] > maxMeasured { maxMeasured = powerKw[index] }
         if model[index] > maxModel { maxModel = model[index] }
     }
     var flat = [Bool](repeating: false, count: total)
     for index in stride(from: 1, to: total, by: 1) {
-        let measuredStep = abs(kw[index] - kw[index - 1])
+        let measuredStep = abs(powerKw[index] - powerKw[index - 1])
         let modelStep = abs(model[index] - model[index - 1])
         var isFlat = measuredStep < 0.004 * maxMeasured && modelStep > 0.01 * maxModel
-            && kw[index] > 0.1 * maxMeasured && kw[index] < 0.97 * model[index]
-        if let clipKw, clipKw > 0 { isFlat = isFlat && kw[index] < 0.98 * clipKw }
+            && powerKw[index] > 0.1 * maxMeasured && powerKw[index] < 0.97 * model[index]
+        if let clipKw, clipKw > 0 { isFlat = isFlat && powerKw[index] < 0.98 * clipKw }
         flat[index] = isFlat
     }
     var out = [Bool](repeating: false, count: total)
@@ -295,7 +318,9 @@ func flatRuns(kw: [Double], model: [Double], clipKw: Double?) -> [Bool] {
 /// Horizon profile: for each 10° sun-azimuth bin, the lowest elevation above which the
 /// 80th-percentile measured/model ratio is >= `threshold` in every populated 2.5° bin, plus
 /// isolated strong-deficit bins above it (chimney, vent, pole).
-func learnShade(saz: [Double], sel: [Double], ratio: [Double], dayIds: [String], threshold: Double = 0.85) -> ShadeMask {
+func learnShade(
+    saz: [Double], sel: [Double], ratio: [Double], dayIds: [String], threshold: Double = 0.85
+) -> ShadeMask {
     var azimuthBins = [[Int]](repeating: [], count: azimuthBinCount)
     for sample in 0 ..< saz.count {
         guard ratio[sample].isFinite, saz[sample] >= 0, saz[sample] < 360 else { continue }
@@ -305,24 +330,8 @@ func learnShade(saz: [Double], sel: [Double], ratio: [Double], dayIds: [String],
     for bin in 0 ..< azimuthBinCount {
         let members = azimuthBins[bin]
         guard members.count >= 20 else { continue }
-        var elevationBins = [[Int]](repeating: [], count: azimuthBinCount)
-        for sample in members {
-            let elevationBin = floor(sel[sample] / 2.5)
-            if elevationBin >= 0, elevationBin < Double(azimuthBinCount) {
-                elevationBins[Int(elevationBin)].append(sample)
-            }
-        }
-        var height = -Double.infinity
-        for elevationBin in 0 ..< azimuthBinCount {
-            let cell = elevationBins[elevationBin]
-            if cell.count < 8 || Set(cell.map { dayIds[$0] }).count < 3 { continue }
-            if quantile(cell.map { ratio[$0] }, 0.8) < threshold {
-                height = Double(elevationBin + 1) * 2.5
-            } else {
-                break
-            }
-        }
-        horizon[bin] = min(height, 45)
+        horizon[bin] = min(
+            shadeHeight(members, sel: sel, ratio: ratio, dayIds: dayIds, threshold: threshold), 45)
     }
     var hot: [ShadeHotBin] = []
     for bin in 0 ..< azimuthBinCount {
@@ -338,6 +347,31 @@ func learnShade(saz: [Double], sel: [Double], ratio: [Double], dayIds: [String],
         }
     }
     return ShadeMask(horizon: horizon, hotBins: hot)
+}
+
+/// The lowest elevation above which a 10° azimuth bin's rows are unshaded: walks the populated
+/// 2.5° elevation bins upward while their 80th-percentile ratio stays under `threshold`.
+private func shadeHeight(
+    _ members: [Int], sel: [Double], ratio: [Double], dayIds: [String], threshold: Double
+) -> Double {
+    var elevationBins = [[Int]](repeating: [], count: azimuthBinCount)
+    for sample in members {
+        let elevationBin = floor(sel[sample] / 2.5)
+        if elevationBin >= 0, elevationBin < Double(azimuthBinCount) {
+            elevationBins[Int(elevationBin)].append(sample)
+        }
+    }
+    var height = -Double.infinity
+    for elevationBin in 0 ..< azimuthBinCount {
+        let cell = elevationBins[elevationBin]
+        if cell.count < 8 || Set(cell.map { dayIds[$0] }).count < 3 { continue }
+        if quantile(cell.map { ratio[$0] }, 0.8) < threshold {
+            height = Double(elevationBin + 1) * 2.5
+        } else {
+            break
+        }
+    }
+    return height
 }
 
 /// JavaScript `Math.round`: halves round toward positive infinity.
