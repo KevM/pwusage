@@ -115,7 +115,7 @@ actor SolarLayoutRecordStore {
         try protectedDirectory.setResourceValues(directoryValues)
         try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
         let url = fileURL(scope)
-        try JSONEncoder().encode(record).write(to: url, options: .atomic)
+        try JSONEncoder().encode(record).write(to: url, options: [.atomic, .completeFileProtection])
         // Atomic replacement has committed. Keep memory aligned with disk even if
         // applying protection or backup metadata below fails.
         cache[scope] = record
