@@ -170,6 +170,7 @@ enum SolarLayoutDetector {
 - [ ] **Step 3:** Implement. `SolarLayoutResearchParityTests` reads `site-*.csv` + `inputs.json` from `PWUSAGE_SOLAR_PARITY_DIR` (same format as `scripts/solar-layout-parity.ts`), writes `<site>.swift.json` beside each, and is skipped (`XCTSkip`) when the variable is unset. Research data never enters the repo.
 - [ ] **Step 4:** Rerun. Expected: PASS (research test skipped).
 - [ ] **Step 5: Device timing.** Run `east-west-year` on a physical iPhone (a Release-configuration timing test, or a temporary debug button) and record the time in this plan under Task 5. If it exceeds 30 s, stop and raise it with the owner before Phase C. A background processing task has minutes, but foreground detection is only acceptable if it is short.
+  - Recorded 2026-10-30. Mac, `swiftc -O` (Release-like): `east-west-year` took 6.17 s, `south-clipped-year` 5.79 s, and the full results match the TypeScript fixture results. iOS Simulator Debug: 582 s, because the test build is unoptimized; the year fixtures therefore run only behind `TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1`. **Still open (owner):** time it on a physical iPhone in a Release build before Phase C.
 - [ ] **Step 6:** Commit: `feat(ios): port solar layout detector with fixture parity`.
 
 ## Phase B: History endpoint (server)
