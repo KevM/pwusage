@@ -4,7 +4,8 @@ import Testing
 
 @Suite("Solar layout sun and plane-of-array parity")
 struct SolarLayoutSunPOATests {
-    static let fixtureNames = ["east-west-30d", "east-west-year", "south-clipped-year", "south-shaded-100d"]
+    /// Every bundled fixture: the sun and POA stages are cheap even for the year fixtures.
+    static let fixtureNames = SolarLayoutDetectorTests.fixtureNames + SolarLayoutDetectorYearParityTests.fixtureNames
 
     @Test func fixturesAreBundled() throws {
         for name in Self.fixtureNames {

@@ -14,7 +14,7 @@ extension SolarLayoutDetector {
     /// count. Returns the series indices of daylight rows with a finite measurement.
     static func selectClearIndices(_ series: LayoutSeries, peak: Double, clipKw: Double?) -> [Int] {
         var clear = envelopeClear(series, peakKw: peak)
-        if let clipKw {
+        if let clipKw = LayoutFit.clip(clipKw) {
             let curvature = smoothness(series.points.map(\.powerKw), scale: peak)
             for index in series.points.indices {
                 let point = series[index]
@@ -129,7 +129,7 @@ extension SolarLayoutDetector {
     /// Plane-of-array model kW with the AC clip applied as a smooth cap (`modelKw` in poa.ts).
     static func modelKw(_ sun: LayoutSunSample, planes: [LayoutPlane], clipKw: Double?) -> Double {
         let total = LayoutPOA.modelKw(sun: sun, planes: planes)
-        guard let clipKw else { return total }
+        guard let clipKw = LayoutFit.clip(clipKw) else { return total }
         return clipKw * LayoutPOA.softmin(total / clipKw)
     }
 

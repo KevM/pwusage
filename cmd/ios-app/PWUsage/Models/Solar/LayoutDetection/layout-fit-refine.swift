@@ -74,17 +74,16 @@ extension LayoutFit {
                 let tilt = params[3 * plane + 1]
                 let size = params[3 * plane + 2]
                 let column = columns[plane]
-                jacobian[3 * plane + 2] = (0 ..< count).map { column[$0] * dsoft[$0] }
                 let shifted = LayoutPOA.poaColumn(
                     rows.sun, azimuth: wrapDegrees(azimuth + hAzimuth), tilt: tilt, smooth: true)
-                jacobian[3 * plane] = (0 ..< count).map {
-                    size * (shifted[$0] - column[$0]) / hAzimuth * dsoft[$0]
-                }
                 let tiltStep = tilt + hTilt > LayoutPOA.maxTilt ? -hTilt : hTilt
                 let tilted = LayoutPOA.poaColumn(
                     rows.sun, azimuth: wrapDegrees(azimuth), tilt: tilt + tiltStep, smooth: true)
-                jacobian[3 * plane + 1] = (0 ..< count).map {
-                    size * (tilted[$0] - column[$0]) / tiltStep * dsoft[$0]
+                // Plain loops, not map closures: closures stay unoptimized in Debug builds.
+                for row in 0 ..< count {
+                    jacobian[3 * plane + 2][row] = column[row] * dsoft[row]
+                    jacobian[3 * plane][row] = size * (shifted[row] - column[row]) / hAzimuth * dsoft[row]
+                    jacobian[3 * plane + 1][row] = size * (tilted[row] - column[row]) / tiltStep * dsoft[row]
                 }
             }
             return jacobian
@@ -191,6 +190,7 @@ extension LayoutFit {
     }
 
     /// Solves `matrix x = rhs` for an n x n row-major `matrix` by Gaussian elimination with partial pivoting.
+    @_optimize(speed)
     static func solveLinear(_ matrix: [Double], _ rhs: [Double], _ size: Int) -> [Double]? {
         var work = matrix
         var solution = rhs

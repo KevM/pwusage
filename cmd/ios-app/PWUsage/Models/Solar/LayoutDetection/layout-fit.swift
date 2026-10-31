@@ -148,6 +148,7 @@ enum LayoutFit {
     }
 
     /// Adds the block's rows (row-major, `width` per row) into `gram`, row by row.
+    @_optimize(speed)
     private static func accumulate(_ gram: inout Gram, block: [Double], rows: [Int], powerKw: [Double], width: Int) {
         block.withUnsafeBufferPointer { blockPtr in
             gram.normal.withUnsafeMutableBufferPointer { normal in
@@ -237,6 +238,7 @@ enum LayoutFit {
     }
 
     /// Every feasible two-plane candidate, in combo-pair order.
+    @_optimize(speed)
     private static func pairCandidates(_ gram: Gram) -> [Candidate] {
         let width = gram.moment.count
         let moment = gram.moment
@@ -259,6 +261,7 @@ enum LayoutFit {
     }
 
     /// The best three-plane extension of `pair` over every other column, sorted by combo index.
+    @_optimize(speed)
     private static func bestTriple(_ gram: Gram, extending pair: Candidate) -> Candidate? {
         let (first, second) = (pair.idx[0], pair.idx[1])
         var best: Candidate?
@@ -272,6 +275,7 @@ enum LayoutFit {
     }
 
     /// The exact three-plane solution for the combos `ids`, nil when singular, negative or not finite.
+    @_optimize(speed)
     private static func tripleCandidate(_ gram: Gram, ids: [Int]) -> Candidate? {
         let width = gram.moment.count
         let matrix = ids.flatMap { row in ids.map { col in gram.normal[row * width + col] + (row == col ? 1e-12 : 0) } }

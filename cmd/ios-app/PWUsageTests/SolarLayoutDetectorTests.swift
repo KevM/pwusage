@@ -6,23 +6,28 @@ import Testing
 /// `SolarLayoutDetectorYearParityTests` (opt-in) because unoptimized detection on them takes minutes.
 @Suite("Solar layout detector fixture parity")
 struct SolarLayoutDetectorTests {
-    static let fixtureNames = ["east-west-30d", "south-shaded-100d"]
+    /// `east-west-clipped-60d` is the default suite's clipped, two-plane, detected case.
+    static let fixtureNames = ["east-west-30d", "east-west-clipped-60d", "south-shaded-100d"]
 
     @Test(arguments: fixtureNames)
-    func resultMatchesFixture(name: String) throws {
-        try Self.checkResult(name)
+    func matchesFixture(name: String) throws {
+        try Self.checkFixture(name)
     }
 
-    @Test(arguments: fixtureNames)
-    func stagesMatchFixture(name: String) throws {
-        try Self.checkStages(name)
-    }
-
-    static func checkResult(_ name: String) throws {
+    /// Runs detection once on fixture `name` and checks its result and stages against the recorded
+    /// TypeScript values. Returns the detection's wall time in seconds.
+    @discardableResult
+    static func checkFixture(_ name: String) throws -> Double {
         let fixture = try SolarLayoutFixture.load(name)
-        let result = try Self.detect(fixture)
-        let expected = fixture.result
+        let started = ProcessInfo.processInfo.systemUptime
+        let outcome = try Self.detectStages(fixture)
+        let seconds = ProcessInfo.processInfo.systemUptime - started
+        checkResult(name, outcome.result, fixture.result)
+        try checkStages(name, outcome.stages, fixture)
+        return seconds
+    }
 
+    static func checkResult(_ name: String, _ result: DetectedSolarLayout, _ expected: SolarLayoutFixture.Result) {
         #expect(result.status.rawValue == expected.status, "\(name) status")
         #expect(result.confidence == expected.confidence, "\(name) confidence")
         #expect(result.reasons == expected.reasons, "\(name) reasons")
@@ -39,14 +44,22 @@ struct SolarLayoutDetectorTests {
             Self.expectClose(plane.dcKwp, want.dcKwp, 0.01 * want.dcKwp, "\(name) plane \(index) dcKwp")
             Self.expectClose(
                 plane.effectiveKw, want.effectiveKw, 0.01 * want.effectiveKw, "\(name) plane \(index) effectiveKw")
+            #expect(plane.azimuthRange90.count == 2, "\(name) plane \(index) azimuthRange90 count")
+            #expect(plane.tiltRange90.count == 2, "\(name) plane \(index) tiltRange90 count")
+            for (got, wanted) in zip(plane.azimuthRange90, want.azimuthRange90) {
+                Self.expectAngle(got, wanted, 0.5, "\(name) plane \(index) azimuthRange90")
+            }
+            for (got, wanted) in zip(plane.tiltRange90, want.tiltRange90) {
+                Self.expectClose(got, wanted, 0.5, "\(name) plane \(index) tiltRange90")
+            }
         }
     }
 
     /// Stage values replayed from the fixture's `stages`: selection and fit intermediates that the
     /// result does not carry.
-    static func checkStages(_ name: String) throws {
-        let fixture = try SolarLayoutFixture.load(name)
-        let stages = try Self.detectStages(fixture).stages
+    static func checkStages(
+        _ name: String, _ stages: SolarLayoutDetectionStages, _ fixture: SolarLayoutFixture
+    ) throws {
         let selection = try #require(fixture.stages.selection)
 
         #expect(stages.producingDays == selection.producingDays, "\(name) producingDays")
@@ -66,14 +79,10 @@ struct SolarLayoutDetectorTests {
             return
         }
         #expect(stages.planeCount == fit.planeCount, "\(name) planeCount")
+        // The exporter rejects non-finite cvNrmse, so every recorded value is finite.
         for count in 1 ... 3 {
             let got = stages.cvNrmse[count] ?? .nan
-            let want = fit.cvNrmse[count] ?? .nan
-            if want.isNaN {
-                #expect(got.isNaN, "\(name) cvNrmse \(count) should be NaN")
-            } else {
-                Self.expectClose(got, want, 1e-6, "\(name) cvNrmse \(count)")
-            }
+            Self.expectClose(got, fit.cvNrmse[count] ?? .nan, 1e-6, "\(name) cvNrmse \(count)")
         }
         #expect(stages.bestPlanes.count == fit.bestPlanes.count, "\(name) best plane count")
         for (index, (plane, want)) in zip(stages.bestPlanes, fit.bestPlanes).enumerated() {
@@ -147,10 +156,6 @@ struct SolarLayoutDetectorTests {
         }
     }
 
-    static func detect(_ fixture: SolarLayoutFixture) throws -> DetectedSolarLayout {
-        try detectStages(fixture).result
-    }
-
     static func detectStages(_ fixture: SolarLayoutFixture) throws -> SolarLayoutDetectorOutcome {
         let timeZone = try #require(TimeZone(identifier: fixture.input.timeZone))
         return try SolarLayoutDetector.detectWithStages(
@@ -191,23 +196,10 @@ struct SolarLayoutDetectorTests {
 struct SolarLayoutDetectorYearParityTests {
     static let fixtureNames = ["east-west-year", "south-clipped-year"]
 
+    /// One detection per fixture checks its result and stages and prints its wall time for the timing record.
     @Test(arguments: fixtureNames)
-    func resultMatchesFixture(name: String) throws {
-        try SolarLayoutDetectorTests.checkResult(name)
-    }
-
-    @Test(arguments: fixtureNames)
-    func stagesMatchFixture(name: String) throws {
-        try SolarLayoutDetectorTests.checkStages(name)
-    }
-
-    /// Prints the wall time of one full detection on the year fixture, for the timing record.
-    @Test func eastWestYearTiming() throws {
-        let fixture = try SolarLayoutFixture.load("east-west-year")
-        let started = ProcessInfo.processInfo.systemUptime
-        let result = try SolarLayoutDetectorTests.detect(fixture)
-        let seconds = ProcessInfo.processInfo.systemUptime - started
-        print("SOLAR_LAYOUT_DETECT_TIMING east-west-year \(String(format: "%.2f", seconds)) s")
-        #expect(result.status == .detected)
+    func matchesFixture(name: String) throws {
+        let seconds = try SolarLayoutDetectorTests.checkFixture(name)
+        print("SOLAR_LAYOUT_DETECT_TIMING \(name) \(String(format: "%.2f", seconds)) s")
     }
 }

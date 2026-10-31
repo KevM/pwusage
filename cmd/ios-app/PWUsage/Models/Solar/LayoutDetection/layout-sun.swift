@@ -61,9 +61,10 @@ private func layoutAirmass(_ apparentZenith: Double) -> Double {
 /// Seasonal ±8 °C peaking near Jul 19, diurnal ±4 °C peaking at 15 h solar time.
 private func layoutAmbientFactor(_ time: Date, longitude: Double) -> Double {
     let day = utcDayOfYear(time)
-    let calendar = utcCalendar
-    let hour = Double(calendar.component(.hour, from: time))
-    let minute = Double(calendar.component(.minute, from: time))
+    // UTC hour and minute straight from the epoch: Calendar lookups dominate a year of slots.
+    let secondOfDay = layoutMod(floor(time.timeIntervalSince1970), 86400)
+    let hour = floor(secondOfDay / 3600)
+    let minute = floor(layoutMod(secondOfDay, 3600) / 60)
     let solarHour = layoutMod(hour + minute / 60 + longitude / 15, 24)
     let deltaT = ambientSeasonAmplitude * cos(2 * Double.pi * Double(day - 200) / 365)
         + ambientDiurnalAmplitude * cos(2 * Double.pi * (solarHour - 15) / 24)

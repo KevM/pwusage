@@ -59,11 +59,16 @@ struct SolarPosition: Sendable {
             / (60 * tan((elevation + 10.3 / (elevation + 5.11)) * radians))
     }
 
-    /// Spencer (1971), UTC day-of-year, as in pvlib get_extra_radiation.
-    private static func extraterrestrialDni(_ date: Date) -> Double {
+    /// Built once: `at` runs for every 5-minute slot of a year of history.
+    private static let utcCalendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
-        let day = calendar.ordinality(of: .day, in: .year, for: date) ?? 1
+        return calendar
+    }()
+
+    /// Spencer (1971), UTC day-of-year, as in pvlib get_extra_radiation.
+    private static func extraterrestrialDni(_ date: Date) -> Double {
+        let day = utcCalendar.ordinality(of: .day, in: .year, for: date) ?? 1
         let angle = 2 * Double.pi / 365 * Double(day - 1)
         return 1366.1 * (1.00011 + 0.034221 * cos(angle) + 0.00128 * sin(angle)
             + 0.000719 * cos(2 * angle) + 0.000077 * sin(2 * angle))

@@ -187,6 +187,8 @@ function buildFixture(name: string, rawSamples: Samples): SolarLayoutFixture {
     if (result.clearDays !== selection.clearDays) throw new Error(`${name}: clearDays drifted from the stage replay`);
     if (fit && result.planes.length !== fit.planeCount) throw new Error(`${name}: plane count drifted from the stage replay`);
     if (result.acClipKw !== null && result.acClipKw !== selection.clipKw) throw new Error(`${name}: clip drifted from the stage replay`);
+    if ((fit === null) !== (result.planes.length === 0)) throw new Error(`${name}: fit presence drifted from the result`);
+    if (JSON.stringify(result.shading) !== JSON.stringify(selection.shading)) throw new Error(`${name}: shading drifted from the stage replay`);
 
     const sun = sunRows(series);
     const kw = sun.map(s => modelKw(s.sun, POA_PLANES, null));
@@ -223,6 +225,14 @@ const CASES: { name: string; build: () => Samples }[] = [
     {
         name: 'east-west-30d',
         build: () => syntheticSeries({ ...LOCATION, start: '2026-05-01', days: 30, planes: EAST_WEST, cloudyFraction: 0.3, seed: 3 }),
+    },
+    {
+        // Small enough for the default Debug suite, yet clipped with two planes: covers the clipped
+        // fit, the 2-plane cross-validation choice and bootstrap alignment on every run.
+        name: 'east-west-clipped-60d',
+        build: () => syntheticSeries({
+            ...LOCATION, start: '2026-05-01', days: 60, planes: EAST_WEST, clipKw: 5, cloudyFraction: 0.3, seed: 13,
+        }),
     },
     {
         // Single south plane whose DC size (6 kW effective) exceeds the 4.5 kW AC limit.

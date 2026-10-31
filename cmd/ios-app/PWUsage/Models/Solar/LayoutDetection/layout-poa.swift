@@ -23,7 +23,8 @@ enum LayoutPOA {
     /// Plane-of-array output in kW for `planes` under `sun`, summed over planes.
     static func modelKw(sun: LayoutSunSample, planes: [LayoutPlane]) -> Double {
         planes.reduce(0) { total, plane in
-            total + plane.effectiveKw * effectiveIrradiance(sun, azimuth: plane.azimuth, tilt: plane.tilt) / 1000
+            total + plane.effectiveKw
+                * effectiveIrradiance(sun, azimuth: LayoutFit.wrapDegrees(plane.azimuth), tilt: plane.tilt) / 1000
         }
     }
 
@@ -91,6 +92,7 @@ enum LayoutPOA {
 
     private enum Region { case sky, ground }
 
+    @_optimize(speed)
     private static func marionIntegrate(_ tilt: Double, region: Region) -> Double {
         let segments = 180
         let beta = tilt * radians
@@ -123,6 +125,7 @@ enum LayoutPOA {
     }
 
     /// Diffuse IAM linearly interpolated between 0.1° points, so the fit sees a smooth tilt response.
+    @_optimize(speed)
     static func diffuseIamSmooth(_ tilt: Double) -> DiffuseIam {
         let low = floor(tilt * 10) / 10
         let fraction = (tilt - low) * 10
@@ -135,6 +138,7 @@ enum LayoutPOA {
     }
 
     /// Smooth min(ratio, 1) with scale `scale` (reference `_softmin`).
+    @_optimize(speed)
     static func softmin(_ ratio: Double, scale: Double = 0.01) -> Double {
         let scaled = (ratio - 1) / scale
         let logAddExp = scaled > 0 ? scaled + log1p(exp(-scaled)) : log1p(exp(scaled))
