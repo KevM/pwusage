@@ -4,7 +4,7 @@ import type { BatteryHold } from './db';
 
 export interface RestoreDecision {
   restore: true;
-  reason: 'load_ended' | 'safety_timeout' | 'timer_elapsed';
+  reason: 'load_ended' | 'no_load_detected' | 'safety_timeout' | 'timer_elapsed';
 }
 
 // A detected event whose start is within this window of the park counts as "the load".

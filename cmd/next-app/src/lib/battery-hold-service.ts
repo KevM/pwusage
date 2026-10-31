@@ -140,7 +140,7 @@ export type RestoreResult =
 
 export interface RestoreDeps {
   client: TeslaClient; repo: BatteryHoldRepo; siteId: string;
-  reason: 'load_ended' | 'manual' | 'safety_timeout' | 'timer_elapsed';
+  reason: 'load_ended' | 'no_load_detected' | 'manual' | 'safety_timeout' | 'timer_elapsed';
   expectedHoldId?: number;
   leaseOwner?: string;
 }

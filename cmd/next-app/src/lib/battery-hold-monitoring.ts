@@ -22,6 +22,10 @@ export interface BatteryHoldMonitoring {
   battery_percent?: number | null;
   /** When Tesla measured the live reading (live_status.timestamp). */
   live_at?: string | null;
+  no_load_checks?: number;
+  no_load_last_checked_at?: string | null;
+  no_load_last_sample_at?: string | null;
+  job_detected?: boolean;
 }
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
@@ -38,6 +42,10 @@ function baseMonitoring(hold: BatteryHold, now: Date, live: HoldLiveStatus | nul
     next_check_at: new Date((Math.floor(now.getTime() / CHECK_INTERVAL_MS) + 1) * CHECK_INTERVAL_MS).toISOString(),
     sampled_at: null, estimated_load_w: null, baseline_load_w: null, home_load_w: null, peak_load_w: null,
     battery_percent: finite(live?.percentage_charged), live_at: isoOrNull(live?.timestamp),
+    no_load_checks: hold.monitoring?.no_load_checks ?? 0,
+    no_load_last_checked_at: hold.monitoring?.no_load_last_checked_at ?? null,
+    no_load_last_sample_at: hold.monitoring?.no_load_last_sample_at ?? null,
+    job_detected: hold.monitoring?.job_detected ?? false,
   };
 }
 
@@ -86,6 +94,22 @@ export function summarizeHoldMonitoring(
     result.sampled_at = load.at;
     result.home_load_w = Math.round(load.watts);
     result.peak_load_w = Math.round(Math.max(load.watts, ...(latest ? [peak] : [])));
+  }
+  const liveIsRecent = load && result.live_at && Date.parse(result.live_at) <= now.getTime()
+    && now.getTime() - Date.parse(result.live_at) <= 20 * 60 * 1000;
+  if (peak >= hold.baseline_load_w + 1000 || (liveIsRecent && load.watts >= hold.baseline_load_w + 1000)) {
+    result.job_detected = true;
+  }
+  const latestMs = latest ? new Date(latest.timestamp).getTime() : NaN;
+  const priorCheck = Date.parse(result.no_load_last_checked_at ?? '');
+  const priorSample = Date.parse(result.no_load_last_sample_at ?? '');
+  if (!decision && !result.job_detected && Number.isFinite(latestMs)
+    && latestMs > hold.created_at.getTime() && now.getTime() - latestMs <= 20 * 60 * 1000
+    && (!Number.isFinite(priorSample) || latestMs > priorSample)
+    && (!Number.isFinite(priorCheck) || Math.floor(now.getTime() / CHECK_INTERVAL_MS) > Math.floor(priorCheck / CHECK_INTERVAL_MS))) {
+    result.no_load_checks = (result.no_load_checks ?? 0) + 1;
+    result.no_load_last_checked_at = now.toISOString();
+    result.no_load_last_sample_at = new Date(latestMs).toISOString();
   }
   // Phase and estimate stay history-based: detection reads only the five-minute samples.
   if (decision) return { ...result, phase: 'restoring' };

@@ -6,6 +6,7 @@ const { getAllMock, rawMock, evalMock, refreshMock, createClientMock, restoreMoc
 }));
 
 vi.mock('@/lib/battery-hold-repo', () => ({ BatteryHoldRepo: class { getAllActiveHolds = getAllMock; recordMonitoring = recordMock;
+  getActiveHold = async (siteId: string) => (await getAllMock()).find((hold: { site_id: string }) => hold.site_id === siteId);
   claimHold = async () => true; releaseHold = async () => undefined; } }));
 vi.mock('@/lib/energy-repo-factory', () => ({ createEnergyRepo: () => ({ getRawEnergyData: rawMock }) }));
 vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = async (id: string) => ({ id, timezone: 'America/Chicago' }); } }));

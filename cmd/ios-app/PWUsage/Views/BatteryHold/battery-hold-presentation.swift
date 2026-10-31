@@ -59,7 +59,9 @@ enum BatteryHoldPresentation {
             return "Waiting for updated usage data. Battery Saver is still on."
         }
         switch monitoring.phase {
-        case .watching: return "Waiting for a job to finish."
+        case .watching:
+            return "Waiting for a job to start. " +
+                "Battery Saver turns off if none is detected after two checks."
         case .loadRunning:
             if let watts = monitoring.estimatedLoadW, watts.isFinite, watts >= 0 {
                 let power = (watts / 1000).formatted(.number.precision(.fractionLength(0 ... 1)))

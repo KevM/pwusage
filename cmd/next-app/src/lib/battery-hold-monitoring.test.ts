@@ -11,6 +11,25 @@ const hold: BatteryHold = {
 const point = (minutes: number, watts: number) => ({ timestamp: new Date(start.getTime() + minutes * 60000).toISOString(), powerWatts: watts });
 const now = new Date('2026-10-02T10:16:00Z');
 describe('battery hold monitoring', () => {
+  it('requires two distinct fresh checks before stopping when no job starts', () => {
+    const first = summarizeHoldMonitoring(hold, [point(5, 500), point(15, 510)], now, null);
+    expect(first.no_load_checks).toBe(1);
+    const secondTime = new Date('2026-10-02T10:30:00Z');
+    const second = summarizeHoldMonitoring({ ...hold, monitoring: first }, [point(5, 500), point(15, 510), point(30, 520)], secondTime, null);
+    expect(second.no_load_checks).toBe(2);
+  });
+  it('does not count stale data, the same sample, or repeated checks in one interval', () => {
+    const first = summarizeHoldMonitoring(hold, [point(15, 500)], now, null);
+    expect(summarizeHoldMonitoring({ ...hold, monitoring: first }, [point(15, 500)], new Date('2026-10-02T10:30:00Z'), null).no_load_checks).toBe(1);
+    expect(summarizeHoldMonitoring({ ...hold, monitoring: first }, [point(15, 500), point(20, 500)], new Date('2026-10-02T10:21:00Z'), null).no_load_checks).toBe(1);
+    expect(summarizeHoldMonitoring({ ...hold, monitoring: first }, [point(15, 500)], new Date('2026-10-02T11:00:00Z'), null).no_load_checks).toBe(1);
+  });
+  it('remembers a detected job even if later history is missing', () => {
+    const first = summarizeHoldMonitoring(hold, [point(15, 500)], now, null);
+    const running = summarizeHoldMonitoring({ ...hold, monitoring: first }, [point(15, 500), point(30, 3000)], new Date('2026-10-02T10:30:00Z'), null);
+    expect(running.job_detected).toBe(true);
+    expect(summarizeHoldMonitoring({ ...hold, monitoring: running }, [point(45, 500)], new Date('2026-10-02T10:45:00Z'), null)).toMatchObject({ job_detected: true, no_load_checks: 1 });
+  });
   it('reports estimated excess power and the next quarter-hour check', () => {
     expect(summarizeHoldMonitoring(hold, [point(0, 500), point(15, 9500)], now, null)).toMatchObject({ phase: 'load_running', estimated_load_w: 9000, checked_at: now.toISOString(), next_check_at: '2026-10-02T10:30:00.000Z' });
   });
@@ -76,7 +95,8 @@ describe('battery hold monitoring', () => {
     expect(seedHoldMonitoring({ ...hold, baseline_load_w: 1612.4 }, live, at)).toEqual({
       phase: 'watching', checked_at: at.toISOString(), next_check_at: '2026-10-02T10:15:00.000Z',
       sampled_at: '2026-10-02T10:00:10.000Z', live_at: '2026-10-02T10:00:10.000Z', battery_percent: 74.6,
-      estimated_load_w: null, baseline_load_w: 1612, home_load_w: 1612, peak_load_w: 1612 });
+      estimated_load_w: null, baseline_load_w: 1612, home_load_w: 1612, peak_load_w: 1612,
+      no_load_checks: 0, no_load_last_checked_at: null, no_load_last_sample_at: null, job_detected: false });
     expect(seedHoldMonitoring({ ...hold, mode: 'timer' }, live, at)).toMatchObject({
       phase: 'timer', battery_percent: 74.6, home_load_w: 1612, baseline_load_w: null, peak_load_w: null });
   });

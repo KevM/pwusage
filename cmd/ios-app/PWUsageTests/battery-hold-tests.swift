@@ -100,7 +100,9 @@ struct BatteryHoldTests {
         #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300)).contains("updated usage data"))
         #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300)).hasSuffix("Battery Saver is still on."))
         let watching = BatteryHoldMonitoring(phase: .watching, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: now, estimatedLoadW: nil)
-        #expect(BatteryHoldPresentation.monitoringText(watching, at: now) == "Waiting for a job to finish.")
+        let expectedWaiting = "Waiting for a job to start. " +
+            "Battery Saver turns off if none is detected after two checks."
+        #expect(BatteryHoldPresentation.monitoringText(watching, at: now) == expectedWaiting)
     }
 
     @Test("Monitoring decodes alongside an existing hold and remains optional")
