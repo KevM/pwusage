@@ -62,12 +62,14 @@ struct SolarForecastStoreSessionCleanup: SolarForecastSessionCleanup {
     let store: any SolarForecastManaging
     /// Clears automatic-provider caches and raw history. Provider request ledgers survive.
     var service: SolarForecastService?
+    var historyStore: SolarHistoryStore = .shared
 
-    /// Both halves always run, so a store failure cannot leave history behind.
+    /// All cleanup steps run even if an earlier step fails.
     func signOut() async throws {
         var firstError: (any Error)?
         do { try await store.signOut() } catch { firstError = error }
         do { try await service?.clearAccountData() } catch { firstError = firstError ?? error }
+        do { try await historyStore.removeAll() } catch { firstError = firstError ?? error }
         if let firstError { throw firstError }
     }
 }

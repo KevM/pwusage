@@ -171,6 +171,23 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         }
     }
 
+    func fetchSolarHistory(
+        siteID: String,
+        from: String,
+        changedSince: Date?
+    ) async throws -> MobileSolarHistoryResponse {
+        var items = [URLQueryItem(name: "from", value: from)]
+        if let changedSince {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            items.append(URLQueryItem(name: "changedSince", value: formatter.string(from: changedSince)))
+        }
+        let data = try await request(url: makeURL(path: "/api/mobile/solar-history", siteID: siteID, extra: items))
+        do { return try MobileContractDecoder.make().decode(MobileSolarHistoryResponse.self, from: data) } catch {
+            throw PWUsageAPIError.invalidResponse
+        }
+    }
+
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {
         let url = try makeURL(path: "/api/mobile/session")
         var request = URLRequest(url: url)
@@ -242,7 +259,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 // declared next to the type that consumes it, which is why these used to be one
 // line each in three files.
 extension PWUsageAPI: MobileDashboardDataAPI, MobileLivePowerDataAPI {}
-extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarLayoutDataAPI {}
+extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarLayoutDataAPI, MobileSolarHistoryDataAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}

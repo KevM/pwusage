@@ -14,7 +14,8 @@ struct SolarAutomaticSettingsTests {
 
     @Test("Solcast setup is shown only when the server confirms the site is outside beta")
     func legacySetupVisibility() {
-        #expect(SolarForecastSettingsStatus.showsSolcastSetup(for: .disabled))
+        let showsSetup = SolarForecastSettingsStatus.showsSolcastSetup(for: .disabled)
+        #expect(showsSetup)
         #expect(!SolarForecastSettingsStatus.showsSolcastSetup(for: nil))
         #expect(!SolarForecastSettingsStatus.showsSolcastSetup(
             for: .enabled(location: nil, layout: nil, reason: .pending)))
