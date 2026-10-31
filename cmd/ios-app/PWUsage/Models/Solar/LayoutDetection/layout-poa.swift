@@ -122,6 +122,64 @@ enum LayoutPOA {
         return denominator != 0 ? numerator / denominator : 0
     }
 
+    /// Diffuse IAM linearly interpolated between 0.1° points, so the fit sees a smooth tilt response.
+    static func diffuseIamSmooth(_ tilt: Double) -> DiffuseIam {
+        let low = floor(tilt * 10) / 10
+        let fraction = (tilt - low) * 10
+        let lower = diffuseIam(low)
+        if fraction < 1e-9 { return lower }
+        let upper = diffuseIam(low + 0.1)
+        return DiffuseIam(
+            sky: lower.sky + (upper.sky - lower.sky) * fraction,
+            ground: lower.ground + (upper.ground - lower.ground) * fraction)
+    }
+
+    /// Smooth min(x, 1) with scale `scale` (reference `_softmin`).
+    static func softmin(_ x: Double, scale: Double = 0.01) -> Double {
+        let z = (x - 1) / scale
+        let logAddExp = z > 0 ? z + log1p(exp(-z)) : log1p(exp(z))
+        return x - scale * logAddExp
+    }
+
+    /// Effective POA irradiance divided by 1000 (kW per kW of effective size) for every row of
+    /// `sun`, for one plane (reference `poaColumn`). `smooth` uses the interpolated diffuse IAM.
+    static func poaColumn(_ sun: LayoutSunArrays, azimuth: Double, tilt: Double, smooth: Bool = false) -> [Double] {
+        let clampedTilt = min(max(tilt, 0), 89)
+        let cosTilt = cos(clampedTilt * radians)
+        let sinTilt = sin(clampedTilt * radians)
+        let cosAzimuth = cos(azimuth * radians)
+        let sinAzimuth = sin(azimuth * radians)
+        let diffuse = smooth ? diffuseIamSmooth(clampedTilt) : diffuseIam(clampedTilt)
+        let isotropicFactor = 0.5 * (1 + cosTilt)
+        let groundFactor = albedo * (1 - cosTilt) * 0.5 * diffuse.ground
+        let n = refractiveIndex
+        let extinction = 4 * extinctionDepthMetres
+        let normalReflectance = square((1 - n) / (1 + n))
+        let norm0 = 2 * (1 - normalReflectance) * exp(-extinction)
+        var out = [Double](repeating: 0, count: sun.count)
+        for i in 0 ..< sun.count {
+            guard sun.ghi[i] > 0 else { continue }
+            var c = cosTilt * sun.cosZ[i] + sinTilt * sun.sinZ[i] * (sun.cosSaz[i] * cosAzimuth + sun.sinSaz[i] * sinAzimuth)
+            c = c > 1 ? 1 : (c < -1 ? -1 : c)
+            var beam = 0.0
+            if c > 0 {
+                let sin2 = sqrt(1 - c * c) / n
+                let cos2 = sqrt(1 - sin2 * sin2)
+                let reflectanceS = square((c - n * cos2) / (c + n * cos2))
+                let reflectanceP = square((cos2 - n * c) / (cos2 + n * c))
+                beam = sun.dni[i] * c * ((2 - reflectanceS - reflectanceP) * exp(-extinction / cos2) / norm0)
+            }
+            let anisotropy = sun.anis[i]
+            let isotropic = sun.dhi[i] * (1 - anisotropy) * isotropicFactor
+            let circumsolar = c > 0 ? sun.dhi[i] * anisotropy * c / sun.rbDen[i] : 0
+            var effective = beam + (max(isotropic, 0) + max(circumsolar, 0)) * diffuse.sky + sun.ghi[i] * groundFactor
+            if effective < 0 { effective = 0 }
+            out[i] = effective * (1 - temperatureCoefficient * effective / 1000) / (1 - temperatureCoefficient)
+                * sun.tfac[i] / 1000
+        }
+        return out
+    }
+
     private static func square(_ value: Double) -> Double { value * value }
 
     private static let diffuseCache = DiffuseIamCache()
@@ -157,5 +215,59 @@ private final class DiffuseIamCache: @unchecked Sendable {
         entries[key] = computed
         lock.unlock()
         return computed
+    }
+}
+
+/// Struct-of-arrays sun geometry for fast per-plane columns, one entry per row (reference `toSunArrays`).
+struct LayoutSunArrays: Sendable {
+    let cosZ: [Double]
+    let sinZ: [Double]
+    let cosSaz: [Double]
+    let sinSaz: [Double]
+    let dni: [Double]
+    let ghi: [Double]
+    let dhi: [Double]
+    let anis: [Double]
+    let rbDen: [Double]
+    let tfac: [Double]
+
+    var count: Int { cosZ.count }
+
+    init(suns: [LayoutSunSample]) {
+        let radiansPerDegree = Double.pi / 180
+        cosZ = suns.map { cos($0.apparentZenith * radiansPerDegree) }
+        sinZ = suns.map { sin($0.apparentZenith * radiansPerDegree) }
+        cosSaz = suns.map { cos($0.azimuth * radiansPerDegree) }
+        sinSaz = suns.map { sin($0.azimuth * radiansPerDegree) }
+        dni = suns.map(\.dni)
+        ghi = suns.map(\.ghi)
+        dhi = suns.map(\.dhi)
+        anis = suns.map { $0.dniExtra > 0 ? $0.dni / $0.dniExtra : 0 }
+        rbDen = cosZ.map { max($0, 0.01745) }
+        tfac = suns.map(\.ambientFactor)
+    }
+
+    private init(
+        cosZ: [Double], sinZ: [Double], cosSaz: [Double], sinSaz: [Double], dni: [Double], ghi: [Double],
+        dhi: [Double], anis: [Double], rbDen: [Double], tfac: [Double]
+    ) {
+        self.cosZ = cosZ
+        self.sinZ = sinZ
+        self.cosSaz = cosSaz
+        self.sinSaz = sinSaz
+        self.dni = dni
+        self.ghi = ghi
+        self.dhi = dhi
+        self.anis = anis
+        self.rbDen = rbDen
+        self.tfac = tfac
+    }
+
+    /// The rows at `indices`, in that order.
+    func subset(_ indices: [Int]) -> LayoutSunArrays {
+        func pick(_ values: [Double]) -> [Double] { indices.map { values[$0] } }
+        return LayoutSunArrays(
+            cosZ: pick(cosZ), sinZ: pick(sinZ), cosSaz: pick(cosSaz), sinSaz: pick(sinSaz), dni: pick(dni),
+            ghi: pick(ghi), dhi: pick(dhi), anis: pick(anis), rbDen: pick(rbDen), tfac: pick(tfac))
     }
 }
