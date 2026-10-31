@@ -38,19 +38,26 @@ struct SolarLayoutRecordStoreTests {
 
     @Test("Rejects stale results after the location moves")
     func rejectsStaleSave() async throws {
-        let store = SolarLayoutRecordStore(directory: temporaryFolder())
+        let folder = temporaryFolder()
+        let store = SolarLayoutRecordStore(directory: folder)
         try await store.setLocation(location, scope: scope)
         try await store.setLocation(SolarHomeLocation(latitude: 44, longitude: -87, source: .device), scope: scope)
+        let before = try #require(await store.record(scope: scope))
+        let beforeBytes = try persistedBytes(in: folder)
         #expect(try await !store.saveResult(result(.notEnoughHistory), scope: scope, for: location, at: .now))
+        #expect(try await store.record(scope: scope) == before)
+        #expect(try persistedBytes(in: folder) == beforeBytes)
         try await store.removeAll()
     }
 
     @Test("Maps first-run and disabled states")
-    func mapsEmptyStates() {
-        let empty = SolarLayoutRecord(location: nil, locationSetAt: nil, result: nil, detectedAt: nil,
-                                      attemptedAt: nil, detectorVersion: nil, resultLocation: nil)
-        #expect(empty.response(historyEnabled: false) == .disabled)
-        #expect(empty.response(historyEnabled: true) == .enabled(location: nil, layout: nil, reason: .needsLocation))
+    func mapsEmptyStates() async throws {
+        let store = SolarLayoutRecordStore(directory: temporaryFolder())
+        let absent = try await store.record(scope: scope)
+        #expect(absent == nil)
+        #expect(try await store.response(scope: scope, historyEnabled: false) == .disabled)
+        #expect(try await store.response(scope: scope, historyEnabled: true) ==
+            .enabled(location: nil, layout: nil, reason: .needsLocation))
     }
 
     @Test("Maps detector results and rejects stale detector versions")
@@ -64,6 +71,11 @@ struct SolarLayoutRecordStoreTests {
         expectReason(.notEnoughHistory, .notEnoughHistory)
         expectReason(.lowConfidence, .lowConfidence)
         expectReason(.failed, .pending)
+        let locationPending = SolarLayoutRecord(location: rounded, locationSetAt: .now, result: nil,
+                                                detectedAt: nil, attemptedAt: nil, detectorVersion: nil,
+                                                resultLocation: nil)
+        #expect(locationPending.response(historyEnabled: true) ==
+            .enabled(location: rounded, layout: nil, reason: .pending))
         let stale = makeRecord(location: rounded, result: result(.notEnoughHistory), detectedAt: .now,
                                detectorVersion: -1, resultLocation: rounded)
         #expect(stale.response(historyEnabled: true) == .enabled(location: rounded, layout: nil, reason: .pending))
@@ -77,6 +89,13 @@ struct SolarLayoutRecordStoreTests {
         } else {
             Issue.record("Expected enabled detected layout")
         }
+        let medium = makeRecord(location: rounded, result: result(.detected, confidence: "medium"), detectedAt: .now,
+                                detectorVersion: SolarLayoutDetector.version, resultLocation: rounded)
+        if case .enabled(_, let layout, _) = medium.response(historyEnabled: true) {
+            #expect(layout?.confidence == .medium)
+        } else {
+            Issue.record("Expected enabled medium-confidence layout")
+        }
     }
 
     private func makeRecord(
@@ -87,12 +106,18 @@ struct SolarLayoutRecordStoreTests {
                           attemptedAt: detectedAt, detectorVersion: detectorVersion, resultLocation: resultLocation)
     }
 
-    private func result(_ status: DetectedSolarLayout.Status) -> DetectedSolarLayout {
+    private func result(_ status: DetectedSolarLayout.Status, confidence: String = "high") -> DetectedSolarLayout {
         let plane = DetectedSolarLayout.Plane(azimuth: 180, tilt: 30, dcKwp: 5, effectiveKw: 4.25,
                                               azimuthRange90: [175, 185], tiltRange90: [25, 35])
-        return DetectedSolarLayout(status: status, confidence: status == .detected ? "high" : nil,
+        return DetectedSolarLayout(status: status, confidence: status == .detected ? confidence : nil,
                                    reasons: [], planes: status == .detected ? [plane] : [], acClipKw: nil,
                                    historyDays: 90, clearDays: 30, firstDay: nil, lastDay: nil)
+    }
+
+    private func persistedBytes(in folder: URL) throws -> Data {
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        let file = try #require(files.first)
+        return try Data(contentsOf: file)
     }
 
     private func temporaryFolder() -> URL {

@@ -54,6 +54,14 @@ actor SolarLayoutRecordStore {
         return record
     }
 
+    func response(scope: SolarForecastSiteScope, historyEnabled: Bool) throws -> MobileSolarLayoutResponse {
+        guard historyEnabled else { return .disabled }
+        guard let record = try record(scope: scope) else {
+            return .enabled(location: nil, layout: nil, reason: .needsLocation)
+        }
+        return record.response(historyEnabled: true)
+    }
+
     func setLocation(_ location: SolarHomeLocation, scope: SolarForecastSiteScope, at date: Date = .now) throws {
         let rounded = Self.rounded(location)
         var value = try record(scope: scope) ?? SolarLayoutRecord(
