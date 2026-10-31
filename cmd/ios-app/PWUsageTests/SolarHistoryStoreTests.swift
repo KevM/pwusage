@@ -332,6 +332,10 @@ extension SolarHistoryStoreTests {
         let store = SolarHistoryStore(directory: folder)
         let api = SuspendedHistoryAPI()
         let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "in-flight")
+        let layoutFolder = temporaryFolder()
+        let layoutStore = SolarLayoutRecordStore(directory: layoutFolder)
+        try await layoutStore.setLocation(
+            SolarHomeLocation(latitude: 43, longitude: -87, source: .device), scope: scope)
         let day = historyDay(day: "2026-10-31", start: date("2026-10-31T00:00:00Z"),
                              fetchedAt: now, slots: Array(repeating: 1, count: 288))
         _ = try await store.sync(scope: scope, api: HistoryAPI(responses: initialResponses(
@@ -339,13 +343,15 @@ extension SolarHistoryStoreTests {
         #expect(FileManager.default.fileExists(atPath: folder.path))
         let sync = Task { try await store.sync(scope: scope, api: api, now: now) }
         await api.waitUntilRequested()
-        let cleanup = SolarForecastStoreSessionCleanup(store: FakeSolcastStore(), historyStore: store)
+        let cleanup = SolarForecastStoreSessionCleanup(
+            store: FakeSolcastStore(), historyStore: store, layoutRecordStore: layoutStore)
         let configuration = try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
         let auth = MobileAuthService(configuration: configuration, forecastCleanup: cleanup)
         try await auth.invalidateAuthenticatedSession()
         await api.resume(with: .enabled(timeZone: zone("UTC"), days: [], nextFrom: nil))
         await #expect(throws: CancellationError.self) { try await sync.value }
         #expect(!FileManager.default.fileExists(atPath: folder.path))
+        #expect(!FileManager.default.fileExists(atPath: layoutFolder.path))
     }
     private func response(day fetchedAt: Date, nextFrom: String?) -> MobileSolarHistoryResponse {
         let start = ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z") ?? .distantPast
