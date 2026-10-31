@@ -7,23 +7,33 @@ extension DashboardCoordinator {
     /// The selected site's status, read from the local record on disk. Triggers on-device
     /// detection if due and returns the current record's response immediately.
     func solarLayoutLookup(siteID: String, operation: Int) async -> MobileSolarLayoutResponse? {
-        guard let accountScopeID, let runner, historyEnabled else {
+        isPerformingSolarLayoutLookup = true
+        defer { isPerformingSolarLayoutLookup = false }
+        guard let accountScopeID, let runner else {
             publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
             return .disabled
         }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
-        if (try? await history.isEnabled(scope: scope)) == false {
+        let bypassTTL = layoutInvalidated
+        layoutInvalidated = false
+        let isEnabled = try? await history.isEnabled(scope: scope)
+        let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
+        let isSyncedWithinTTL = !bypassTTL && isSynced
+        if isSyncedWithinTTL, !historyEnabled || isEnabled == false {
             historyEnabled = false
             publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
             return .disabled
         }
         let record = try? await records.record(scope: scope)
-        if record == nil, (try? await history.isSynced(scope: scope, within: 86_400, now: now())) != true {
+        let needsSync = (record == nil || isEnabled == false) && !isSyncedWithinTTL
+        if needsSync {
             let syncResult = await runner.syncHistory(scope: scope)
-            if syncResult == .disabled || !historyEnabled {
+            guard case .synced = syncResult else {
+                historyEnabled = false
                 publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
                 return .disabled
             }
+            historyEnabled = true
         } else {
             Task { [weak self] in
                 _ = await self?.runner?.runIfDue(scope: scope)
@@ -39,7 +49,9 @@ extension DashboardCoordinator {
 
     /// Forces the next lookup to ask the runner, as pull-to-refresh, settings and a location
     /// post do.
-    func invalidateSolarLayout() {}
+    func invalidateSolarLayout() {
+        layoutInvalidated = true
+    }
 
     func solarSurfaceAppeared(_ surface: SolarForecastSurface) {
         visibleSolarSurfaces.insert(surface)

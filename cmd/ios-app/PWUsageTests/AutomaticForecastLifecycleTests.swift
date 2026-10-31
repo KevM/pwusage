@@ -74,6 +74,7 @@ struct AutomaticForecastLifecycleTests {
         let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        harness.api.historyResponse = .disabled
         harness.coordinator.historyEnabled = false
         harness.coordinator.invalidateSolarLayout()
         await harness.coordinator.loadTimingDetailRefreshed()

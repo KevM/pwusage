@@ -60,6 +60,7 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
         #expect(harness.coordinator.solarForecastBatch == nil)
         #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 2)
+        harness.api.historyResponse = .disabled
         harness.coordinator.historyEnabled = false
         harness.coordinator.invalidateSolarLayout()
         await harness.coordinator.loadTimingDetailAppeared()
@@ -213,14 +214,49 @@ extension AutomaticForecastCoordinatorTests {
     func coldStartDisabledPreservesManual() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
         try await harness.setNeedsLocation()
+        await harness.solcast.configure(
+            credential: Self.credential,
+            batch: Self.solcastBatch(now: harness.api.now)
+        )
         harness.api.historyResponse = .disabled
 
         await harness.coordinator.refreshSolarForecast(manual: true)
 
         #expect(harness.coordinator.solarLayoutStatus == .disabled)
         #expect(!harness.coordinator.historyEnabled)
-        #expect(harness.coordinator.solarForecastState == .basic)
-        #expect(harness.coordinator.solarForecastSource == nil)
+        #expect(harness.coordinator.solarForecastSource == .solcast)
+        #expect(await harness.solcast.refreshCount >= 1)
         #expect(await harness.automatic.refreshes == 0)
+    }
+
+    @Test("Pull to refresh bypasses cached disabled status to pick up beta enrollment")
+    func pullToRefreshRechecksDisabledBetaEnrollment() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setNeedsLocation()
+        harness.api.historyResponse = .disabled
+
+        // Cold start learns disabled
+        await harness.coordinator.refreshSolarForecast(manual: false)
+        #expect(harness.coordinator.solarLayoutStatus == .disabled)
+        #expect(!harness.coordinator.historyEnabled)
+
+        // Subsequent lookup within 24h stays on cached disabled without network
+        let initialFetches = harness.api.historyFetches.count
+        await harness.coordinator.loadTimingDetailAppeared()
+        #expect(harness.api.historyFetches.count == initialFetches)
+        #expect(harness.coordinator.solarLayoutStatus == .disabled)
+
+        // Admin grants beta, user pulls to refresh
+        harness.api.historyResponse = .enabled(timeZone: .gmt, days: [], nextFrom: nil)
+        harness.coordinator.invalidateSolarLayout()
+        await harness.coordinator.refreshSolarForecast(manual: true)
+
+        #expect(harness.api.historyFetches.count > initialFetches)
+        #expect(harness.coordinator.historyEnabled)
+        guard case .enabled(_, _, let reason) = harness.coordinator.solarLayoutStatus else {
+            Issue.record("Expected enabled status after pull to refresh")
+            return
+        }
+        #expect(reason == .needsLocation)
     }
 }

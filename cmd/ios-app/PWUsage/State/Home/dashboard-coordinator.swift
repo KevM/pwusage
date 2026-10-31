@@ -96,6 +96,8 @@ final class DashboardCoordinator: ObservableObject {
     let records: SolarLayoutRecordStore
     let runner: SolarLayoutDetectionRunner?
     var historyEnabled = true
+    var layoutInvalidated = false
+    var isPerformingSolarLayoutLookup = false
     var visibleSolarSurfaces: Set<SolarForecastSurface> = []
     var solarSurfaceVisible: Bool { !visibleSolarSurfaces.isEmpty }
     @Published var forecastOperationPending = false
@@ -183,11 +185,16 @@ final class DashboardCoordinator: ObservableObject {
         }
         runner?.onHistoryDisabled = { [weak self] scope in
             guard let self, scope == solarScope else { return }
+            let needsReload = !isPerformingSolarLayoutLookup
+                && solarLayoutStatus != nil
+                && solarLayoutStatus != .disabled
             historyEnabled = false
             publishLayoutStatus(.disabled, siteID: scope.siteID, operation: forecastGeneration)
-            Task { [weak self] in
-                guard let self, scope == solarScope else { return }
-                await loadTimingDetailAppeared(surface: nil)
+            if needsReload {
+                Task { [weak self] in
+                    guard let self, scope == solarScope else { return }
+                    await loadTimingDetailAppeared(surface: nil)
+                }
             }
         }
     }
@@ -317,6 +324,7 @@ final class DashboardCoordinator: ObservableObject {
         householdPattern = nil
         clearSolarLayoutState()
         historyEnabled = true
+        layoutInvalidated = false
         runner?.cancel()
     }
 
@@ -342,6 +350,7 @@ final class DashboardCoordinator: ObservableObject {
         resetForecastEnhancement(state: .basic, connection: .checking)
         clearSolarLayoutState()
         historyEnabled = true
+        layoutInvalidated = false
         // The pattern belongs to the old site; connecting or disconnecting
         // Solcast leaves it in place.
         householdPattern = nil
