@@ -30,15 +30,9 @@ enum SolarLayoutCloudMerge {
         guard let remoteLoc else { return (localLoc, localDate) }
 
         if let remoteDate, let localDate {
-            if remoteDate > localDate {
-                return (remoteLoc, remoteDate)
-            }
-            return (localLoc, localDate)
+            return remoteDate > localDate ? (remoteLoc, remoteDate) : (localLoc, localDate)
         }
-        if remoteDate != nil {
-            return (remoteLoc, remoteDate)
-        }
-        return (localLoc, localDate)
+        return remoteDate != nil ? (remoteLoc, remoteDate) : (localLoc, localDate)
     }
 
     private struct ResultCandidate {
@@ -83,11 +77,9 @@ enum SolarLayoutCloudMerge {
         if localV > remoteV { return local }
 
         if let rAttempt = remote.attemptedAt, let lAttempt = local.attemptedAt {
-            if rAttempt > lAttempt { return remote }
-            return local
+            return rAttempt > lAttempt ? remote : local
         }
-        if remote.attemptedAt != nil { return remote }
-        return local
+        return remote.attemptedAt != nil ? remote : local
     }
 }
 
@@ -200,6 +192,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private var database: CKDatabase?
     private var syncEngine: CKSyncEngine?
     private var isStarted = false
+    private var onRemoteRecordApplied: (@Sendable (SolarForecastSiteScope) -> Void)?
 
     private var hasSavedZone: Bool {
         get { userDefaults.bool(forKey: "pwusage.solarLayoutZoneSaved") }
@@ -267,6 +260,10 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         guard !hasSavedZone, !isPending else { return }
         let zone = CKRecordZone(zoneID: zoneID)
         engine.state.add(pendingDatabaseChanges: [.saveZone(zone)])
+    }
+
+    func setOnRemoteRecordApplied(_ handler: (@Sendable (SolarForecastSiteScope) -> Void)?) {
+        onRemoteRecordApplied = handler
     }
 
     func stop() async {
@@ -352,6 +349,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         for record in modifications {
             guard let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(record) else { continue }
             _ = try? await store.applyRemoteRecord(remoteRecord, scope: scope)
+            onRemoteRecordApplied?(scope)
         }
     }
 
@@ -359,7 +357,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         do {
             try fileManager.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(serialization)
-            try data.write(to: stateURL, options: [.atomic, .completeFileProtection])
+            try data.write(to: stateURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {
             // Stay local-only gracefully
         }

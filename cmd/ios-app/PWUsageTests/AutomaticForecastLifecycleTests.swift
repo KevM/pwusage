@@ -25,22 +25,31 @@ struct AutomaticForecastLifecycleTests {
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
     }
 
-    @Test("Revalidation is cancelled by leaving the view, backgrounding or switching site")
-    func cancellation() async throws {
-        for leave in 0 ..< 3 {
+    @Test("In-flight detection survives leaving view and backgrounding, but switching site isolates scope")
+    func backgroundingSurvives() async throws {
+        for leave in 0 ..< 2 {
             let harness = await AutomaticForecastHarness(seedDetected: false)
             try await harness.setPending()
             harness.coordinator.scenePhaseChanged(isActive: true)
             await harness.coordinator.loadTimingDetailAppeared()
-            switch leave {
-            case 0: harness.coordinator.solarSurfaceDisappeared()
-            case 1: harness.coordinator.scenePhaseChanged(isActive: false)
-            default: harness.coordinator.selectSite("site-b")
+            if leave == 0 {
+                harness.coordinator.solarSurfaceDisappeared()
+            } else {
+                harness.coordinator.scenePhaseChanged(isActive: false)
             }
-            // Runner cancel was called, so no in-flight task remains
-            try await staysTrue {
-                harness.coordinator.solarLayoutStatus != AutomaticForecastHarness.detectedResponse
+            try await eventually {
+                harness.coordinator.solarForecastSource == .forecastSolar
             }
+            #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
+        }
+
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
+        harness.coordinator.scenePhaseChanged(isActive: true)
+        await harness.coordinator.loadTimingDetailAppeared()
+        harness.coordinator.selectSite("site-b")
+        try await staysTrue {
+            harness.coordinator.solarLayoutStatus != AutomaticForecastHarness.detectedResponse
         }
     }
 

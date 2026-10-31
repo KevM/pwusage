@@ -40,11 +40,9 @@ extension DashboardCoordinator {
         if !solarSurfaceVisible { cancelLayoutRevalidation() }
     }
 
-    func cancelLayoutRevalidation() {
-        runner?.cancel()
-    }
+    func cancelLayoutRevalidation() {}
 
-    private func publishLayoutStatus(_ response: MobileSolarLayoutResponse, siteID: String, operation: Int) {
+    func publishLayoutStatus(_ response: MobileSolarLayoutResponse, siteID: String, operation: Int) {
         solarLayoutStatus = response
     }
 }

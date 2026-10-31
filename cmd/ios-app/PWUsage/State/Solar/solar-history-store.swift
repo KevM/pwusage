@@ -13,6 +13,7 @@ actor SolarHistoryStore {
     private struct Persisted: Codable {
         var timeZone: String?
         var syncedThrough: Date?
+        var syncedAt: Date?
         var days: [StoredDay] = []
     }
 
@@ -71,6 +72,7 @@ actor SolarHistoryStore {
         }
         state.timeZone = timeZone.identifier
         if let maxFetchedAt { state.syncedThrough = maxFetchedAt.addingTimeInterval(-300) }
+        state.syncedAt = now
         let pruneBefore = Self.localDay(daysBefore: 400, now: now, timeZone: timeZone)
         state.days.removeAll { $0.dayStart < pruneBefore }
         try validateGeneration(syncGeneration, scope: scope, scopeGeneration: scopeGeneration)
@@ -159,6 +161,17 @@ actor SolarHistoryStore {
         return Self.dayString(dayStart, timeZone: zone)
     }
 
+    func timeZone(scope: SolarForecastSiteScope) throws -> TimeZone? {
+        guard let identifier = try load(scope).timeZone else { return nil }
+        return TimeZone(identifier: identifier)
+    }
+
+    func isSynced(scope: SolarForecastSiteScope, within interval: TimeInterval, now: Date) throws -> Bool {
+        let state = try load(scope)
+        guard let timestamp = state.syncedAt ?? state.syncedThrough else { return false }
+        return now.timeIntervalSince(timestamp) < interval
+    }
+
     func hourlyActuals(scope: SolarForecastSiteScope, now: Date = .now) throws -> [MobileSolarActualsHour] {
         let state = try load(scope)
         guard let identifier = state.timeZone, let zone = TimeZone(identifier: identifier) else { return [] }
@@ -223,14 +236,23 @@ actor SolarHistoryStore {
         directoryValues.isExcludedFromBackup = true
         var protectedDirectory = directory
         try protectedDirectory.setResourceValues(directoryValues)
-        try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
-        try JSONEncoder().encode(state).write(to: fileURL(scope), options: .atomic)
-        try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: fileURL(scope).path)
+        try fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: directory.path
+        )
+        try JSONEncoder().encode(state).write(
+            to: fileURL(scope),
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
+        cache[scope] = state
+        try fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: fileURL(scope).path
+        )
         var fileValues = URLResourceValues()
         fileValues.isExcludedFromBackup = true
         var protectedFile = fileURL(scope)
         try protectedFile.setResourceValues(fileValues)
-        cache[scope] = state
     }
 
     private func validateGeneration(

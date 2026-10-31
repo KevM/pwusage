@@ -180,13 +180,22 @@ actor SolarLayoutRecordStore {
         directoryValues.isExcludedFromBackup = true
         var protectedDirectory = directory
         try protectedDirectory.setResourceValues(directoryValues)
-        try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
+        try fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: directory.path
+        )
         let url = fileURL(scope)
-        try JSONEncoder().encode(record).write(to: url, options: [.atomic, .completeFileProtection])
+        try JSONEncoder().encode(record).write(
+            to: url,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
         // Atomic replacement has committed. Keep memory aligned with disk even if
         // applying protection or backup metadata below fails.
         cache[scope] = record
-        try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        try fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
         var fileValues = URLResourceValues()
         fileValues.isExcludedFromBackup = true
         var protectedFile = url

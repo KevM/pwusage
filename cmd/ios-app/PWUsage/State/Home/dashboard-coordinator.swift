@@ -181,6 +181,15 @@ final class DashboardCoordinator: ObservableObject {
                 await loadTimingDetailAppeared(surface: nil)
             }
         }
+        runner?.onHistoryDisabled = { [weak self] scope in
+            guard let self, scope == solarScope else { return }
+            historyEnabled = false
+            publishLayoutStatus(.disabled, siteID: scope.siteID, operation: forecastGeneration)
+            Task { [weak self] in
+                guard let self, scope == solarScope else { return }
+                await loadTimingDetailAppeared(surface: nil)
+            }
+        }
     }
 
     /// Stops the polling timer. That cancel is the only one with any effect: the
@@ -308,6 +317,7 @@ final class DashboardCoordinator: ObservableObject {
         householdPattern = nil
         clearSolarLayoutState()
         historyEnabled = true
+        runner?.cancel()
     }
 
     func selectSite(_ siteID: String) {
@@ -318,6 +328,7 @@ final class DashboardCoordinator: ObservableObject {
         siteGeneration += 1
         forecastGeneration += 1
         cancelInFlightRequests()
+        runner?.cancel()
         refreshSettled = false
         batteryHold = BatteryHoldState()
         requiresTeslaReconnect = false

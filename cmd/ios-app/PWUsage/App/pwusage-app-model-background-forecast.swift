@@ -36,6 +36,11 @@ extension PWUsageAppModel {
                   case .enabled(let location?, let layout?, _) = record.response(historyEnabled: true) else {
                 return false
             }
+            let isStale = (try? await solarHistory.isSynced(scope: scope, within: 86_400, now: now)) != true
+            if isStale {
+                let syncResult = try? await solarHistory.sync(scope: scope, api: backgroundAPI, now: now)
+                if case .disabled = syncResult { return false }
+            }
             let context = try await backgroundAPI.fetchLoadPlanningContext(siteID: siteID)
                 .validating(siteID: siteID, now: now)
             let hours = (try? await solarHistory.hourlyActuals(scope: scope, now: now)) ?? []

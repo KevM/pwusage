@@ -174,8 +174,12 @@ extension DashboardCoordinator {
     /// Measured hourly solar for correction, derived from local history. `nil` when disabled or failed,
     /// which means the forecast is published uncorrected.
     func solarActuals(siteID: String) async -> [MobileSolarActualsHour]? {
-        guard let accountScopeID else { return nil }
+        guard let accountScopeID, historyEnabled else { return nil }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
+        let isStale = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) != true
+        if isStale {
+            _ = await runner?.syncHistory(scope: scope)
+        }
         let hours = try? await history.hourlyActuals(scope: scope, now: now())
         return hours?.isEmpty == true ? nil : hours
     }
