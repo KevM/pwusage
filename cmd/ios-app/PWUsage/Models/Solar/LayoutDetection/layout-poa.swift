@@ -143,6 +143,7 @@ enum LayoutPOA {
 
     /// Effective POA irradiance divided by 1000 (kW per kW of effective size) for every row of
     /// `sun`, for one plane (reference `poaColumn`). `smooth` uses the interpolated diffuse IAM.
+    @_optimize(speed)
     static func poaColumn(_ sun: LayoutSunArrays, azimuth: Double, tilt: Double, smooth: Bool = false) -> [Double] {
         let clampedTilt = min(max(tilt, 0), 89)
         let cosTilt = cos(clampedTilt * radians)

@@ -95,6 +95,7 @@ enum LayoutFit {
     }
 
     /// Grid columns (kW per kW for every combo) for a set of rows, stored as Float like the reference.
+    @_optimize(speed)
     static func gridColumns(_ rows: Rows) -> [[Float]] {
         combos.map { combo in
             LayoutPOA.poaColumn(rows.sun, azimuth: combo.azimuth, tilt: combo.tilt).map { Float($0) }
@@ -104,6 +105,7 @@ enum LayoutFit {
     /// Gram matrices per group (`group[r]` in 0..<groups, -1 excluded): the upper triangle of the
     /// sum of outer products of each row's grid values, mirrored. Rows are processed in
     /// cache-sized blocks laid out row-major.
+    @_optimize(speed)
     static func groupGrams(_ cols: [[Float]], y: [Double], group: [Int], groups: Int) -> [Gram] {
         let m = cols.count
         var out = (0 ..< groups).map { _ in Gram(G: [Double](repeating: 0, count: m * m), b: [Double](repeating: 0, count: m), yy: 0) }
@@ -250,6 +252,7 @@ enum LayoutFit {
     }
 
     /// Model kW for packed params [azimuth, tilt, kW, ...] over the rows.
+    @_optimize(speed)
     static func modelRows(_ params: [Double], rows: Rows, clipKw clipInput: Double?) -> [Double] {
         let n = rows.y.count
         var total = [Double](repeating: 0, count: n)
@@ -293,6 +296,7 @@ enum LayoutFit {
 
     /// Robust continuous refinement (reference `refine`: soft-L1 with f_scale 0.08, azimuth
     /// in ±720, tilt 0-50, size 0-50). Levenberg-Marquardt on iteratively reweighted residuals.
+    @_optimize(speed)
     static func refine(_ params0: [Double], rows: Rows, clipKw clipInput: Double?, maxNfev: Int = 200) -> [Double] {
         let clipKw = clip(clipInput)
         let np = params0.count
@@ -307,6 +311,7 @@ enum LayoutFit {
         let hi = [720.0, LayoutPOA.maxTilt, 50]
         func clamp(_ v: Double, _ i: Int) -> Double { min(max(v, lo[i % 3]), hi[i % 3]) }
 
+        @_optimize(speed)
         func evaluate(_ q: [Double]) -> (total: [Double], columns: [[Double]]) {
             var total = [Double](repeating: 0, count: n)
             var columns: [[Double]] = []
@@ -319,6 +324,7 @@ enum LayoutFit {
             return (total, columns)
         }
 
+        @_optimize(speed)
         func cost(_ total: [Double]) -> Double {
             var s = 0.0
             for r in 0 ..< n {
@@ -451,6 +457,7 @@ enum LayoutFit {
     }
 
     /// Refines the best `starts` grid candidates and keeps the lowest RMSE (reference `fit_n`).
+    @_optimize(speed)
     static func fitFromGram(_ rows: Rows, gram: Gram, clipKw: Double?, planes: Int, starts: Int) -> Fitted {
         let candidates = gridSearch(gram, planes: planes)
         var best: (params: [Double], rmseKw: Double)?
