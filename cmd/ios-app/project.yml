@@ -31,8 +31,10 @@ targets:
         NSSupportsLiveActivities: true
         BGTaskSchedulerPermittedIdentifiers:
           - fm.rodeo.pwusage.solar-forecast-refresh
+          - fm.rodeo.pwusage.solar-layout-detect
         UIBackgroundModes:
           - fetch
+          - processing
         NSLocationWhenInUseUsageDescription: "PWUsage uses your home's approximate location once to work out which way your solar panels face."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -123,6 +125,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage.tests
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6HQGHHRK87
         SWIFT_VERSION: "6.0"
     dependencies:
       - target: PWUsage

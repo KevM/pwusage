@@ -1,4 +1,6 @@
+import BackgroundTasks
 import Foundation
+import os
 @testable import PWUsage
 
 actor HistoryAPI: MobileSolarHistoryDataAPI {
@@ -52,4 +54,81 @@ actor SuspendedHistoryAPI: MobileSolarHistoryDataAPI {
         responseContinuation?.resume(returning: response)
         responseContinuation = nil
     }
+}
+
+actor ScopeSwitchingHistoryAPI: MobileSolarHistoryDataAPI {
+    private let page: MobileSolarHistoryResponse
+    private var requestContinuation: CheckedContinuation<Void, Never>?
+    private var resumeContinuation: CheckedContinuation<MobileSolarHistoryResponse, Never>?
+    private var requested = false
+
+    init(page: MobileSolarHistoryResponse) {
+        self.page = page
+    }
+
+    func fetchSolarHistory(
+        siteID: String,
+        from: String,
+        changedSince: Date?
+    ) async throws -> MobileSolarHistoryResponse {
+        if siteID == "site1" {
+            requested = true
+            requestContinuation?.resume()
+            requestContinuation = nil
+            return await withCheckedContinuation { resumeContinuation = $0 }
+        }
+        return page
+    }
+
+    func waitUntilRequested() async {
+        guard !requested else { return }
+        await withCheckedContinuation { requestContinuation = $0 }
+    }
+
+    func resumeScopeA() {
+        resumeContinuation?.resume(returning: page)
+        resumeContinuation = nil
+    }
+}
+
+final class FakeBackgroundTask: BackgroundLayoutDetectingTask, @unchecked Sendable {
+    var expirationHandler: (() -> Void)?
+    private let completionLock = OSAllocatedUnfairLock(initialState: [Bool]())
+    var completedCount: Int { completionLock.withLock { $0.count } }
+    var lastSuccess: Bool? { completionLock.withLock { $0.last } }
+    func setTaskCompleted(success: Bool) { completionLock.withLock { $0.append(success) } }
+}
+
+final class DetectionGate: @unchecked Sendable {
+    private struct State {
+        var callCount = 0
+        var startedContinuation: CheckedContinuation<Void, Never>?
+    }
+    private let lock = OSAllocatedUnfairLock(initialState: State())
+    private let resumeSemaphore = DispatchSemaphore(value: 0)
+
+    var callCount: Int { lock.withLock { $0.callCount } }
+
+    func onDetect() {
+        let continuation = lock.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.callCount += 1
+            defer { state.startedContinuation = nil }
+            return state.startedContinuation
+        }
+        continuation?.resume()
+        resumeSemaphore.wait()
+    }
+
+    func waitUntilStarted() async {
+        if lock.withLock({ $0.callCount > 0 }) { return }
+        await withCheckedContinuation { cont in
+            if lock.withLock({ state -> Bool in
+                if state.callCount > 0 { return true }
+                state.startedContinuation = cont
+                return false
+            }) { cont.resume() }
+        }
+    }
+
+    func proceed() { resumeSemaphore.signal() }
 }

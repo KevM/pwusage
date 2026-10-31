@@ -96,6 +96,25 @@ actor SolarLayoutRecordStore {
         return true
     }
 
+    @discardableResult
+    func saveFailure(
+        scope: SolarForecastSiteScope, for location: SolarHomeLocation, at date: Date
+    ) throws -> Bool {
+        guard var value = try record(scope: scope),
+              solarLocationsShareCoordinates(value.location, Self.rounded(location)) else {
+            return false
+        }
+        let failed = DetectedSolarLayout(status: .failed, confidence: nil, reasons: [], planes: [], acClipKw: nil,
+                                         historyDays: 0, clearDays: 0, firstDay: nil, lastDay: nil)
+        value.result = failed
+        value.detectedAt = date
+        value.attemptedAt = date
+        value.detectorVersion = SolarLayoutDetector.version
+        value.resultLocation = value.location
+        try save(value, scope: scope)
+        return true
+    }
+
     func remove(scope: SolarForecastSiteScope) throws {
         cache.removeValue(forKey: scope)
         try removeFile(fileURL(scope))

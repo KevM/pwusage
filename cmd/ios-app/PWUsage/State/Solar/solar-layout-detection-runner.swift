@@ -1,0 +1,179 @@
+import Foundation
+
+enum SolarLayoutDetectionSchedule {
+    static func isDue(_ record: SolarLayoutRecord, now: Date) -> Bool {
+        guard record.location != nil else { return false }
+        guard let result = record.result, record.detectorVersion == SolarLayoutDetector.version else { return true }
+        let cadence: TimeInterval = result.status == .detected || result.status == .lowConfidence
+            ? 30 * 86_400 : 86_400
+        guard let attemptedAt = record.attemptedAt else { return true }
+        return now.timeIntervalSince(attemptedAt) >= cadence
+    }
+
+    static func nextDue(_ record: SolarLayoutRecord) -> Date? {
+        guard record.location != nil else { return nil }
+        guard let result = record.result, record.detectorVersion == SolarLayoutDetector.version,
+              let attemptedAt = record.attemptedAt else { return .distantPast }
+        let cadence: TimeInterval = result.status == .detected || result.status == .lowConfidence
+            ? 30 * 86_400 : 86_400
+        return attemptedAt.addingTimeInterval(cadence)
+    }
+}
+
+@MainActor
+final class SolarLayoutDetectionRunner {
+    typealias Detector = @Sendable (
+        [(timestamp: Date, solarWh: Double)], Double, Double, TimeZone, () throws -> Void
+    ) throws -> DetectedSolarLayout
+
+    let history: SolarHistoryStore
+    let records: SolarLayoutRecordStore
+    private let api: any MobileSolarHistoryDataAPI
+    private let detect: Detector
+    private let now: () -> Date
+    private var generation = 0
+    private var activeScope: SolarForecastSiteScope?
+    private var syncTask: Task<SolarHistorySyncResult, Error>?
+    private var detectionTask: Task<DetectedSolarLayout, Error>?
+    private var inFlightRun: (scope: SolarForecastSiteScope, task: Task<SolarLayoutRecord?, Never>)?
+    var onRecordChanged: ((SolarForecastSiteScope) -> Void)?
+    var onRecordSaved: ((SolarForecastSiteScope) -> Void)?
+
+    init(
+        history: SolarHistoryStore,
+        records: SolarLayoutRecordStore,
+        api: any MobileSolarHistoryDataAPI,
+        detect: @escaping Detector = SolarLayoutDetector.detect,
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.history = history
+        self.records = records
+        self.api = api
+        self.detect = detect
+        self.now = now
+    }
+
+    func runIfDue(scope: SolarForecastSiteScope) async -> SolarLayoutRecord? {
+        if let current = inFlightRun {
+            if current.scope == scope {
+                return await current.task.value
+            }
+            cancel()
+        }
+
+        generation += 1
+        let run = generation
+        activeScope = scope
+
+        let task = Task { @MainActor [weak self] () -> SolarLayoutRecord? in
+            guard let self else { return nil }
+            return await self.performRunIfDue(scope: scope, run: run)
+        }
+        inFlightRun = (scope: scope, task: task)
+
+        let result = await task.value
+        if inFlightRun?.task == task {
+            inFlightRun = nil
+            if activeScope == scope {
+                activeScope = nil
+            }
+        }
+        return result
+    }
+
+    func cancel() {
+        generation += 1
+        activeScope = nil
+        let runToCancel = inFlightRun
+        inFlightRun = nil
+        syncTask?.cancel()
+        detectionTask?.cancel()
+        runToCancel?.task.cancel()
+        syncTask = nil
+        detectionTask = nil
+    }
+
+    private func performRunIfDue(scope: SolarForecastSiteScope, run: Int) async -> SolarLayoutRecord? {
+        guard isCurrent(run, scope: scope) else { return nil }
+        guard let record = try? await records.record(scope: scope),
+              isCurrent(run, scope: scope) else {
+            return nil
+        }
+        guard SolarLayoutDetectionSchedule.isDue(record, now: now()),
+              let location = record.location else {
+            return record
+        }
+
+        let sync = Task { try await history.sync(scope: scope, api: api, now: now()) }
+        syncTask = sync
+        guard let result = await syncHistory(sync, scope: scope, run: run) else {
+            syncTask = nil
+            return nil
+        }
+        syncTask = nil
+        guard isCurrent(run, scope: scope) else { return nil }
+        guard case .synced(let timeZone) = result else { return nil }
+
+        guard let samples = try? await history.samples(scope: scope),
+              isCurrent(run, scope: scope) else {
+            return nil
+        }
+
+        let operation = Task.detached(priority: .utility) { [detect] in
+            try Task.checkCancellation()
+            return try detect(
+                samples, location.latitude, location.longitude, timeZone, { try Task.checkCancellation() }
+            )
+        }
+        detectionTask = operation
+        let outcome = await saveDetection(operation, scope: scope, location: location, run: run)
+        detectionTask = nil
+        return outcome
+    }
+
+    private func saveDetection(
+        _ operation: Task<DetectedSolarLayout, Error>,
+        scope: SolarForecastSiteScope,
+        location: SolarHomeLocation,
+        run: Int
+    ) async -> SolarLayoutRecord? {
+        do {
+            let detected = try await operation.value
+            guard isCurrent(run, scope: scope) else { return nil }
+            guard (try? await records.saveResult(detected, scope: scope, for: location, at: now())) == true else {
+                return nil
+            }
+            let saved = try? await records.record(scope: scope)
+            guard isCurrent(run, scope: scope) else { return nil }
+            onRecordChanged?(scope)
+            onRecordSaved?(scope)
+            return saved
+        } catch where !(error is CancellationError) {
+            guard isCurrent(run, scope: scope) else { return nil }
+            guard (try? await records.saveFailure(scope: scope, for: location, at: now())) == true else {
+                return nil
+            }
+            guard isCurrent(run, scope: scope) else { return nil }
+            onRecordChanged?(scope)
+            onRecordSaved?(scope)
+            return try? await records.record(scope: scope)
+        } catch {
+            return nil
+        }
+    }
+
+    private func syncHistory(
+        _ sync: Task<SolarHistorySyncResult, Error>, scope: SolarForecastSiteScope, run: Int
+    ) async -> SolarHistorySyncResult? {
+        do {
+            let value = try await sync.value
+            return isCurrent(run, scope: scope) ? value : nil
+        } catch {
+            return nil
+        }
+    }
+
+    private func isCurrent(_ expected: Int, scope: SolarForecastSiteScope) -> Bool {
+        generation == expected && activeScope == scope && !Task.isCancelled
+    }
+}
