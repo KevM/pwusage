@@ -259,4 +259,18 @@ extension AutomaticForecastCoordinatorTests {
         }
         #expect(reason == .needsLocation)
     }
+
+    @Test("Site switch during history sync drops old lookup and does not disable beta on new site")
+    func siteSwitchDuringHistorySyncDoesNotDisableBetaOnNewSite() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        harness.api.holdHistory = true
+        let pending = Task { await harness.coordinator.loadTimingDetailAppeared() }
+        try await eventually { harness.api.historyFetches.count == 1 }
+        harness.coordinator.selectSite("site-b")
+        harness.api.historyError = PWUsageAPIError.invalidResponse
+        harness.api.resumeHistory()
+        await pending.value
+        #expect(harness.coordinator.historyEnabled)
+        #expect(harness.coordinator.solarLayoutStatus == nil)
+    }
 }

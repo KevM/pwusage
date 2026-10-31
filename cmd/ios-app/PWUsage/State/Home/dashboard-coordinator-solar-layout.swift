@@ -18,6 +18,7 @@ extension DashboardCoordinator {
         layoutInvalidated = false
         let isEnabled = try? await history.isEnabled(scope: scope)
         let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
         let isSyncedWithinTTL = !bypassTTL && isSynced
         if isSyncedWithinTTL, !historyEnabled || isEnabled == false {
             historyEnabled = false
@@ -25,9 +26,11 @@ extension DashboardCoordinator {
             return .disabled
         }
         let record = try? await records.record(scope: scope)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
         let needsSync = (record == nil || isEnabled == false) && !isSyncedWithinTTL
         if needsSync {
             let syncResult = await runner.syncHistory(scope: scope)
+            guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
             guard case .synced = syncResult else {
                 historyEnabled = false
                 publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
@@ -41,6 +44,7 @@ extension DashboardCoordinator {
         }
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
         let currentRecord = try? await records.record(scope: scope)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
         let response = currentRecord?.response(historyEnabled: historyEnabled)
             ?? .enabled(location: nil, layout: nil, reason: .needsLocation)
         publishLayoutStatus(response, siteID: siteID, operation: operation)
@@ -65,6 +69,7 @@ extension DashboardCoordinator {
     func cancelLayoutRevalidation() {}
 
     func publishLayoutStatus(_ response: MobileSolarLayoutResponse, siteID: String, operation: Int) {
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
         solarLayoutStatus = response
     }
 }

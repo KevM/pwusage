@@ -1,183 +1,8 @@
 import CloudKit
 import Foundation
 
-enum SolarLayoutCloudMerge {
-    static func merge(local: SolarLayoutRecord?, remote: SolarLayoutRecord) -> SolarLayoutRecord {
-        let winningLoc = winningLocation(local: local, remote: remote)
-        let localCand = validateResult(candidate(for: local), for: winningLoc.location)
-        let remoteCand = validateResult(candidate(for: remote), for: winningLoc.location)
-        let validated = winningCandidate(local: localCand, remote: remoteCand)
-        return SolarLayoutRecord(
-            location: winningLoc.location,
-            locationSetAt: winningLoc.locationSetAt,
-            result: validated?.result,
-            detectedAt: validated?.detectedAt,
-            attemptedAt: validated?.attemptedAt,
-            detectorVersion: validated?.detectorVersion,
-            resultLocation: validated?.resultLocation
-        )
-    }
-
-    private static func winningLocation(
-        local: SolarLayoutRecord?, remote: SolarLayoutRecord
-    ) -> (location: SolarHomeLocation?, locationSetAt: Date?) {
-        let localLoc = local?.location?.rounded
-        let localDate = local?.locationSetAt
-        let remoteLoc = remote.location?.rounded
-        let remoteDate = remote.locationSetAt
-
-        guard let localLoc else { return (remoteLoc, remoteDate) }
-        guard let remoteLoc else { return (localLoc, localDate) }
-
-        if let remoteDate, let localDate {
-            return remoteDate > localDate ? (remoteLoc, remoteDate) : (localLoc, localDate)
-        }
-        return remoteDate != nil ? (remoteLoc, remoteDate) : (localLoc, localDate)
-    }
-
-    private struct ResultCandidate {
-        let result: DetectedSolarLayout
-        let detectedAt: Date?
-        let attemptedAt: Date?
-        let detectorVersion: Int?
-        let resultLocation: SolarHomeLocation?
-    }
-
-    private static func candidate(for record: SolarLayoutRecord?) -> ResultCandidate? {
-        guard let record, let result = record.result else { return nil }
-        return ResultCandidate(
-            result: result,
-            detectedAt: record.detectedAt,
-            attemptedAt: record.attemptedAt,
-            detectorVersion: record.detectorVersion,
-            resultLocation: record.resultLocation?.rounded
-        )
-    }
-
-    private static func validateResult(
-        _ candidate: ResultCandidate?, for location: SolarHomeLocation?
-    ) -> ResultCandidate? {
-        guard let candidate,
-              let location,
-              solarLocationsShareCoordinates(candidate.resultLocation, location) else {
-            return nil
-        }
-        return candidate
-    }
-
-    private static func winningCandidate(
-        local: ResultCandidate?, remote: ResultCandidate?
-    ) -> ResultCandidate? {
-        guard let local else { return remote }
-        guard let remote else { return local }
-
-        let localV = local.detectorVersion ?? 0
-        let remoteV = remote.detectorVersion ?? 0
-        if remoteV > localV { return remote }
-        if localV > remoteV { return local }
-
-        if let rAttempt = remote.attemptedAt, let lAttempt = local.attemptedAt {
-            return rAttempt > lAttempt ? remote : local
-        }
-        return remote.attemptedAt != nil ? remote : local
-    }
-}
-
 protocol SolarLayoutSyncing: AnyObject, Sendable {
     func recordChanged(_ scope: SolarForecastSiteScope) async
-}
-
-enum SolarLayoutCloudRecordSerializer {
-    static let zoneID = CKRecordZone.ID(zoneName: "SolarLayout", ownerName: CKCurrentUserDefaultName)
-    static let recordType = "SolarLayoutRecord"
-
-    static func recordID(for scope: SolarForecastSiteScope, zoneID: CKRecordZone.ID = zoneID) -> CKRecord.ID {
-        CKRecord.ID(recordName: "\(scope.accountScopeID).\(scope.siteID)", zoneID: zoneID)
-    }
-
-    static func makeRecord(
-        from layoutRecord: SolarLayoutRecord,
-        scope: SolarForecastSiteScope,
-        zoneID: CKRecordZone.ID = zoneID
-    ) -> CKRecord {
-        let recID = recordID(for: scope, zoneID: zoneID)
-        let record = CKRecord(recordType: recordType, recordID: recID)
-        record["accountScopeID"] = scope.accountScopeID as CKRecordValue
-        record["siteID"] = scope.siteID as CKRecordValue
-
-        applyLocation(layoutRecord.location?.rounded, to: record)
-        record.encryptedValues["locationSetAt"] = layoutRecord.locationSetAt as CKRecordValue?
-
-        record["result"] = layoutRecord.result.flatMap { (try? JSONEncoder().encode($0)) as CKRecordValue? }
-        record["detectedAt"] = layoutRecord.detectedAt as CKRecordValue?
-        record["attemptedAt"] = layoutRecord.attemptedAt as CKRecordValue?
-        record["detectorVersion"] = layoutRecord.detectorVersion as CKRecordValue?
-        applyResultLocation(layoutRecord.resultLocation?.rounded, to: record)
-
-        return record
-    }
-
-    static func parseRecord(
-        _ record: CKRecord
-    ) -> (scope: SolarForecastSiteScope, record: SolarLayoutRecord)? {
-        guard let scope = parseScope(record) else { return nil }
-        let location = parseLocation(in: record)
-        let locationSetAt = record.encryptedValues["locationSetAt"] as? Date
-
-        let result = (record["result"] as? Data).flatMap {
-            try? JSONDecoder().decode(DetectedSolarLayout.self, from: $0)
-        }
-        let detectedAt = record["detectedAt"] as? Date
-        let attemptedAt = record["attemptedAt"] as? Date
-        let detectorVersion = record["detectorVersion"] as? Int
-        let resultLocation = parseLocation("result", in: record) ?? (result != nil ? location : nil)
-
-        let layoutRecord = SolarLayoutRecord(
-            location: location,
-            locationSetAt: locationSetAt,
-            result: result,
-            detectedAt: detectedAt,
-            attemptedAt: attemptedAt,
-            detectorVersion: detectorVersion,
-            resultLocation: resultLocation
-        )
-        return (scope, layoutRecord)
-    }
-
-    private static func applyLocation(_ location: SolarHomeLocation?, to record: CKRecord) {
-        record.encryptedValues["latitude"] = location?.latitude as CKRecordValue?
-        record.encryptedValues["longitude"] = location?.longitude as CKRecordValue?
-        record.encryptedValues["source"] = location?.source.rawValue as CKRecordValue?
-    }
-
-    private static func applyResultLocation(_ location: SolarHomeLocation?, to record: CKRecord) {
-        record.encryptedValues["resultLatitude"] = location?.latitude as CKRecordValue?
-        record.encryptedValues["resultLongitude"] = location?.longitude as CKRecordValue?
-        record.encryptedValues["resultSource"] = location?.source.rawValue as CKRecordValue?
-    }
-
-    private static func parseScope(_ record: CKRecord) -> SolarForecastSiteScope? {
-        if let account = record["accountScopeID"] as? String,
-           let site = record["siteID"] as? String,
-           !account.isEmpty, !site.isEmpty {
-            return SolarForecastSiteScope(accountScopeID: account, siteID: site)
-        }
-        let parts = record.recordID.recordName.split(separator: ".", maxSplits: 1)
-        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
-        return SolarForecastSiteScope(accountScopeID: String(parts[0]), siteID: String(parts[1]))
-    }
-
-    private static func parseLocation(_ prefix: String = "", in record: CKRecord) -> SolarHomeLocation? {
-        let latKey = prefix.isEmpty ? "latitude" : "\(prefix)Latitude"
-        let lonKey = prefix.isEmpty ? "longitude" : "\(prefix)Longitude"
-        let srcKey = prefix.isEmpty ? "source" : "\(prefix)Source"
-        guard let lat = record.encryptedValues[latKey] as? Double,
-              let lon = record.encryptedValues[lonKey] as? Double else { return nil }
-        let srcStr = record.encryptedValues[srcKey] as? String
-        let source = srcStr.flatMap(SolarLocationSource.init(rawValue:)) ?? .device
-        let loc = SolarHomeLocation(latitude: lat, longitude: lon, source: source)
-        return loc.isValid ? loc.rounded : nil
-    }
 }
 
 actor SolarLayoutCloudSync: SolarLayoutSyncing {
@@ -188,6 +13,8 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private let fileManager: FileManager
     private let userDefaults: UserDefaults
     private let stateURL: URL
+    private let systemFieldsURL: URL
+    private var systemFields: [String: Data] = [:]
     private var container: CKContainer?
     private var database: CKDatabase?
     private var syncEngine: CKSyncEngine?
@@ -204,18 +31,18 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         store: SolarLayoutRecordStore = .shared,
         fileManager: FileManager = .default,
         userDefaults: UserDefaults = .standard,
-        stateURL: URL? = nil
+        stateURL: URL? = nil,
+        systemFieldsURL: URL? = nil
     ) {
         self.containerIdentifier = containerIdentifier
         self.store = store
         self.fileManager = fileManager
         self.userDefaults = userDefaults
-        self.stateURL = stateURL ?? {
-            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                ?? fileManager.temporaryDirectory
-            return appSupport.appendingPathComponent("SolarLayout", isDirectory: true)
-                .appendingPathComponent("sync-engine-state.json")
-        }()
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+        let baseDir = appSupport.appendingPathComponent("SolarLayout", isDirectory: true)
+        self.stateURL = stateURL ?? baseDir.appendingPathComponent("sync-engine-state.json")
+        self.systemFieldsURL = systemFieldsURL ?? baseDir.appendingPathComponent("system-fields.json")
     }
 
     func start() async {
@@ -227,6 +54,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             return
         }
         do {
+            systemFields = loadSystemFields()
             let container = CKContainer(identifier: containerIdentifier)
             let status = try await container.accountStatus()
             guard status == .available else { return }
@@ -296,6 +124,8 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             await handleFetchedChanges(fetched.modifications.map(\.record))
         case .sentDatabaseChanges(let sent):
             handleSentDatabaseChanges(sent)
+        case .sentRecordZoneChanges(let sent):
+            await handleSentRecordZoneChanges(sent, syncEngine: syncEngine)
         default:
             break
         }
@@ -304,6 +134,37 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private func handleSentDatabaseChanges(_ sent: CKSyncEngine.Event.SentDatabaseChanges) {
         if sent.savedZones.contains(where: { $0.zoneID == SolarLayoutCloudRecordSerializer.zoneID }) {
             hasSavedZone = true
+        }
+    }
+
+    private func handleSentRecordZoneChanges(
+        _ sent: CKSyncEngine.Event.SentRecordZoneChanges,
+        syncEngine: CKSyncEngine
+    ) async {
+        for record in sent.savedRecords {
+            saveSystemFields(for: record)
+        }
+        var shouldResend = false
+        for failure in sent.failedRecordSaves {
+            guard let ckError = failure.error as? CKError,
+                  ckError.code == .serverRecordChanged,
+                  let serverRecord = ckError.serverRecord else { continue }
+            saveSystemFields(for: serverRecord)
+            if let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
+               let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) {
+                outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
+            }
+            syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
+            shouldResend = true
+        }
+        if shouldResend {
+            Task.detached { [syncEngine] in
+                do {
+                    try await syncEngine.sendChanges()
+                } catch {
+                    // Stay local-only gracefully
+                }
+            }
         }
     }
 
@@ -323,7 +184,13 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         guard parts.count == 2 else { return nil }
         let scope = SolarForecastSiteScope(accountScopeID: String(parts[0]), siteID: String(parts[1]))
         guard let local = try? await store.record(scope: scope) else { return nil }
-        return SolarLayoutCloudRecordSerializer.makeRecord(from: local, scope: scope, zoneID: recordID.zoneID)
+        let fields = systemFields[recordID.recordName]
+        return SolarLayoutCloudRecordSerializer.makeRecord(
+            from: local,
+            scope: scope,
+            zoneID: recordID.zoneID,
+            systemFieldsData: fields
+        )
     }
 
     private func handleAccountChange(
@@ -347,10 +214,38 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     private func handleFetchedChanges(_ modifications: [CKRecord]) async {
         for record in modifications {
+            saveSystemFields(for: record)
             guard let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(record),
                   let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) else { continue }
             outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
         }
+    }
+
+    private func saveSystemFields(for record: CKRecord) {
+        systemFields[record.recordID.recordName] = SolarLayoutCloudRecordSystemFields.encode(record)
+        persistSystemFields()
+    }
+
+    private func persistSystemFields() {
+        do {
+            try fileManager.createDirectory(
+                at: systemFieldsURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(systemFields)
+            try data.write(to: systemFieldsURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            // Stay local-only gracefully
+        }
+    }
+
+    private func loadSystemFields() -> [String: Data] {
+        guard fileManager.fileExists(atPath: systemFieldsURL.path),
+              let data = try? Data(contentsOf: systemFieldsURL),
+              let decoded = try? JSONDecoder().decode([String: Data].self, from: data) else {
+            return [:]
+        }
+        return decoded
     }
 
     private func saveState(_ serialization: CKSyncEngine.State.Serialization) {
@@ -371,7 +266,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     private func clearState() {
         userDefaults.removeObject(forKey: "pwusage.solarLayoutZoneSaved")
+        systemFields.removeAll()
         try? fileManager.removeItem(at: stateURL)
+        try? fileManager.removeItem(at: systemFieldsURL)
     }
 }
 
