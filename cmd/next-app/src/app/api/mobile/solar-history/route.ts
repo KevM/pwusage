@@ -63,6 +63,8 @@ function dayJson(day: SolarHistoryDay, timeZone: string) {
 /**
  * Archived solar samples for the phone's on-device layout detection. Read-only: never calls Tesla.
  * Pages by site-local day; `changedSince` keeps days fetched strictly after it.
+ * `fetchedAt` is when the Tesla request started, not when the record committed, so writers can
+ * commit out of `fetchedAt` order: clients must sync with an overlap, not from the newest `fetchedAt`.
  */
 export async function GET(request: Request): Promise<NextResponse> {
     return withRequestContext(async () => {
