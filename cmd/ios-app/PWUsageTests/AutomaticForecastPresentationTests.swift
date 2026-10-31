@@ -24,8 +24,7 @@ struct AutomaticForecastPresentationTests {
             .enabled(location: nil, layout: nil, reason: .needsLocation),
             .enabled(location: SolarProviderFixture.location, layout: nil, reason: .pending),
             .enabled(location: SolarProviderFixture.location, layout: nil, reason: .lowConfidence),
-            .enabled(location: SolarProviderFixture.location, layout: nil, reason: .notEnoughHistory)
-        ]
+            .enabled(location: SolarProviderFixture.location, layout: nil, reason: .notEnoughHistory)]
         for status in statuses {
             let availability = LoadTimingForecastPresentation.forecastAvailability(
                 state: .basic, connection: .notConnected, cause: nil, reason: nil,

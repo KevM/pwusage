@@ -12,7 +12,6 @@ extension DashboardCoordinator {
             return .disabled
         }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
-        solarLayoutRevalidationRequested = false
         Task { [weak self] in
             _ = await self?.runner?.runIfDue(scope: scope)
         }
@@ -30,9 +29,7 @@ extension DashboardCoordinator {
 
     /// Forces the next lookup to ask the runner, as pull-to-refresh, settings and a location
     /// post do.
-    func invalidateSolarLayout() {
-        solarLayoutRevalidationRequested = true
-    }
+    func invalidateSolarLayout() {}
 
     func solarSurfaceAppeared(_ surface: SolarForecastSurface) {
         visibleSolarSurfaces.insert(surface)

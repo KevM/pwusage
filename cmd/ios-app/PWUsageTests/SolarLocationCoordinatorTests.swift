@@ -81,6 +81,9 @@ struct SolarLocationCoordinatorTests {
             harness.coordinator.solarForecastSource == .forecastSolar
         }
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
+        // A single initial sync issues exactly two fetches: the 364-day UTC discovery page,
+        // followed by the 365-day site-local exact start page (Task 7 contract).
+        #expect(harness.api.historyFetches.count == 2)
     }
 
     @Test("Refining an estimated location keeps the forecast, then stops offering refinement")

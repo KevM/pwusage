@@ -38,7 +38,9 @@ struct AutomaticForecastLifecycleTests {
             default: harness.coordinator.selectSite("site-b")
             }
             // Runner cancel was called, so no in-flight task remains
-            #expect(harness.coordinator.solarLayoutStatus != AutomaticForecastHarness.detectedResponse)
+            try await staysTrue {
+                harness.coordinator.solarLayoutStatus != AutomaticForecastHarness.detectedResponse
+            }
         }
     }
 
@@ -53,6 +55,9 @@ struct AutomaticForecastLifecycleTests {
             harness.coordinator.solarForecastSource == .forecastSolar
         }
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
+        // A single initial sync issues exactly two fetches: the 364-day UTC discovery page,
+        // followed by the 365-day site-local exact start page (Task 7 contract).
+        #expect(harness.api.historyFetches.count == 2)
     }
 
     @Test("A role revoked on revalidation clears the automatic forecast")
