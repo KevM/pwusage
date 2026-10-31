@@ -6,6 +6,13 @@ import Testing
 
 private struct TestDetectionError: Error, Equatable {}
 
+struct ScopeSwitchPair: Sendable, CustomTestStringConvertible {
+    let name: String
+    let scopeA: SolarForecastSiteScope
+    let scopeB: SolarForecastSiteScope
+    var testDescription: String { name }
+}
+
 @Suite("Solar Layout Detection Schedule")
 struct SolarLayoutDetectionRunnerTests {
     private let scope = SolarForecastSiteScope(accountScopeID: "account", siteID: "site")
@@ -157,60 +164,74 @@ struct SolarLayoutDetectionRunnerTests {
         #expect(SolarLayoutDetectionSchedule.isDue(current, now: attempt))
     }
 
-    @Test("Account switch mid-sync cancels old scope and runs new scope")
+    private static let accountSwitch = ScopeSwitchPair(
+        name: "account switch",
+        scopeA: SolarForecastSiteScope(accountScopeID: "acc1", siteID: "site"),
+        scopeB: SolarForecastSiteScope(accountScopeID: "acc2", siteID: "site")
+    )
+    private static let siteSwitch = ScopeSwitchPair(
+        name: "site switch",
+        scopeA: SolarForecastSiteScope(accountScopeID: "acc", siteID: "site1"),
+        scopeB: SolarForecastSiteScope(accountScopeID: "acc", siteID: "site2")
+    )
+    private static let switchPairs = [accountSwitch, siteSwitch]
+
+    @Test("Scope switch mid-sync cancels old scope and runs new scope", arguments: switchPairs)
     @MainActor
-    func accountSwitchMidSyncCancelsOldScope() async throws {
-        let scopeA = SolarForecastSiteScope(accountScopeID: "acc1", siteID: "site1")
-        let scopeB = SolarForecastSiteScope(accountScopeID: "acc2", siteID: "site2")
-        let (records, history) = try await setupStores(scope: scopeA, location: location)
-        try await records.setLocation(location, scope: scopeB, at: attempt)
+    func scopeSwitchMidSyncCancelsOldScope(pair: ScopeSwitchPair) async throws {
+        let (records, history) = try await setupStores(scope: pair.scopeA, location: location)
+        try await records.setLocation(location, scope: pair.scopeB, at: attempt)
         let switchingAPI = ScopeSwitchingHistoryAPI(page: historyPage(at: attempt))
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: switchingAPI,
                                                 detect: { _, _, _, _, _ in self.result(.detected) },
                                                 now: { self.attempt })
         var published: [SolarForecastSiteScope] = []
+        var savedScopes: [SolarForecastSiteScope] = []
         runner.onRecordChanged = { published.append($0) }
-        let taskA = Task { await runner.runIfDue(scope: scopeA) }
+        runner.onRecordSaved = { savedScopes.append($0) }
+        let taskA = Task { await runner.runIfDue(scope: pair.scopeA) }
         await switchingAPI.waitUntilRequested()
-        let taskB = Task { await runner.runIfDue(scope: scopeB) }
+        let taskB = Task { await runner.runIfDue(scope: pair.scopeB) }
         await switchingAPI.resumeScopeA()
         let (resultA, resultB) = (await taskA.value, await taskB.value)
         #expect(resultA == nil)
         #expect(resultB?.result != nil)
-        #expect(try await records.record(scope: scopeA)?.result == nil)
-        #expect(try await records.record(scope: scopeB)?.result != nil)
-        #expect(published == [scopeB])
+        #expect(try await records.record(scope: pair.scopeA)?.result == nil)
+        #expect(try await records.record(scope: pair.scopeB)?.result != nil)
+        #expect(published == [pair.scopeB])
+        #expect(savedScopes == [pair.scopeB])
     }
 
-    @Test("Site switch mid-detection cancels old scope and runs new scope")
+    @Test("Scope switch mid-detection cancels old scope and runs new scope", arguments: switchPairs)
     @MainActor
-    func siteSwitchMidDetectionCancelsOldScope() async throws {
-        let scopeA = SolarForecastSiteScope(accountScopeID: "acc", siteID: "site1")
-        let scopeB = SolarForecastSiteScope(accountScopeID: "acc", siteID: "site2")
-        let (records, history) = try await setupStores(scope: scopeA, location: location)
-        try await records.setLocation(location, scope: scopeB, at: attempt)
+    func scopeSwitchMidDetectionCancelsOldScope(pair: ScopeSwitchPair) async throws {
+        let (records, history) = try await setupStores(scope: pair.scopeA, location: location)
+        try await records.setLocation(location, scope: pair.scopeB, at: attempt)
         let page = historyPage(at: attempt)
         let api = HistoryAPI(responses: [page, page, page, page])
-        let gateA = DetectionGate()
+        let gate = DetectionGate()
         let runner = SolarLayoutDetectionRunner(
             history: history, records: records, api: api,
-            detect: { _, latitude, _, _, _ in
-                if latitude == 43.39 && gateA.callCount == 0 { gateA.onDetect() }
+            detect: { _, _, _, _, _ in
+                gate.onDetect()
                 return self.result(.detected)
             }, now: { self.attempt }
         )
         var published: [SolarForecastSiteScope] = []
+        var savedScopes: [SolarForecastSiteScope] = []
         runner.onRecordChanged = { published.append($0) }
-        let taskA = Task { await runner.runIfDue(scope: scopeA) }
-        await gateA.waitUntilStarted()
-        let taskB = Task { await runner.runIfDue(scope: scopeB) }
-        gateA.proceed()
+        runner.onRecordSaved = { savedScopes.append($0) }
+        let taskA = Task { await runner.runIfDue(scope: pair.scopeA) }
+        await gate.waitUntilStarted()
+        let taskB = Task { await runner.runIfDue(scope: pair.scopeB) }
+        gate.proceed()
         let (resultA, resultB) = (await taskA.value, await taskB.value)
         #expect(resultA == nil)
         #expect(resultB?.result != nil)
-        #expect(try await records.record(scope: scopeA)?.result == nil)
-        #expect(try await records.record(scope: scopeB)?.result != nil)
-        #expect(published == [scopeB])
+        #expect(try await records.record(scope: pair.scopeA)?.result == nil)
+        #expect(try await records.record(scope: pair.scopeB)?.result != nil)
+        #expect(published == [pair.scopeB])
+        #expect(savedScopes == [pair.scopeB])
     }
 
     @Test("Same-scope concurrent run joins and invokes detector once")

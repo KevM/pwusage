@@ -60,7 +60,7 @@ actor ScopeSwitchingHistoryAPI: MobileSolarHistoryDataAPI {
     private let page: MobileSolarHistoryResponse
     private var requestContinuation: CheckedContinuation<Void, Never>?
     private var resumeContinuation: CheckedContinuation<MobileSolarHistoryResponse, Never>?
-    private var requested = false
+    private var requestCount = 0
 
     init(page: MobileSolarHistoryResponse) {
         self.page = page
@@ -71,8 +71,8 @@ actor ScopeSwitchingHistoryAPI: MobileSolarHistoryDataAPI {
         from: String,
         changedSince: Date?
     ) async throws -> MobileSolarHistoryResponse {
-        if siteID == "site1" {
-            requested = true
+        requestCount += 1
+        if requestCount == 1 {
             requestContinuation?.resume()
             requestContinuation = nil
             return await withCheckedContinuation { resumeContinuation = $0 }
@@ -81,7 +81,7 @@ actor ScopeSwitchingHistoryAPI: MobileSolarHistoryDataAPI {
     }
 
     func waitUntilRequested() async {
-        guard !requested else { return }
+        guard requestCount == 0 else { return }
         await withCheckedContinuation { requestContinuation = $0 }
     }
 
@@ -110,13 +110,19 @@ final class DetectionGate: @unchecked Sendable {
     var callCount: Int { lock.withLock { $0.callCount } }
 
     func onDetect() {
-        let continuation = lock.withLock { state -> CheckedContinuation<Void, Never>? in
+        let shouldWait = lock.withLock { state -> Bool in
             state.callCount += 1
-            defer { state.startedContinuation = nil }
-            return state.startedContinuation
+            if state.callCount == 1 {
+                let cont = state.startedContinuation
+                state.startedContinuation = nil
+                cont?.resume()
+                return true
+            }
+            return false
         }
-        continuation?.resume()
-        resumeSemaphore.wait()
+        if shouldWait {
+            resumeSemaphore.wait()
+        }
     }
 
     func waitUntilStarted() async {

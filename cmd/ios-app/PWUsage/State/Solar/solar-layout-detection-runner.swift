@@ -153,10 +153,11 @@ final class SolarLayoutDetectionRunner {
             guard (try? await records.saveFailure(scope: scope, for: location, at: now())) == true else {
                 return nil
             }
+            let saved = try? await records.record(scope: scope)
             guard isCurrent(run, scope: scope) else { return nil }
             onRecordChanged?(scope)
             onRecordSaved?(scope)
-            return try? await records.record(scope: scope)
+            return saved
         } catch {
             return nil
         }
