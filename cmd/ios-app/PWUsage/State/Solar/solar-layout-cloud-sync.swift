@@ -176,9 +176,12 @@ enum SolarLayoutCloudRecordSerializer {
     }
 
     private static func parseLocation(_ prefix: String = "", in record: CKRecord) -> SolarHomeLocation? {
-        guard let lat = record.encryptedValues[prefix + "latitude"] as? Double,
-              let lon = record.encryptedValues[prefix + "longitude"] as? Double else { return nil }
-        let srcStr = record.encryptedValues[prefix + "source"] as? String
+        let latKey = prefix.isEmpty ? "latitude" : "\(prefix)Latitude"
+        let lonKey = prefix.isEmpty ? "longitude" : "\(prefix)Longitude"
+        let srcKey = prefix.isEmpty ? "source" : "\(prefix)Source"
+        guard let lat = record.encryptedValues[latKey] as? Double,
+              let lon = record.encryptedValues[lonKey] as? Double else { return nil }
+        let srcStr = record.encryptedValues[srcKey] as? String
         let source = srcStr.flatMap(SolarLocationSource.init(rawValue:)) ?? .device
         let loc = SolarHomeLocation(latitude: lat, longitude: lon, source: source)
         return loc.isValid ? loc.rounded : nil

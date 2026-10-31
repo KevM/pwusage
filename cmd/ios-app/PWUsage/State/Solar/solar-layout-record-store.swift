@@ -46,7 +46,7 @@ actor SolarLayoutRecordStore {
         fileManager: FileManager = .default,
         directory: URL? = nil,
         activeAccountScopeProvider: @escaping @Sendable () -> String? = {
-            UserDefaults.standard.string(forKey: "pwusage.localAccountScopeID")
+            UserDefaults.standard.string(forKey: PWUsageAppModel.accountScopeDefaultsKey)
         }
     ) {
         self.fileManager = fileManager

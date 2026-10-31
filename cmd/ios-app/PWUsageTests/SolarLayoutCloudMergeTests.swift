@@ -264,6 +264,32 @@ struct SolarLayoutCloudMergeTests {
         #expect(parsed.record == original)
     }
 
+    @Test("Record serialization round trip preserves distinct location and resultLocation")
+    func recordSerializationRoundTripWithDistinctLocations() throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "acc-prod", siteID: "site-123")
+        let date = Date(timeIntervalSince1970: 1000)
+        let original = SolarLayoutRecord(
+            location: locA,
+            locationSetAt: date,
+            result: makeResult(.detected),
+            detectedAt: date,
+            attemptedAt: date,
+            detectorVersion: 1,
+            resultLocation: locB
+        )
+
+        let record = SolarLayoutCloudRecordSerializer.makeRecord(from: original, scope: scope)
+        #expect(record.encryptedValues["resultLatitude"] as? Double == 40.71)
+        #expect(record.encryptedValues["resultLongitude"] as? Double == -74.00)
+        #expect(record.encryptedValues["resultSource"] as? String == "device")
+
+        let parsed = try #require(SolarLayoutCloudRecordSerializer.parseRecord(record))
+        #expect(parsed.scope == scope)
+        #expect(parsed.record.location == locA)
+        #expect(parsed.record.resultLocation == locB)
+        #expect(parsed.record == original)
+    }
+
     @Test("Scope routing handles plain fields and recordName fallback")
     func scopeRouting() throws {
         let zoneID = SolarLayoutCloudRecordSerializer.zoneID

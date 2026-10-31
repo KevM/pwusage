@@ -90,7 +90,7 @@ extension PWUsageAppModel {
     }
 
     static let selectedSiteDefaultsKey = "pwusage.selectedSiteID"
-    static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
+    nonisolated static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
     static let selectedTabDefaultsKey = "pwusage.selectedTab"
 
     /// The next session starts on Home, not on whatever tab this one ended on.
@@ -102,6 +102,9 @@ extension PWUsageAppModel {
     func ensureAccountScopeID() -> String {
         if let existing = userDefaults.string(forKey: Self.accountScopeDefaultsKey), !existing.isEmpty {
             accountScopeID = existing
+            if (NSUbiquitousKeyValueStore.default.string(forKey: Self.accountScopeDefaultsKey) ?? "").isEmpty {
+                NSUbiquitousKeyValueStore.default.set(existing, forKey: Self.accountScopeDefaultsKey)
+            }
             return existing
         }
         if let cloudExisting = NSUbiquitousKeyValueStore.default.string(forKey: Self.accountScopeDefaultsKey),
