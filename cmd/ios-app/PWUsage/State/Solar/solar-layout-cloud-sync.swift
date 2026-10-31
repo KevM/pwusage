@@ -336,10 +336,12 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         case .signOut, .switchAccounts:
             await stop()
         case .signIn:
-            do {
-                try await syncEngine.fetchChanges()
-            } catch {
-                // Stay local-only gracefully
+            Task.detached { [syncEngine] in
+                do {
+                    try await syncEngine.fetchChanges()
+                } catch {
+                    // Stay local-only gracefully
+                }
             }
         @unknown default:
             break

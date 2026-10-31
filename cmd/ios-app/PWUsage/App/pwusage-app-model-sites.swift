@@ -102,20 +102,10 @@ extension PWUsageAppModel {
     func ensureAccountScopeID() -> String {
         if let existing = userDefaults.string(forKey: Self.accountScopeDefaultsKey), !existing.isEmpty {
             accountScopeID = existing
-            if (NSUbiquitousKeyValueStore.default.string(forKey: Self.accountScopeDefaultsKey) ?? "").isEmpty {
-                NSUbiquitousKeyValueStore.default.set(existing, forKey: Self.accountScopeDefaultsKey)
-            }
             return existing
-        }
-        if let cloudExisting = NSUbiquitousKeyValueStore.default.string(forKey: Self.accountScopeDefaultsKey),
-           !cloudExisting.isEmpty {
-            userDefaults.set(cloudExisting, forKey: Self.accountScopeDefaultsKey)
-            accountScopeID = cloudExisting
-            return cloudExisting
         }
         let created = UUID().uuidString.lowercased()
         userDefaults.set(created, forKey: Self.accountScopeDefaultsKey)
-        NSUbiquitousKeyValueStore.default.set(created, forKey: Self.accountScopeDefaultsKey)
         accountScopeID = created
         return created
     }

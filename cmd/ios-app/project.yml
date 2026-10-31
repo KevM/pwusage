@@ -35,6 +35,7 @@ targets:
         UIBackgroundModes:
           - fetch
           - processing
+          - remote-notification
         NSLocationWhenInUseUsageDescription: "PWUsage uses your home's approximate location once to work out which way your solar panels face."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
