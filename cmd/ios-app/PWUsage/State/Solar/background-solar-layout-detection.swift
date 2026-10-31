@@ -32,7 +32,8 @@ enum BackgroundSolarLayoutDetection {
     ) {
         self.runner = runner
         self.dueScope = dueScope ?? { @MainActor in defaultScope() }
-        runner.onRecordSaved = { scope in
+        runner.onRecordSaved = { [weak runner] scope in
+            guard let runner else { return }
             Task {
                 let record = try? await runner.records.record(scope: scope)
                 schedule(nextDue: record.flatMap(SolarLayoutDetectionSchedule.nextDue))
