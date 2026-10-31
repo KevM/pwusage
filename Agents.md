@@ -83,15 +83,25 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - Preserve `DEVELOPMENT_TEAM: 6HQGHHRK87` in `cmd/ios-app/project.yml`. The user explicitly wants this committed setting for device deployment.
 - Do not remove it, move it to an untracked local override, or require manual signing setup unless the user explicitly requests that change. It is an intentional project preference, not a security finding.
 
-## iOS Test Runs
-- For every native iOS test run, use `cmd/ios-app/run-tests.sh` (or `./run-tests.sh` from that directory). Do not invoke `xcodebuild test` directly. The script generates the Xcode project, selects an available iPhone simulator, disables parallel test execution, and stops a run after 10 minutes.
+## iOS Test Runs & Code Quality
+- **Swift API Design Guidelines & Swifty Naming Conventions**:
+  - **Clarity at Call Site**: Call sites must read like fluent English prose (e.g. `cache.store(item, for: key)` NOT `cache.storeItemWithKey(item, key)`).
+  - **Omit Needless Words**: Do not repeat type names or enclosing context (e.g. `site.refresh()`, `battery.level`, NOT `site.refreshSite()`, `battery.batteryLevel`).
+  - **No `get` Prefixes for Getters**: Use noun phrases or properties (`user.profile`, `fetchMetrics()` if async/throwing, NOT `user.getProfile()`).
+  - **Boolean Naming**: Read as assertions about receiver (`isEmpty`, `isRefreshing`, `hasData`, `animated: true`, NOT `empty`, `refreshFlag`).
+  - **Mutating vs Non-Mutating**: Imperative verbs for mutating side effects (`sort()`, `reverse()`); `-ed` / `-ing` or nouns for non-mutating (`sorted()`, `reversed()`).
+  - **No Force Unwrapping**: Strict prohibition of `!` (force-unwrap or force-try `try!`). Always use `guard let`, `if let`, nil-coalescing `??`, or throw.
+- **Strict Linting & Pre-commit Verification**:
+  - Always run `cmd/ios-app/format.sh` after any Swift edits.
+  - Always run `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` from repo root. Never introduce new SwiftLint warnings or errors.
+  - SwiftLint Budgets: Line length ≤ 120 chars; file length ≤ 400 (warn)/500 (err); type body ≤ 350 (warn)/450 (err); function body ≤ 50 (warn)/100 (err); cyclomatic complexity ≤ 10 (warn)/20 (err).
+- **Test Execution**: For every native iOS test run, use `cmd/ios-app/run-tests.sh` (or `./run-tests.sh` from that directory). Do not invoke `xcodebuild test` directly. The script generates the Xcode project, selects an available iPhone simulator, disables parallel test execution, and stops a run after 10 minutes.
 - **Quick vs full**: while iterating, use `./run-tests.sh --quick`, the everyday sniff test. It skips the multi-minute suites listed in `cmd/ios-app/quick-test-skips.txt` (detector fixture parity) and combines with filters, e.g. `./run-tests.sh --quick AppConfigurationTests`. Plain `./run-tests.sh` runs every default suite as a Debug build. Run it once before opening or updating a PR, and whenever you change code covered by a skipped suite, such as `Models/Solar/LayoutDetection`. Add a suite to the skip file only when it takes more than about 30 s in Debug. CI runs `./run-tests.sh --full`. That run builds optimized (`-O`, still `@testable`) and also runs the opt-in year-fixture parity suite. Use it locally to reproduce a CI-only failure.
 - Set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. A failed or timed-out run prints the retained test-artifact path.
 - If a run times out, inspect the retained artifacts and simulator state before changing app code. Avoid overlapping test runs.
 - **Framework**: All iOS tests must use Swift Testing (`SwiftTest` via `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Do not use legacy `XCTest`.
 - **Targeting Specific Tests**: Target individual suites/fixtures (e.g., `./run-tests.sh AppConfigurationTests`) or specific test methods (e.g., `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin`). The script automatically normalizes the target prefix and method parentheses. `./run-tests.sh PWUsageTests` runs the whole bundle. A run that executes zero tests (for example a misspelled suite) exits non-zero even though `xcodebuild` prints `TEST SUCCEEDED`. After changing the script, run `./test-run-tests.sh`.
 - **Waiting in tests**: Never assert after a fixed `Task.sleep`. Use `eventually` for a state that must be reached and `staysTrue` for one that must not change, both in `PWUsageTests/test-waits.swift`.
-- **Lint**: `swiftlint --strict` from the repository root uses `.swiftlint.yml`. CI runs it as a non-blocking step until the baseline in `CODE_AUDIT.md` §14.4 is cleared; do not add new violations.
 
 ## Communication Style
 - **Task Management**: Use `task.md` to track huge chunks of work.
