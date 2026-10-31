@@ -33,6 +33,7 @@ extension PWUsageAppModel {
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
         await forecastService?.activateAccountScope(accountScopeID)
+        await solarCloudSync.start()
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true

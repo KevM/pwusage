@@ -64,6 +64,7 @@ struct SolarForecastStoreSessionCleanup: SolarForecastSessionCleanup {
     var service: SolarForecastService?
     var historyStore: SolarHistoryStore = .shared
     var layoutRecordStore: SolarLayoutRecordStore = .shared
+    var cloudSync: SolarLayoutCloudSync = .shared
 
     /// All cleanup steps run even if an earlier step fails.
     func signOut() async throws {
@@ -72,6 +73,7 @@ struct SolarForecastStoreSessionCleanup: SolarForecastSessionCleanup {
         do { try await service?.clearAccountData() } catch { firstError = firstError ?? error }
         do { try await historyStore.removeAll() } catch { firstError = firstError ?? error }
         do { try await layoutRecordStore.removeAll() } catch { firstError = firstError ?? error }
+        await cloudSync.stop()
         if let firstError { throw firstError }
     }
 }

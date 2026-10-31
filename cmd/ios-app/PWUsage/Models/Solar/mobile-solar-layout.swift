@@ -44,6 +44,24 @@ struct SolarHomeLocation: Codable, Equatable, Hashable, Sendable {
     var isValid: Bool {
         latitude.isFinite && (-90 ... 90).contains(latitude) && longitude.isFinite && (-180 ... 180).contains(longitude)
     }
+
+    var rounded: SolarHomeLocation {
+        SolarHomeLocation(
+            latitude: latitude.roundedToHundredths,
+            longitude: longitude.roundedToHundredths,
+            source: source
+        )
+    }
+
+    func sharesCoordinates(with other: SolarHomeLocation?) -> Bool {
+        guard let other else { return false }
+        return latitude == other.latitude && longitude == other.longitude
+    }
+}
+
+func solarLocationsShareCoordinates(_ lhs: SolarHomeLocation?, _ rhs: SolarHomeLocation?) -> Bool {
+    guard let lhs, let rhs else { return false }
+    return lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
 }
 
 struct SolarLayout: Codable, Equatable, Sendable {

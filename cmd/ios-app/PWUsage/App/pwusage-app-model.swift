@@ -48,6 +48,7 @@ final class PWUsageAppModel: ObservableObject {
     let solarHistory: SolarHistoryStore
     let solarRecords: SolarLayoutRecordStore
     let solarRunner: SolarLayoutDetectionRunner?
+    let solarCloudSync: SolarLayoutCloudSync
     let coordinatorFactory: CoordinatorFactory
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
@@ -70,7 +71,8 @@ final class PWUsageAppModel: ObservableObject {
         liveActivities: BatteryHoldActivityCoordinator? = nil,
         solarHistory: SolarHistoryStore = .shared,
         solarRecords: SolarLayoutRecordStore = .shared,
-        solarRunner: SolarLayoutDetectionRunner? = nil
+        solarRunner: SolarLayoutDetectionRunner? = nil,
+        solarCloudSync: SolarLayoutCloudSync = .shared
     ) {
         self.controlSiteStore = controlSiteStore
         self.liveActivities = liveActivities
@@ -81,6 +83,7 @@ final class PWUsageAppModel: ObservableObject {
         self.forecastService = forecastService
         self.solarHistory = solarHistory
         self.solarRecords = solarRecords
+        self.solarCloudSync = solarCloudSync
         let runner = solarRunner ?? (forecastService != nil ? SolarLayoutDetectionRunner(
             history: solarHistory, records: solarRecords, api: api
         ) : nil)
@@ -108,17 +111,11 @@ final class PWUsageAppModel: ObservableObject {
             api: api,
             forecastCleanup: SolarForecastStoreSessionCleanup(
                 store: forecastStore, service: forecastService,
-                historyStore: solarHistory, layoutRecordStore: solarRecords
+                historyStore: solarHistory, layoutRecordStore: solarRecords,
+                cloudSync: solarCloudSync
             )
         )
-        if let cachedSites = cache?.snapshot.sites, !cachedSites.isEmpty {
-            sites = cachedSites
-            let savedID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey)
-            let chosen = cachedSites.first(where: { $0.id == savedID }) ?? cachedSites[0]
-            selectedSiteID = chosen.id
-            installCoordinator(siteID: chosen.id, accountScopeID: ensureAccountScopeID())
-            screenState = .signedIn
-        }
+        restoreCachedSession()
     }
 
     /// Retries until a terminal state is reached. The `.task` that drives this is
@@ -247,5 +244,17 @@ final class PWUsageAppModel: ObservableObject {
                 batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
             }
         }
+    }
+
+    private func restoreCachedSession() {
+        guard let cachedSites = cache?.snapshot.sites, !cachedSites.isEmpty else { return }
+        sites = cachedSites
+        let savedID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey)
+        let chosen = cachedSites.first(where: { $0.id == savedID }) ?? cachedSites[0]
+        selectedSiteID = chosen.id
+        installCoordinator(siteID: chosen.id, accountScopeID: ensureAccountScopeID())
+        screenState = .signedIn
+        let sync = solarCloudSync
+        Task { await sync.start() }
     }
 }

@@ -65,6 +65,10 @@ targets:
         com.apple.security.application-groups:
           - "$(PWUSAGE_APP_GROUP)"
         aps-environment: "$(PWUSAGE_APS_ENVIRONMENT)"
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.fm.rodeo.pwusage
+        com.apple.developer.icloud-services:
+          - CloudKit
     settings:
       base:
         PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage

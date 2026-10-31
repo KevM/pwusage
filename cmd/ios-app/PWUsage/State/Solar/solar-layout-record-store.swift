@@ -39,11 +39,16 @@ actor SolarLayoutRecordStore {
     private let directory: URL
     private let fileManager: FileManager
     private var cache: [SolarForecastSiteScope: SolarLayoutRecord] = [:]
+    private var sync: (any SolarLayoutSyncing)?
 
     init(fileManager: FileManager = .default, directory: URL? = nil) {
         self.fileManager = fileManager
         self.directory = directory ?? (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory).appendingPathComponent("SolarLayout", isDirectory: true)
+    }
+
+    func setSync(_ sync: (any SolarLayoutSyncing)?) {
+        self.sync = sync
     }
 
     func record(scope: SolarForecastSiteScope) throws -> SolarLayoutRecord? {
@@ -77,6 +82,7 @@ actor SolarLayoutRecordStore {
         value.location = rounded
         value.locationSetAt = date
         try save(value, scope: scope)
+        notifySync(scope)
     }
 
     @discardableResult
@@ -93,6 +99,7 @@ actor SolarLayoutRecordStore {
         value.detectorVersion = SolarLayoutDetector.version
         value.resultLocation = value.location
         try save(value, scope: scope)
+        notifySync(scope)
         return true
     }
 
@@ -112,7 +119,25 @@ actor SolarLayoutRecordStore {
         value.detectorVersion = SolarLayoutDetector.version
         value.resultLocation = value.location
         try save(value, scope: scope)
+        notifySync(scope)
         return true
+    }
+
+    @discardableResult
+    func applyRemoteRecord(_ remote: SolarLayoutRecord, scope: SolarForecastSiteScope) throws -> SolarLayoutRecord {
+        let local = try record(scope: scope)
+        let merged = SolarLayoutCloudMerge.merge(local: local, remote: remote)
+        if merged != local {
+            try save(merged, scope: scope)
+        }
+        return merged
+    }
+
+    private func notifySync(_ scope: SolarForecastSiteScope) {
+        guard let sync else { return }
+        Task { [sync] in
+            await sync.recordChanged(scope)
+        }
     }
 
     func remove(scope: SolarForecastSiteScope) throws {
@@ -156,12 +181,6 @@ actor SolarLayoutRecordStore {
     }
 
     private static func rounded(_ location: SolarHomeLocation) -> SolarHomeLocation {
-        SolarHomeLocation(latitude: location.latitude.roundedToHundredths,
-                          longitude: location.longitude.roundedToHundredths, source: location.source)
+        location.rounded
     }
-}
-
-private func solarLocationsShareCoordinates(_ lhs: SolarHomeLocation?, _ rhs: SolarHomeLocation) -> Bool {
-    guard let lhs else { return false }
-    return lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
 }
