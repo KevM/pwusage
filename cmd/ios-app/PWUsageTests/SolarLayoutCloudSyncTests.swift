@@ -73,4 +73,29 @@ struct SolarLayoutCloudSyncTests {
         let parsed = try #require(SolarLayoutCloudRecordSerializer.parseRecord(record))
         #expect(parsed.record.location == locA)
     }
+
+    @Test("Offline record changes are persisted and retained across restarts")
+    func offlineRecordChangesRetained() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let scopesURL = tempDir.appendingPathComponent("pending-scopes.json")
+        let sync = SolarLayoutCloudSync(
+            pendingScopesURL: scopesURL
+        )
+        let scope1 = SolarForecastSiteScope(accountScopeID: "acc-1", siteID: "site-1")
+        let scope2 = SolarForecastSiteScope(accountScopeID: "acc-1", siteID: "site-2")
+
+        // recordChanged called while stopped
+        await sync.recordChanged(scope1)
+        await sync.recordChanged(scope2)
+
+        #expect(FileManager.default.fileExists(atPath: scopesURL.path))
+
+        // New instance restores pending scopes from disk
+        let syncRestarted = SolarLayoutCloudSync(
+            pendingScopesURL: scopesURL
+        )
+        // Calling stop/clear removes persisted state
+        await syncRestarted.stop()
+        #expect(!FileManager.default.fileExists(atPath: scopesURL.path))
+    }
 }

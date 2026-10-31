@@ -32,14 +32,16 @@ extension PWUsageAppModel {
             let authorized = try await backgroundAPI.fetchSites()
             guard isCurrent(), authorized.contains(where: { $0.id == siteID }) else { return false }
             let scope = SolarForecastSiteScope(accountScopeID: account, siteID: siteID)
+            let isEnabled = try? await solarHistory.isEnabled(scope: scope)
+            let isSynced = (try? await solarHistory.isSynced(scope: scope, within: 86_400, now: now)) == true
+            if isSynced, isEnabled == false { return false }
             guard let record = try await solarRecords.record(scope: scope), isCurrent(),
                   case .enabled(let location?, let layout?, _) = record.response(historyEnabled: true) else {
                 return false
             }
-            let isStale = (try? await solarHistory.isSynced(scope: scope, within: 86_400, now: now)) != true
-            if isStale {
+            if !isSynced {
                 let syncResult = try? await solarHistory.sync(scope: scope, api: backgroundAPI, now: now)
-                if case .disabled = syncResult { return false }
+                guard isCurrent(), case .synced = syncResult else { return false }
             }
             let context = try await backgroundAPI.fetchLoadPlanningContext(siteID: siteID)
                 .validating(siteID: siteID, now: now)

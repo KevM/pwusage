@@ -87,6 +87,22 @@ struct BackgroundSolarForecastTests {
         #expect(await harness.provider.refreshes == 0)
     }
 
+    @Test("Persisted disabled beta status skips automatic background forecast even with detected record")
+    func persistedDisabledBetaStatusPreventsBackgroundForecast() async throws {
+        let harness = try await BackgroundForecastHarness()
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        harness.api.solarHistoryResponse = .disabled
+        _ = try await harness.historyStore.sync(scope: scope, api: harness.api, now: harness.api.clock.now())
+        #expect(try await harness.historyStore.isEnabled(scope: scope) == false)
+        #expect(try await harness.historyStore.isSynced(scope: scope, within: 86_400, now: harness.api.clock.now()))
+
+        let refreshed = await harness.model.refreshBackgroundForecast(
+            using: harness.api, now: harness.api.clock.now(), lowPowerMode: false
+        )
+        #expect(!refreshed)
+        #expect(await harness.provider.refreshes == 0)
+    }
+
     @Test("Sign-out during an API await prevents forecast publication")
     func accountFence() async throws {
         let harness = try await BackgroundForecastHarness()
@@ -201,10 +217,12 @@ private final class BackgroundForecastAPI: PWUsageApplicationAPI {
         pending.forEach { $0.resume() }
     }
 
+    var solarHistoryResponse: MobileSolarHistoryResponse = .enabled(timeZone: .gmt, days: [], nextFrom: nil)
+
     func fetchSolarHistory(
         siteID: String, from: String, changedSince: Date?
     ) async throws -> MobileSolarHistoryResponse {
-        .enabled(timeZone: .gmt, days: [], nextFrom: nil)
+        solarHistoryResponse
     }
 
     func exchangeSession(_ exchange: MobileSessionExchange) async throws { throw PWUsageAPIError.invalidResponse }

@@ -14,7 +14,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private let userDefaults: UserDefaults
     private let stateURL: URL
     private let systemFieldsURL: URL
+    private let pendingScopesURL: URL
     private var systemFields: [String: Data] = [:]
+    private var pendingOfflineScopes: Set<SolarForecastSiteScope> = []
     private var container: CKContainer?
     private var database: CKDatabase?
     private var syncEngine: CKSyncEngine?
@@ -32,7 +34,8 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         fileManager: FileManager = .default,
         userDefaults: UserDefaults = .standard,
         stateURL: URL? = nil,
-        systemFieldsURL: URL? = nil
+        systemFieldsURL: URL? = nil,
+        pendingScopesURL: URL? = nil
     ) {
         self.containerIdentifier = containerIdentifier
         self.store = store
@@ -43,6 +46,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         let baseDir = appSupport.appendingPathComponent("SolarLayout", isDirectory: true)
         self.stateURL = stateURL ?? baseDir.appendingPathComponent("sync-engine-state.json")
         self.systemFieldsURL = systemFieldsURL ?? baseDir.appendingPathComponent("system-fields.json")
+        let scopesURL = pendingScopesURL ?? baseDir.appendingPathComponent("pending-scopes.json")
+        self.pendingScopesURL = scopesURL
+        self.pendingOfflineScopes = Self.loadPendingScopes(from: scopesURL, fileManager: fileManager)
     }
 
     func start() async {
@@ -71,6 +77,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             let engine = CKSyncEngine(config)
             self.syncEngine = engine
             ensureZoneSaved(engine: engine)
+            enqueuePendingOfflineScopes(engine: engine)
             try await engine.fetchChanges()
         } catch {
             // Stay local-only gracefully
@@ -104,7 +111,11 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     func recordChanged(_ scope: SolarForecastSiteScope) async {
-        guard isStarted, let syncEngine else { return }
+        guard isStarted, let syncEngine else {
+            pendingOfflineScopes.insert(scope)
+            persistPendingScopes()
+            return
+        }
         let recordID = SolarLayoutCloudRecordSerializer.recordID(for: scope)
         syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
         do {
@@ -264,11 +275,48 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         return try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: data)
     }
 
+    private func enqueuePendingOfflineScopes(engine: CKSyncEngine) {
+        guard !pendingOfflineScopes.isEmpty else { return }
+        let changes: [CKSyncEngine.PendingRecordZoneChange] = pendingOfflineScopes.map { scope in
+            .saveRecord(SolarLayoutCloudRecordSerializer.recordID(for: scope))
+        }
+        engine.state.add(pendingRecordZoneChanges: changes)
+        pendingOfflineScopes.removeAll()
+        persistPendingScopes()
+    }
+
+    private func persistPendingScopes() {
+        do {
+            try fileManager.createDirectory(
+                at: pendingScopesURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(Array(pendingOfflineScopes))
+            try data.write(
+                to: pendingScopesURL,
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            )
+        } catch {
+            // Stay local-only gracefully
+        }
+    }
+
+    private static func loadPendingScopes(from url: URL, fileManager: FileManager) -> Set<SolarForecastSiteScope> {
+        guard fileManager.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([SolarForecastSiteScope].self, from: data) else {
+            return []
+        }
+        return Set(decoded)
+    }
+
     private func clearState() {
         userDefaults.removeObject(forKey: "pwusage.solarLayoutZoneSaved")
         systemFields.removeAll()
+        pendingOfflineScopes.removeAll()
         try? fileManager.removeItem(at: stateURL)
         try? fileManager.removeItem(at: systemFieldsURL)
+        try? fileManager.removeItem(at: pendingScopesURL)
     }
 }
 
