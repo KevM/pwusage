@@ -72,7 +72,10 @@ function parseHeader(value: unknown): Header {
     return { version: h.version, site: h.site, start: h.start, end: h.end, axis: h.axis, positions: h.positions as number[] };
 }
 
-function decode(archive: DayArchive, identity?: { siteId: string; start: Date; end: Date }): EnergySample[] {
+type Identity = { siteId: string; start: Date; end: Date };
+
+/** Verify an archive (size, bounded decompression, checksum, header, identity, data length); returns its header and where its data starts. */
+function openArchive(archive: DayArchive, identity?: Identity): { header: Header; bytes: Buffer; dataOffset: number } {
     if (archive.data.length > MAX_BYTES) throw new Error('Archive too large');
     const bytes = archive.codec === 'gzip' ? gunzipSync(archive.data, { maxOutputLength: MAX_BYTES })
         : archive.codec === 'brotli' ? brotliDecompressSync(archive.data, { maxOutputLength: MAX_BYTES }) : (() => { throw new Error('Unknown codec'); })();
@@ -81,12 +84,22 @@ function decode(archive: DayArchive, identity?: { siteId: string; start: Date; e
     if (length > bytes.length - 4) throw new Error('Truncated header');
     const h = parseHeader(JSON.parse(bytes.subarray(4, 4 + length).toString('utf8')) as unknown);
     if (identity && (h.start !== +identity.start || h.end !== +identity.end || (h.positions.length > 0 && h.site !== identity.siteId))) throw new Error('Archive identity mismatch');
-    const keys = sampleColumns;
-    if (bytes.length !== 4 + length + h.positions.length * keys.length * 8) throw new Error('Invalid data length');
-    const rows: EnergySample[] = h.positions.map(p => ({ site_id: h.site, timestamp: new Date(h.start + p * (h.axis === 'grid' ? INTERVAL_MS : 1)),
+    const dataOffset = 4 + length;
+    if (bytes.length !== dataOffset + h.positions.length * sampleColumns.length * 8) throw new Error('Invalid data length');
+    return { header: h, bytes, dataOffset };
+}
+
+/** Rows carrying each sample's timestamp; measurement columns are filled in by the caller. */
+function timestampedRows(h: Header): EnergySample[] {
+    return h.positions.map(p => ({ site_id: h.site, timestamp: new Date(h.start + p * (h.axis === 'grid' ? INTERVAL_MS : 1)),
         load_power: 0, solar_power: 0, grid_power: 0, battery_power: 0, battery_soc: null }));
-    let offset = 4 + length;
-    for (const key of keys) for (const row of rows) {
+}
+
+function decode(archive: DayArchive, identity?: Identity): EnergySample[] {
+    const { header: h, bytes, dataOffset } = openArchive(archive, identity);
+    const rows = timestampedRows(h);
+    let offset = dataOffset;
+    for (const key of sampleColumns) for (const row of rows) {
         const n = bytes.readDoubleLE(offset); offset += 8;
         if (key === 'battery_soc') row[key] = Number.isNaN(n) ? null : n;
         else row[key] = n;
@@ -102,6 +115,15 @@ export const toSample = (row: EnergySample): EnergySample => ({ site_id: row.sit
 /** Read format-2 measurements; tariff labels come from the separate attribution timeline. */
 export function decodeDaySamples(archive: DayArchive, identity?: { siteId: string; start: Date; end: Date }): EnergySample[] {
     return decode(archive, identity);
+}
+
+/** Read only the solar channel of a day archive, with the same integrity checks as `decodeDaySamples`. */
+export function decodeDaySolar(archive: DayArchive, identity?: Identity): { timestamp: Date; solarWh: number }[] {
+    const { header: h, bytes, dataOffset } = openArchive(archive, identity);
+    const solarOffset = dataOffset + h.positions.length * 8 * sampleColumns.indexOf('solar_power');
+    const rows = timestampedRows(h).map((row, i) => ({ ...row, solar_power: bytes.readDoubleLE(solarOffset + i * 8) }));
+    validateSamples(rows, new Date(h.start), new Date(h.end));
+    return rows.map(row => ({ timestamp: row.timestamp, solarWh: row.solar_power }));
 }
 
 export function rollupDay(rows: EnergyData[], day: Date): DayRollup[] {

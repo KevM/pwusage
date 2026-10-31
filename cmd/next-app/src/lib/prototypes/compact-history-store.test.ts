@@ -2,7 +2,7 @@ import {EnergyRepo} from '../energy-repo';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import {addDaysInSiteTimezone} from '../date-utils';
+import {addDaysInSiteTimezone,parseSiteLocalDateToMidnight} from '../date-utils';
 import { readFileSync, statSync } from 'node:fs';
 import { CompactHistoryStore } from './compact-history-store';
 import { encodeDaySamples } from './compact-energy';
@@ -465,6 +465,72 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             ['format 3',{format_version:3}],
         ])('rejects %s',async(_,overrides)=>{
             await expect(insertV2(overrides)).rejects.toThrow(/violates check constraint/);
+        });
+    });
+    describe('readSolarDays (solar history for the phone)',()=>{
+        const tz='America/Chicago',day=(n:number)=>addDaysInSiteTimezone(start,n,tz);
+        const t0=new Date('2026-01-09T12:00:00Z'),t1=new Date(+t0+3600000),t2=new Date(+t0+7200000);
+        const slotSamples=(d:Date,count:number,solar:(n:number)=>number=n=>n%7+0.25)=>Array.from({length:count},(_,n)=>({site_id:'site',timestamp:new Date(+d+n*300000),
+            tariff_id:1,tariff_schedule_id:2,load_power:20,solar_power:solar(n),grid_power:10,battery_power:-2,battery_soc:null}));
+        const read=(from:Date,until:Date,changedSince:Date|null,limit=10)=>store.readSolarDays('site',from,until,changedSince,limit);
+        const starts=(rows:{dayStart:Date}[])=>rows.map(r=>+r.dayStart);
+        it('returns the days fetched strictly after changedSince, oldest day first, and every day for null',async()=>{
+            await store.writeDay('site',day(2),slotSamples(day(2),288),t2,jobOptions.now);
+            await store.writeDay('site',day(0),slotSamples(day(0),288),t0,jobOptions.now);
+            await store.writeDay('site',day(1),slotSamples(day(1),288),t1,jobOptions.now);
+            expect(starts(await read(day(0),day(5),null))).toEqual([day(0),day(1),day(2)].map(Number));
+            // Equal fetched_at is excluded, as are older ones: the watermark is strict.
+            expect(starts(await read(day(0),day(5),t1))).toEqual([+day(2)]);
+            expect(await read(day(0),day(5),t2)).toEqual([]);
+            expect(starts(await read(day(0),day(5),new Date(+t0-1)))).toEqual([day(0),day(1),day(2)].map(Number));
+        });
+        it('returns each day with its status, fetch time, expected slots and solar samples',async()=>{
+            const samples=slotSamples(day(0),288,n=>n);
+            await store.writeDay('site',day(0),samples,t0,jobOptions.now);
+            const [row]=await read(day(0),day(1),null);
+            expect(row).toMatchObject({dayStart:day(0),status:'complete',fetchedAt:t0,expectedSlots:288});
+            expect(row.samples).toEqual(samples.map(s=>({timestamp:s.timestamp,solarWh:s.solar_power})));
+        });
+        it('caps the read at limit days, from the oldest',async()=>{
+            for(const n of [0,1,2]) await store.writeDay('site',day(n),slotSamples(day(n),288),t0,jobOptions.now);
+            expect(starts(await read(day(0),day(5),null,2))).toEqual([day(0),day(1)].map(Number));
+        });
+        it('skips rows without a status, which are not day records',async()=>{
+            await store.writeDay('site',day(0),slotSamples(day(0),288),t0,jobOptions.now);
+            await store.writeDay('site',day(1),slotSamples(day(1),288),t0,jobOptions.now);
+            // The schema forbids a status-less v2 record; drop its check only for this row, then restore it as it was.
+            const [{def}]=(await pool.query<{def:string}>(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+                WHERE conrelid='"EnergyDayArchive"'::regclass AND conname='EnergyDayArchive_v2_record_check'`)).rows;
+            await pool.query('ALTER TABLE "EnergyDayArchive" DROP CONSTRAINT "EnergyDayArchive_v2_record_check"');
+            try {
+                await pool.query('UPDATE "EnergyDayArchive" SET status=NULL WHERE day_start=$1',[day(0)]);
+                expect(starts(await read(day(0),day(5),null))).toEqual([+day(1)]);
+            } finally {
+                await pool.query("UPDATE \"EnergyDayArchive\" SET status='complete' WHERE status IS NULL");
+                await pool.query(`ALTER TABLE "EnergyDayArchive" ADD CONSTRAINT "EnergyDayArchive_v2_record_check" ${def}`);
+            }
+        });
+        it('returns an empty day as no samples with its expected slots',async()=>{
+            expect(await store.writeDay('site',day(0),[],t0,jobOptions.now)).toEqual({status:'checked-empty'});
+            expect(await read(day(0),day(1),null)).toEqual([{dayStart:day(0),status:'empty',fetchedAt:t0,expectedSlots:288,samples:[]}]);
+        });
+        it('round-trips a fall-back day as 300 slots',async()=>{
+            const fall=parseSiteLocalDateToMidnight('2026-11-01',tz),next=addDaysInSiteTimezone(fall,1,tz);
+            const samples=slotSamples(fall,300,n=>n%5+0.5);
+            expect(await store.writeDay('site',fall,samples,new Date('2026-11-02T06:00:00Z'),new Date('2026-11-02T12:00:00Z')))
+                .toMatchObject({status:'written',dayStatus:'complete'});
+            const [row]=await read(fall,next,null);
+            expect(row).toMatchObject({expectedSlots:300,status:'complete'});
+            expect(row.samples).toEqual(samples.map(s=>({timestamp:s.timestamp,solarWh:s.solar_power})));
+        });
+        it('pages stably: two pages from the day after the first equal one unpaged read for a fixed changedSince',async()=>{
+            for(const n of [0,1,2,3,4]) await store.writeDay('site',day(n),slotSamples(day(n),288),t0,jobOptions.now);
+            const since=new Date('2026-01-01T00:00:00Z');
+            const unpaged=await read(day(0),day(5),since,10);
+            const first=await read(day(0),day(5),since,2);
+            const second=await read(addDaysInSiteTimezone(first.at(-1)!.dayStart,1,tz),day(5),since,10);
+            expect([...first,...second]).toEqual(unpaged);
+            expect(starts(unpaged)).toEqual([0,1,2,3,4].map(n=>+day(n)));
         });
     });
 });

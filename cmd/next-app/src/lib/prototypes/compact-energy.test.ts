@@ -3,7 +3,7 @@ import { brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import type { EnergyData } from '../db-types';
 import { addDaysInSiteTimezone, parseSiteLocalDateToMidnight } from '../date-utils';
-import { decodeDaySamples, encodeDaySamples, rollupDay, type ArchiveCodec, toSample, type EnergySample } from './compact-energy';
+import { decodeDaySamples, decodeDaySolar, encodeDaySamples, rollupDay, type ArchiveCodec, toSample, type EnergySample } from './compact-energy';
 
 import { attributeSamples } from './day-attribution';
 
@@ -61,6 +61,22 @@ describe('compact energy format v2 (samples only)', () => {
         expect(archive.axis).toBe('offsets');
         expect(decodeDaySamples(archive)).toEqual(rows);
         expect(decodeDaySamples(encodeDaySamples([], start, end, 'brotli'))).toEqual([]);
+    });
+    it('decodes only the solar channel, equal to the solar field of a full decode', () => {
+        const rows = [v2(start, { solar_power: 5.25 }), v2(new Date(+start + 300000), { solar_power: -0.04 }), v2(new Date(+start + 600000), { solar_power: 0 })];
+        const archive = encodeDaySamples(rows, start, end, 'brotli');
+        const identity = { siteId: 'site', start, end };
+        expect(decodeDaySolar(archive, identity)).toEqual(decodeDaySamples(archive, identity).map(r => ({ timestamp: r.timestamp, solarWh: r.solar_power })));
+        expect(decodeDaySolar(encodeDaySamples([], start, end, 'gzip'))).toEqual([]);
+    });
+    it('rejects a bad checksum, a mis-identified day and a nonfinite solar value when decoding solar only', () => {
+        const archive = encodeDaySamples([v2(start, { solar_power: 4 })], start, end, 'gzip');
+        expect(() => decodeDaySolar({ ...archive, sha256: 'wrong' })).toThrow('Invalid archive checksum');
+        expect(() => decodeDaySolar(archive, { siteId: 'site', start, end: new Date(+end + 300000) })).toThrow('Archive identity mismatch');
+        const bytes = gunzipSync(archive.data);
+        bytes.writeDoubleLE(NaN, 4 + bytes.readUInt32LE(0) + 8);
+        const tampered = { ...archive, sha256: createHash('sha256').update(bytes).digest('hex'), data: gzipSync(bytes) };
+        expect(() => decodeDaySolar(tampered)).toThrow('Nonfinite sample');
     });
     it('rejects corrupt, mis-identified, nonfinite, duplicate, mixed-site and out-of-day input', () => {
         const archive = encodeDaySamples([v2(start)], start, end, 'gzip');

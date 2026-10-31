@@ -6,7 +6,7 @@ import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow,DailyCover
 import type { Tariff, TariffSchedule, TariffSeason } from '../db-types';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
 import type {EnergyDayRecord} from './compact-day-record';
-import { decodeDaySamples, encodeDaySamples, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
+import { decodeDaySamples, decodeDaySolar, encodeDaySamples, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
 import {buildLatestMetadata,verifyLatestMetadata,type LatestMetadata,type LatestSample} from './compact-latest-metadata';
 import { buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-metadata';
 import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayRecordStatus, type DayStatus, type EmptyDayState } from './day-attribution';
@@ -33,6 +33,10 @@ const MODERN_METADATA_SQL=(alias='')=>`${alias}format_version=2 AND ${alias}meta
 export const HAS_SAMPLES_SQL=(alias='')=>`${alias}status IS DISTINCT FROM 'empty'`;
 
 type DetailArchiveRecord = Pick<ArchiveRecord, 'site_id'|'day_start'|'day_end'|'revision'|'format_version'|'metadata_version'|'codec'|'axis'|'checksum'|'payload'|'expected_slots'|'attribution_complete'|'attribution'>;
+/** The status is non-null: the read filters `status IS NOT NULL`. */
+type SolarArchiveRecord = Omit<Pick<ArchiveRecord, 'site_id'|'day_start'|'day_end'|'status'|'fetched_at'|'codec'|'axis'|'checksum'|'payload'|'expected_slots'>,'status'> & { status: DayRecordStatus };
+/** A stored day's solar samples; `samples` is empty for an `empty` day. */
+export interface SolarHistoryDay { dayStart:Date; status:DayRecordStatus; fetchedAt:Date|null; expectedSlots:number; samples:{timestamp:Date;solarWh:number}[] }
 const detailColumns = 'site_id,day_start,day_end,revision,format_version,metadata_version,codec,axis,checksum,payload,expected_slots,attribution_complete,attribution';
 const archiveOf=(a:DetailArchiveRecord):DayArchive=>({codec:a.codec,axis:a.axis,sha256:a.checksum,data:a.payload,expectedSlots:a.expected_slots});
 type LatestArchiveRecord=Pick<ArchiveRecord,'site_id'|'day_start'|'day_end'|'format_version'|'metadata_version'|'checksum'|'latest_metadata'|'latest_checksum'>;
@@ -327,6 +331,21 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record.status};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /**
+     * Solar samples of archived days for the phone's on-device layout detection: one read, decoding only the solar channel.
+     * `changedSince` keeps days whose fetch is strictly newer (a sync watermark); days come oldest first, at most `limit`.
+     */
+    async readSolarDays(siteId:string,from:Date,end:Date,changedSince:Date|null,limit:number):Promise<SolarHistoryDay[]> {
+        if(!siteId||!Number.isSafeInteger(+from)||!Number.isSafeInteger(+end)||!Number.isSafeInteger(limit)||limit<1)throw new Error('Invalid solar history request');
+        const params:unknown[]=changedSince?[siteId,from,end,changedSince,limit]:[siteId,from,end,limit];
+        const rows=(await this.pool.query<SolarArchiveRecord>(`SELECT site_id,day_start,day_end,status,fetched_at,codec,axis,checksum,payload,expected_slots
+            FROM "EnergyDayArchive" WHERE site_id=$1 AND day_start>=$2 AND day_start<$3 AND status IS NOT NULL${changedSince?' AND fetched_at>$4':''}
+            ORDER BY day_start LIMIT $${params.length}`,params)).rows;
+        return rows.map(a=>({dayStart:new Date(a.day_start),status:a.status,fetchedAt:a.fetched_at,expectedSlots:a.expected_slots,
+            samples:a.status==='empty'||!a.payload?[]:decodeDaySolar({codec:a.codec!,axis:a.axis!,sha256:a.checksum!,data:a.payload,expectedSlots:a.expected_slots},
+                {siteId:a.site_id,start:new Date(a.day_start),end:new Date(a.day_end)})}));
     }
 
     /** A day record's status (`empty` when Tesla answered with no samples) and fetch time, for deciding whether Tesla's answer for it is final. */
