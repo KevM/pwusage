@@ -2,6 +2,18 @@ import Foundation
 @testable import PWUsage
 import Testing
 
+private final class FailingSolarRecordFileManager: FileManager {
+    private(set) var hasFailed = false
+
+    override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
+        if path.hasSuffix(".json"), !hasFailed {
+            hasFailed = true
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try super.setAttributes(attributes, ofItemAtPath: path)
+    }
+}
+
 @Suite("Solar Layout Record Store")
 struct SolarLayoutRecordStoreTests {
     private let scope = SolarForecastSiteScope(accountScopeID: "account", siteID: "site")
@@ -32,7 +44,24 @@ struct SolarLayoutRecordStoreTests {
         #expect(try await store.record(scope: scope)?.result != nil)
         try await store.setLocation(
             SolarHomeLocation(latitude: 43.40, longitude: -87.87, source: .device), scope: scope)
-        #expect(try await store.record(scope: scope)?.result == nil)
+        let movedRecord = try #require(await store.record(scope: scope))
+        #expect(movedRecord.result == nil)
+        #expect(movedRecord.attemptedAt == nil)
+        try await store.removeAll()
+    }
+
+    @Test("Persists separate records for separate scopes")
+    func scopesAreIsolated() async throws {
+        let folder = temporaryFolder()
+        let store = SolarLayoutRecordStore(directory: folder)
+        let otherScope = SolarForecastSiteScope(accountScopeID: "account", siteID: "other-site")
+        try await store.setLocation(location, scope: scope)
+        try await store.setLocation(SolarHomeLocation(latitude: 44, longitude: -87, source: .device),
+                                    scope: otherScope)
+        #expect(try await store.record(scope: scope)?.location?.latitude == 43.39)
+        #expect(try await store.record(scope: otherScope)?.location?.latitude == 44)
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        #expect(files.count == 2)
         try await store.removeAll()
     }
 
@@ -47,6 +76,20 @@ struct SolarLayoutRecordStoreTests {
         #expect(try await !store.saveResult(result(.notEnoughHistory), scope: scope, for: location, at: .now))
         #expect(try await store.record(scope: scope) == before)
         #expect(try persistedBytes(in: folder) == beforeBytes)
+        try await store.removeAll()
+    }
+
+    @Test("Cache stays aligned after post-write metadata failure")
+    func cacheMatchesCommittedFileWhenMetadataFails() async throws {
+        let folder = temporaryFolder()
+        let manager = FailingSolarRecordFileManager()
+        let store = SolarLayoutRecordStore(fileManager: manager, directory: folder)
+        await #expect(throws: CocoaError.self) {
+            try await store.setLocation(location, scope: scope)
+        }
+        let cached = try #require(await store.record(scope: scope))
+        let diskStore = SolarLayoutRecordStore(directory: folder)
+        #expect(try await diskStore.record(scope: scope) == cached)
         try await store.removeAll()
     }
 

@@ -70,6 +70,7 @@ actor SolarLayoutRecordStore {
         if !solarLocationsShareCoordinates(value.location, rounded) {
             value.result = nil
             value.detectedAt = nil
+            value.attemptedAt = nil
             value.detectorVersion = nil
             value.resultLocation = nil
         }
@@ -115,12 +116,14 @@ actor SolarLayoutRecordStore {
         try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
         let url = fileURL(scope)
         try JSONEncoder().encode(record).write(to: url, options: .atomic)
+        // Atomic replacement has committed. Keep memory aligned with disk even if
+        // applying protection or backup metadata below fails.
+        cache[scope] = record
         try fileManager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
         var fileValues = URLResourceValues()
         fileValues.isExcludedFromBackup = true
         var protectedFile = url
         try protectedFile.setResourceValues(fileValues)
-        cache[scope] = record
     }
 
     private func removeFile(_ url: URL) throws {
