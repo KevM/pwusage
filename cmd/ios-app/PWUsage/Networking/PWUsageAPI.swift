@@ -147,30 +147,6 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         catch { throw PWUsageAPIError.invalidResponse }
     }
 
-    func fetchSolarLayout(siteID: String) async throws -> MobileSolarLayoutResponse {
-        let data = try await request(url: makeURL(path: "/api/mobile/solar-layout", siteID: siteID))
-        do { return try MobileContractDecoder.make().decode(MobileSolarLayoutResponse.self, from: data) } catch {
-            throw PWUsageAPIError.invalidResponse
-        }
-    }
-
-    /// The server answers 204 with no body, so nothing is decoded.
-    func postSolarLocation(siteID: String, latitude: Double, longitude: Double) async throws {
-        var request = URLRequest(url: try makeURL(path: "/api/mobile/solar-layout"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(SolarLocationBody(
-            siteId: siteID, latitude: latitude.roundedToHundredths, longitude: longitude.roundedToHundredths))
-        _ = try await perform(request)
-    }
-
-    func fetchSolarActuals(siteID: String) async throws -> MobileSolarActualsResponse {
-        let data = try await request(url: makeURL(path: "/api/mobile/solar-actuals", siteID: siteID))
-        do { return try MobileContractDecoder.make().decode(MobileSolarActualsResponse.self, from: data) } catch {
-            throw PWUsageAPIError.invalidResponse
-        }
-    }
-
     func fetchSolarHistory(
         siteID: String,
         from: String,
@@ -251,7 +227,6 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     private struct SessionResponse: Decodable { let ok: Bool }
-    private struct SolarLocationBody: Encodable { let siteId: String; let latitude: Double; let longitude: Double }
     private struct ErrorResponse: Decodable { let error: String?; let code: String? }
 }
 
@@ -259,7 +234,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 // declared next to the type that consumes it, which is why these used to be one
 // line each in three files.
 extension PWUsageAPI: MobileDashboardDataAPI, MobileLivePowerDataAPI {}
-extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarLayoutDataAPI, MobileSolarHistoryDataAPI {}
+extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}

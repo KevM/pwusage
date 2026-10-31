@@ -31,30 +31,28 @@ extension PWUsageAppModel {
         do {
             let authorized = try await backgroundAPI.fetchSites()
             guard isCurrent(), authorized.contains(where: { $0.id == siteID }) else { return false }
-            let status = try await backgroundAPI.fetchSolarLayout(siteID: siteID)
-            guard isCurrent(), case .enabled(let location?, let layout?, _) = status else { return false }
-            async let contextResponse = backgroundAPI.fetchLoadPlanningContext(siteID: siteID)
-            async let actualsResponse = backgroundAPI.fetchSolarActuals(siteID: siteID)
-            let context = try await contextResponse.validating(siteID: siteID, now: now)
-            let actuals = try await actualsResponse
-            guard isCurrent(), case .enabled(_, let hours) = actuals,
-                  let zone = TimeZone(identifier: context.site.timezone) else { return false }
+            let scope = SolarForecastSiteScope(accountScopeID: account, siteID: siteID)
+            guard let record = try await solarRecords.record(scope: scope), isCurrent(),
+                  case .enabled(let location?, let layout?, _) = record.response(historyEnabled: true) else {
+                return false
+            }
+            let context = try await backgroundAPI.fetchLoadPlanningContext(siteID: siteID)
+                .validating(siteID: siteID, now: now)
+            let hours = (try? await solarHistory.hourlyActuals(scope: scope, now: now)) ?? []
+            guard isCurrent(), let zone = TimeZone(identifier: context.site.timezone) else { return false }
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = zone
             guard let end = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: now)), end > now else {
                 return false
             }
             let request = SolarForecastRequest(
-                scope: SolarForecastSiteScope(accountScopeID: account, siteID: siteID),
-                siteTimeZone: zone, window: DateInterval(start: now, end: end),
+                scope: scope, siteTimeZone: zone, window: DateInterval(start: now, end: end),
                 manual: false, layout: layout, location: location, automaticOnly: true
             )
             guard isCurrent() else { return false }
             let publication = await service.publication(for: request, actuals: hours)
             return isCurrent() && publication != nil
         } catch {
-            // Offline, locked-before-first-unlock, revoked sessions, and expiration all keep
-            // the last cache. No sign-in UI or retry loop is started from a background task.
             return false
         }
     }

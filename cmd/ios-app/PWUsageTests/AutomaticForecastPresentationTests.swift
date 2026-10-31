@@ -7,13 +7,13 @@ import Testing
 struct AutomaticForecastPresentationTests {
     @Test("Unknown eligibility stays checking while the actual layout request is pending")
     func checkingDuringLookup() async throws {
-        let harness = AutomaticForecastHarness()
+        let harness = await AutomaticForecastHarness()
         #expect(harness.coordinator.forecastConnectionForConsumers == .checking)
-        harness.api.holdLayout = true
+        await harness.automatic.setHold(true)
         let load = Task { await harness.coordinator.loadTimingDetailAppeared() }
-        try await eventually { harness.api.layoutSiteIDs.count == 1 }
+        try await eventually { harness.coordinator.forecastOperationPending }
         #expect(harness.coordinator.forecastConnectionForConsumers == .checking)
-        harness.api.resumeLayout()
+        await harness.automatic.resume()
         await load.value
         #expect(harness.coordinator.forecastConnectionForConsumers == .ready)
     }
@@ -24,7 +24,8 @@ struct AutomaticForecastPresentationTests {
             .enabled(location: nil, layout: nil, reason: .needsLocation),
             .enabled(location: SolarProviderFixture.location, layout: nil, reason: .pending),
             .enabled(location: SolarProviderFixture.location, layout: nil, reason: .lowConfidence),
-            .enabled(location: SolarProviderFixture.location, layout: nil, reason: .notEnoughHistory)]
+            .enabled(location: SolarProviderFixture.location, layout: nil, reason: .notEnoughHistory)
+        ]
         for status in statuses {
             let availability = LoadTimingForecastPresentation.forecastAvailability(
                 state: .basic, connection: .notConnected, cause: nil, reason: nil,
@@ -41,7 +42,7 @@ struct AutomaticForecastPresentationTests {
 
     @Test("An automatic failure remains usable through history rather than loading forever")
     func completedFailure() async {
-        let harness = AutomaticForecastHarness()
+        let harness = await AutomaticForecastHarness()
         await harness.automatic.setFailing(true)
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.forecastConnectionForConsumers != .checking)
@@ -50,7 +51,7 @@ struct AutomaticForecastPresentationTests {
 
     @Test("Automatic forecasts trigger the same energy aging refresh as Solcast")
     func automaticEnergyAging() async throws {
-        let harness = AutomaticForecastHarness()
+        let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         let through = try #require(harness.coordinator.bill.response?.sources.energyDataThrough)
         #expect(harness.coordinator.solarForecastConnection != .ready)
@@ -60,31 +61,29 @@ struct AutomaticForecastPresentationTests {
     }
 
     @Test("Closing settings does not hide the Bill surface underneath")
-    func overlappingSurfaces() async {
-        let harness = AutomaticForecastHarness()
+    func overlappingSurfaces() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
         harness.coordinator.scenePhaseChanged(isActive: true)
-        harness.api.layout = .enabled(location: SolarProviderFixture.location, layout: nil, reason: .pending)
         await harness.coordinator.billOutlookAppeared()
         await harness.coordinator.solarSettingsAppeared()
         harness.coordinator.solarSurfaceDisappeared(.settings)
         #expect(harness.coordinator.solarSurfaceVisible)
-        #expect(harness.scheduler.pending.count == 1)
         harness.coordinator.solarSurfaceDisappeared(.bill)
         #expect(!harness.coordinator.solarSurfaceVisible)
-        #expect(harness.scheduler.pending.isEmpty)
     }
 
-    @Test("A timer refresh cannot create a new visible Smart Shift surface")
-    func internalRefreshPreservesSurfaces() async {
-        let harness = AutomaticForecastHarness()
+    @Test("A background detection does not create a new visible Smart Shift surface")
+    func internalRefreshPreservesSurfaces() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
         harness.coordinator.scenePhaseChanged(isActive: true)
-        harness.api.layout = .enabled(location: SolarProviderFixture.location, layout: nil, reason: .pending)
         await harness.coordinator.billOutlookAppeared()
-        harness.api.clock.advance(by: 15 * 60)
-        await harness.scheduler.fire()
+        try await eventually {
+            harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse
+        }
         harness.coordinator.solarSurfaceDisappeared(.bill)
         #expect(!harness.coordinator.solarSurfaceVisible)
-        #expect(harness.scheduler.pending.isEmpty)
     }
 
     @Test("Open-Meteo attribution links to the weather data source")
@@ -95,7 +94,7 @@ struct AutomaticForecastPresentationTests {
 
     @Test("Attribution is attached only to a projection that used the published forecast")
     func attributionRequiresSolarUse() async throws {
-        let harness = AutomaticForecastHarness()
+        let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.attributionDescriptor(usesSolar: false) == nil)
         let source = try #require(harness.coordinator.attributionDescriptor(usesSolar: true))
@@ -107,23 +106,24 @@ struct AutomaticForecastPresentationTests {
 extension AutomaticForecastPresentationTests {
     @Test("A newer operation clears the pending state owned by a superseded load")
     func supersededLoadDoesNotLeavePending() async throws {
-        let harness = AutomaticForecastHarness()
-        harness.api.holdLayout = true
+        let harness = await AutomaticForecastHarness()
+        await harness.automatic.setHold(true)
         let load = Task { await harness.coordinator.loadTimingDetailAppeared() }
-        try await eventually { harness.api.layoutSiteIDs.count == 1 }
+        try await eventually { harness.coordinator.forecastOperationPending }
         #expect(harness.coordinator.forecastOperationPending)
         _ = harness.coordinator.beginForecastOperation()
-        harness.api.resumeLayout()
+        await harness.automatic.resume()
         await load.value
         #expect(!harness.coordinator.forecastOperationPending)
     }
 
     @Test("Confirmed legacy sites cannot expose an automatic attempt from the previous role")
     func legacyDiagnosticsDoNotRetainAutomaticFailure() async throws {
-        let harness = AutomaticForecastHarness()
-        harness.api.layout = .disabled
+        let harness = await AutomaticForecastHarness()
+        harness.coordinator.historyEnabled = false
         harness.coordinator.solarForecastAttempt = .init(
-            providerID: .openMeteo, outcome: .failed(.transient), diagnostic: "Old automatic request failed")
+            providerID: .openMeteo, outcome: .failed(.transient), diagnostic: "Old automatic request failed"
+        )
         await harness.coordinator.loadTimingDetailAppeared()
         let diagnostics = try #require(await harness.coordinator.solarForecastDiagnostics())
         #expect(diagnostics.automaticProviderID == nil)
@@ -133,11 +133,11 @@ extension AutomaticForecastPresentationTests {
 
     @Test("Direct legacy refresh without credentials clears inherited automatic failure state")
     func directLegacyRefreshClearsAutomaticFailure() async {
-        let harness = AutomaticForecastHarness()
+        let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         harness.coordinator.solarForecastUnavailableReason = .forecastNotUsable
         harness.coordinator.solarForecastUnavailableCause = .requestFailed
-        harness.api.layout = .disabled
+        harness.coordinator.historyEnabled = false
         harness.coordinator.invalidateSolarLayout()
         await harness.coordinator.refreshSolarForecast(manual: true)
         #expect(harness.coordinator.solarForecastUnavailableReason == nil)

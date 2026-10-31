@@ -158,9 +158,11 @@
         func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
             throw URLError(.notConnectedToInternet)
         }
-        func fetchSolarLayout(siteID: String) async throws -> MobileSolarLayoutResponse { .disabled }
-        func postSolarLocation(siteID: String, latitude: Double, longitude: Double) async throws {}
-        func fetchSolarActuals(siteID: String) async throws -> MobileSolarActualsResponse { .disabled }
+        func fetchSolarHistory(
+            siteID: String, from: String, changedSince: Date?
+        ) async throws -> MobileSolarHistoryResponse {
+            .disabled
+        }
         func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
         func logout() async throws {}
         func clearSiteAuthCookie() async {}

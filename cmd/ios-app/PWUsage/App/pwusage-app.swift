@@ -58,7 +58,8 @@ struct PWUsageApp: App {
                         api: api,
                         apnsEnvironment: .fromBundle(),
                         store: .init(defaults: .standard)
-                    )
+                    ),
+                    solarRunner: detectionRunner
                 )
             )
         } catch let error as AppConfiguration.ValidationError {

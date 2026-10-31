@@ -105,31 +105,6 @@ enum MobileSolarLayoutResponse: Decodable, Equatable, Sendable {
     }
 }
 
-/// `GET /api/mobile/solar-actuals`, version 1: measured solar energy per UTC hour.
-enum MobileSolarActualsResponse: Decodable, Equatable, Sendable {
-    case disabled
-    case enabled(asOf: Date, hours: [Hour])
-
-    typealias Hour = MobileSolarActualsHour
-
-    private enum CodingKeys: String, CodingKey { case version, enabled, asOf, hours }
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        guard try values.decode(Int.self, forKey: .version) == 1 else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .version, in: values, debugDescription: "Unsupported version")
-        }
-        guard try values.decode(Bool.self, forKey: .enabled) else {
-            self = .disabled
-            return
-        }
-        self = try .enabled(
-            asOf: values.decode(Date.self, forKey: .asOf),
-            hours: values.decode([Hour].self, forKey: .hours))
-    }
-}
-
 struct MobileSolarActualsHour: Decodable, Equatable, Sendable {
     let hourStart: Date
     /// Energy in the hour, not power.
@@ -158,13 +133,6 @@ struct MobileSolarActualsHour: Decodable, Equatable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .energyWh, in: values, debugDescription: "Invalid energy")
         }
     }
-}
-
-@MainActor
-protocol MobileSolarLayoutDataAPI: Sendable {
-    func fetchSolarLayout(siteID: String) async throws -> MobileSolarLayoutResponse
-    func postSolarLocation(siteID: String, latitude: Double, longitude: Double) async throws
-    func fetchSolarActuals(siteID: String) async throws -> MobileSolarActualsResponse
 }
 
 extension Double {

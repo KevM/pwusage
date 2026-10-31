@@ -91,12 +91,11 @@ final class DashboardCoordinator: ObservableObject {
     let planningAPI: (any MobileLoadPlanningDataAPI)?
     let forecastStore: (any SolarForecastManaging)?
     let accountScopeID: String?
-    let layoutAPI: (any MobileSolarLayoutDataAPI)?
     let forecastService: SolarForecastService?
-    let revalidationScheduler: any SolarLayoutRevalidationScheduling
-    var solarLayoutCache: [SolarForecastSiteScope: SolarLayoutCacheEntry] = [:]
-    var solarActualsCache: [SolarForecastSiteScope: SolarActualsCacheEntry] = [:]
-    var solarLayoutRevalidation: SolarLayoutRevalidationHandle?
+    let history: SolarHistoryStore
+    let records: SolarLayoutRecordStore
+    let runner: SolarLayoutDetectionRunner?
+    var historyEnabled = true
     var solarLayoutRevalidationRequested = false
     var visibleSolarSurfaces: Set<SolarForecastSurface> = []
     var solarSurfaceVisible: Bool { !visibleSolarSurfaces.isEmpty }
@@ -152,9 +151,10 @@ final class DashboardCoordinator: ObservableObject {
         now: @escaping () -> Date = Date.init,
         timerInterval: Duration? = .seconds(30),
         cache: DashboardCache? = nil,
-        layoutAPI: (any MobileSolarLayoutDataAPI)? = nil,
         forecastService: SolarForecastService? = nil,
-        revalidationScheduler: (any SolarLayoutRevalidationScheduling)? = nil
+        history: SolarHistoryStore = .shared,
+        records: SolarLayoutRecordStore = .shared,
+        runner: SolarLayoutDetectionRunner? = nil
     ) {
         selectedSiteID = siteID
         self.api = api
@@ -164,11 +164,24 @@ final class DashboardCoordinator: ObservableObject {
         self.now = now
         self.timerInterval = timerInterval
         self.cache = cache
-        self.layoutAPI = layoutAPI
         self.forecastService = forecastService
-        self.revalidationScheduler = revalidationScheduler ?? TaskSolarLayoutRevalidationScheduler()
+        self.history = history
+        self.records = records
+        self.runner = runner
+        configureRunner()
         if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }
         restoreCachedReadings()
+    }
+
+    private func configureRunner() {
+        runner?.onRecordChanged = { [weak self] scope in
+            guard let self, scope == solarScope, canRequestAccountData, historyEnabled else { return }
+            invalidateSolarLayout()
+            Task { [weak self] in
+                guard let self, scope == solarScope, canRequestAccountData, historyEnabled else { return }
+                await loadTimingDetailAppeared(surface: nil)
+            }
+        }
     }
 
     /// Stops the polling timer. That cancel is the only one with any effect: the
@@ -295,6 +308,7 @@ final class DashboardCoordinator: ObservableObject {
         resetForecastEnhancement(state: .basic, connection: .notConnected)
         householdPattern = nil
         clearSolarLayoutState()
+        historyEnabled = true
     }
 
     func selectSite(_ siteID: String) {
@@ -317,6 +331,7 @@ final class DashboardCoordinator: ObservableObject {
         // until then the card waits rather than showing a forecast-free answer.
         resetForecastEnhancement(state: .basic, connection: .checking)
         clearSolarLayoutState()
+        historyEnabled = true
         // The pattern belongs to the old site; connecting or disconnecting
         // Solcast leaves it in place.
         householdPattern = nil
