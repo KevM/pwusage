@@ -175,7 +175,7 @@ struct SolarForecastServiceTests {
     func sessionCleanup() async throws {
         let setup = Self.setup()
         _ = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
-        let cleanup = await SolarForecastStoreSessionCleanup(store: FailingSignOutStore(), service: setup.service)
+        let cleanup = SolarForecastStoreSessionCleanup(store: FailingSignOutStore(), service: setup.service)
         await #expect(throws: CocoaError.self) { try await cleanup.signOut() }
         #expect(await setup.automatic.provider.cachedForecast(for: Fixture.request(now: Self.now)) == nil)
         let refused = await setup.automatic.provider.refresh(Fixture.request(now: Self.now, manual: true))

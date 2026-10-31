@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import SwiftUI
 
 extension PWUsageAppModel {
@@ -33,6 +34,7 @@ extension PWUsageAppModel {
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
         await forecastService?.activateAccountScope(accountScopeID)
+        await solarCloudSync.start()
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
@@ -88,7 +90,7 @@ extension PWUsageAppModel {
     }
 
     static let selectedSiteDefaultsKey = "pwusage.selectedSiteID"
-    static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
+    nonisolated static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
     static let selectedTabDefaultsKey = "pwusage.selectedTab"
 
     /// The next session starts on Home, not on whatever tab this one ended on.

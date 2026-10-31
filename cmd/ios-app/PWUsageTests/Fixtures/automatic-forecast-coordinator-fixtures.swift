@@ -1,36 +1,22 @@
 import Foundation
 @testable import PWUsage
 
-/// Dashboard, planning and solar-layout API in one fake, all in UTC.
+/// Dashboard, planning and solar history API in one fake, all in UTC.
 @MainActor
-final class AutomaticForecastAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileSolarLayoutDataAPI {
-    static let detected = MobileSolarLayoutResponse.enabled(
-        location: SolarHomeLocation(latitude: 43.39, longitude: -87.87, source: .device),
-        layout: SolarLayout(
-            planes: [SolarLayoutPlane(azimuth: 180, tilt: 30, dcKwp: 5)], acClipKw: nil,
-            confidence: .high, detectedAt: Date(timeIntervalSince1970: 1_790_000_000)
-        ),
-        reason: nil
-    )
-
+final class AutomaticForecastAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI {
     let clock = MutableSolarClock(Date(timeIntervalSince1970: 1_800_000_000))
     var now: Date { clock.now() }
-    var layout: MobileSolarLayoutResponse = detected
-    var layoutError: Error?
-    var actuals: MobileSolarActualsResponse = .disabled
-    var actualsError: Error?
-    var holdLayout = false
-    private(set) var layoutSiteIDs: [String] = []
-    private(set) var actualsSiteIDs: [String] = []
-    struct PostedLocation: Equatable {
+    var historyResponse: MobileSolarHistoryResponse = .enabled(timeZone: .gmt, days: [], nextFrom: nil)
+    struct HistoryFetch: Equatable {
         let siteID: String
-        let latitude: Double
-        let longitude: Double
+        let from: String
+        let changedSince: Date?
     }
 
-    private(set) var postedLocations: [PostedLocation] = []
-    var postError: Error?
-    private var layoutContinuations: [CheckedContinuation<Void, Never>] = []
+    var historyError: Error?
+    var holdHistory = false
+    private(set) var historyFetches: [HistoryFetch] = []
+    private var historyContinuations: [CheckedContinuation<Void, Never>] = []
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
 
@@ -55,29 +41,20 @@ final class AutomaticForecastAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
         )
     }
 
-    func fetchSolarLayout(siteID: String) async throws -> MobileSolarLayoutResponse {
-        layoutSiteIDs.append(siteID)
-        if holdLayout { await withCheckedContinuation { layoutContinuations.append($0) } }
-        if let layoutError { throw layoutError }
-        return layout
+    func fetchSolarHistory(
+        siteID: String, from: String, changedSince: Date?
+    ) async throws -> MobileSolarHistoryResponse {
+        historyFetches.append(HistoryFetch(siteID: siteID, from: from, changedSince: changedSince))
+        if holdHistory { await withCheckedContinuation { historyContinuations.append($0) } }
+        if let historyError { throw historyError }
+        return historyResponse
     }
 
-    func resumeLayout() {
-        holdLayout = false
-        let pending = layoutContinuations
-        layoutContinuations.removeAll()
+    func resumeHistory() {
+        holdHistory = false
+        let pending = historyContinuations
+        historyContinuations.removeAll()
         pending.forEach { $0.resume() }
-    }
-
-    func postSolarLocation(siteID: String, latitude: Double, longitude: Double) async throws {
-        if let postError { throw postError }
-        postedLocations.append(PostedLocation(siteID: siteID, latitude: latitude, longitude: longitude))
-    }
-
-    func fetchSolarActuals(siteID: String) async throws -> MobileSolarActualsResponse {
-        actualsSiteIDs.append(siteID)
-        if let actualsError { throw actualsError }
-        return actuals
     }
 }
 
@@ -90,6 +67,8 @@ actor StubAutomaticProvider: SolarForecastProviding {
     private(set) var refreshes = 0
     private(set) var requests: [SolarForecastRequest] = []
     var failing = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    var hold = false
 
     init(id: SolarForecastProviderID = .forecastSolar, now: @escaping @Sendable () -> Date) {
         descriptor = SolarForecastProviderDescriptor(
@@ -101,6 +80,14 @@ actor StubAutomaticProvider: SolarForecastProviding {
     }
 
     func setFailing(_ value: Bool) { failing = value }
+    func setHold(_ value: Bool) { hold = value }
+
+    func resume() {
+        hold = false
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
 
     func configuration(for request: SolarForecastRequest) async -> SolarForecastConfiguration {
         guard request.layout != nil, request.location != nil else {
@@ -112,6 +99,7 @@ actor StubAutomaticProvider: SolarForecastProviding {
     func refresh(_ request: SolarForecastRequest) async -> SolarForecastProviderResult {
         refreshes += 1
         requests.append(request)
+        if hold { await withCheckedContinuation { continuations.append($0) } }
         if failing { return SolarForecastProviderResult(batch: nil, outcome: .failed(.transient)) }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = request.siteTimeZone
@@ -131,47 +119,37 @@ actor StubAutomaticProvider: SolarForecastProviding {
     func clearAccountData() async throws { cache.removeAll() }
 }
 
-/// Records scheduled revalidations so a test can fire them without waiting.
 @MainActor
-final class ManualRevalidationScheduler: SolarLayoutRevalidationScheduling {
-    struct Scheduled {
-        let delay: TimeInterval
-        let handle: SolarLayoutRevalidationHandle
-        let work: @MainActor () async -> Void
-    }
-
-    private(set) var scheduled: [Scheduled] = []
-    var pending: [Scheduled] { scheduled.filter { !$0.handle.isCancelled } }
-
-    func schedule(
-        after delay: TimeInterval,
-        _ work: @escaping @MainActor () async -> Void
-    ) -> SolarLayoutRevalidationHandle {
-        let handle = SolarLayoutRevalidationHandle()
-        scheduled.append(Scheduled(delay: delay, handle: handle, work: work))
-        return handle
-    }
-
-    /// Runs every pending revalidation once.
-    func fire() async {
-        let due = pending
-        scheduled.removeAll()
-        for item in due { await item.work() }
-    }
-}
-
-@MainActor
-struct AutomaticForecastHarness {
+final class AutomaticForecastHarness {
     let api = AutomaticForecastAPISpy()
     let solcast = FakeSolcastStore()
     let automatic: StubAutomaticProvider
     let history: SolarForecastHistory
     let service: SolarForecastService
-    let scheduler = ManualRevalidationScheduler()
+    let records: SolarLayoutRecordStore
+    let historyStore: SolarHistoryStore
+    let runner: SolarLayoutDetectionRunner
     let coordinator: DashboardCoordinator
 
-    init(siteID: String = "site-a", correctsSolcast: Bool = false) {
-        let api = api
+    nonisolated static let detectedLocation = SolarHomeLocation(latitude: 43.39, longitude: -87.87, source: .device)
+    nonisolated static let detectedLayout = SolarLayout(
+        planes: [SolarLayoutPlane(azimuth: 180, tilt: 30, dcKwp: 5)], acClipKw: nil,
+        confidence: .high, detectedAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+    nonisolated static let detectedPlane = DetectedSolarLayout.Plane(
+        azimuth: 180, tilt: 30, dcKwp: 5, effectiveKw: 4.25,
+        azimuthRange90: [175, 185], tiltRange90: [25, 35]
+    )
+    nonisolated static let detectedResult = DetectedSolarLayout(
+        status: .detected, confidence: "high", reasons: [],
+        planes: [detectedPlane], acClipKw: nil,
+        historyDays: 365, clearDays: 100, firstDay: "2025-01-01", lastDay: "2026-01-01"
+    )
+    nonisolated static let detectedResponse = MobileSolarLayoutResponse.enabled(
+        location: detectedLocation, layout: detectedLayout, reason: nil
+    )
+
+    init(siteID: String = "site-a", correctsSolcast: Bool = false, seedDetected: Bool = true) async {
         let clock = api.clock
         automatic = StubAutomaticProvider { clock.now() }
         history = SolarForecastHistory(file: InMemorySolarFile(), clock: clock)
@@ -183,32 +161,85 @@ struct AutomaticForecastHarness {
             ),
             history: history, clock: clock
         )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "harness-\(UUID().uuidString)", isDirectory: true
+        )
+        records = SolarLayoutRecordStore(directory: tempDir.appendingPathComponent("SolarLayout"))
+        historyStore = SolarHistoryStore(directory: tempDir.appendingPathComponent("SolarHistory"))
+        runner = SolarLayoutDetectionRunner(
+            history: historyStore, records: records, api: api,
+            detect: { _, _, _, _, _ in Self.detectedResult },
+            now: { clock.now() }
+        )
         coordinator = DashboardCoordinator(
             siteID: siteID, api: api, planningAPI: api, forecastStore: solcast, accountScopeID: "account-a",
-            now: { api.now }, timerInterval: nil, layoutAPI: api, forecastService: service,
-            revalidationScheduler: scheduler
+            now: { clock.now() }, timerInterval: nil, forecastService: service,
+            history: historyStore, records: records, runner: runner
         )
+        if seedDetected {
+            let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)
+            let date = api.now
+            try? await records.setLocation(Self.detectedLocation, scope: scope, at: date)
+            try? await records.saveResult(Self.detectedResult, scope: scope, for: Self.detectedLocation, at: date)
+        }
     }
 
-    /// Fourteen days of raw history and actuals at `ratio` of the forecast for `identity`,
-    /// fetched the day before each target (day-ahead) and early on each target day (same-day).
-    func seedCorrection(ratio: Double, providerID: SolarForecastProviderID, fingerprint: String) async {
+    func seedDetected(siteID: String = "site-a") async throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)
+        let date = api.now
+        try await records.setLocation(Self.detectedLocation, scope: scope, at: date)
+        try await records.saveResult(Self.detectedResult, scope: scope, for: Self.detectedLocation, at: date)
+    }
+
+    func setPending(siteID: String = "site-a") async throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)
+        let date = api.now
+        try await records.remove(scope: scope)
+        try await records.setLocation(Self.detectedLocation, scope: scope, at: date)
+    }
+
+    func setNeedsLocation(siteID: String = "site-a") async throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)
+        try await records.remove(scope: scope)
+    }
+
+    func setLowConfidence(siteID: String = "site-a") async throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)
+        let date = api.now
+        try await records.remove(scope: scope)
+        try await records.setLocation(Self.detectedLocation, scope: scope, at: date)
+        let lowConfResult = DetectedSolarLayout(
+            status: .lowConfidence, confidence: "low", reasons: ["scatter"],
+            planes: [], acClipKw: nil, historyDays: 365, clearDays: 20, firstDay: nil, lastDay: nil
+        )
+        try await records.saveResult(lowConfResult, scope: scope, for: Self.detectedLocation, at: date)
+    }
+
+    /// Fourteen days of raw history and actuals at `ratio` of the forecast for `identity`.
+    func seedCorrection(ratio: Double, providerID: SolarForecastProviderID, fingerprint: String) async throws {
         let identity = SolarForecastHistoryIdentity(
             accountScopeID: "account-a", siteID: "site-a", providerID: providerID, fingerprint: fingerprint
         )
-        var hours: [MobileSolarActualsHour] = []
         let today = Date(timeIntervalSince1970: (api.now.timeIntervalSince1970 / 86400).rounded(.down) * 86400)
+        var days: [MobileSolarHistoryDay] = []
         for back in 1 ... 14 {
             let day = today.addingTimeInterval(TimeInterval(-back) * 86400)
             let intervals = SolarProviderFixture.intervals(from: day, hours: 24, powerKw: 2)
             await history.record(identity: identity, intervals: intervals, fetchedAt: day.addingTimeInterval(-3600))
             await history.record(identity: identity, intervals: intervals, fetchedAt: day.addingTimeInterval(60))
-            hours += (0 ..< 24).map {
-                MobileSolarActualsHour(
-                    hourStart: day.addingTimeInterval(TimeInterval($0) * 3600), energyWh: 2000 * ratio, complete: true
-                )
-            }
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.timeZone = .gmt
+            let dayString = formatter.string(from: day)
+            let slotWh = (2000.0 * ratio) / 12.0
+            let slots = Array(repeating: slotWh, count: 288)
+            days.append(MobileSolarHistoryDay(
+                day: dayString, dayStart: day, status: .complete,
+                fetchedAt: day.addingTimeInterval(3600), solarWh: slots
+            ))
         }
-        api.actuals = .enabled(asOf: api.now, hours: hours)
+        api.historyResponse = .enabled(timeZone: .gmt, days: days, nextFrom: nil)
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        _ = try await historyStore.sync(scope: scope, api: api, now: api.now)
     }
 }

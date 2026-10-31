@@ -1,51 +1,60 @@
 import Foundation
 
-/// The beta layout status: cached per account and site, revalidated while a solar surface is
-/// on screen, and cleared on rejection so no automatic request follows.
+/// The beta layout status: cached per account and site, and updated when detection completes.
 enum SolarForecastSurface: Hashable { case smartShift, bill, settings }
 
 extension DashboardCoordinator {
-    /// The selected site's status, from cache when still valid. A transient failure falls back
-    /// to the last status the server confirmed within six hours; an explicit rejection or a
-    /// malformed response clears everything automatic.
+    /// The selected site's status, read from the local record on disk. Triggers on-device
+    /// detection if due and returns the current record's response immediately.
     func solarLayoutLookup(siteID: String, operation: Int) async -> MobileSolarLayoutResponse? {
-        guard let layoutAPI, let accountScopeID else { return nil }
+        isPerformingSolarLayoutLookup = true
+        defer { isPerformingSolarLayoutLookup = false }
+        guard let accountScopeID, let runner else {
+            publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
+            return .disabled
+        }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
-        let requestTime = now()
-        let force = solarLayoutRevalidationRequested
-        solarLayoutRevalidationRequested = false
-        if !force, let cached = solarLayoutCache[scope],
-           (0 ..< cached.lifetime).contains(requestTime.timeIntervalSince(cached.validatedAt)) {
-            publishLayoutStatus(cached, siteID: siteID, operation: operation)
-            return cached.response
+        let bypassTTL = layoutInvalidated
+        layoutInvalidated = false
+        let isEnabled = try? await history.isEnabled(scope: scope)
+        let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        let isSyncedWithinTTL = !bypassTTL && isSynced
+        if isSyncedWithinTTL, !historyEnabled || isEnabled == false {
+            historyEnabled = false
+            publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
+            return .disabled
         }
-        do {
-            let response = try await layoutAPI.fetchSolarLayout(siteID: siteID)
+        let record = try? await records.record(scope: scope)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        let needsSync = (record == nil || isEnabled == false) && !isSyncedWithinTTL
+        if needsSync {
+            let syncResult = await runner.syncHistory(scope: scope)
             guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-            let entry = SolarLayoutCacheEntry(response: response, validatedAt: now())
-            solarLayoutCache[scope] = entry
-            publishLayoutStatus(entry, siteID: siteID, operation: operation)
-            return response
-        } catch {
-            guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-            if Self.isTransientLayoutFailure(error), let cached = solarLayoutCache[scope],
-               (0 ..< SolarLayoutCacheEntry.validationLifetime).contains(now().timeIntervalSince(cached.validatedAt)) {
-                // The timer that got here has already cleared itself, so a pending status needs
-                // a retry. Its validation time is left alone, so the 6-hour bound still applies.
-                scheduleLayoutRevalidation(for: cached, siteID: siteID, after: SolarLayoutCacheEntry.retryDelay)
-                return cached.response
+            guard case .synced = syncResult else {
+                historyEnabled = false
+                publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
+                return .disabled
             }
-            solarLayoutCache[scope] = nil
-            solarActualsCache[scope] = nil
-            solarLayoutStatus = nil
-            return nil
+            historyEnabled = true
+        } else {
+            Task { [weak self] in
+                _ = await self?.runner?.runIfDue(scope: scope)
+            }
         }
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        let currentRecord = try? await records.record(scope: scope)
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        let response = currentRecord?.response(historyEnabled: historyEnabled)
+            ?? .enabled(location: nil, layout: nil, reason: .needsLocation)
+        publishLayoutStatus(response, siteID: siteID, operation: operation)
+        return response
     }
 
-    /// Forces the next lookup to ask the server, as pull-to-refresh, settings and a location
+    /// Forces the next lookup to ask the runner, as pull-to-refresh, settings and a location
     /// post do.
     func invalidateSolarLayout() {
-        solarLayoutRevalidationRequested = true
+        layoutInvalidated = true
     }
 
     func solarSurfaceAppeared(_ surface: SolarForecastSurface) {
@@ -57,45 +66,10 @@ extension DashboardCoordinator {
         if !solarSurfaceVisible { cancelLayoutRevalidation() }
     }
 
-    func cancelLayoutRevalidation() {
-        solarLayoutRevalidation?.cancel()
-        solarLayoutRevalidation = nil
-    }
+    func cancelLayoutRevalidation() {}
 
-    private func publishLayoutStatus(_ entry: SolarLayoutCacheEntry, siteID: String, operation: Int) {
-        solarLayoutStatus = entry.response
-        if case .disabled = entry.response, let scope = solarScope { solarActualsCache[scope] = nil }
-        scheduleLayoutRevalidation(for: entry, siteID: siteID)
-    }
-
-    /// One coalesced revalidation at the transitional status's expiry, while the app is active
-    /// and a solar surface is visible. It never promises detection will have finished.
-    private func scheduleLayoutRevalidation(
-        for entry: SolarLayoutCacheEntry,
-        siteID: String,
-        after retryDelay: TimeInterval? = nil
-    ) {
-        guard entry.isTransitional, sceneIsActive, solarSurfaceVisible else {
-            cancelLayoutRevalidation()
-            return
-        }
-        guard solarLayoutRevalidation == nil else { return }
-        let expiry = entry.validatedAt.addingTimeInterval(entry.lifetime).timeIntervalSince(now())
-        let delay = max(retryDelay ?? expiry, 1)
-        solarLayoutRevalidation = revalidationScheduler.schedule(after: delay) { [weak self] in
-            guard let self else { return }
-            solarLayoutRevalidation = nil
-            guard siteID == selectedSiteID, sceneIsActive, solarSurfaceVisible, canRequestAccountData else { return }
-            invalidateSolarLayout()
-            await loadTimingDetailAppeared(surface: nil)
-        }
-    }
-
-    private static func isTransientLayoutFailure(_ error: any Error) -> Bool {
-        switch error as? PWUsageAPIError {
-        case .recoverableServerError: true
-        case .signInRequired, .requestRejected, .invalidResponse: false
-        case nil: true
-        }
+    func publishLayoutStatus(_ response: MobileSolarLayoutResponse, siteID: String, operation: Int) {
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
+        solarLayoutStatus = response
     }
 }

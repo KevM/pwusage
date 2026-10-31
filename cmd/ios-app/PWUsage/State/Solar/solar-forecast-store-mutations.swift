@@ -1,6 +1,7 @@
 import Foundation
 
 extension SolarForecastStore {
+    @discardableResult
     func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]? = nil) async throws -> String {
         try await loadIfNeeded()
         guard !apiKey.isEmpty, !accountScopeID.isEmpty, !siteID.isEmpty else { throw StoreError.invalidConfiguration }
