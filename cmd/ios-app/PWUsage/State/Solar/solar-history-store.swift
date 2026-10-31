@@ -14,6 +14,7 @@ actor SolarHistoryStore {
         var timeZone: String?
         var syncedThrough: Date?
         var syncedAt: Date?
+        var isEnabled: Bool?
         var days: [StoredDay] = []
     }
 
@@ -67,9 +68,15 @@ actor SolarHistoryStore {
         let pageResult = try await fetchPages(pageContext, state: &state)
         try validateGeneration(syncGeneration, scope: scope, scopeGeneration: scopeGeneration)
         guard case .completed(let timeZone, let maxFetchedAt) = pageResult else {
-            try remove(scope: scope)
+            state.isEnabled = false
+            state.syncedAt = now
+            state.days.removeAll()
+            state.syncedThrough = nil
+            state.timeZone = nil
+            try save(state, scope: scope)
             return .disabled
         }
+        state.isEnabled = true
         state.timeZone = timeZone.identifier
         if let maxFetchedAt { state.syncedThrough = maxFetchedAt.addingTimeInterval(-300) }
         state.syncedAt = now
@@ -170,6 +177,10 @@ actor SolarHistoryStore {
         let state = try load(scope)
         guard let timestamp = state.syncedAt ?? state.syncedThrough else { return false }
         return now.timeIntervalSince(timestamp) < interval
+    }
+
+    func isEnabled(scope: SolarForecastSiteScope) throws -> Bool? {
+        try load(scope).isEnabled
     }
 
     func hourlyActuals(scope: SolarForecastSiteScope, now: Date = .now) throws -> [MobileSolarActualsHour] {

@@ -347,9 +347,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     private func handleFetchedChanges(_ modifications: [CKRecord]) async {
         for record in modifications {
-            guard let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(record) else { continue }
-            _ = try? await store.applyRemoteRecord(remoteRecord, scope: scope)
-            onRemoteRecordApplied?(scope)
+            guard let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(record),
+                  let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) else { continue }
+            outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
         }
     }
 

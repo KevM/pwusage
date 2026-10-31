@@ -206,4 +206,21 @@ extension AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarForecastUnavailableReason == .forecastNotUsable)
         #expect(harness.coordinator.publishedForecastIntervals == nil)
     }
+
+    @Test(
+        "Cold start on non-beta account learns disabled synchronously, preserves manual, and avoids needsLocation"
+    )
+    func coldStartDisabledPreservesManual() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setNeedsLocation()
+        harness.api.historyResponse = .disabled
+
+        await harness.coordinator.refreshSolarForecast(manual: true)
+
+        #expect(harness.coordinator.solarLayoutStatus == .disabled)
+        #expect(!harness.coordinator.historyEnabled)
+        #expect(harness.coordinator.solarForecastState == .basic)
+        #expect(harness.coordinator.solarForecastSource == nil)
+        #expect(await harness.automatic.refreshes == 0)
+    }
 }

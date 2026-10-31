@@ -338,8 +338,9 @@ struct SolarLayoutCloudMergeTests {
             detectorVersion: 1,
             resultLocation: locA
         )
-        let merged = try await store.applyRemoteRecord(remote, scope: scope)
-        #expect(merged.result?.status == .detected)
+        let outcome = try await store.applyRemoteRecord(remote, scope: scope)
+        #expect(outcome.record.result?.status == .detected)
+        #expect(outcome.appliedScopes == [scope])
 
         try await staysTrue { mockSync.changedScopes.isEmpty }
         #expect(try await store.record(scope: scope)?.result?.status == .detected)
@@ -365,7 +366,8 @@ struct SolarLayoutCloudMergeTests {
             resultLocation: locA
         )
 
-        _ = try await store.applyRemoteRecord(remoteRecord, scope: remoteScope)
+        let outcome = try await store.applyRemoteRecord(remoteRecord, scope: remoteScope)
+        #expect(outcome.appliedScopes == [remoteScope, activeScope])
 
         let remoteSaved = try await store.record(scope: remoteScope)
         #expect(remoteSaved?.result?.status == .detected)

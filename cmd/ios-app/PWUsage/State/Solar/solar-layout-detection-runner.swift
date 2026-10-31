@@ -33,7 +33,7 @@ final class SolarLayoutDetectionRunner {
     private let now: () -> Date
     private var generation = 0
     private var activeScope: SolarForecastSiteScope?
-    private var syncTask: Task<SolarHistorySyncResult, Error>?
+    private var inFlightSync: (scope: SolarForecastSiteScope, task: Task<SolarHistorySyncResult, Error>)?
     private var detectionTask: Task<DetectedSolarLayout, Error>?
     private var inFlightRun: (scope: SolarForecastSiteScope, task: Task<SolarLayoutRecord?, Never>)?
     var onRecordChanged: ((SolarForecastSiteScope) -> Void)?
@@ -87,18 +87,27 @@ final class SolarLayoutDetectionRunner {
         activeScope = nil
         let runToCancel = inFlightRun
         inFlightRun = nil
-        syncTask?.cancel()
+        inFlightSync?.task.cancel()
         detectionTask?.cancel()
         runToCancel?.task.cancel()
-        syncTask = nil
+        inFlightSync = nil
         detectionTask = nil
     }
 
     @discardableResult
     func syncHistory(scope: SolarForecastSiteScope) async -> SolarHistorySyncResult? {
-        let sync = Task { try await history.sync(scope: scope, api: api, now: now()) }
+        if let current = inFlightSync, current.scope == scope {
+            return (try? await current.task.value)
+        }
+        let task = Task { try await history.sync(scope: scope, api: api, now: now()) }
+        inFlightSync = (scope: scope, task: task)
+        defer {
+            if inFlightSync?.task == task {
+                inFlightSync = nil
+            }
+        }
         do {
-            let result = try await sync.value
+            let result = try await task.value
             if case .disabled = result {
                 onHistoryDisabled?(scope)
             }
@@ -167,14 +176,10 @@ final class SolarLayoutDetectionRunner {
     private func syncHistoryIfCurrent(
         scope: SolarForecastSiteScope, run: Int
     ) async -> TimeZone? {
-        let sync = Task { try await history.sync(scope: scope, api: api, now: now()) }
-        syncTask = sync
-        defer { syncTask = nil }
-        guard let result = await syncHistory(sync, scope: scope, run: run),
+        guard let result = await syncHistory(scope: scope),
               isCurrent(run, scope: scope) else { return nil }
         switch result {
         case .disabled:
-            onHistoryDisabled?(scope)
             return nil
         case .synced(let zone):
             return zone
@@ -208,17 +213,6 @@ final class SolarLayoutDetectionRunner {
             onRecordChanged?(scope)
             onRecordSaved?(scope)
             return saved
-        } catch {
-            return nil
-        }
-    }
-
-    private func syncHistory(
-        _ sync: Task<SolarHistorySyncResult, Error>, scope: SolarForecastSiteScope, run: Int
-    ) async -> SolarHistorySyncResult? {
-        do {
-            let value = try await sync.value
-            return isCurrent(run, scope: scope) ? value : nil
         } catch {
             return nil
         }

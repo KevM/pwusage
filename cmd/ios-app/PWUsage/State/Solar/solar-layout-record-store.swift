@@ -1,6 +1,11 @@
 import CryptoKit
 import Foundation
 
+struct SolarLayoutRemoteApplyOutcome: Equatable, Sendable {
+    let record: SolarLayoutRecord
+    let appliedScopes: [SolarForecastSiteScope]
+}
+
 struct SolarLayoutRecord: Codable, Equatable, Sendable {
     var location: SolarHomeLocation?
     var locationSetAt: Date?
@@ -132,10 +137,15 @@ actor SolarLayoutRecordStore {
     }
 
     @discardableResult
-    func applyRemoteRecord(_ remote: SolarLayoutRecord, scope: SolarForecastSiteScope) throws -> SolarLayoutRecord {
+    func applyRemoteRecord(
+        _ remote: SolarLayoutRecord, scope: SolarForecastSiteScope
+    ) throws -> SolarLayoutRemoteApplyOutcome {
+        var appliedScopes = [scope]
         let merged = try mergeAndSave(remote, scope: scope)
-        applyToActiveScopeIfNeeded(remote, sourceScope: scope)
-        return merged
+        if let active = applyToActiveScopeIfNeeded(remote, sourceScope: scope) {
+            appliedScopes.append(active)
+        }
+        return SolarLayoutRemoteApplyOutcome(record: merged, appliedScopes: appliedScopes)
     }
 
     @discardableResult
@@ -148,12 +158,15 @@ actor SolarLayoutRecordStore {
         return merged
     }
 
-    private func applyToActiveScopeIfNeeded(_ remote: SolarLayoutRecord, sourceScope: SolarForecastSiteScope) {
+    private func applyToActiveScopeIfNeeded(
+        _ remote: SolarLayoutRecord, sourceScope: SolarForecastSiteScope
+    ) -> SolarForecastSiteScope? {
         guard let activeAccount = activeAccountScopeProvider(),
               !activeAccount.isEmpty,
-              activeAccount != sourceScope.accountScopeID else { return }
+              activeAccount != sourceScope.accountScopeID else { return nil }
         let activeScope = SolarForecastSiteScope(accountScopeID: activeAccount, siteID: sourceScope.siteID)
         _ = try? mergeAndSave(remote, scope: activeScope)
+        return activeScope
     }
 
     private func notifySync(_ scope: SolarForecastSiteScope) {

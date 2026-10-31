@@ -7,22 +7,32 @@ extension DashboardCoordinator {
     /// The selected site's status, read from the local record on disk. Triggers on-device
     /// detection if due and returns the current record's response immediately.
     func solarLayoutLookup(siteID: String, operation: Int) async -> MobileSolarLayoutResponse? {
-        guard let accountScopeID, runner != nil, historyEnabled else {
+        guard let accountScopeID, let runner, historyEnabled else {
             publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
             return .disabled
         }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
-        Task { [weak self] in
-            _ = await self?.runner?.runIfDue(scope: scope)
+        if (try? await history.isEnabled(scope: scope)) == false {
+            historyEnabled = false
+            publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
+            return .disabled
         }
         let record = try? await records.record(scope: scope)
-        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-        let response: MobileSolarLayoutResponse
-        if let record {
-            response = record.response(historyEnabled: historyEnabled)
+        if record == nil, (try? await history.isSynced(scope: scope, within: 86_400, now: now())) != true {
+            let syncResult = await runner.syncHistory(scope: scope)
+            if syncResult == .disabled || !historyEnabled {
+                publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
+                return .disabled
+            }
         } else {
-            response = .enabled(location: nil, layout: nil, reason: .needsLocation)
+            Task { [weak self] in
+                _ = await self?.runner?.runIfDue(scope: scope)
+            }
         }
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        let currentRecord = try? await records.record(scope: scope)
+        let response = currentRecord?.response(historyEnabled: historyEnabled)
+            ?? .enabled(location: nil, layout: nil, reason: .needsLocation)
         publishLayoutStatus(response, siteID: siteID, operation: operation)
         return response
     }

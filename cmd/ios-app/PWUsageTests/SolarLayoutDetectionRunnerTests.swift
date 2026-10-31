@@ -255,6 +255,20 @@ struct SolarLayoutDetectionRunnerTests {
         #expect(gate.callCount == 1)
     }
 
+    @Test("Same-scope concurrent syncHistory joins in-flight sync")
+    @MainActor
+    func sameScopeConcurrentSyncHistoryJoins() async throws {
+        let (records, history) = try await setupStores(scope: scope, location: location)
+        let api = HistoryAPI(responses: [historyPage(at: attempt), historyPage(at: attempt)])
+        let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api, now: { self.attempt })
+        async let sync1 = runner.syncHistory(scope: scope)
+        async let sync2 = runner.syncHistory(scope: scope)
+        let (res1, res2) = await (sync1, sync2)
+        #expect(res1 != nil)
+        #expect(res1 == res2)
+        #expect(await api.requests.count == 2)
+    }
+
     @Test("Detector failure saves failed status with twenty-four hour cadence")
     @MainActor
     func detectorFailureSavesFailedStatus() async throws {
