@@ -67,9 +67,9 @@ Uploads use the **Release production API**, `https://pwusage.fm.rodeo`, and skip
 
 ## API origin
 
-Debug builds use `https://pwusagebeta.fm.rodeo` for sign-in and dashboard data. Release builds use `https://pwusage.fm.rodeo`. `AppConfiguration` accepts an injected origin for tests and local development; Release requires HTTPS. To override a Debug build for a local server, set `PWUSAGE_API_ORIGIN` in the Xcode build environment or scheme. Do not commit credentials.
+Release builds use `https://pwusage.fm.rodeo` (Prod). Debug builds use `PWUSAGE_DEBUG_API_ORIGIN` in `project.yml`, which defaults to Prod; set it to `https://pwusagebeta.fm.rodeo` (Beta, backed by the Dev database) when a Debug build needs unmerged server changes, then run `./generate.sh`. A Debug build signed in to Prod is a real production client, with real Tesla tokens. `AppConfiguration` accepts an injected origin for tests and local development; Release requires HTTPS. To override a Debug build for a local server, set `PWUSAGE_API_ORIGIN` in the Xcode build environment or scheme. Do not commit credentials.
 
-When checking a server-side problem by hand, match the host to the build. A Debug build talks to **beta**, so a `curl` against `pwusage.fm.rodeo` describes production and says nothing about what a Debug build sees. Note that a `401` means the route exists but rejected the unauthenticated request, while a `404` means the route is not deployed at that host. The two are easy to conflate when only one host is checked.
+When checking a server-side problem by hand, match the host to the build. Check `PWUSAGE_DEBUG_API_ORIGIN` before assuming which host a Debug build talks to: a `curl` against one host says nothing about what a build pointed at the other sees. Note that a `401` means the route exists but rejected the unauthenticated request, while a `404` means the route is not deployed at that host. The two are easy to conflate when only one host is checked.
 
 ## Server routes the app depends on
 

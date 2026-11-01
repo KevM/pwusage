@@ -13,6 +13,9 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     STRING_CATALOG_GENERATE_SYMBOLS: YES
     DEVELOPMENT_TEAM: 6HQGHHRK87
+    # The server a Debug build signs in to; Release always uses Prod. Switch to Beta
+    # (https://pwusagebeta.fm.rodeo, the Dev database) when testing unmerged server changes.
+    PWUSAGE_DEBUG_API_ORIGIN: https://pwusage.fm.rodeo
 targets:
   PWUsage:
     type: application
@@ -80,7 +83,7 @@ targets:
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
-          PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
+          PWUSAGE_API_ORIGIN: $(PWUSAGE_DEBUG_API_ORIGIN)
           PWUSAGE_APS_ENVIRONMENT: development
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
@@ -115,7 +118,7 @@ targets:
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
-          PWUSAGE_API_ORIGIN: https://pwusagebeta.fm.rodeo
+          PWUSAGE_API_ORIGIN: $(PWUSAGE_DEBUG_API_ORIGIN)
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
   PWUsageTests:
