@@ -230,4 +230,20 @@ struct LoadTimingViewTests {
             }
         }
     }
+
+    @Test("A source inside the current minute is not in the future on a minute-aligned timeline")
+    func freshnessLabelUsesRealClockWithinTimelineMinute() {
+        let minuteStart = Date(timeIntervalSince1970: 1_800_000_000)
+        let clock = minuteStart.addingTimeInterval(35)
+        func status(_ source: Date, clock: Date) -> String {
+            LoadTimingPresentation.sourceStatus(
+                isUnavailable: false, energyDataThrough: source, timelineDate: minuteStart, clock: clock
+            )
+        }
+        #expect(status(minuteStart.addingTimeInterval(30), clock: clock) == "Updated just now")
+        #expect(status(clock.addingTimeInterval(90), clock: clock) == "Source time is in the future")
+        // A resumed timeline can hand over a date later than the clock; the later one wins.
+        let lateEntry = status(minuteStart.addingTimeInterval(-120), clock: minuteStart.addingTimeInterval(-300))
+        #expect(lateEntry == "Updated 2 min ago")
+    }
 }
