@@ -88,7 +88,6 @@ final class PWUsageAppModel: ObservableObject {
             history: solarHistory, records: solarRecords, api: api
         ) : nil)
         self.solarRunner = runner
-        Self.wireCloudSyncListener(solarCloudSync, runner: runner)
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
@@ -116,6 +115,7 @@ final class PWUsageAppModel: ObservableObject {
                 cloudSync: solarCloudSync
             )
         )
+        wireCloudSyncListener(solarCloudSync, runner: runner)
         restoreCachedSession()
     }
 
@@ -259,17 +259,24 @@ final class PWUsageAppModel: ObservableObject {
         Task { await sync.start() }
     }
 
-    private static func wireCloudSyncListener(
+    private func wireCloudSyncListener(
         _ cloudSync: SolarLayoutCloudSync, runner: SolarLayoutDetectionRunner?
     ) {
-        guard let runner else { return }
-        Task { [weak runner] in
-            await cloudSync.setOnRemoteRecordApplied { scope in
-                Task { @MainActor in
-                    runner?.onRecordChanged?(scope)
-                    _ = await runner?.runIfDue(scope: scope)
+        guard runner != nil else { return }
+        Task { [weak self] in
+            await cloudSync.setOnRemoteRecordApplied { [weak self] scope in
+                Task { @MainActor [weak self] in
+                    await self?.solarLayoutRecordChanged(scope)
                 }
             }
         }
+    }
+
+    func solarLayoutRecordChanged(_ scope: SolarForecastSiteScope) async {
+        let activeScope = coordinator?.solarScope
+            ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
+        guard scope == activeScope else { return }
+        solarRunner?.onRecordChanged?(scope)
+        _ = await solarRunner?.runIfDue(scope: scope)
     }
 }

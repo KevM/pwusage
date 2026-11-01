@@ -132,4 +132,86 @@ struct SolarLayoutCloudSyncTests {
         let hasSync = await store.hasSync
         #expect(hasSync)
     }
+
+    @Test("Unrelated remote records do not cancel selected-site detection", arguments: [false, true])
+    @MainActor
+    func unrelatedRemoteRecordDoesNotCancelSelectedSiteDetection(otherAccount: Bool) async throws {
+        let scope = SolarForecastSiteScope(
+            accountScopeID: otherAccount ? "other-account" : "account-a",
+            siteID: otherAccount ? "site-a" : "site-b"
+        )
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
+        _ = try await harness.historyStore.sync(scope: scope, api: harness.api, now: harness.api.now)
+        let model = try cloudSyncModel(harness: harness)
+        let previousFetchCount = harness.api.historyFetches.count
+        harness.api.holdHistory = true
+        defer { harness.api.resumeHistory() }
+        let selectedScope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        let runTask = Task { await harness.runner.runIfDue(scope: selectedScope) }
+        try await eventually { harness.api.historyFetches.count > previousFetchCount }
+
+        await model.solarLayoutRecordChanged(scope)
+        harness.api.resumeHistory()
+        let completed = await runTask.value
+        #expect(completed?.result?.status == .detected)
+    }
+
+    @Test("Selected-site remote updates start detection", arguments: [false, true])
+    @MainActor
+    func selectedRemoteRecordStartsDetection(hasCoordinator: Bool) async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
+        let model = try cloudSyncModel(harness: harness)
+        if hasCoordinator {
+            model.coordinator = harness.coordinator
+            model.userDefaults.set("site-b", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
+        }
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+
+        await model.solarLayoutRecordChanged(scope)
+
+        let record = try await harness.records.record(scope: scope)
+        #expect(record?.result?.status == .detected)
+    }
+
+    @MainActor
+    private func cloudSyncModel(harness: AutomaticForecastHarness) throws -> PWUsageAppModel {
+        let defaults = try #require(UserDefaults(suiteName: "CloudSyncTests.\(UUID().uuidString)"))
+        defaults.set("account-a", forKey: PWUsageAppModel.accountScopeDefaultsKey)
+        defaults.set("site-a", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
+        return PWUsageAppModel(
+            configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
+            api: CloudSyncTestAppAPI(historyAPI: harness.api),
+            userDefaults: defaults,
+            solarHistory: harness.historyStore,
+            solarRecords: harness.records,
+            solarRunner: harness.runner,
+            solarCloudSync: SolarLayoutCloudSync(store: harness.records)
+        )
+    }
+}
+
+@MainActor
+private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
+    let historyAPI: AutomaticForecastAPISpy
+
+    init(historyAPI: AutomaticForecastAPISpy) {
+        self.historyAPI = historyAPI
+    }
+
+    func fetchSites() async throws -> [MobileSite] { [MobileSite(id: "site-a", name: "Home", utility: "Test")] }
+    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
+        try await historyAPI.fetchLoadPlanningContext(siteID: siteID)
+    }
+    func fetchSolarHistory(
+        siteID: String, from: String, changedSince: Date?
+    ) async throws -> MobileSolarHistoryResponse {
+        try await historyAPI.fetchSolarHistory(siteID: siteID, from: from, changedSince: changedSince)
+    }
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
+    func logout() async throws {}
+    func clearSiteAuthCookie() async {}
 }

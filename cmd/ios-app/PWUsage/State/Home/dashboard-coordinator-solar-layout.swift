@@ -32,10 +32,9 @@ extension DashboardCoordinator {
             let step = await executeLookupSync(scope: scope, runner: runner, siteID: siteID, operation: operation)
             if step.shouldExit { return step.response }
             syncResult = step.result
-        } else {
-            Task { [weak self] in
-                _ = await self?.runner?.runIfDue(scope: scope)
-            }
+        }
+        if !needsSync || syncResult != nil {
+            scheduleLayoutDetection(scope: scope, operation: operation)
         }
         let currentRecord = try? await records.record(scope: scope)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
@@ -49,6 +48,13 @@ extension DashboardCoordinator {
         }
         publishLayoutStatus(response, siteID: siteID, operation: operation)
         return response
+    }
+
+    private func scheduleLayoutDetection(scope: SolarForecastSiteScope, operation: Int) {
+        Task { [weak self] in
+            guard let self, operation == forecastGeneration, scope.siteID == selectedSiteID else { return }
+            _ = await runner?.runIfDue(scope: scope)
+        }
     }
 
     private struct CachedEligibility {

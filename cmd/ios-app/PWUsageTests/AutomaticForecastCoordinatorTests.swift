@@ -317,4 +317,26 @@ extension AutomaticForecastCoordinatorTests {
         #expect(staleResponse == nil)
         #expect(harness.coordinator.layoutInvalidated)
     }
+
+    @Test("Restoring beta eligibility with a pending location starts due detection")
+    func restoringEligibilityStartsDueDetection() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
+        harness.api.historyResponse = .disabled
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        _ = try await harness.historyStore.sync(scope: scope, api: harness.api, now: harness.api.now)
+
+        await harness.coordinator.refreshSolarForecast(manual: false)
+        #expect(harness.coordinator.solarLayoutStatus == .disabled)
+        #expect(!harness.coordinator.historyEnabled)
+
+        harness.api.historyResponse = .enabled(timeZone: .gmt, days: [], nextFrom: nil)
+        harness.coordinator.invalidateSolarLayout()
+        await harness.coordinator.refreshSolarForecast(manual: true)
+
+        try await eventually {
+            harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse
+                && harness.coordinator.solarForecastSource == .forecastSolar
+        }
+    }
 }
