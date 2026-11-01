@@ -46,6 +46,7 @@ actor SolarLayoutRecordStore {
     private let activeAccountScopeProvider: @Sendable () -> String?
     private var cache: [SolarForecastSiteScope: SolarLayoutRecord] = [:]
     private var sync: (any SolarLayoutSyncing)?
+    private var syncGeneration: Int?
     private var onSetSync: (@Sendable () async -> Void)?
 
     init(
@@ -67,8 +68,9 @@ actor SolarLayoutRecordStore {
         onSetSync = handler
     }
 
-    func setSync(_ sync: (any SolarLayoutSyncing)?) async {
+    func setSync(_ sync: (any SolarLayoutSyncing)?, generation: Int? = nil) async {
         self.sync = sync
+        syncGeneration = generation
         if let handler = onSetSync {
             onSetSync = nil
             await handler()
@@ -157,6 +159,16 @@ actor SolarLayoutRecordStore {
             appliedScopes.append(active)
         }
         return SolarLayoutRemoteApplyOutcome(record: merged, appliedScopes: appliedScopes)
+    }
+
+    @discardableResult
+    func applyRemoteRecord(
+        _ remote: SolarLayoutRecord, scope: SolarForecastSiteScope,
+        from source: any SolarLayoutSyncing, generation: Int
+    ) throws -> SolarLayoutRemoteApplyOutcome {
+        // Validate at the write boundary so queued work cannot cross a stop or restart.
+        guard sync === source, syncGeneration == generation else { throw CancellationError() }
+        return try applyRemoteRecord(remote, scope: scope)
     }
 
     @discardableResult

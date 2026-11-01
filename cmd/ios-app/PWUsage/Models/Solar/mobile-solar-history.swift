@@ -15,7 +15,16 @@ enum MobileSolarHistoryResponse: Decodable, Equatable, Sendable {
         guard let timeZone = TimeZone(identifier: zone) else {
             throw DecodingError.dataCorruptedError(forKey: .timeZone, in: values, debugDescription: "Invalid time zone")
         }
-        self = try .enabled(timeZone: timeZone, days: values.decode([MobileSolarHistoryDay].self, forKey: .days),
+        let days = try values.decode([MobileSolarHistoryDay].self, forKey: .days)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        guard days.allSatisfy({ day in
+            calendar.dateInterval(of: .day, for: day.dayStart)?.duration == Double(day.solarWh.count) * 300
+        }) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .days, in: values, debugDescription: "Solar slot count must match the site-local day duration")
+        }
+        self = try .enabled(timeZone: timeZone, days: days,
                             nextFrom: values.decodeIfPresent(String.self, forKey: .nextFrom))
     }
 }
@@ -45,8 +54,7 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
         status = try values.decode(Status.self, forKey: .status)
         fetchedAt = try values.decodeIfPresent(Date.self, forKey: .fetchedAt)
         solarWh = try values.decode([Double?].self, forKey: .solarWh)
-        guard [276, 288, 300].contains(solarWh.count),
-              solarWh.compactMap({ $0 }).allSatisfy(\.isFinite) else {
+        guard solarWh.compactMap({ $0 }).allSatisfy(\.isFinite) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .solarWh, in: values, debugDescription: "Invalid solar slots")
         }

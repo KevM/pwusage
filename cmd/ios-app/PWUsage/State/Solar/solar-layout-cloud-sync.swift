@@ -63,7 +63,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
                 startingGeneration = nil
             }
         }
-        await store.setSync(self)
+        await store.setSync(self, generation: generation)
         guard generation == lifecycleGeneration else { return }
         guard fileManager.fileExists(
             atPath: Bundle.main.bundleURL.appendingPathComponent("_CodeSignature").path
@@ -218,10 +218,13 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
               let serverRecord = ckError.serverRecord else { return false }
         saveSystemFields(for: serverRecord)
         if let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
-           let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) {
+           let outcome = try? await store.applyRemoteRecord(
+               remoteRecord, scope: scope, from: self, generation: generation
+           ) {
             guard isCurrentEngine(syncEngine, generation: generation) else { return false }
             outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
         }
+        guard isCurrentEngine(syncEngine, generation: generation) else { return false }
         syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
         return true
     }
@@ -278,7 +281,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             guard isCurrentEngine(syncEngine, generation: generation) else { return }
             saveSystemFields(for: record)
             guard let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(record),
-                  let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) else { continue }
+                  let outcome = try? await store.applyRemoteRecord(
+                      remoteRecord, scope: scope, from: self, generation: generation
+                  ) else { continue }
             guard isCurrentEngine(syncEngine, generation: generation) else { return }
             outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
         }
