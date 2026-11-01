@@ -144,4 +144,27 @@ struct SolarLocationCoordinatorTests {
         #expect(res2?.result == detected)
         #expect(changedCount == 1)
     }
+
+    @Test("scheduleSelectedRecordIfDue schedules future nextDue for not-yet-due selected record")
+    func scheduleSelectedRecordSchedulesFutureNextDue() async throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "acc", siteID: "site-a")
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let records = SolarLayoutRecordStore(directory: tempRoot.appendingPathComponent("records"))
+        let history = SolarHistoryStore(directory: tempRoot.appendingPathComponent("history"))
+        let attempt = Date(timeIntervalSince1970: 2_000_000_000)
+        try await records.setLocation(Self.home, scope: scope, at: attempt)
+        let retryResult = DetectedSolarLayout(
+            status: .notEnoughHistory, confidence: nil, reasons: [], planes: [],
+            acClipKw: nil, historyDays: 0, clearDays: 0, firstDay: nil, lastDay: nil
+        )
+        _ = try await records.saveResult(retryResult, scope: scope, for: Self.home, at: attempt)
+
+        let runner = SolarLayoutDetectionRunner(
+            history: history, records: records, api: HistoryAPI(responses: []), now: { attempt }
+        )
+        BackgroundSolarLayoutDetection.configure(runner: runner, dueScope: { scope })
+        var scheduledDue: Date?
+        await BackgroundSolarLayoutDetection.scheduleSelectedRecordIfDue { scheduledDue = $0 }
+        #expect(scheduledDue == attempt.addingTimeInterval(86_400))
+    }
 }

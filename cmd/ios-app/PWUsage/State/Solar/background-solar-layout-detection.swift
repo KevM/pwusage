@@ -112,20 +112,21 @@ enum BackgroundSolarLayoutDetection {
     }
 
     @MainActor
-    static func scheduleSelectedRecordIfDue() async {
+    static func scheduleSelectedRecordIfDue(
+        reschedule: (Date?) -> Void = { schedule(nextDue: $0) }
+    ) async {
         guard let dueScope, let scope = await dueScope() else { return }
-        let store = runner?.records ?? .shared
-        guard let record = try? await store.record(scope: scope),
-              SolarLayoutDetectionSchedule.isDue(record, now: Date()) else { return }
-        schedule(nextDue: SolarLayoutDetectionSchedule.nextDue(record))
+        await schedule(scope: scope, reschedule: reschedule)
     }
 
     @MainActor
-    static func schedule(scope: SolarForecastSiteScope) async {
+    static func schedule(
+        scope: SolarForecastSiteScope,
+        reschedule: (Date?) -> Void = { schedule(nextDue: $0) }
+    ) async {
         let store = runner?.records ?? .shared
-        guard let record = try? await store.record(scope: scope),
-              SolarLayoutDetectionSchedule.isDue(record, now: Date()) else { return }
-        schedule(nextDue: SolarLayoutDetectionSchedule.nextDue(record))
+        let record = try? await store.record(scope: scope)
+        reschedule(record.flatMap(SolarLayoutDetectionSchedule.nextDue))
     }
 }
 
