@@ -42,7 +42,8 @@ final class AppStoreScreenshots: XCTestCase {
 
     private func captureTabs() {
         open("Bill")
-        waitFor(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "146.82")).firstMatch)
+        // The demo's amount moves with the cycle day; the recorded total's label doesn't.
+        waitFor(app.staticTexts["So far"])
         snapshot("03-bill")
         open("Smart Shift")
         // The bar is there from the first frame; the verdict card's link is not.

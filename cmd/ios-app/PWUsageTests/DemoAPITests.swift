@@ -64,6 +64,8 @@ struct DemoAPITests {
         _ = try hold.validating(siteID: DemoFixtures.site.id, status: .active)
         #expect(hold.status == .active)
         #expect(hold.safetyExpiresAt == clock.now.addingTimeInterval(2 * 3600))
+        // The sheet offers to hold at the live charge, so the hold keeps that charge.
+        #expect(hold.targetReserve == DemoFixtures.stateOfCharge)
     }
 
     @Test("Restoring ends the hold")

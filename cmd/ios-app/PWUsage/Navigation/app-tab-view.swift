@@ -20,6 +20,14 @@ struct AppTabView: View {
                     subtitle: "Reconnect your Tesla account to update your energy data.",
                     buttonTitle: "Reconnect Tesla"
                 )
+            } else if model.isDemo {
+                // Stacked rather than a safe-area inset: the floating tab bar ignores
+                // an inset and would sit under the bar. Below the tab bar on iPhone,
+                // across the window's foot under the sidebar on iPad.
+                VStack(spacing: 0) {
+                    tabs
+                    DemoModeBar { model.presentDemoSheet() }
+                }
             } else {
                 tabs
             }
@@ -53,13 +61,6 @@ struct AppTabView: View {
                 model.isSitePickerPresented = false
             }
             .presentationDetents(model.sites.count > 4 ? [.medium, .large] : [.medium])
-        }
-        // A bottom inset spanning the window: below the tab bar on iPhone, at the
-        // window's foot beside the sidebar on iPad, never over either.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.isDemo {
-                DemoModeBar { model.presentDemoSheet() }
-            }
         }
         .sheet(isPresented: $model.isDemoSheetPresented) {
             DemoModeSheet(

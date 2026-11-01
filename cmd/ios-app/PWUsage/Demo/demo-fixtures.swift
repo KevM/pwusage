@@ -14,6 +14,20 @@ enum DemoFixtures {
     // swiftlint:disable:next force_unwrapping
     static let timeZone = TimeZone(identifier: "America/Chicago")!
     static let tariffName = "Residential · Time of use"
+    /// The battery's live charge, which the simulated hold keeps.
+    static let stateOfCharge = 64
+
+    /// Typical winter solar for the hour of day, in kW. The planning history and
+    /// the demo forecast share it, so Smart Shift and the bill project the same
+    /// days: midday export bends the period banks, the evening draws them down.
+    static func solarKw(hour: Int) -> Double {
+        switch hour {
+        case 8 ..< 10: 1.0
+        case 10 ..< 15: 3.2
+        case 15 ..< 17: 1.2
+        default: 0
+        }
+    }
 
     private struct Rate {
         let name: String
@@ -43,8 +57,11 @@ enum DemoFixtures {
     private static let offPeak = Rate(name: "Off-peak", buy: 0.10, sell: 0.03)
     /// Net grid import per whole day of the cycle. Both periods are net buyers,
     /// as a winter home is, so each period's marginal cost is its buy rate.
-    private static let onPeakKwhPerDay = 8.5
-    private static let offPeakKwhPerDay = 32.0
+    /// The banks stay small (about 60 and 175 kWh owed) so a day's solar and
+    /// evening load visibly move them, yet On-peak is deep enough that Smart
+    /// Shift's two days never repay it.
+    private static let onPeakKwhPerDay = 3.0
+    private static let offPeakKwhPerDay = 8.0
 
     /// Whole seconds: a fractional source instant can serialize into the future.
     private static func source(_ asOf: Date) -> Date {
@@ -115,7 +132,7 @@ enum DemoFixtures {
             "site": ["id": site.id, "name": site.name, "timezone": timeZone.identifier,
                      "localDate": localDateText(source)],
             "live": ["solarPower": 3900, "loadPower": 1400, "batteryPower": -1800, "gridPower": -700],
-            "stateOfCharge": 64,
+            "stateOfCharge": stateOfCharge,
             "activeTariff": tariffName,
             "activeLoadTiming": [
                 "periodName": onPeak.name, "buyRate": onPeak.buy, "sellRate": onPeak.sell,
@@ -209,12 +226,7 @@ enum DemoFixtures {
             case 21 ..< 23: 1.1
             default: 0.5
             }
-            let solarKw: Double = switch hour {
-            case 8 ..< 10: 0.8
-            case 10 ..< 15: 2.6
-            case 15 ..< 17: 1.0
-            default: 0
-            }
+            let solarKw = solarKw(hour: hour)
             var slot = MobileLoadPlanningContextResponse.Slot(
                 localMinute: index * 30, homeKw: homeKw, batteryNetChargeKw: 0, sampleCount: 12, coverage: 1
             )

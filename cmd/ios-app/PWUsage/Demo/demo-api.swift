@@ -70,7 +70,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             let hours = choice.mode == .timer ? choice.durationHours : 8
             let started = BatteryHold(
                 id: nextHoldID, siteID: siteID, status: .active, mode: choice.mode,
-                originalReserve: 20, targetReserve: choice.reserveChoice ?? 80,
+                originalReserve: 20, targetReserve: choice.reserveChoice ?? DemoFixtures.stateOfCharge,
                 createdAt: date, safetyExpiresAt: date.addingTimeInterval(TimeInterval(hours) * 3600),
                 cancelledObservedReserve: nil
             )

@@ -74,8 +74,36 @@ struct DemoFixturesTests {
                                               now: asOf, cycleEnd: bill.currentBill.cycleEnd)
         #expect(projection.points.last?.date == bill.currentBill.cycleEnd)
         let soFar = try #require(bill.currentBill.estimatedCost)
-        #expect((90 ... 140).contains(soFar))
+        #expect((25 ... 120).contains(soFar))
         #expect(abs((outlook.points.last?.estimatedCost ?? 0) - soFar) < 0.01)
+    }
+
+    /// Whatever the hour, Smart Shift's two days of solar never repay On-peak (so
+    /// waiting stays cheaper), and the forecast lands near the amount so far rather than far
+    /// below it. Midday export can trim the bill a little, as it would.
+    @Test("With the demo solar forecast, On-peak stays owed and the bill stays sane",
+          arguments: [0, 3, 6, 9, 12, 15, 18, 21])
+    func forecastKeepsScenario(hoursLater: Int) async throws {
+        let asOf = Date.now.addingTimeInterval(TimeInterval(hoursLater) * 3600)
+        let bill = try DemoFixtures.bill(asOf: asOf)
+        let outlook = try #require(bill.outlook)
+        let context = try #require(DemoFixtures.planningContext(asOf: asOf).estimatorContext)
+        let batch = await DemoForecastStore(now: { asOf })
+            .cachedBatch(accountScopeID: DemoSession.accountScopeID, siteID: DemoFixtures.site.id)
+        let forecast = try #require(batch?.intervals)
+        let projection = BillOutlook.evaluate(history: outlook, context: context, forecast: forecast,
+                                              now: asOf, cycleEnd: bill.currentBill.cycleEnd)
+        #expect(projection.usesSolar)
+        let soFar = try #require(bill.currentBill.estimatedCost)
+        let projected = try #require(projection.points.last?.estimatedCost)
+        #expect(projected > soFar - 15)
+        // Smart Shift looks through the end of tomorrow.
+        let onPeak = projection.points.filter { $0.date <= asOf.addingTimeInterval(2 * 86400) }.compactMap { point in
+            point.periods.first { $0.periodName == "On-peak" }?.netGridKwh
+        }
+        #expect(onPeak.allSatisfy { $0 > 0 }, "On-peak bank was repaid: \(onPeak)")
+        // Owed, but small enough that a day's solar visibly moves the bank.
+        #expect((20 ... 80).contains(onPeak.first ?? 0))
     }
 
     @Test("Rate plans show the demo's two periods")

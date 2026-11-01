@@ -1,6 +1,6 @@
 import Foundation
 
-/// An offline solar forecast for the demo home: two arrays, a week of clear
+/// An offline solar forecast for the demo home: two arrays, a week of winter
 /// days shaped in the home's local time. Nothing is fetched, stored or
 /// connected, so Settings and Smart Shift show a forecast without a key or a
 /// location.
@@ -15,8 +15,8 @@ actor DemoForecastStore: SolarForecastManaging {
         self.now = now
     }
 
-    /// Nothing overnight, a broad midday peak, tapering tails, every half hour
-    /// for a week from the half hour before now.
+    /// The planning history's winter curve, half-hourly for a week from the half
+    /// hour before now.
     private func intervals() -> [SolarForecastInterval] {
         let step: TimeInterval = 30 * 60
         let start = Date(timeIntervalSince1970: floor(now().timeIntervalSince1970 / step) * step - step)
@@ -24,16 +24,10 @@ actor DemoForecastStore: SolarForecastManaging {
         calendar.timeZone = DemoFixtures.timeZone
         return (0 ..< 7 * 48).map { index in
             let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
-            let shape: Double = switch calendar.component(.hour, from: periodStart) {
-            case 5 ... 8: 0.25
-            case 9 ... 11: 0.8
-            case 12 ... 14: 1.0
-            case 15 ... 17: 0.7
-            case 18 ... 19: 0.2
-            default: 0
-            }
-            return SolarForecastInterval(periodStart: periodStart, periodEnd: periodStart.addingTimeInterval(step),
-                                         powerKw: 9.0 * shape)
+            return SolarForecastInterval(
+                periodStart: periodStart, periodEnd: periodStart.addingTimeInterval(step),
+                powerKw: DemoFixtures.solarKw(hour: calendar.component(.hour, from: periodStart))
+            )
         }
     }
 
