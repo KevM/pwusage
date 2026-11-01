@@ -39,6 +39,8 @@ final class PWUsageAppModel: ObservableObject {
     @Published var batteryHoldNavigationMessage: String?
     let controlSiteStore: BatteryHoldControlSiteStore?
     let liveActivities: BatteryHoldActivityCoordinator?
+    /// The throwaway sample-home model behind "Try the demo". See `DemoSession`.
+    let isDemo: Bool
     var sessionVerified = false
     var hasBootstrapAttempted = false
     @Published var siteRequestCount = 0
@@ -75,8 +77,10 @@ final class PWUsageAppModel: ObservableObject {
         solarHistory: SolarHistoryStore = .shared,
         solarRecords: SolarLayoutRecordStore = .shared,
         solarRunner: SolarLayoutDetectionRunner? = nil,
-        solarCloudSync: SolarLayoutCloudSync = .shared
+        solarCloudSync: SolarLayoutCloudSync = .shared,
+        isDemo: Bool = false
     ) {
+        self.isDemo = isDemo
         self.controlSiteStore = controlSiteStore
         self.liveActivities = liveActivities
         self.api = api
