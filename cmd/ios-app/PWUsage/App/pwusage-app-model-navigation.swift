@@ -17,6 +17,12 @@ extension PWUsageAppModel {
         coordinator?.selectSite(site.id)
     }
 
+    /// Smart Shift's jobs live beside the model's other settings, so a model on
+    /// its own defaults (the screenshot run) keeps them there too.
+    func makeLoadProfileStore() -> LoadProfileStore {
+        LoadProfileStore(userDefaults: userDefaults)
+    }
+
     func selectTab(_ tab: AppTab) {
         selectedTab = tab
         userDefaults.set(tab.rawValue, forKey: Self.selectedTabDefaultsKey)

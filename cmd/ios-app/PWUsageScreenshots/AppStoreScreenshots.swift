@@ -20,8 +20,10 @@ final class AppStoreScreenshots: XCTestCase {
         app.launchArguments += [Self.screenshotArgument]
         setupSnapshot(app)
         app.launch()
-        // The bill card replaces its loading placeholder only once demo data is in.
+        // Bill and live readings load separately; wait for each placeholder to go.
         XCTAssertTrue(element("home.bill").waitForExistence(timeout: timeout), "Home never finished loading")
+        waitFor(label("Battery charge 72 percent"))
+        waitFor(app.staticTexts["18.4 kWh"])
     }
 
     func testIPhoneShots() throws {
@@ -43,10 +45,11 @@ final class AppStoreScreenshots: XCTestCase {
         waitFor(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "146.82")).firstMatch)
         snapshot("03-bill")
         open("Smart Shift")
-        waitFor(app.navigationBars["Smart Shift"])
+        // The bar is there from the first frame; the verdict card's link is not.
+        waitFor(label("How this is worked out"))
         snapshot("04-smart-shift")
         open("Settings")
-        waitFor(app.navigationBars["Settings"])
+        waitFor(app.staticTexts["Hill Country Electric"])
         snapshot("05-settings")
     }
 
@@ -79,6 +82,10 @@ final class AppStoreScreenshots: XCTestCase {
 
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier].firstMatch
+    }
+
+    private func label(_ text: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", text)).firstMatch
     }
 
     private func waitFor(_ element: XCUIElement) {

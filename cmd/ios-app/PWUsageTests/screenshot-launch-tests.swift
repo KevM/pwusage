@@ -58,6 +58,17 @@
             #expect(live <= launchedBy.addingTimeInterval(-60))
         }
 
+        @Test("Smart Shift jobs come from the model's defaults, not standard defaults")
+        func jobsUseModelDefaults() throws {
+            let key = LoadProfileStore.storageKey
+            let before = UserDefaults.standard.data(forKey: key)
+            let model = ScreenshotLaunch.makeModel()
+            let store = model.makeLoadProfileStore()
+            #expect(!store.profiles.isEmpty)
+            #expect(model.userDefaults.data(forKey: key) != nil)
+            #expect(UserDefaults.standard.data(forKey: key) == before)
+        }
+
         @Test("The screenshot model never touches standard defaults")
         func isolatedDefaults() {
             let key = PWUsageAppModel.selectedTabDefaultsKey
