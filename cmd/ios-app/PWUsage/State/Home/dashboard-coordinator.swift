@@ -97,7 +97,8 @@ final class DashboardCoordinator: ObservableObject {
     let runner: SolarLayoutDetectionRunner?
     var historyEnabled = true
     var layoutInvalidated = false
-    var isPerformingSolarLayoutLookup = false
+    var activeSolarLayoutLookups = 0
+    var isPerformingSolarLayoutLookup: Bool { activeSolarLayoutLookups > 0 }
     var visibleSolarSurfaces: Set<SolarForecastSurface> = []
     var solarSurfaceVisible: Bool { !visibleSolarSurfaces.isEmpty }
     @Published var forecastOperationPending = false

@@ -7,8 +7,9 @@ extension DashboardCoordinator {
     /// The selected site's status, read from the local record on disk. Triggers on-device
     /// detection if due and returns the current record's response immediately.
     func solarLayoutLookup(siteID: String, operation: Int) async -> MobileSolarLayoutResponse? {
-        isPerformingSolarLayoutLookup = true
-        defer { isPerformingSolarLayoutLookup = false }
+        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        activeSolarLayoutLookups += 1
+        defer { activeSolarLayoutLookups -= 1 }
         guard let accountScopeID, let runner else {
             publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
             return .disabled
@@ -39,7 +40,10 @@ extension DashboardCoordinator {
         let currentRecord = try? await records.record(scope: scope)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
         guard let response = resolveLayoutResponse(
-            record: currentRecord, needsSync: needsSync, syncResult: syncResult
+            record: currentRecord,
+            eligibility: eligibility,
+            needsSync: needsSync,
+            syncResult: syncResult
         ) else {
             return nil
         }
@@ -90,10 +94,19 @@ extension DashboardCoordinator {
     }
 
     private func resolveLayoutResponse(
-        record: SolarLayoutRecord?, needsSync: Bool, syncResult: SolarHistorySyncResult?
+        record: SolarLayoutRecord?,
+        eligibility: CachedEligibility,
+        needsSync: Bool,
+        syncResult: SolarHistorySyncResult?
     ) -> MobileSolarLayoutResponse? {
-        if record == nil && needsSync && syncResult == nil {
-            return nil
+        if needsSync, syncResult == nil {
+            if eligibility.isEnabled == false || !historyEnabled {
+                historyEnabled = false
+                return .disabled
+            }
+            if record == nil {
+                return nil
+            }
         }
         return record?.response(historyEnabled: historyEnabled)
             ?? .enabled(location: nil, layout: nil, reason: .needsLocation)

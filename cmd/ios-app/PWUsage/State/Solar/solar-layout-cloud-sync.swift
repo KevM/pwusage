@@ -21,6 +21,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private var database: CKDatabase?
     private var syncEngine: CKSyncEngine?
     private(set) var isStarted = false
+    private var startingGeneration: Int?
     private var lifecycleGeneration = 0
     private var onRemoteRecordApplied: (@Sendable (SolarForecastSiteScope) -> Void)?
 
@@ -53,14 +54,17 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     func start() async {
-        guard !isStarted else { return }
+        guard !isStarted, startingGeneration == nil else { return }
         lifecycleGeneration += 1
         let generation = lifecycleGeneration
-        await store.setSync(self)
-        guard generation == lifecycleGeneration else {
-            await store.setSync(nil)
-            return
+        startingGeneration = generation
+        defer {
+            if startingGeneration == generation {
+                startingGeneration = nil
+            }
         }
+        await store.setSync(self)
+        guard generation == lifecycleGeneration else { return }
         guard fileManager.fileExists(
             atPath: Bundle.main.bundleURL.appendingPathComponent("_CodeSignature").path
         ) else {
@@ -70,8 +74,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             systemFields = loadSystemFields()
             let container = CKContainer(identifier: containerIdentifier)
             let status = try await container.accountStatus()
-            guard generation == lifecycleGeneration else { return }
-            guard status == .available else { return }
+            guard generation == lifecycleGeneration, status == .available else { return }
             self.container = container
             self.database = container.privateCloudDatabase
             isStarted = true
@@ -86,7 +89,6 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             self.syncEngine = engine
             ensureZoneSaved(engine: engine)
             enqueuePendingOfflineScopes(engine: engine)
-            guard generation == lifecycleGeneration else { return }
             try await engine.fetchChanges()
         } catch {
             // Stay local-only gracefully
@@ -112,6 +114,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     func stop() async {
         lifecycleGeneration += 1
+        startingGeneration = nil
         isStarted = false
         syncEngine = nil
         container = nil
@@ -121,11 +124,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     func recordChanged(_ scope: SolarForecastSiteScope) async {
-        guard isStarted, let syncEngine else {
-            pendingOfflineScopes.insert(scope)
-            persistPendingScopes()
-            return
-        }
+        pendingOfflineScopes.insert(scope)
+        persistPendingScopes()
+        guard isStarted, let syncEngine else { return }
         let recordID = SolarLayoutCloudRecordSerializer.recordID(for: scope)
         syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
         do {
@@ -175,12 +176,23 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         for record in sent.savedRecords {
             guard isCurrentEngine(syncEngine, generation: generation) else { return }
             saveSystemFields(for: record)
+            if let (scope, _) = SolarLayoutCloudRecordSerializer.parseRecord(record),
+               pendingOfflineScopes.remove(scope) != nil {
+                persistPendingScopes()
+            }
         }
         var shouldResend = false
         for failure in sent.failedRecordSaves {
             guard isCurrentEngine(syncEngine, generation: generation) else { return }
-            guard let ckError = failure.error as? CKError,
-                  ckError.code == .serverRecordChanged,
+            guard let ckError = failure.error as? CKError else { continue }
+            if ckError.code == .zoneNotFound || ckError.code == .userDeletedZone {
+                hasSavedZone = false
+                ensureZoneSaved(engine: syncEngine)
+                syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
+                shouldResend = true
+                continue
+            }
+            guard ckError.code == .serverRecordChanged,
                   let serverRecord = ckError.serverRecord else { continue }
             saveSystemFields(for: serverRecord)
             if let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
@@ -293,6 +305,10 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             try fileManager.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(serialization)
             try data.write(to: stateURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            if !pendingOfflineScopes.isEmpty {
+                pendingOfflineScopes.removeAll()
+                persistPendingScopes()
+            }
         } catch {
             // Stay local-only gracefully
         }
@@ -310,8 +326,6 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             .saveRecord(SolarLayoutCloudRecordSerializer.recordID(for: scope))
         }
         engine.state.add(pendingRecordZoneChanges: changes)
-        pendingOfflineScopes.removeAll()
-        persistPendingScopes()
     }
 
     private func persistPendingScopes() {

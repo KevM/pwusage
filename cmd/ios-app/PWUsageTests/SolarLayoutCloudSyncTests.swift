@@ -116,4 +116,20 @@ struct SolarLayoutCloudSyncTests {
         #expect(!isStarted)
         #expect(!hasSync)
     }
+
+    @Test("Concurrent start calls do not invalidate in-flight startup")
+    func concurrentStartCallsDoNotInvalidateStartup() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = SolarLayoutRecordStore(directory: tempDir)
+        let sync = SolarLayoutCloudSync(
+            store: store,
+            pendingScopesURL: tempDir.appendingPathComponent("pending.json")
+        )
+        await store.setOnSetSync {
+            await sync.start()
+        }
+        await sync.start()
+        let hasSync = await store.hasSync
+        #expect(hasSync)
+    }
 }

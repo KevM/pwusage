@@ -33,6 +33,7 @@ final class SolarLayoutDetectionRunner {
     private let now: () -> Date
     private var generation = 0
     private var activeScope: SolarForecastSiteScope?
+    private var lastRunLocation: SolarHomeLocation?
     private var inFlightSync: (scope: SolarForecastSiteScope, task: Task<SolarHistorySyncResult, Error>)?
     private var detectionTask: Task<DetectedSolarLayout, Error>?
     private var inFlightRun: (scope: SolarForecastSiteScope, task: Task<SolarLayoutRecord?, Never>)?
@@ -55,11 +56,27 @@ final class SolarLayoutDetectionRunner {
     }
 
     func runIfDue(scope: SolarForecastSiteScope) async -> SolarLayoutRecord? {
-        if let current = inFlightRun {
-            if current.scope == scope {
-                return await current.task.value
+        while let current = inFlightRun {
+            guard current.scope == scope else {
+                cancel()
+                break
             }
-            cancel()
+            let result = await current.task.value
+            if inFlightRun?.task == current.task {
+                inFlightRun = nil
+                if activeScope == scope {
+                    activeScope = nil
+                }
+            }
+            if let next = inFlightRun, next.scope != scope {
+                return nil
+            }
+            guard let record = try? await records.record(scope: scope),
+                  !solarLocationsShareCoordinates(record.location, lastRunLocation),
+                  SolarLayoutDetectionSchedule.isDue(record, now: now()),
+                  !Task.isCancelled else {
+                return result
+            }
         }
 
         generation += 1
@@ -131,6 +148,7 @@ final class SolarLayoutDetectionRunner {
               isCurrent(run, scope: scope) else {
             return nil
         }
+        lastRunLocation = record.location
         guard SolarLayoutDetectionSchedule.isDue(record, now: now()),
               let location = record.location else {
             return record

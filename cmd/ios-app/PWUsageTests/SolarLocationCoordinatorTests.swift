@@ -98,4 +98,50 @@ struct SolarLocationCoordinatorTests {
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
         #expect(SolarLocationInvitation.kind(status: harness.coordinator.solarLayoutStatus) == nil)
     }
+
+    @Test("Joined runIfDue reruns detection when home location changes mid-flight")
+    func joinedRunIfDueRerunsAfterMidFlightLocationChange() async throws {
+        let scope = SolarForecastSiteScope(accountScopeID: "acc", siteID: "site")
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let records = SolarLayoutRecordStore(directory: tempRoot.appendingPathComponent("records"))
+        let history = SolarHistoryStore(directory: tempRoot.appendingPathComponent("history"))
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        try await records.setLocation(Self.home, scope: scope, at: now)
+        let day = MobileSolarHistoryDay(
+            day: "2026-10-31", dayStart: now, status: .complete,
+            fetchedAt: now, solarWh: Array(repeating: 0, count: 288)
+        )
+        let page = MobileSolarHistoryResponse.enabled(timeZone: .gmt, days: [day], nextFrom: nil)
+        let api = HistoryAPI(responses: [page, page, page, page])
+        let gate = DetectionGate()
+        let detected = DetectedSolarLayout(
+            status: .detected, confidence: nil, reasons: [], planes: [],
+            acClipKw: nil, historyDays: 0, clearDays: 0, firstDay: nil, lastDay: nil
+        )
+        let runner = SolarLayoutDetectionRunner(
+            history: history,
+            records: records,
+            api: api,
+            detect: { _, _, _, _, _ in
+                gate.onDetect()
+                return detected
+            },
+            now: { now }
+        )
+        var changedCount = 0
+        runner.onRecordChanged = { _ in changedCount += 1 }
+
+        let task1 = Task { await runner.runIfDue(scope: scope) }
+        await gate.waitUntilStarted()
+        let updatedLoc = SolarHomeLocation(latitude: 45.0, longitude: -90.0, source: .device)
+        try await records.setLocation(updatedLoc, scope: scope, at: now.addingTimeInterval(1))
+        let task2 = Task { await runner.runIfDue(scope: scope) }
+        gate.proceed()
+
+        let (res1, res2) = (await task1.value, await task2.value)
+        #expect(res1 == nil)
+        #expect(res2?.location == updatedLoc)
+        #expect(res2?.result == detected)
+        #expect(changedCount == 1)
+    }
 }

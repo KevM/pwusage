@@ -288,4 +288,33 @@ extension AutomaticForecastCoordinatorTests {
         let count = await harness.solcast.refreshCount
         #expect(count == 0)
     }
+
+    @Test("Offline history recheck with cached layout record preserves disabled beta status")
+    func offlineHistoryRecheckWithCachedRecordPreservesDisabledStatus() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        harness.api.historyResponse = .disabled
+        await harness.coordinator.refreshSolarForecast(manual: false)
+        #expect(harness.coordinator.solarLayoutStatus == .disabled)
+
+        try await harness.setNeedsLocation()
+        harness.coordinator.historyEnabled = true
+        harness.coordinator.invalidateSolarLayout()
+        harness.api.historyError = PWUsageAPIError.invalidResponse
+        await harness.coordinator.refreshSolarForecast(manual: true)
+
+        #expect(!harness.coordinator.historyEnabled)
+        #expect(harness.coordinator.solarLayoutStatus == .disabled)
+    }
+
+    @Test("Superseded lookup operation does not consume layout invalidation flag")
+    func supersededLookupDoesNotConsumeInvalidationFlag() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        harness.coordinator.invalidateSolarLayout()
+        let staleResponse = await harness.coordinator.solarLayoutLookup(
+            siteID: "site-1",
+            operation: harness.coordinator.forecastGeneration - 1
+        )
+        #expect(staleResponse == nil)
+        #expect(harness.coordinator.layoutInvalidated)
+    }
 }
