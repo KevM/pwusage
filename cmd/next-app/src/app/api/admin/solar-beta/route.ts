@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isUserAdmin } from '@/lib/auth-checks';
 import { SolarBetaAdminRepo } from '@/lib/solar-beta-admin-repo';
-import { SolarLayoutRepo } from '@/lib/solar-layout-repo';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +20,7 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
 const nonEmpty = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-/** GET: sites owned by solar forecast beta users, with location and latest detection. */
+/** GET: sites owned by solar forecast beta users. */
 export async function GET() {
     if (!(await isUserAdmin())) return forbidden();
     try {
@@ -52,31 +51,3 @@ export async function POST(request: Request) {
     }
 }
 
-/** PUT { siteId, latitude, longitude }: seed a beta site's location so detection can run. */
-export async function PUT(request: Request) {
-    if (!(await isUserAdmin())) return forbidden();
-    const body = await readJson(request);
-    const siteId = nonEmpty(body?.siteId);
-    const { latitude, longitude } = body ?? {};
-    if (!siteId) return badRequest('siteId is required');
-    if (typeof latitude !== 'number' || typeof longitude !== 'number'
-        || !Number.isFinite(latitude) || !Number.isFinite(longitude)
-        || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
-        return badRequest('latitude and longitude must be numbers within range');
-    }
-    try {
-        if (!(await new SolarBetaAdminRepo().siteOwnerHasBeta(siteId))) {
-            return NextResponse.json({ error: 'Site owner is not in the solar forecast beta' }, { status: 409 });
-        }
-        const outcome = await new SolarLayoutRepo().setLocation(siteId, latitude, longitude, 'estimated', {
-            overwriteDevice: body?.overwrite === true,
-        });
-        if (outcome === 'device-location-kept') {
-            return NextResponse.json({ error: 'This site already has a location from the phone' }, { status: 409 });
-        }
-        return noContent();
-    } catch (error) {
-        console.error('[admin-solar-beta] location failed:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
-    }
-}

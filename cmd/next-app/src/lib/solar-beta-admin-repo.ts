@@ -1,6 +1,5 @@
 import { pool } from './db';
 import { SOLAR_FORECAST_BETA_ROLE } from './solar-forecast-beta';
-import type { SolarLayoutStatus, SolarLocationSource } from './solar-layout-repo';
 
 export interface SolarBetaSite {
     userId: string;
@@ -8,30 +7,16 @@ export interface SolarBetaSite {
     authStatus: string | null;
     siteId: string;
     siteName: string;
-    latitude: number | null;
-    longitude: number | null;
-    locationSource: SolarLocationSource | null;
-    status: SolarLayoutStatus | null;
-    confidence: string | null;
-    reasons: string[];
-    planes: { azimuth: number; tilt: number; dcKwp: number }[];
-    acClipKw: number | null;
-    detectedAt: string | null;
-    attemptedAt: string | null;
 }
 
-const toNumber = (value: unknown): number | null => (value === null || value === undefined ? null : Number(value));
-
-/** Admin-only queries for granting the solar forecast beta and seeding locations. */
+/** Admin-only queries for granting the solar forecast beta. */
 export class SolarBetaAdminRepo {
-    /** Every site owned by a beta user, with its stored location and latest detection. */
+    /** Every site owned by a beta user. Locations and layouts live on the user's devices. */
     async listBetaSites(): Promise<SolarBetaSite[]> {
         const { rows } = await pool.query(`
-            SELECT u.id AS user_id, u.email, u.auth_status, s.id AS site_id, s.name AS site_name,
-                   l.latitude, l.longitude, l.location_source, l.status, l.result, l.detected_at, l.attempted_at
+            SELECT u.id AS user_id, u.email, u.auth_status, s.id AS site_id, s.name AS site_name
             FROM "User" u
             JOIN "Site" s ON s.user_id = u.id
-            LEFT JOIN "SiteSolarLayout" l ON l.site_id = s.id
             WHERE $1 = ANY(COALESCE(u.roles, '{}'))
             ORDER BY u.email, s.name
         `, [SOLAR_FORECAST_BETA_ROLE]);
@@ -41,18 +26,6 @@ export class SolarBetaAdminRepo {
             authStatus: r.auth_status ?? null,
             siteId: r.site_id,
             siteName: r.site_name,
-            latitude: toNumber(r.latitude),
-            longitude: toNumber(r.longitude),
-            locationSource: (r.location_source ?? null) as SolarLocationSource | null,
-            status: r.status ?? null,
-            confidence: r.result?.confidence ?? null,
-            reasons: r.result?.reasons ?? [],
-            planes: (r.result?.planes ?? []).map((p: { azimuth: number; tilt: number; dcKwp: number }) => ({
-                azimuth: p.azimuth, tilt: p.tilt, dcKwp: p.dcKwp,
-            })),
-            acClipKw: r.result?.acClipKw ?? null,
-            detectedAt: r.detected_at ? new Date(r.detected_at).toISOString() : null,
-            attemptedAt: r.attempted_at ? new Date(r.attempted_at).toISOString() : null,
         }));
     }
 
@@ -71,13 +44,5 @@ export class SolarBetaAdminRepo {
                WHERE id = $1 AND NOT ($2 = ANY(COALESCE(roles, '{}')))`
             : `UPDATE "User" SET roles = array_remove(roles, $2) WHERE id = $1`,
         [userId, SOLAR_FORECAST_BETA_ROLE]);
-    }
-
-    async siteOwnerHasBeta(siteId: string): Promise<boolean> {
-        const { rows } = await pool.query(`
-            SELECT 1 FROM "Site" s JOIN "User" u ON u.id = s.user_id
-            WHERE s.id = $1 AND $2 = ANY(COALESCE(u.roles, '{}'))
-        `, [siteId, SOLAR_FORECAST_BETA_ROLE]);
-        return rows.length > 0;
     }
 }

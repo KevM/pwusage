@@ -6,7 +6,7 @@ import Testing
 /// Research data never enters the repo: point PWUSAGE_SOLAR_PARITY_DIR at a folder outside it,
 /// passed through xcodebuild as TEST_RUNNER_PWUSAGE_SOLAR_PARITY_DIR=/abs/path ./run-tests.sh ….
 /// The folder holds site-*.csv (timestamp,solar_wh; UTC interval start, Wh per 5 minutes) and
-/// inputs.json, the same format as scripts/solar-layout-parity.ts. Each site writes
+/// inputs.json (see cmd/next-app/scripts/solar-layout-reference/README.md). Each site writes
 /// <site>.swift.json beside its CSV. Without the variable the test is disabled.
 @Suite("Solar layout research parity")
 struct SolarLayoutResearchParityTests {

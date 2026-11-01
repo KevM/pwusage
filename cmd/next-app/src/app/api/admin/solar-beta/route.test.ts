@@ -5,8 +5,6 @@ const mocks = vi.hoisted(() => ({
     listBetaSites: vi.fn(),
     findUserId: vi.fn(),
     setBeta: vi.fn(),
-    siteOwnerHasBeta: vi.fn(),
-    setLocation: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({ isUserAdmin: mocks.isUserAdmin }));
@@ -16,17 +14,10 @@ vi.mock('@/lib/solar-beta-admin-repo', () => ({
         listBetaSites = mocks.listBetaSites;
         findUserId = mocks.findUserId;
         setBeta = mocks.setBeta;
-        siteOwnerHasBeta = mocks.siteOwnerHasBeta;
     },
 }));
 
-vi.mock('@/lib/solar-layout-repo', () => ({
-    SolarLayoutRepo: class {
-        setLocation = mocks.setLocation;
-    },
-}));
-
-import { GET, POST, PUT } from './route';
+import { GET, POST } from './route';
 
 const request = (method: string, body?: unknown) => new Request('http://localhost/api/admin/solar-beta', {
     method,
@@ -44,9 +35,7 @@ describe('/api/admin/solar-beta', () => {
         mocks.isUserAdmin.mockResolvedValue(false);
         expect((await GET()).status).toBe(403);
         expect((await POST(request('POST', { siteId: 's1', enabled: true }))).status).toBe(403);
-        expect((await PUT(request('PUT', { siteId: 's1', latitude: 1, longitude: 2 }))).status).toBe(403);
         expect(mocks.setBeta).not.toHaveBeenCalled();
-        expect(mocks.setLocation).not.toHaveBeenCalled();
     });
 
     it('lists beta sites', async () => {
@@ -78,43 +67,5 @@ describe('/api/admin/solar-beta', () => {
         expect((await POST(request('POST', { enabled: true }))).status).toBe(400);
         expect((await POST(request('POST', { siteId: 's1' }))).status).toBe(400);
         expect(mocks.setBeta).not.toHaveBeenCalled();
-    });
-
-    it('stores a location for a beta site', async () => {
-        mocks.siteOwnerHasBeta.mockResolvedValue(true);
-        const res = await PUT(request('PUT', { siteId: 's1', latitude: 43.39321, longitude: -87.87154 }));
-        expect(res.status).toBe(204);
-        expect(mocks.setLocation).toHaveBeenCalledWith('s1', 43.39321, -87.87154, 'estimated', { overwriteDevice: false });
-    });
-
-    it('does not replace a phone location unless overwrite is true', async () => {
-        mocks.siteOwnerHasBeta.mockResolvedValue(true);
-        mocks.setLocation.mockResolvedValue('device-location-kept');
-        const res = await PUT(request('PUT', { siteId: 's1', latitude: 1, longitude: 2 }));
-        expect(res.status).toBe(409);
-        expect(await res.json()).toEqual({ error: 'This site already has a location from the phone' });
-
-        mocks.setLocation.mockResolvedValue('stored');
-        expect((await PUT(request('PUT', { siteId: 's1', latitude: 1, longitude: 2, overwrite: true }))).status).toBe(204);
-        expect(mocks.setLocation).toHaveBeenLastCalledWith('s1', 1, 2, 'estimated', { overwriteDevice: true });
-    });
-
-    it('refuses a location for a site whose owner is not in the beta', async () => {
-        mocks.siteOwnerHasBeta.mockResolvedValue(false);
-        expect((await PUT(request('PUT', { siteId: 's1', latitude: 1, longitude: 2 }))).status).toBe(409);
-        expect(mocks.setLocation).not.toHaveBeenCalled();
-    });
-
-    it('rejects out-of-range or non-numeric coordinates', async () => {
-        mocks.siteOwnerHasBeta.mockResolvedValue(true);
-        for (const body of [
-            { siteId: 's1', latitude: 91, longitude: 0 },
-            { siteId: 's1', latitude: 0, longitude: -181 },
-            { siteId: 's1', latitude: '43', longitude: 0 },
-            { latitude: 1, longitude: 2 },
-        ]) {
-            expect((await PUT(request('PUT', body))).status).toBe(400);
-        }
-        expect(mocks.setLocation).not.toHaveBeenCalled();
     });
 });

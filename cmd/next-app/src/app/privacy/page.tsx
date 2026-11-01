@@ -13,17 +13,18 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
     return (
         <PageShell maxWidth="lg" padding="default" fullHeight={false}>
-            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated October 2, 2026." className="mb-8" />
+            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 1, 2026." className="mb-8" />
             <div className="space-y-6 text-gray-700 dark:text-gray-300">
                 <p>pwusage helps you understand your Powerwall energy use, estimate electricity costs, and manage optional battery holds. This policy explains what information those features use.</p>
                 <SectionCard title="Tesla account and energy information" bodyClassName="space-y-4">
                     <p>When you connect Tesla, Tesla handles your sign-in. pwusage receives account identifiers, your email address when provided by Tesla, and authorization tokens for the permissions you grant. We do not receive your Tesla password.</p>
                     <p>Our server stores connected energy-site information, including site names, identifiers, utility and time zone information, energy readings, battery status, tariffs, and settings. Tesla site responses may include location information. We use this data to show your dashboard, history, bill estimates, and load-timing information.</p>
-                    <p>If you are in the automatic solar forecast beta and share your location from the app, pwusage stores your home&apos;s approximate location, rounded to about 1 km, and uses it with your solar production history to work out which way your solar panels face, how steeply they are tilted and how large they are. The app sends only that rounded location from your device to Open-Meteo to get weather forecasts. It estimates solar production on your device using the detected panel layout and recent production history; it does not send your panel layout or production history to Open-Meteo.</p>
+                    <p>If you are in the automatic solar forecast beta, the app downloads your solar production history from pwusage and uses it on your device to work out which way your solar panels face, how steeply they are tilted and how large they are.</p>
                     <p>If you use Battery Hold and grant the required command permission, pwusage stores hold settings and status and sends the reserve changes you request to Tesla. Scheduled checks use energy readings to monitor and restore holds.</p>
                 </SectionCard>
                 <SectionCard title="Information on your device" bodyClassName="space-y-4">
                     <p>The iOS app stores your session, selected site, preferences, appliance load profiles, and cached dashboard and forecast data on your device. Cached readings can remain visible offline and retain their original timestamps.</p>
+                    <p>If you share your location for the automatic solar forecast, the app rounds it to about 1 km and keeps it, with the detected panel layout, on your device and in your private iCloud so your other devices signed in to the same Apple ID can use it. pwusage does not receive your location or panel layout. The app sends only the rounded location to Open-Meteo to get weather forecasts, and estimates solar production on your device; it does not send your panel layout or production history to Open-Meteo.</p>
                     <p>Solcast is optional. If you connect it, your API key is stored in the iOS Keychain and sent directly from your device to Solcast to request your rooftop sites and forecasts. The app does not send that key to the pwusage server. Forecast settings and cached forecasts are stored locally.</p>
                     <p>Signing out clears the app&apos;s saved dashboard data and account-scoped forecast credentials and state. Removing the app removes its local app data; iOS Keychain items may persist separately.</p>
                 </SectionCard>

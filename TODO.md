@@ -61,11 +61,9 @@ Smart Shift now projects rate-period banks to the bill date from 7 days of Solca
 
 ## Automatic solar forecast (2026-10-27)
 
-Server side is in: `SiteSolarLayout`, the TypeScript layout detector (`src/lib/solar-layout/`), the `detect-solar-layouts` cron and `/api/mobile/solar-layout` + `/api/mobile/solar-actuals`, all gated by the `solar-forecast-beta` role. See the [spec](docs/superpowers/specs/2026-10-27-auto-solar-forecast-design.md).
+Layout detection runs on the phone (Swift port of the detector), from a year of day records served by `/api/mobile/solar-history`; the home location and layout stay on the user's devices and sync through their private iCloud. The server's `SiteSolarLayout`, `detect-solar-layouts` cron and layout/actuals endpoints were removed on 2026-11-01. Everything stays gated by the `solar-forecast-beta` role. See the [spec](docs/superpowers/specs/2026-10-27-auto-solar-forecast-design.md) and the [on-device plan](docs/superpowers/plans/2026-10-30-on-device-solar-layout.md).
 
-- [ ] **iOS plan:** provider refactor, `ForecastSolarClient`, location prompt, hourly correction from `/api/mobile/solar-actuals`, settings UI. Not started.
 - [ ] **Provider decision rule:** the forward capture (`.forecast-compare/capture.py`, `score.py`, local only) keeps running until it has 20+ scored days; Open-Meteo is now the preferred automatic beta provider. Before wider release, its matched day-ahead forecasts must beat the 14-day history median on both daily and hourly error; the retrospective fixed-lead Harrison backtest supports the trial but does not replace this gate.
-- [ ] **Move layout detection on device (decided 2026-10-30):** Swift port of the detector, phone-side history cache from day records, location and layout kept on device and synced through iCloud; then drop `SiteSolarLayout`, the cron and the layout/actuals endpoints. Don't build more on `SiteSolarLayout`. See the [plan](docs/superpowers/plans/2026-10-30-on-device-solar-layout.md).
 - [ ] **Location check threshold:** the solar-noon check flags a location more than 3° of longitude off (not the spec's 1.5°): terrain shifts one research site's sunrise/sunset edges by ~2.4°. Revisit with more sites.
 
 ## Single compact store follow-ups (2026-10-27)
