@@ -352,6 +352,7 @@ The background task is a `BGProcessingTaskRequest` with `requiresNetworkConnecti
 - [ ] **Step 3:** Implement `merge`, then the sync engine. `SolarLayoutRecordStore` calls `sync.recordChanged(scope)` after every write and applies fetched records through `merge`.
 - [ ] **Step 4:** Rerun. Expected: PASS.
 - [ ] **Step 5: Owner step.** Create the iCloud container in the Apple Developer portal and add it to the app ID. Then on two devices signed into the same Apple ID, check that a location shared on one shows a detected layout on the other without the location prompt.
+  - Verified 2026-11-01 (iPhone → Mac, same Apple ID, Release builds): the layout shared on the phone appeared on the Mac without the location prompt. It needed two fixes first (PR #269): the engine delegate is now retained (CKSyncEngine holds it weakly), and engine calls run detached, outside delegate callbacks.
 - [ ] **Step 6:** Commit: `feat(ios): sync solar layout across devices through iCloud`.
 
 ## Phase D: Server removal
