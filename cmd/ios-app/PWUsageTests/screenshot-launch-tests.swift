@@ -31,6 +31,33 @@
             #expect(coordinator.bill.response?.currentBill.estimatedCost == 146.82)
         }
 
+        @Test("Smart Shift reaches the solar forecast, not the Connect Solcast note")
+        func smartShiftHasForecast() async throws {
+            let model = ScreenshotLaunch.makeModel()
+            let coordinator = try #require(model.coordinator)
+            coordinator.scenePhaseChanged(isActive: true)
+            coordinator.authenticationRestored()
+            await coordinator.refreshAll(trigger: .userGesture)
+            await coordinator.loadTimingDetailAppeared()
+            #expect(coordinator.solarForecastConnection == .ready)
+            #expect(coordinator.solarForecastState == .enhanced)
+        }
+
+        /// Minute timelines render with the minute's start, so a source inside the
+        /// current minute reads "Source time is in the future". Two minutes back
+        /// keeps every label on "updated … ago".
+        @Test("Every fetch reports one source instant, before the current minute")
+        func sourceTimeIsFixedBeforeLaunchMinute() async throws {
+            let api = ScreenshotLaunch.API()
+            let launchedBy = Date.now
+            try await Task.sleep(for: .milliseconds(1100))
+            let first = try await api.fetchLive(siteID: ScreenshotLaunch.site.id).sources.liveStatusAt
+            let second = try await api.fetchBill(siteID: ScreenshotLaunch.site.id).sources.energyDataThrough
+            let live = try #require(first)
+            #expect(live == second)
+            #expect(live <= launchedBy.addingTimeInterval(-60))
+        }
+
         @Test("The screenshot model never touches standard defaults")
         func isolatedDefaults() {
             let key = PWUsageAppModel.selectedTabDefaultsKey
