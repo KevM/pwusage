@@ -20,9 +20,26 @@ enum SolarForecastArraySelection: Equatable {
     }
 }
 
+/// Smart Shift presents the settings as a sheet; Settings pushes `SolarForecastSettingsView`.
 struct SolarForecastSettingsSheet: View {
     @ObservedObject var coordinator: DashboardCoordinator
     @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SolarForecastSettingsView(coordinator: coordinator)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+        }
+    }
+}
+
+/// The solar forecast settings, without navigation of their own.
+struct SolarForecastSettingsView: View {
+    @ObservedObject var coordinator: DashboardCoordinator
 
     @State private var apiKey = ""
     @State private var discoveredSites: [SolcastSite] = []
@@ -36,32 +53,25 @@ struct SolarForecastSettingsSheet: View {
     @State private var allowsManualIDs = false
 
     var body: some View {
-        NavigationStack {
-            Form {
-                SolarForecastAutomaticSection(coordinator: coordinator)
-                if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
-                    solcastSections
-                }
-                if coordinator.solarLayoutStatus == nil {
-                    Section { Text("Checking solar forecast availability…") }
-                }
+        Form {
+            SolarForecastAutomaticSection(coordinator: coordinator)
+            if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
+                solcastSections
             }
-            .navigationTitle("Solar Forecast")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
+            if coordinator.solarLayoutStatus == nil {
+                Section { Text("Checking solar forecast availability…") }
             }
-            .overlay {
-                if isWorking { ProgressView().controlSize(.large) }
-            }
-            .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
-            .task {
-                await coordinator.solarSettingsAppeared()
-                if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
-                    await loadStatus()
-                }
+        }
+        .navigationTitle("Solar Forecast")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if isWorking { ProgressView().controlSize(.large) }
+        }
+        .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
+        .task {
+            await coordinator.solarSettingsAppeared()
+            if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
+                await loadStatus()
             }
         }
     }

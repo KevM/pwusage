@@ -9,7 +9,6 @@ struct SettingsView: View {
     let onSignOut: () -> Void
 
     @State private var isConfirmingSignOut = false
-    @State private var isSolarForecastSheetPresented = false
 
     var body: some View {
         List {
@@ -36,9 +35,7 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
-                Button {
-                    isSolarForecastSheetPresented = true
-                } label: {
+                NavigationLink(value: SettingsDestination.solarForecast) {
                     Label("Solar Forecast", systemImage: "sun.max")
                 }
                 NavigationLink(value: SettingsDestination.about) {
@@ -55,14 +52,13 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .inlineNavigationTitle()
-        .sheet(isPresented: $isSolarForecastSheetPresented) {
-            SolarForecastSettingsSheet(coordinator: coordinator)
-        }
         .navigationDestination(for: SettingsDestination.self) { destination in
             switch destination {
             case .ratePlans:
                 TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
                     .id(site.id)
+            case .solarForecast:
+                SolarForecastSettingsView(coordinator: coordinator)
             case .about:
                 AboutSheet()
             }
@@ -72,6 +68,7 @@ struct SettingsView: View {
 
 private enum SettingsDestination: Hashable {
     case ratePlans
+    case solarForecast
     case about
 }
 
