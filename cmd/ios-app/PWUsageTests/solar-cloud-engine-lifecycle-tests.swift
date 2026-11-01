@@ -198,6 +198,25 @@ struct SolarCloudEngineLifecycleTests {
         #expect(engine.delegate != nil)
     }
 
+    @Test("Work started while handling an engine event reaches the engine outside the callback")
+    func engineCallsLeaveTheDelegateCallback() async throws {
+        let transport = FakeSolarCloudTransport()
+        let harness = try SolarCloudLifecycleHarness(transport: transport.transport)
+        defer { harness.removeFiles() }
+        let session = harness.sync.issueSession(accountScopeID: account)
+        await harness.sync.start(session: session)
+        let engine = try #require(transport.engines.first)
+        let token = try #require(await harness.sync.currentEngineToken)
+
+        await FakeEngineCallback.$isActive.withValue(true) {
+            await harness.sync.handleAccountChange(.signIn(currentUser: CKRecord.ID(recordName: "user")), token: token)
+            await harness.sync.recordChanged(scope, session: session)
+        }
+
+        try await eventually { engine.counts.fetches == 2 && engine.counts.sends == 1 }
+        #expect(engine.counts.callbackViolations == 0)
+    }
+
     @Test("Unavailable iCloud leaves the session offline with pending work for a later start")
     func unavailableCloudKeepsPendingWork() async throws {
         let transport = FakeSolarCloudTransport()

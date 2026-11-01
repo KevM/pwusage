@@ -255,14 +255,15 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         await store.acknowledge(markers, for: session)
     }
 
+    /// Detached: CKSyncEngine traps on engine calls made from inside its delegate callbacks.
     private func sendChanges(_ token: SolarCloudEngineToken) async {
         guard let cloud = runningEngine(token) else { return }
-        try? await cloud.sendChanges()
+        await Task.detached { try? await cloud.sendChanges() }.value
     }
 
     private func fetchChanges(_ token: SolarCloudEngineToken) async {
         guard let cloud = runningEngine(token) else { return }
-        try? await cloud.fetchChanges()
+        await Task.detached { try? await cloud.fetchChanges() }.value
     }
 
     // MARK: - Engine events
@@ -287,7 +288,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         }
     }
 
-    private func handleAccountChange(
+    func handleAccountChange(
         _ type: CKSyncEngine.Event.AccountChange.ChangeType, token: SolarCloudEngineToken
     ) async {
         switch type {
