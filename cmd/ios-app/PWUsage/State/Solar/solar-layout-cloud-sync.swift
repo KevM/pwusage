@@ -175,44 +175,55 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     ) async {
         for record in sent.savedRecords {
             guard isCurrentEngine(syncEngine, generation: generation) else { return }
-            saveSystemFields(for: record)
-            if let (scope, _) = SolarLayoutCloudRecordSerializer.parseRecord(record),
-               pendingOfflineScopes.remove(scope) != nil {
-                persistPendingScopes()
-            }
+            handleSavedRecord(record)
         }
         var shouldResend = false
         for failure in sent.failedRecordSaves {
             guard isCurrentEngine(syncEngine, generation: generation) else { return }
-            guard let ckError = failure.error as? CKError else { continue }
-            if ckError.code == .zoneNotFound || ckError.code == .userDeletedZone {
-                hasSavedZone = false
-                ensureZoneSaved(engine: syncEngine)
-                syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
+            if await handleFailedRecordSave(failure, syncEngine: syncEngine, generation: generation) {
                 shouldResend = true
-                continue
             }
-            guard ckError.code == .serverRecordChanged,
-                  let serverRecord = ckError.serverRecord else { continue }
-            saveSystemFields(for: serverRecord)
-            if let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
-               let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) {
-                guard isCurrentEngine(syncEngine, generation: generation) else { return }
-                outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
+        }
+        guard isCurrentEngine(syncEngine, generation: generation), shouldResend else { return }
+        Task.detached { [syncEngine] in
+            do {
+                try await syncEngine.sendChanges()
+            } catch {
+                // Stay local-only gracefully
             }
+        }
+    }
+
+    private func handleSavedRecord(_ record: CKRecord) {
+        saveSystemFields(for: record)
+        if let (scope, _) = SolarLayoutCloudRecordSerializer.parseRecord(record),
+           pendingOfflineScopes.remove(scope) != nil {
+            persistPendingScopes()
+        }
+    }
+
+    private func handleFailedRecordSave(
+        _ failure: CKSyncEngine.Event.SentRecordZoneChanges.FailedRecordSave,
+        syncEngine: CKSyncEngine,
+        generation: Int
+    ) async -> Bool {
+        guard let ckError = failure.error as? CKError else { return false }
+        if ckError.code == .zoneNotFound || ckError.code == .userDeletedZone {
+            hasSavedZone = false
+            ensureZoneSaved(engine: syncEngine)
             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
-            shouldResend = true
+            return true
         }
-        guard isCurrentEngine(syncEngine, generation: generation) else { return }
-        if shouldResend {
-            Task.detached { [syncEngine] in
-                do {
-                    try await syncEngine.sendChanges()
-                } catch {
-                    // Stay local-only gracefully
-                }
-            }
+        guard ckError.code == .serverRecordChanged,
+              let serverRecord = ckError.serverRecord else { return false }
+        saveSystemFields(for: serverRecord)
+        if let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
+           let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) {
+            guard isCurrentEngine(syncEngine, generation: generation) else { return false }
+            outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
         }
+        syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
+        return true
     }
 
     fileprivate func nextRecordZoneChangeBatch(
