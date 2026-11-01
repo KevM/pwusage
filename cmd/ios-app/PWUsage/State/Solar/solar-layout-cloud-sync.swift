@@ -337,7 +337,8 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private func retryFailedSave(
         _ failure: CKSyncEngine.Event.SentRecordZoneChanges.FailedRecordSave, token: SolarCloudEngineToken
     ) async -> Bool {
-        guard runningEngine(token) != nil, let error = failure.error as? CKError else { return false }
+        guard runningEngine(token) != nil else { return false }
+        let error = failure.error
         if error.code == .zoneNotFound || error.code == .userDeletedZone {
             files.hasSavedZone = false
             runningEngine(token)?.saveZoneIfNeeded(alreadySaved: false)
