@@ -169,6 +169,8 @@ struct DashboardView: View {
                 EmptyCard(symbol: "chart.bar", title: "Energy data unavailable", message: "No energy samples are available yet.")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("home.today")
     }
 
     private var billNavigation: some View {
@@ -203,6 +205,7 @@ struct DashboardView: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityHint("Opens the Bill tab")
+                    .accessibilityIdentifier("home.bill")
                 }
                 .buttonStyle(.plain)
                 .pointerHoverEffect()

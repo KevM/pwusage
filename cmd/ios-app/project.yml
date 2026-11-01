@@ -135,7 +135,32 @@ targets:
         SWIFT_VERSION: "6.0"
     dependencies:
       - target: PWUsage
+  # App Store screenshots, driven by `fastlane ios screenshots`. Kept out of the
+  # PWUsage scheme so unit test runs and the release never run it.
+  PWUsageScreenshots:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: PWUsageScreenshots
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage.screenshots
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+        TEST_TARGET_NAME: PWUsage
+    dependencies:
+      - target: PWUsage
 schemes:
+  PWUsageScreenshots:
+    build:
+      targets:
+        PWUsage: all
+        PWUsageScreenshots: [test]
+    test:
+      config: Debug
+      targets:
+        - PWUsageScreenshots
   PWUsage:
     build:
       targets:
