@@ -8,6 +8,9 @@ struct SignInView: View {
     var title: String = "Your energy, at a glance"
     var subtitle: String = "Sign in to view live home power and your current bill."
     var buttonTitle: String = "Sign in"
+    /// Offered only on the signed-out screen, for anyone without a Tesla
+    /// account to look around (App Review among them).
+    var onTryDemo: (() -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -22,6 +25,9 @@ struct SignInView: View {
                         errorCard(message)
                     }
                     signInButton
+                    if let onTryDemo, !isWorking {
+                        tryDemoButton(onTryDemo)
+                    }
                     legalLinks
                     trustNote
                 }
@@ -126,6 +132,18 @@ struct SignInView: View {
         .accessibilityHint("Opens the pwusage secure sign-in page")
     }
 
+    private func tryDemoButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("Try the demo")
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .foregroundStyle(accent)
+        .hoverEffect()
+        .accessibilityHint("Shows the app with a sample home. No account needed.")
+    }
+
     private var legalLinks: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
@@ -227,6 +245,10 @@ private struct SignInButtonStyle: ButtonStyle {
         message: "Your session expired. Sign in to continue.",
         onSignIn: {}
     )
+}
+
+#Preview("Sign in · Demo offered") {
+    SignInView(isWorking: false, message: nil, onSignIn: {}, onTryDemo: {})
 }
 
 #Preview("Sign in · Dark") {
