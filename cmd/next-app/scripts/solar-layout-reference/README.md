@@ -1,11 +1,15 @@
 # Solar layout reference detector (Python)
 
-`detector.py` is the Python + pvlib reference for the TypeScript detector in
-`src/lib/solar-layout/`. It infers a site's panel planes (azimuth, tilt,
-effective size), AC clip and shading from 5-minute production history and an
-approximate location. The TypeScript port is checked against it for parity
-(see the plan `docs/superpowers/plans/2026-10-27-auto-solar-forecast-server.md`,
-Task 8). It is not run in CI or production.
+`detector.py` is the Python + pvlib reference for the solar layout detector,
+which now runs on the phone (`cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/`).
+It infers a site's panel planes (azimuth, tilt, effective size), AC clip and
+shading from 5-minute production history and an approximate location. The
+detector was first ported to TypeScript and checked against this reference
+(see `docs/superpowers/plans/2026-10-27-auto-solar-forecast-server.md`, Task 8),
+then ported to Swift and held to the TypeScript by JSON fixtures
+(`docs/superpowers/plans/2026-10-30-on-device-solar-layout.md`). The TypeScript
+detector was removed from the server in Phase D of that plan. This reference is
+not run in CI or production.
 
 Research data (other households' production exports, results, backtests) is
 **not** in the repo and must never be committed. Parity runs are local only.
@@ -21,16 +25,17 @@ python3.12 -m venv .venv
 Input parquet: columns `timestamp` (UTC, interval start) and `solar_wh` (Wh in
 the 5-minute interval).
 
-## Parity with the TypeScript port
+## Parity with the Swift port
 
-`scripts/solar-layout-parity.ts` reads `site-*.csv` files (`timestamp,solar_wh`)
-plus an `inputs.json` (`{ "sites": { "site-a": { "timezone", "lat", "lon" } } }`)
-and writes `<site>.ts.json` beside each CSV. Convert parquet exports to CSV
-outside the repo with:
+`SolarLayoutResearchParityTests` in `cmd/ios-app/PWUsageTests` reads
+`site-*.csv` files (`timestamp,solar_wh`) plus an `inputs.json`
+(`{ "sites": { "site-a": { "timezone", "lat", "lon" } } }`) from the folder in
+`PWUSAGE_SOLAR_PARITY_DIR`, and writes `<site>.swift.json` beside each CSV.
+Convert parquet exports to CSV outside the repo, then run the test:
 
 ```bash
 .venv/bin/python -c "import glob,pandas as pd; [pd.read_parquet(f)[['timestamp','solar_wh']].assign(timestamp=lambda d: pd.to_datetime(d.timestamp, utc=True).dt.strftime('%Y-%m-%dT%H:%M:%SZ')).to_csv(f[:-8]+'.csv', index=False) for f in glob.glob('site-*.parquet')]"
-npx tsx scripts/solar-layout-parity.ts --dir /path/outside/repo
+cd cmd/ios-app && TEST_RUNNER_PWUSAGE_SOLAR_PARITY_DIR=/path/outside/repo ./run-tests.sh
 ```
 
 Differences in the port, by design: altitude 0 and a fixed Linke turbidity of
@@ -39,10 +44,10 @@ IAM integrated numerically.
 
 ## Swift fixtures
 
-`scripts/solar-layout-fixtures.ts` writes one JSON fixture per synthetic case
-(seeded, test-only data) into `cmd/ios-app/PWUsageTests/Fixtures/SolarLayout`.
-Each holds the input samples as base64 little-endian Float32, the stage values
-(sun, POA, selection, fit) and the final `SolarLayoutResult`, so the Swift port
-can check parity stage by stage. Regenerate with
-`npx tsx scripts/solar-layout-fixtures.ts --out ../ios-app/PWUsageTests/Fixtures/SolarLayout`;
-the output is byte-identical across runs.
+The JSON fixtures in `cmd/ios-app/PWUsageTests/Fixtures/SolarLayout` were
+written once by the TypeScript detector (seeded synthetic cases, test-only
+data). Each holds the input samples as base64 little-endian Float32, the stage
+values (sun, POA, selection, fit) and the final result, so the Swift port is
+checked stage by stage. The generator was removed with the TypeScript detector;
+recover it from git history (`scripts/solar-layout-fixtures.ts`, before Phase D)
+if a fixture ever has to be regenerated.

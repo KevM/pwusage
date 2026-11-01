@@ -8,6 +8,12 @@ this path exclusively, even when Solcast credentials are saved; failures use his
 Forecast.Solar sections below record the earlier design. See the
 [Open-Meteo continuation plan](../../plans/2026-10-30-open-meteo-provider.md).
 
+2026-11-01 update: layout detection and the home location moved to the phone. Sections 1–3
+(location to the server, server-side detection, delivery) and the server's `SiteSolarLayout`
+table, cron and layout/actuals endpoints are superseded and removed; the phone detects from
+day records served by `/api/mobile/solar-history` and syncs the result through the user's
+private iCloud. See the [on-device plan](../plans/2026-10-30-on-device-solar-layout.md).
+
 ## Intent
 
 Smart Shift and the bill projection are better with a solar forecast, but today
