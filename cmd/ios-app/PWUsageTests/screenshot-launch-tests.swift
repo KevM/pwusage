@@ -69,6 +69,17 @@
             #expect(UserDefaults.standard.data(forKey: key) == before)
         }
 
+        /// A simulator signed in to iCloud would otherwise start CloudKit sync and
+        /// write the normal app's solar files and defaults.
+        @Test("Solar stores and cloud sync are the screenshot run's own")
+        func solarDependenciesAreIsolated() {
+            let model = ScreenshotLaunch.makeModel()
+            #expect(model.solarCloudSync !== SolarLayoutCloudSync.shared)
+            #expect(model.solarRecords !== SolarLayoutRecordStore.shared)
+            #expect(model.solarHistory !== SolarHistoryStore.shared)
+            #expect(model.forecastStore is PreviewForecastStore)
+        }
+
         @Test("The screenshot model never touches standard defaults")
         func isolatedDefaults() {
             let key = PWUsageAppModel.selectedTabDefaultsKey
