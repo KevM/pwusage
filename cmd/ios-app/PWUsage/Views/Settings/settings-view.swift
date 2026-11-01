@@ -21,10 +21,7 @@ struct SettingsView: View {
                             Text(site.utility).font(.footnote).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
+                        DisclosureChevron()
                     }
                     .contentShape(Rectangle())
                 }
@@ -36,11 +33,23 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
+                // Opens a sheet, so it is a button; plain style keeps the title from taking the
+                // accent color and matches the navigation rows around it.
                 Button {
                     isSolarForecastSheetPresented = true
                 } label: {
-                    Label("Solar Forecast", systemImage: "sun.max")
+                    HStack {
+                        Label {
+                            Text("Solar Forecast")
+                        } icon: {
+                            Image(systemName: "sun.max").foregroundStyle(.tint)
+                        }
+                        Spacer(minLength: 4)
+                        DisclosureChevron()
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 NavigationLink(value: SettingsDestination.about) {
                     Label("About", systemImage: "info.circle")
                 }
@@ -67,6 +76,16 @@ struct SettingsView: View {
                 AboutSheet()
             }
         }
+    }
+}
+
+/// The chevron a navigation row draws, for the rows that are buttons.
+private struct DisclosureChevron: View {
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
     }
 }
 
