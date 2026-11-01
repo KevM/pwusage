@@ -3,9 +3,10 @@ import SwiftUI
 /// How stale the energy observations are, in words.
 ///
 /// This is one of only two things on the load timing screen that move with the
-/// clock, so it owns a minute timeline of its own. Using the timeline's own date
-/// keeps the label and the tick that redraws it on the same clock instead of a
-/// second one.
+/// clock, so it owns a minute timeline of its own. `.everyMinute` dates are the
+/// start of each minute, so a source fetched since that start would read as in
+/// the future until the next tick; the label measures from the later of the
+/// timeline date and the real clock instead.
 struct LoadTimingFreshnessLabel: View {
     let isUnavailable: Bool
     let energyDataThrough: Date?
@@ -22,7 +23,7 @@ struct LoadTimingFreshnessLabel: View {
             let status = LoadTimingPresentation.sourceStatus(
                 isUnavailable: isUnavailable,
                 energyDataThrough: energyDataThrough,
-                now: context.date
+                timelineDate: context.date
             )
             Text(status)
                 .font(.caption)

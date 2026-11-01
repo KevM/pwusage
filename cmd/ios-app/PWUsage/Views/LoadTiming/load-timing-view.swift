@@ -43,6 +43,18 @@ enum LoadTimingPresentation {
         let freshness = DashboardPresentation.freshness(energyDataThrough, now: now, staleAfter: 60 * 60)
         return isUnavailable ? "Refresh unavailable · \(freshness.lowercased())" : freshness
     }
+
+    /// A minute timeline's date is the start of the minute, earlier than a source
+    /// fetched since; measuring from the later of it and the real clock keeps that
+    /// source from reading as in the future until the next tick.
+    static func sourceStatus(
+        isUnavailable: Bool,
+        energyDataThrough: Date?,
+        timelineDate: Date,
+        clock: Date = .now
+    ) -> String {
+        sourceStatus(isUnavailable: isUnavailable, energyDataThrough: energyDataThrough, now: max(timelineDate, clock))
+    }
 }
 
 struct LoadTimingView: View {
