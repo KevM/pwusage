@@ -178,7 +178,8 @@ struct DashboardView: View {
                 Button { onOpenTab(.bill) } label: {
                     StatusCard(theme: .bill, fillAlignment: .leading) {
                         HStack(spacing: 16) {
-                            Image(systemName: "dollarsign.circle.fill")
+                            Image(systemName: AppTab.bill.systemImage)
+                                .symbolVariant(.fill)
                                 .font(.title2.weight(.semibold))
                                 .foregroundStyle(.indigo)
                                 .frame(width: 48, height: 48)
@@ -231,7 +232,8 @@ struct DashboardView: View {
             Button { onOpenTab(.smartShift) } label: {
                 StatusCard(theme: .loadTiming, fillAlignment: .leading) {
                     HStack(spacing: 14) {
-                        Image(systemName: "clock.arrow.circlepath")
+                        Image(systemName: AppTab.smartShift.systemImage)
+                            .symbolVariant(.fill)
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.teal)
                             .frame(width: 48, height: 48)
