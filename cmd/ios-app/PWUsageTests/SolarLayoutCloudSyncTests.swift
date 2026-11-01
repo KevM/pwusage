@@ -272,6 +272,43 @@ struct SolarLayoutCloudSyncTests {
         try await harness.records.setLocation(.lifecycleHome, scope: scope)
     }
 
+    @Test("Foregrounding an authorized session restarts synchronization left offline")
+    @MainActor
+    func foregroundRestartsOfflineSync() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        let transport = FakeSolarCloudTransport()
+        transport.setStatus(.noAccount)
+        let model = try cloudSyncModel(harness: harness, transport: transport)
+        let site = MobileSite(id: "site-a", name: "Home", utility: "Test")
+        await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
+        try await eventually { transport.lookups == 1 && model.solarCloudStartup == nil }
+        #expect(await model.solarCloudSync.isStarted == false)
+
+        transport.setStatus(.available)
+        model.scenePhaseChanged(isActive: true)
+        try await eventuallyAsync { await model.solarCloudSync.isStarted }
+
+        model.scenePhaseChanged(isActive: false)
+        model.scenePhaseChanged(isActive: true)
+        try await eventually { model.solarCloudStartup == nil }
+        #expect(transport.lookups == 2)
+        #expect(transport.engines.count == 1)
+    }
+
+    @Test("Foregrounding without a verified session starts no synchronization")
+    @MainActor
+    func foregroundWithoutSessionDoesNotStart() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        let transport = FakeSolarCloudTransport()
+        let model = try cloudSyncModel(harness: harness, transport: transport)
+        _ = model.ensureAccountScopeID()
+
+        model.scenePhaseChanged(isActive: true)
+
+        try await staysTrue { transport.lookups == 0 }
+        #expect(model.solarCloudStartup == nil)
+    }
+
     @Test("Cancelled queued startup cannot attach after sign-out")
     @MainActor
     func cancelledStartupDoesNotAttach() async throws {

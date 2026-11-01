@@ -164,3 +164,22 @@ only the actor's notification fences is still caught by the store's binding chec
   notification is sent; its marker is recovered by the next activation or local save.
 - iCloud account switches, real cancellation timing and engine event delivery are
   exercised only through the fake transport; they remain unverified on device.
+
+### Follow-up review (2026-11-01, after `73b1fc3b`)
+
+Both findings were rules with no single owner rather than isolated races:
+
+- **Offline had no recovery trigger.** iCloud sign-out/switch, a failed account lookup
+  and a network error all leave the engine offline in an authorized session. One rule now
+  covers every cause: foregrounding a verified session requests startup, which is
+  idempotent and coalesced (C "Foregrounding an authorized session restarts
+  synchronization left offline"; control: C "Foregrounding without a verified session
+  starts no synchronization").
+- **Eligibility had two sources of truth.** Every successful history sync persists
+  eligibility before any in-memory update (including `onHistoryDisabled`), so the
+  persisted value is authoritative whenever present and `historyEnabled` is its cache
+  (`AutomaticForecastCoordinatorTests` "A persisted sync result overrides stale
+  in-memory beta eligibility", both directions). Three older tests flipped the flag by
+  hand without the persisted result the app would have; their fixtures now persist the
+  revocation through a history sync. Forcing a sync on every invalidation was tried and
+  rejected: it changed fetch counts and location-share states beyond this finding.

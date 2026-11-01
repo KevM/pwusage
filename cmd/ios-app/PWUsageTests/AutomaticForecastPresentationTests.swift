@@ -131,12 +131,17 @@ extension AutomaticForecastPresentationTests {
     }
 
     @Test("Direct legacy refresh without credentials clears inherited automatic failure state")
-    func directLegacyRefreshClearsAutomaticFailure() async {
+    func directLegacyRefreshClearsAutomaticFailure() async throws {
         let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         harness.coordinator.solarForecastUnavailableReason = .forecastNotUsable
         harness.coordinator.solarForecastUnavailableCause = .requestFailed
-        harness.coordinator.historyEnabled = false
+        // A legacy site: a history sync has recorded it outside the beta.
+        harness.api.historyResponse = .disabled
+        _ = try await harness.historyStore.sync(
+            scope: SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a"),
+            api: harness.api, now: harness.api.now
+        )
         harness.coordinator.invalidateSolarLayout()
         await harness.coordinator.refreshSolarForecast(manual: true)
         #expect(harness.coordinator.solarForecastUnavailableReason == nil)

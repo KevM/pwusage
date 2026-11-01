@@ -165,7 +165,12 @@ final class PWUsageAppModel: ObservableObject {
         sceneIsActive = isActive
         if sessionVerified {
             coordinator?.scenePhaseChanged(isActive: isActive)
-            if isActive { liveActivities?.reconcileInBackground() }
+            guard isActive else { return }
+            liveActivities?.reconcileInBackground()
+            // Whatever left synchronization offline (iCloud signed out or switched, an
+            // account lookup failure), foregrounding an authorized session retries it.
+            // A running engine makes this a no-op.
+            startSolarCloudSync()
         } else if isActive, hasBootstrapAttempted, coordinator != nil, siteRequestCount == 0 {
             Task { await reloadSitesAfterSignIn() }
         }

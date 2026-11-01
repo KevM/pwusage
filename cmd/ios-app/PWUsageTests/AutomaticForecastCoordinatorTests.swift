@@ -60,13 +60,36 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
         #expect(harness.coordinator.solarForecastBatch == nil)
         #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 2)
+        // Beta access is revoked and a history sync (here, a background refresh) records it.
         harness.api.historyResponse = .disabled
-        harness.coordinator.historyEnabled = false
+        _ = try await harness.historyStore.sync(
+            scope: SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a"),
+            api: harness.api, now: harness.api.now
+        )
         harness.coordinator.invalidateSolarLayout()
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastSource == .solcast)
         #expect(harness.coordinator.solarForecastPublication == nil)
         #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 3)
+    }
+
+    @Test("A persisted sync result overrides stale in-memory beta eligibility", arguments: [true, false])
+    func persistedEligibilityWins(persistedEnabled: Bool) async throws {
+        let harness = await AutomaticForecastHarness()
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        harness.api.historyResponse = persistedEnabled
+            ? .enabled(timeZone: .gmt, days: [], nextFrom: nil) : .disabled
+        _ = try await harness.historyStore.sync(scope: scope, api: harness.api, now: harness.api.now)
+        // The coordinator learned the opposite before a background refresh synced.
+        harness.coordinator.historyEnabled = !persistedEnabled
+        let fetches = harness.api.historyFetches.count
+
+        await harness.coordinator.loadTimingDetailAppeared()
+
+        #expect(harness.api.historyFetches.count == fetches)
+        #expect(harness.coordinator.historyEnabled == persistedEnabled)
+        #expect((harness.coordinator.solarLayoutStatus == .disabled) == !persistedEnabled)
+        #expect((harness.coordinator.solarForecastSource == .forecastSolar) == persistedEnabled)
     }
 
     @Test("Missing beta layout, failed lookup and failed automatic provider use history, never saved Solcast")

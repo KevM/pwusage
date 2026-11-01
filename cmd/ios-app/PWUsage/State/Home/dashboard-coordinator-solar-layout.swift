@@ -19,6 +19,7 @@ extension DashboardCoordinator {
         layoutInvalidated = false
         let eligibility = await cachedEligibility(scope: scope, bypassTTL: bypassTTL)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
+        adoptPersistedEligibility(eligibility)
         if eligibility.isConfirmedDisabled {
             historyEnabled = false
             publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
@@ -67,11 +68,18 @@ extension DashboardCoordinator {
         }
     }
 
+    /// Every successful history sync, in the foreground or a background refresh, persists
+    /// eligibility, so a persisted value is never older than `historyEnabled`; it wins
+    /// whenever one exists and the in-memory flag is only its cache.
+    private func adoptPersistedEligibility(_ eligibility: CachedEligibility) {
+        if let isEnabled = eligibility.isEnabled { historyEnabled = isEnabled }
+    }
+
     private func cachedEligibility(scope: SolarForecastSiteScope, bypassTTL: Bool) async -> CachedEligibility {
         let isEnabled = try? await history.isEnabled(scope: scope)
         let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
         let withinTTL = !bypassTTL && isSynced
-        let isConfirmed = withinTTL && (!historyEnabled || isEnabled == false)
+        let isConfirmed = withinTTL && (isEnabled.map { !$0 } ?? !historyEnabled)
         return CachedEligibility(isSyncedWithinTTL: withinTTL, isEnabled: isEnabled, isConfirmedDisabled: isConfirmed)
     }
 

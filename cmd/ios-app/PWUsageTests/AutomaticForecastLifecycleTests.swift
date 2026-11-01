@@ -74,8 +74,12 @@ struct AutomaticForecastLifecycleTests {
         let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        // The server revokes the role and a history sync (e.g. background refresh) records it.
         harness.api.historyResponse = .disabled
-        harness.coordinator.historyEnabled = false
+        _ = try await harness.historyStore.sync(
+            scope: SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a"),
+            api: harness.api, now: harness.api.now
+        )
         harness.coordinator.invalidateSolarLayout()
         await harness.coordinator.loadTimingDetailRefreshed()
         #expect(harness.coordinator.solarForecastSource == nil)
