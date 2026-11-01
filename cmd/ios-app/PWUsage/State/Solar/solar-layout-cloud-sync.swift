@@ -76,7 +76,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             self.database = container.privateCloudDatabase
             isStarted = true
             let state = loadState()
-            let delegate = SyncEngineDelegate(owner: self)
+            let delegate = SyncEngineDelegate(owner: self, generation: generation)
             let config = CKSyncEngine.Configuration(
                 database: container.privateCloudDatabase,
                 stateSerialization: state,
@@ -135,18 +135,27 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         }
     }
 
-    fileprivate func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
+    func isCurrentEngine(_ engine: CKSyncEngine, generation: Int) -> Bool {
+        isStarted && lifecycleGeneration == generation && engine === syncEngine
+    }
+
+    fileprivate func handleEvent(
+        _ event: CKSyncEngine.Event, syncEngine: CKSyncEngine, generation: Int
+    ) async {
+        guard isCurrentEngine(syncEngine, generation: generation) else { return }
         switch event {
         case .stateUpdate(let update):
             saveState(update.stateSerialization)
         case .accountChange(let accountEvent):
             await handleAccountChange(accountEvent.changeType, syncEngine: syncEngine)
         case .fetchedRecordZoneChanges(let fetched):
-            await handleFetchedChanges(fetched.modifications.map(\.record))
+            await handleFetchedChanges(
+                fetched.modifications.map(\.record), syncEngine: syncEngine, generation: generation
+            )
         case .sentDatabaseChanges(let sent):
             handleSentDatabaseChanges(sent)
         case .sentRecordZoneChanges(let sent):
-            await handleSentRecordZoneChanges(sent, syncEngine: syncEngine)
+            await handleSentRecordZoneChanges(sent, syncEngine: syncEngine, generation: generation)
         default:
             break
         }
@@ -160,24 +169,29 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     private func handleSentRecordZoneChanges(
         _ sent: CKSyncEngine.Event.SentRecordZoneChanges,
-        syncEngine: CKSyncEngine
+        syncEngine: CKSyncEngine,
+        generation: Int
     ) async {
         for record in sent.savedRecords {
+            guard isCurrentEngine(syncEngine, generation: generation) else { return }
             saveSystemFields(for: record)
         }
         var shouldResend = false
         for failure in sent.failedRecordSaves {
+            guard isCurrentEngine(syncEngine, generation: generation) else { return }
             guard let ckError = failure.error as? CKError,
                   ckError.code == .serverRecordChanged,
                   let serverRecord = ckError.serverRecord else { continue }
             saveSystemFields(for: serverRecord)
             if let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
                let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) {
+                guard isCurrentEngine(syncEngine, generation: generation) else { return }
                 outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
             }
             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)])
             shouldResend = true
         }
+        guard isCurrentEngine(syncEngine, generation: generation) else { return }
         if shouldResend {
             Task.detached { [syncEngine] in
                 do {
@@ -190,12 +204,13 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     fileprivate func nextRecordZoneChangeBatch(
-        _ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine
+        _ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine, generation: Int
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
-        await CKSyncEngine.RecordZoneChangeBatch(
+        guard isCurrentEngine(syncEngine, generation: generation) else { return nil }
+        return await CKSyncEngine.RecordZoneChangeBatch(
             pendingChanges: syncEngine.state.pendingRecordZoneChanges
         ) { [weak self, store] recordID async in
-            guard let self else { return nil }
+            guard let self, await self.isCurrentEngine(syncEngine, generation: generation) else { return nil }
             return await self.makeRecordForEngine(recordID: recordID, store: store)
         }
     }
@@ -233,11 +248,15 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         }
     }
 
-    private func handleFetchedChanges(_ modifications: [CKRecord]) async {
+    private func handleFetchedChanges(
+        _ modifications: [CKRecord], syncEngine: CKSyncEngine, generation: Int
+    ) async {
         for record in modifications {
+            guard isCurrentEngine(syncEngine, generation: generation) else { return }
             saveSystemFields(for: record)
             guard let (scope, remoteRecord) = SolarLayoutCloudRecordSerializer.parseRecord(record),
                   let outcome = try? await store.applyRemoteRecord(remoteRecord, scope: scope) else { continue }
+            guard isCurrentEngine(syncEngine, generation: generation) else { return }
             outcome.appliedScopes.forEach { onRemoteRecordApplied?($0) }
         }
     }
@@ -332,18 +351,20 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
 private final class SyncEngineDelegate: CKSyncEngineDelegate, Sendable {
     private let owner: SolarLayoutCloudSync
+    private let generation: Int
 
-    init(owner: SolarLayoutCloudSync) {
+    init(owner: SolarLayoutCloudSync, generation: Int) {
         self.owner = owner
+        self.generation = generation
     }
 
     func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
-        await owner.handleEvent(event, syncEngine: syncEngine)
+        await owner.handleEvent(event, syncEngine: syncEngine, generation: generation)
     }
 
     func nextRecordZoneChangeBatch(
         _ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
-        await owner.nextRecordZoneChangeBatch(context, syncEngine: syncEngine)
+        await owner.nextRecordZoneChangeBatch(context, syncEngine: syncEngine, generation: generation)
     }
 }
