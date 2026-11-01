@@ -16,39 +16,87 @@ extension DashboardCoordinator {
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
         let bypassTTL = layoutInvalidated
         layoutInvalidated = false
-        let isEnabled = try? await history.isEnabled(scope: scope)
-        let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
+        let eligibility = await cachedEligibility(scope: scope, bypassTTL: bypassTTL)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-        let isSyncedWithinTTL = !bypassTTL && isSynced
-        if isSyncedWithinTTL, !historyEnabled || isEnabled == false {
+        if eligibility.isConfirmedDisabled {
             historyEnabled = false
             publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
             return .disabled
         }
         let record = try? await records.record(scope: scope)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-        let needsSync = (record == nil || isEnabled == false) && !isSyncedWithinTTL
+        let needsSync = eligibility.needsSync(record: record)
+        var syncResult: SolarHistorySyncResult?
         if needsSync {
-            let syncResult = await runner.syncHistory(scope: scope)
-            guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-            guard case .synced = syncResult else {
-                historyEnabled = false
-                publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
-                return .disabled
-            }
-            historyEnabled = true
+            let step = await executeLookupSync(scope: scope, runner: runner, siteID: siteID, operation: operation)
+            if step.shouldExit { return step.response }
+            syncResult = step.result
         } else {
             Task { [weak self] in
                 _ = await self?.runner?.runIfDue(scope: scope)
             }
         }
-        guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
         let currentRecord = try? await records.record(scope: scope)
         guard operation == forecastGeneration, siteID == selectedSiteID else { return nil }
-        let response = currentRecord?.response(historyEnabled: historyEnabled)
-            ?? .enabled(location: nil, layout: nil, reason: .needsLocation)
+        guard let response = resolveLayoutResponse(
+            record: currentRecord, needsSync: needsSync, syncResult: syncResult
+        ) else {
+            return nil
+        }
         publishLayoutStatus(response, siteID: siteID, operation: operation)
         return response
+    }
+
+    private struct CachedEligibility {
+        let isSyncedWithinTTL: Bool
+        let isEnabled: Bool?
+        let isConfirmedDisabled: Bool
+
+        func needsSync(record: SolarLayoutRecord?) -> Bool {
+            !isSyncedWithinTTL && (record == nil || isEnabled == false)
+        }
+    }
+
+    private func cachedEligibility(scope: SolarForecastSiteScope, bypassTTL: Bool) async -> CachedEligibility {
+        let isEnabled = try? await history.isEnabled(scope: scope)
+        let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
+        let withinTTL = !bypassTTL && isSynced
+        let isConfirmed = withinTTL && (!historyEnabled || isEnabled == false)
+        return CachedEligibility(isSyncedWithinTTL: withinTTL, isEnabled: isEnabled, isConfirmedDisabled: isConfirmed)
+    }
+
+    private struct LookupSyncOutcome {
+        let shouldExit: Bool
+        let response: MobileSolarLayoutResponse?
+        let result: SolarHistorySyncResult?
+    }
+
+    private func executeLookupSync(
+        scope: SolarForecastSiteScope, runner: SolarLayoutDetectionRunner, siteID: String, operation: Int
+    ) async -> LookupSyncOutcome {
+        let result = await runner.syncHistory(scope: scope)
+        guard operation == forecastGeneration, siteID == selectedSiteID else {
+            return LookupSyncOutcome(shouldExit: true, response: nil, result: nil)
+        }
+        if case .disabled = result {
+            historyEnabled = false
+            publishLayoutStatus(.disabled, siteID: siteID, operation: operation)
+            return LookupSyncOutcome(shouldExit: true, response: .disabled, result: result)
+        }
+        if case .synced = result {
+            historyEnabled = true
+        }
+        return LookupSyncOutcome(shouldExit: false, response: nil, result: result)
+    }
+
+    private func resolveLayoutResponse(
+        record: SolarLayoutRecord?, needsSync: Bool, syncResult: SolarHistorySyncResult?
+    ) -> MobileSolarLayoutResponse? {
+        if record == nil && needsSync && syncResult == nil {
+            return nil
+        }
+        return record?.response(historyEnabled: historyEnabled)
+            ?? .enabled(location: nil, layout: nil, reason: .needsLocation)
     }
 
     /// Forces the next lookup to ask the runner, as pull-to-refresh, settings and a location

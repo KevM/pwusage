@@ -46,6 +46,7 @@ actor SolarLayoutRecordStore {
     private let activeAccountScopeProvider: @Sendable () -> String?
     private var cache: [SolarForecastSiteScope: SolarLayoutRecord] = [:]
     private var sync: (any SolarLayoutSyncing)?
+    private var onSetSync: (@Sendable () async -> Void)?
 
     init(
         fileManager: FileManager = .default,
@@ -60,8 +61,18 @@ actor SolarLayoutRecordStore {
             ?? fileManager.temporaryDirectory).appendingPathComponent("SolarLayout", isDirectory: true)
     }
 
-    func setSync(_ sync: (any SolarLayoutSyncing)?) {
+    var hasSync: Bool { sync != nil }
+
+    func setOnSetSync(_ handler: (@Sendable () async -> Void)?) {
+        onSetSync = handler
+    }
+
+    func setSync(_ sync: (any SolarLayoutSyncing)?) async {
         self.sync = sync
+        if let handler = onSetSync {
+            onSetSync = nil
+            await handler()
+        }
     }
 
     func record(scope: SolarForecastSiteScope) throws -> SolarLayoutRecord? {

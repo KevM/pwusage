@@ -20,7 +20,8 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private var container: CKContainer?
     private var database: CKDatabase?
     private var syncEngine: CKSyncEngine?
-    private var isStarted = false
+    private(set) var isStarted = false
+    private var lifecycleGeneration = 0
     private var onRemoteRecordApplied: (@Sendable (SolarForecastSiteScope) -> Void)?
 
     private var hasSavedZone: Bool {
@@ -53,7 +54,13 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     func start() async {
         guard !isStarted else { return }
+        lifecycleGeneration += 1
+        let generation = lifecycleGeneration
         await store.setSync(self)
+        guard generation == lifecycleGeneration else {
+            await store.setSync(nil)
+            return
+        }
         guard fileManager.fileExists(
             atPath: Bundle.main.bundleURL.appendingPathComponent("_CodeSignature").path
         ) else {
@@ -63,6 +70,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             systemFields = loadSystemFields()
             let container = CKContainer(identifier: containerIdentifier)
             let status = try await container.accountStatus()
+            guard generation == lifecycleGeneration else { return }
             guard status == .available else { return }
             self.container = container
             self.database = container.privateCloudDatabase
@@ -78,6 +86,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             self.syncEngine = engine
             ensureZoneSaved(engine: engine)
             enqueuePendingOfflineScopes(engine: engine)
+            guard generation == lifecycleGeneration else { return }
             try await engine.fetchChanges()
         } catch {
             // Stay local-only gracefully
@@ -102,6 +111,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     func stop() async {
+        lifecycleGeneration += 1
         isStarted = false
         syncEngine = nil
         container = nil

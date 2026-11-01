@@ -273,4 +273,19 @@ extension AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.historyEnabled)
         #expect(harness.coordinator.solarLayoutStatus == nil)
     }
+
+    @Test("History sync network failure leaves beta status unknown and preserves automatic forecast branch")
+    func historySyncNetworkFailureLeavesBetaStatusUnknown() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        await harness.solcast.configure(
+            credential: Self.credential,
+            batch: nil
+        )
+        harness.api.historyError = PWUsageAPIError.invalidResponse
+        await harness.coordinator.refreshSolarForecast(manual: false)
+        #expect(harness.coordinator.historyEnabled)
+        #expect(harness.coordinator.solarLayoutStatus == nil)
+        let count = await harness.solcast.refreshCount
+        #expect(count == 0)
+    }
 }

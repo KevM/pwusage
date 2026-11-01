@@ -98,4 +98,22 @@ struct SolarLayoutCloudSyncTests {
         await syncRestarted.stop()
         #expect(!FileManager.default.fileExists(atPath: scopesURL.path))
     }
+
+    @Test("Stop invalidates in-flight start and cleans up store sync")
+    func stopInvalidatesInFlightStart() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = SolarLayoutRecordStore(directory: tempDir)
+        let sync = SolarLayoutCloudSync(
+            store: store,
+            pendingScopesURL: tempDir.appendingPathComponent("pending.json")
+        )
+        await store.setOnSetSync {
+            await sync.stop()
+        }
+        await sync.start()
+        let isStarted = await sync.isStarted
+        let hasSync = await store.hasSync
+        #expect(!isStarted)
+        #expect(!hasSync)
+    }
 }
