@@ -29,6 +29,8 @@ extension PWUsageAppModel {
     }
 
     func openNavigationURL(_ url: URL) async {
+        // The demo never navigates to a real site, whatever opened the app.
+        if isDemo { return presentDemoSheet() }
         if url == DashboardLink.url {
             dismissCompetingPresentations()
             externalNavigationID = UUID()
@@ -52,6 +54,12 @@ extension PWUsageAppModel {
         // Even a warm launch rechecks the current account's sites. A saved picker
         // entry and the dashboard cache are never evidence of current access.
         await reloadSitesAfterSignIn()
+    }
+
+    /// Shows the In Demo Mode sheet over whatever is presented.
+    func presentDemoSheet() {
+        dismissCompetingPresentations()
+        isDemoSheetPresented = true
     }
 
     /// The loading overlay and the launcher alert both live on the root view, so

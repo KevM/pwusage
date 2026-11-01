@@ -7,6 +7,7 @@ struct AppTabView: View {
     @ObservedObject var model: PWUsageAppModel
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
+    @Environment(\.demoMode) private var demoMode
 
     var body: some View {
         Group {
@@ -53,6 +54,19 @@ struct AppTabView: View {
             }
             .presentationDetents(model.sites.count > 4 ? [.medium, .large] : [.medium])
         }
+        // A bottom inset spanning the window: below the tab bar on iPhone, at the
+        // window's foot beside the sidebar on iPad, never over either.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.isDemo {
+                DemoModeBar { model.presentDemoSheet() }
+            }
+        }
+        .sheet(isPresented: $model.isDemoSheetPresented) {
+            DemoModeSheet(
+                onSignIn: { demoMode?.exitAndSignIn() },
+                onKeepExploring: { model.isDemoSheetPresented = false }
+            )
+        }
     }
 
     @ViewBuilder private func content(for tab: AppTab) -> some View {
@@ -69,7 +83,8 @@ struct AppTabView: View {
         case .settings:
             SettingsView(site: site, coordinator: coordinator,
                          onChooseSite: model.openSitePicker,
-                         onSignOut: { Task { await model.signOut() } })
+                         onSignOut: { Task { await model.signOut() } },
+                         onExitDemo: model.isDemo ? { demoMode?.exit() } : nil)
         }
     }
 

@@ -41,6 +41,9 @@ final class PWUsageAppModel: ObservableObject {
     let liveActivities: BatteryHoldActivityCoordinator?
     /// The throwaway sample-home model behind "Try the demo". See `DemoSession`.
     let isDemo: Bool
+    /// The In Demo Mode sheet: the bar opens it, and so does anything that
+    /// would leave the sample home (an external launch, an account action).
+    @Published var isDemoSheetPresented = false
     var sessionVerified = false
     var hasBootstrapAttempted = false
     @Published var siteRequestCount = 0
@@ -181,6 +184,7 @@ final class PWUsageAppModel: ObservableObject {
     }
 
     func signIn() async {
+        if isDemo { return presentDemoSheet() }
         guard !isSigningIn, !isSigningOut else { return }
         isSigningIn = true
         signInMessage = nil
@@ -215,6 +219,7 @@ final class PWUsageAppModel: ObservableObject {
     /// Reauthorization is optional while the dashboard session is still valid.
     /// Only an authorized API rejecting that session should send the user out.
     func reconnectTesla() async {
+        if isDemo { return presentDemoSheet() }
         guard screenState == .signedIn, !isSigningIn else { return }
         isSigningIn = true
         signInMessage = nil
