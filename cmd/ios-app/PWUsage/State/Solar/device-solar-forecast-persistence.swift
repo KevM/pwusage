@@ -66,9 +66,14 @@ struct SolarForecastStoreSessionCleanup: SolarForecastSessionCleanup {
     var layoutRecordStore: SolarLayoutRecordStore = .shared
     var cloudSync: SolarLayoutCloudSync = .shared
 
-    /// All cleanup steps run even if an earlier step fails.
+    /// Runs behind the synchronization actor's cleanup barrier, so a replacement session
+    /// cannot attach or write until every account file is gone. Every step runs even if
+    /// an earlier one fails; a failure leaves the store closed until this is retried.
     func signOut() async throws {
-        await cloudSync.stop()
+        try await cloudSync.endSession { try await clearLocalData() }
+    }
+
+    private func clearLocalData() async throws {
         var firstError: (any Error)?
         do { try await store.signOut() } catch { firstError = error }
         do { try await service?.clearAccountData() } catch { firstError = firstError ?? error }

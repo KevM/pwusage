@@ -19,7 +19,7 @@ struct SolarLayoutSessionCleanupTests {
         let records = SolarLayoutRecordStore(directory: recordsFolder) { nil }
         let sync = try cloudSync(store: records, folder: folder)
         _ = try await records.applyRemoteRecord(remote, scope: scope)
-        await records.setOnSetSync { [remote, scope] in
+        await records.setOnBindingChange { [remote, scope] in
             // Represents an already-dispatched application completing while stop detaches the store.
             _ = try? await records.applyRemoteRecord(remote, scope: scope)
         }
@@ -46,7 +46,7 @@ struct SolarLayoutSessionCleanupTests {
         )
     }
 
-    enum Supersession: CaseIterable, Sendable { case stopped, restarted, replaced }
+    enum Supersession: CaseIterable, Sendable { case stopped, restarted, replaced, signedOut }
 
     @Test("Obsolete remote applications cannot recreate cleared layouts", arguments: Supersession.allCases)
     func obsoleteRemoteApplicationIsRejected(_ supersession: Supersession) async throws {
@@ -54,17 +54,27 @@ struct SolarLayoutSessionCleanupTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let records = SolarLayoutRecordStore(directory: folder) { nil }
         let source = NoopLayoutSync()
-        await records.setSync(source, generation: 1)
-        await records.setSync(nil)
+        let session = SolarCloudSession(accountScopeID: "account")
+        let token = SolarCloudEngineToken()
+        await records.bind(session, to: source)
+        session.attach(token)
+        session.detach(token)
         try await records.removeAll()
         switch supersession {
         case .stopped: break
-        case .restarted: await records.setSync(source, generation: 2)
-        case .replaced: await records.setSync(NoopLayoutSync(), generation: 1)
+        case .restarted: session.attach(SolarCloudEngineToken())
+        case .replaced:
+            let replacement = NoopLayoutSync()
+            let next = SolarCloudSession(accountScopeID: "account")
+            await records.bind(next, to: replacement)
+            next.attach(token)
+        case .signedOut:
+            session.revoke()
+            await records.close()
         }
 
         await #expect(throws: CancellationError.self) {
-            try await records.applyRemoteRecord(remote, scope: scope, from: source, generation: 1)
+            try await records.applyRemoteRecord(remote, scope: scope, from: source, engine: token)
         }
         #expect(try await records.record(scope: scope) == nil)
         #expect(!FileManager.default.fileExists(atPath: folder.path))
@@ -76,15 +86,36 @@ struct SolarLayoutSessionCleanupTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let records = SolarLayoutRecordStore(directory: folder) { nil }
         let source = NoopLayoutSync()
-        await records.setSync(source, generation: 1)
+        let session = SolarCloudSession(accountScopeID: "account")
+        let token = SolarCloudEngineToken()
+        await records.bind(session, to: source)
+        session.attach(token)
 
-        let outcome = try await records.applyRemoteRecord(remote, scope: scope, from: source, generation: 1)
+        let outcome = try await records.applyRemoteRecord(remote, scope: scope, from: source, engine: token)
 
         #expect(outcome.record == remote)
         #expect(try await records.record(scope: scope) == remote)
     }
+
+    @Test("Local layout writes from an ended session are rejected before touching disk")
+    func endedSessionLocalWriteIsRejected() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let records = SolarLayoutRecordStore(directory: folder) { nil }
+        let session = SolarCloudSession(accountScopeID: "account")
+        await records.bind(session, to: NoopLayoutSync())
+        try await records.setLocation(remote.location ?? .lifecycleHome, scope: scope)
+        try await records.removeAll()
+
+        session.revoke()
+
+        await #expect(throws: CancellationError.self) {
+            try await records.setLocation(.lifecycleHome, scope: scope)
+        }
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+    }
 }
 
 private actor NoopLayoutSync: SolarLayoutSyncing {
-    func recordChanged(_ scope: SolarForecastSiteScope) {}
+    func recordChanged(_ scope: SolarForecastSiteScope, session: SolarCloudSession) {}
 }

@@ -150,6 +150,7 @@ actor FakeSolcastStore: SolarForecastManaging {
     var usable = true
     private(set) var refreshCount = 0
     private(set) var activatedScopes: [String?] = []
+    var signOutError: (any Error)?
 
     func configure(
         credential: SolarForecastCredential?,
@@ -185,5 +186,8 @@ actor FakeSolcastStore: SolarForecastManaging {
     }
 
     func disconnect(accountScopeID: String, siteID: String) async throws {}
-    func signOut() async throws {}
+    func setSignOutError(_ error: (any Error)?) { signOutError = error }
+    func signOut() async throws {
+        if let signOutError { throw signOutError }
+    }
 }

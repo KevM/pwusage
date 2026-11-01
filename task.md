@@ -1,3 +1,16 @@
+# Solar cloud lifecycle ownership (2026-11-01)
+
+- [x] Review the partial refactor against the spec; replace it with one ownership model.
+- [x] Session/engine identities, cleanup barrier, write authority, write-ahead markers.
+- [x] Deterministic tests for every acceptance-matrix row, with positive controls.
+- [x] Reproduce each audited finding by reintroducing it (mutation runs).
+- [x] Independent spec-compliance and concurrency reviews; findings fixed and tested.
+- [x] Format, strict lint, targeted and full native suites.
+- [ ] Device verification of iCloud account switches and cancellation timing.
+
+Spec: `docs/plans/2026-11-01-solar-cloud-lifecycle-spec.md`. Evidence and limitations:
+`docs/audits/2026-11-01-solar-cloud-lifecycle.md`. PR: https://github.com/KevM/pwusage/pull/264.
+
 # Tesla authentication remediation (2026-10-28)
 
 - [x] Typed exchange outcomes and no refresh fallback after dispatch.

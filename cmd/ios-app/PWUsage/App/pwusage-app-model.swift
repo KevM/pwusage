@@ -48,8 +48,10 @@ final class PWUsageAppModel: ObservableObject {
     let solarHistory: SolarHistoryStore
     let solarRecords: SolarLayoutRecordStore
     let solarRunner: SolarLayoutDetectionRunner?
+    var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
     let solarCloudSync: SolarLayoutCloudSync
+    let solarSessionCleanup: SolarForecastStoreSessionCleanup
     let coordinatorFactory: CoordinatorFactory
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
@@ -107,14 +109,14 @@ final class PWUsageAppModel: ObservableObject {
                 )
             }
         }
+        let sessionCleanup = SolarForecastStoreSessionCleanup(
+            store: forecastStore, service: forecastService,
+            historyStore: solarHistory, layoutRecordStore: solarRecords,
+            cloudSync: solarCloudSync
+        )
+        solarSessionCleanup = sessionCleanup
         self.authService = authService ?? MobileAuthService(
-            configuration: configuration,
-            api: api,
-            forecastCleanup: SolarForecastStoreSessionCleanup(
-                store: forecastStore, service: forecastService,
-                historyStore: solarHistory, layoutRecordStore: solarRecords,
-                cloudSync: solarCloudSync
-            )
+            configuration: configuration, api: api, forecastCleanup: sessionCleanup
         )
         wireCloudSyncListener(solarCloudSync, runner: runner)
         restoreCachedSession()
@@ -259,11 +261,13 @@ final class PWUsageAppModel: ObservableObject {
         startSolarCloudSync()
     }
 
+    /// Optional and never awaited by session publication.
     func startSolarCloudSync() {
-        guard solarCloudStartup == nil else { return }
+        guard solarCloudStartup == nil, let accountScopeID else { return }
+        let session = adoptSolarCloudSession(accountScopeID: accountScopeID)
         let sync = solarCloudSync
         solarCloudStartup = Task { [weak self] in
-            await sync.start()
+            await sync.start(session: session)
             guard !Task.isCancelled else { return }
             self?.solarCloudStartup = nil
         }
@@ -274,15 +278,17 @@ final class PWUsageAppModel: ObservableObject {
     ) {
         guard runner != nil else { return }
         Task { [weak self] in
-            await cloudSync.setOnRemoteRecordApplied { [weak self] scope in
+            await cloudSync.setOnRemoteRecordApplied { [weak self] scope, session in
                 Task { @MainActor [weak self] in
-                    await self?.solarLayoutRecordChanged(scope)
+                    await self?.solarLayoutRecordChanged(scope, from: session)
                 }
             }
         }
     }
 
-    func solarLayoutRecordChanged(_ scope: SolarForecastSiteScope) async {
+    /// A callback queued before sign-out must not start account work afterwards.
+    func solarLayoutRecordChanged(_ scope: SolarForecastSiteScope, from session: SolarCloudSession) async {
+        guard session.isValid, session === solarCloudSession else { return }
         let activeScope = coordinator?.solarScope
             ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
         guard scope == activeScope else { return }

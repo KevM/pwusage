@@ -74,63 +74,65 @@ struct SolarLayoutCloudSyncTests {
         #expect(parsed.record.location == locA)
     }
 
-    @Test("Offline record changes are persisted and retained across restarts")
+    @Test("Offline record changes are persisted, retained across restarts, and cleared by sign-out")
+    @MainActor
     func offlineRecordChangesRetained() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let scopesURL = tempDir.appendingPathComponent("pending-scopes.json")
-        let sync = SolarLayoutCloudSync(
-            pendingScopesURL: scopesURL
-        )
+        let harness = try SolarCloudLifecycleHarness()
+        defer { harness.removeFiles() }
+        let session = harness.sync.issueSession(accountScopeID: "acc-1")
+        #expect(await harness.sync.activate(session) == .active)
         let scope1 = SolarForecastSiteScope(accountScopeID: "acc-1", siteID: "site-1")
         let scope2 = SolarForecastSiteScope(accountScopeID: "acc-1", siteID: "site-2")
+        try await harness.records.setLocation(locA, scope: scope1)
+        try await harness.records.setLocation(locB, scope: scope2)
+        try await eventually { (try? harness.persistedPendingScopes()) == [scope1, scope2] }
 
-        // recordChanged called while stopped
-        await sync.recordChanged(scope1)
-        await sync.recordChanged(scope2)
-
-        #expect(FileManager.default.fileExists(atPath: scopesURL.path))
-
-        // New instance restores pending scopes from disk
-        let syncRestarted = SolarLayoutCloudSync(
-            pendingScopesURL: scopesURL
-        )
-        // Calling stop/clear removes persisted state
-        await syncRestarted.stop()
-        #expect(!FileManager.default.fileExists(atPath: scopesURL.path))
+        let restarted = try SolarCloudLifecycleHarness(folder: harness.folder)
+        #expect(await restarted.sync.pendingUploadScopes == [scope1, scope2])
+        try await restarted.sessionCleanup().signOut()
+        #expect(!FileManager.default.fileExists(atPath: harness.pendingURL.path))
     }
 
-    @Test("Stop invalidates in-flight start and cleans up store sync")
+    @Test("Stopping the engine during account lookup leaves it detached")
+    @MainActor
     func stopInvalidatesInFlightStart() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let store = SolarLayoutRecordStore(directory: tempDir)
-        let sync = SolarLayoutCloudSync(
-            store: store,
-            pendingScopesURL: tempDir.appendingPathComponent("pending.json")
-        )
-        await store.setOnSetSync {
-            await sync.stop()
-        }
-        await sync.start()
-        let isStarted = await sync.isStarted
-        let hasSync = await store.hasSync
-        #expect(!isStarted)
-        #expect(!hasSync)
+        let gate = LifecycleGate()
+        let transport = FakeSolarCloudTransport(lookupGate: gate)
+        let harness = try SolarCloudLifecycleHarness(transport: transport.transport)
+        defer { harness.removeFiles() }
+        let session = harness.sync.issueSession(accountScopeID: "acc-1")
+        let starting = Task { await harness.sync.start(session: session) }
+        try await eventually { gate.isHolding }
+        #expect(await harness.records.hasEngine)
+
+        await harness.sync.stopEngine()
+        gate.release()
+        await starting.value
+
+        #expect(await harness.sync.isStarted == false)
+        #expect(await harness.records.hasEngine == false)
+        #expect(transport.engines.isEmpty)
     }
 
-    @Test("Concurrent start calls do not invalidate in-flight startup")
+    @Test("A start requested during account lookup coalesces with the attempt in progress")
+    @MainActor
     func concurrentStartCallsDoNotInvalidateStartup() async throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let store = SolarLayoutRecordStore(directory: tempDir)
-        let sync = SolarLayoutCloudSync(
-            store: store,
-            pendingScopesURL: tempDir.appendingPathComponent("pending.json")
-        )
-        await store.setOnSetSync {
-            await sync.start()
-        }
-        await sync.start()
-        let hasSync = await store.hasSync
-        #expect(hasSync)
+        let gate = LifecycleGate()
+        let transport = FakeSolarCloudTransport(lookupGate: gate)
+        let harness = try SolarCloudLifecycleHarness(transport: transport.transport)
+        defer { harness.removeFiles() }
+        let session = harness.sync.issueSession(accountScopeID: "acc-1")
+        let starting = Task { await harness.sync.start(session: session) }
+        try await eventually { gate.isHolding }
+
+        await harness.sync.start(session: session)
+        gate.release()
+        await starting.value
+
+        #expect(await harness.sync.isStarted)
+        #expect(await harness.records.hasEngine)
+        #expect(transport.lookups == 1)
+        #expect(transport.engines.count == 1)
     }
 
     @Test("Unrelated remote records do not cancel selected-site detection", arguments: [false, true])
@@ -144,6 +146,7 @@ struct SolarLayoutCloudSyncTests {
         try await harness.setPending()
         _ = try await harness.historyStore.sync(scope: scope, api: harness.api, now: harness.api.now)
         let model = try cloudSyncModel(harness: harness)
+        let session = model.adoptSolarCloudSession(accountScopeID: "account-a")
         let previousFetchCount = harness.api.historyFetches.count
         harness.api.holdHistory = true
         defer { harness.api.resumeHistory() }
@@ -151,7 +154,7 @@ struct SolarLayoutCloudSyncTests {
         let runTask = Task { await harness.runner.runIfDue(scope: selectedScope) }
         try await eventually { harness.api.historyFetches.count > previousFetchCount }
 
-        await model.solarLayoutRecordChanged(scope)
+        await model.solarLayoutRecordChanged(scope, from: session)
         harness.api.resumeHistory()
         let completed = await runTask.value
         #expect(completed?.result?.status == .detected)
@@ -168,50 +171,126 @@ struct SolarLayoutCloudSyncTests {
             model.userDefaults.set("site-b", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
         }
         let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        let session = model.adoptSolarCloudSession(accountScopeID: "account-a")
 
-        await model.solarLayoutRecordChanged(scope)
+        await model.solarLayoutRecordChanged(scope, from: session)
 
         let record = try await harness.records.record(scope: scope)
         #expect(record?.result?.status == .detected)
     }
 
-    @Test("Authorized session publishes while optional cloud startup is suspended")
+    @Test("A cloud callback queued before sign-out starts no detection afterwards")
     @MainActor
-    func authorizationDoesNotWaitForCloud() async throws {
+    func queuedCallbackAfterSignOutIsIgnored() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
+        try await harness.setPending()
         let model = try cloudSyncModel(harness: harness)
-        let gate = CloudStartupGate()
-        await harness.records.setOnSetSync { await gate.pause() }
-        let installation = Task {
-            await model.installAuthorizedSites(
-                [MobileSite(id: "site-a", name: "Home", utility: "Test")], generation: model.claimSiteInstall()
-            )
-        }
-        try await eventually { gate.entered }
-        let published = model.sessionVerified && model.screenState == .signedIn && model.coordinator != nil
+        model.coordinator = harness.coordinator
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        let session = model.adoptSolarCloudSession(accountScopeID: "account-a")
+        let fetches = harness.api.historyFetches.count
+
         model.teardownCoordinator()
-        await model.solarCloudSync.stop()
-        gate.resume()
-        await installation.value
-        #expect(published)
-        #expect(await harness.records.hasSync == false)
+        try await model.solarSessionCleanup.signOut()
+        await model.solarLayoutRecordChanged(scope, from: session)
+
+        #expect(harness.api.historyFetches.count == fetches)
+        #expect(try await harness.records.record(scope: scope)?.result?.status != .detected)
+    }
+
+    @Test("Authorized session publishes while optional cloud account lookup is suspended", arguments: [false, true])
+    @MainActor
+    func authorizationDoesNotWaitForCloud(cached: Bool) async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        let gate = LifecycleGate()
+        let transport = FakeSolarCloudTransport(lookupGate: gate)
+        let site = MobileSite(id: "site-a", name: "Home", utility: "Test")
+        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let cache = cached ? DashboardCache(fileURL: cacheURL) : nil
+        cache?.storeSites([site])
+        let model = try cloudSyncModel(harness: harness, transport: transport, cache: cache)
+        if cached {
+            #expect(model.screenState == .signedIn && model.coordinator != nil)
+        }
+
+        await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
+        try await eventually { gate.isHolding }
+
+        #expect(model.sessionVerified && model.screenState == .signedIn && model.coordinator != nil)
         #expect(await model.solarCloudSync.isStarted == false)
+        gate.release()
+        try await eventuallyAsync { await model.solarCloudSync.isStarted }
+        #expect(transport.lookups == 1)
+    }
+
+    @Test("Sign-out before queued startup reaches the actor begins no attachment or lookup", arguments: [true, false])
+    @MainActor
+    func endBeforeQueuedStartup(signsOut: Bool) async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        let transport = FakeSolarCloudTransport()
+        let model = try cloudSyncModel(harness: harness, transport: transport)
+        _ = model.ensureAccountScopeID()
+
+        model.startSolarCloudSync()
+        if signsOut {
+            model.teardownCoordinator()
+            try await model.solarSessionCleanup.signOut()
+            try await staysTrue { transport.lookups == 0 }
+            #expect(await harness.records.hasEngine == false)
+        } else {
+            try await eventuallyAsync { await model.solarCloudSync.isStarted }
+            #expect(transport.lookups == 1)
+            #expect(await harness.records.hasEngine)
+        }
+    }
+
+    @Test("A failed sign-out cleanup is retried at authorization and keeps solar writes closed until it succeeds")
+    @MainActor
+    func failedCleanupIsRetriedAtAuthorization() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        let forecastStore = FakeSolcastStore()
+        let model = try cloudSyncModel(harness: harness, forecastStore: forecastStore)
+        let site = MobileSite(id: "site-a", name: "Home", utility: "Test")
+        await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
+        #expect(await harness.records.isWritable)
+        await forecastStore.setSignOutError(LifecycleCleanupFailure())
+        await model.signOut()
+        #expect(model.signInMessage?.contains("Could not clear local solar forecast data") == true)
+
+        await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
+
+        #expect(model.screenState == .signedIn && model.coordinator != nil)
+        #expect(model.signInMessage?.contains("Could not clear local solar forecast data") == true)
+        #expect(await harness.records.isWritable == false)
+
+        await forecastStore.setSignOutError(nil)
+        await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
+
+        #expect(await harness.records.isWritable)
+        let scope = SolarForecastSiteScope(accountScopeID: try #require(model.accountScopeID), siteID: "site-a")
+        try await harness.records.setLocation(.lifecycleHome, scope: scope)
     }
 
     @Test("Cancelled queued startup cannot attach after sign-out")
     @MainActor
-    func cancelledStartupDoesNotAttach() async {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let records = SolarLayoutRecordStore(directory: folder)
-        let sync = SolarLayoutCloudSync(store: records)
-        let task = Task { await sync.start() }
+    func cancelledStartupDoesNotAttach() async throws {
+        let transport = FakeSolarCloudTransport()
+        let harness = try SolarCloudLifecycleHarness(transport: transport.transport)
+        defer { harness.removeFiles() }
+        let session = harness.sync.issueSession(accountScopeID: "acc-1")
+        let task = Task { await harness.sync.start(session: session) }
         task.cancel()
         await task.value
-        #expect(await records.hasSync == false)
+        #expect(await harness.records.hasEngine == false)
+        #expect(transport.lookups == 0)
     }
 
     @MainActor
-    private func cloudSyncModel(harness: AutomaticForecastHarness) throws -> PWUsageAppModel {
+    private func cloudSyncModel(
+        harness: AutomaticForecastHarness, transport: FakeSolarCloudTransport? = nil, cache: DashboardCache? = nil,
+        forecastStore: FakeSolcastStore = FakeSolcastStore()
+    ) throws -> PWUsageAppModel {
         let defaults = try #require(UserDefaults(suiteName: "CloudSyncTests.\(UUID().uuidString)"))
         defaults.set("account-a", forKey: PWUsageAppModel.accountScopeDefaultsKey)
         defaults.set("site-a", forKey: PWUsageAppModel.selectedSiteDefaultsKey)
@@ -219,14 +298,29 @@ struct SolarLayoutCloudSyncTests {
             configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
             api: CloudSyncTestAppAPI(historyAPI: harness.api),
             userDefaults: defaults,
+            forecastStore: forecastStore,
+            cache: cache,
             solarHistory: harness.historyStore,
             solarRecords: harness.records,
             solarRunner: harness.runner,
-            solarCloudSync: SolarLayoutCloudSync(store: harness.records)
+            solarCloudSync: try isolatedSync(records: harness.records, transport: transport?.transport)
+        )
+    }
+
+    private nonisolated func isolatedSync(
+        records: SolarLayoutRecordStore, transport: SolarCloudTransport?
+    ) throws -> SolarLayoutCloudSync {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        return SolarLayoutCloudSync(
+            store: records,
+            userDefaults: try #require(UserDefaults(suiteName: "CloudSyncState.\(folder.lastPathComponent)")),
+            stateURL: folder.appendingPathComponent("state.json"),
+            systemFieldsURL: folder.appendingPathComponent("fields.json"),
+            pendingScopesURL: folder.appendingPathComponent("pending.json"),
+            transport: transport
         )
     }
 }
-
 @MainActor
 private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     let historyAPI: AutomaticForecastAPISpy
@@ -249,20 +343,4 @@ private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
     func logout() async throws {}
     func clearSiteAuthCookie() async {}
-}
-
-@MainActor
-private final class CloudStartupGate {
-    var entered = false
-    private var continuation: CheckedContinuation<Void, Never>?
-
-    func pause() async {
-        entered = true
-        await withCheckedContinuation { continuation = $0 }
-    }
-
-    func resume() {
-        continuation?.resume()
-        continuation = nil
-    }
 }

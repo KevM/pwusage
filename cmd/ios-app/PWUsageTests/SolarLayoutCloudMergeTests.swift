@@ -11,7 +11,7 @@ private final class MockSolarLayoutSync: SolarLayoutSyncing, Sendable {
         lock.withLock { $0 }
     }
 
-    func recordChanged(_ scope: SolarForecastSiteScope) async {
+    func recordChanged(_ scope: SolarForecastSiteScope, session: SolarCloudSession) async {
         lock.withLock { $0.append(scope) }
     }
 
@@ -322,7 +322,7 @@ struct SolarLayoutCloudMergeTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = SolarLayoutRecordStore(directory: folder)
         let mockSync = MockSolarLayoutSync()
-        await store.setSync(mockSync)
+        await store.bind(SolarCloudSession(accountScopeID: "test-acc"), to: mockSync)
 
         let scope = SolarForecastSiteScope(accountScopeID: "test-acc", siteID: "test-site")
         try await store.setLocation(locA, scope: scope)
