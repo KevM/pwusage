@@ -32,18 +32,29 @@ final class LifecycleGate {
     }
 }
 
+/// Mirrors CKSyncEngine's guard against awaiting an engine call from inside one of its
+/// delegate callbacks. Task locals carry the callback context into child tasks, not detached ones.
+enum FakeEngineCallback {
+    @TaskLocal static var isActive = false
+}
+
 final class FakeSolarCloudEngine: SolarCloudEngine {
     struct Counts: Equatable {
         var fetches = 0
         var sends = 0
         var cancels = 0
+        /// Fetches or sends made from inside a delegate callback; CloudKit traps on these.
+        var callbackViolations = 0
     }
 
     private let state = OSAllocatedUnfairLock(initialState: (saves: [CKRecord.ID](), counts: Counts()))
     private let fetchGate: LifecycleGate?
+    /// Weak, as `CKSyncEngine.Configuration` holds its delegate.
+    nonisolated(unsafe) private(set) weak var delegate: (any CKSyncEngineDelegate)?
 
-    init(fetchGate: LifecycleGate?) {
+    init(fetchGate: LifecycleGate?, delegate: any CKSyncEngineDelegate) {
         self.fetchGate = fetchGate
+        self.delegate = delegate
     }
 
     var pendingSaves: [CKRecord.ID] { state.withLock { $0.saves } }
@@ -56,12 +67,20 @@ final class FakeSolarCloudEngine: SolarCloudEngine {
     }
 
     func fetchChanges() async throws {
-        state.withLock { $0.counts.fetches += 1 }
+        let inCallback = FakeEngineCallback.isActive
+        state.withLock {
+            $0.counts.fetches += 1
+            if inCallback { $0.counts.callbackViolations += 1 }
+        }
         if let fetchGate { await fetchGate.pass() }
     }
 
     func sendChanges() async throws {
-        state.withLock { $0.counts.sends += 1 }
+        let inCallback = FakeEngineCallback.isActive
+        state.withLock {
+            $0.counts.sends += 1
+            if inCallback { $0.counts.callbackViolations += 1 }
+        }
     }
 
     func cancelOperations() async {
@@ -99,8 +118,8 @@ final class FakeSolarCloudTransport: Sendable {
                 if let lookupGate { await lookupGate.pass() }
                 return status
             },
-            makeEngine: { [self] _, _ in
-                let engine = FakeSolarCloudEngine(fetchGate: fetchGate)
+            makeEngine: { [self] _, delegate in
+                let engine = FakeSolarCloudEngine(fetchGate: fetchGate, delegate: delegate)
                 state.withLock { $0.engines.append(engine) }
                 return engine
             }

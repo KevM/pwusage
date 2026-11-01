@@ -65,6 +65,8 @@ private final class CloudKitSolarEngine: SolarCloudEngine {
 
 /// Carries the engine token of the attempt that created it, so every delegate event
 /// and record request is checked against current ownership.
+/// `CKSyncEngine.Configuration` holds its delegate weakly, so the owner keeps this alive
+/// for as long as its engine runs; otherwise it is freed at once and every event is dropped.
 final class SolarCloudEngineDelegate: CKSyncEngineDelegate {
     private let owner: SolarLayoutCloudSync
     private let token: SolarCloudEngineToken
