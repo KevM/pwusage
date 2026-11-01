@@ -30,7 +30,10 @@
         private let liveJSON: String
         private let billJSON: String
 
-        init(mode: DashboardPreviewMode, site: MobileSite = .preview, liveJSON: String? = nil, billJSON: String? = nil) {
+        init(
+            mode: DashboardPreviewMode, site: MobileSite = .preview, asOf: Date = .now,
+            liveJSON: String? = nil, billJSON: String? = nil
+        ) {
             self.mode = mode
             // The stale mode is 2h01m old rather than exactly 2h: a charge reading is suppressed only
             // once it is *older* than two hours, and fixture construction and decoding happen at
@@ -38,7 +41,7 @@
             let sourceOffset: TimeInterval = mode == .stale ? -(2 * 60 * 60 + 60) : 0
             // Round down once so serialization cannot move a charge reading into
             // the future. Keep all forecast/balance timestamps on that same instant.
-            let previewNow = Date(timeIntervalSince1970: floor(Date.now.timeIntervalSince1970))
+            let previewNow = Date(timeIntervalSince1970: floor(asOf.timeIntervalSince1970))
             // Production serializes both the energy observation time and the tariff
             // timeline with fractional seconds, and starts the timeline at the
             // observation time. Match that exactly: if the timeline begins even a

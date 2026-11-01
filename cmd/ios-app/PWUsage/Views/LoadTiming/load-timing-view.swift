@@ -71,11 +71,16 @@ struct LoadTimingView: View {
     /// Bumped when the comparison goes stale on its own (see `nextRefresh`), to run a body pass.
     @State var staleRefreshes = 0
 
-    init(coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true, profileStore: LoadProfileStore? = nil, initialExploredProfileID: String? = nil) {
+    /// `profileStore` is an autoclosure so a caller that builds one on every
+    /// body pass only has it built once, like the `StateObject` it feeds.
+    init(
+        coordinator: DashboardCoordinator, site: MobileSite, isSelected: Bool = true,
+        profileStore: @autoclosure @escaping () -> LoadProfileStore? = nil, initialExploredProfileID: String? = nil
+    ) {
         self.coordinator = coordinator
         self.site = site
         self.isSelected = isSelected
-        _profileStore = StateObject(wrappedValue: profileStore ?? LoadProfileStore())
+        _profileStore = StateObject(wrappedValue: profileStore() ?? LoadProfileStore())
         _exploredProfileID = State(initialValue: initialExploredProfileID)
     }
 

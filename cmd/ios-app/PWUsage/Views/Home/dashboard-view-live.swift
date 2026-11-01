@@ -6,6 +6,8 @@ extension DashboardView {
             // Use the actual clock even when a resumed timeline delivers a past entry.
             liveSection(now: .now)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("home.live")
     }
 
     /// The flow and validated charge both the Live card and the bar's scoreboard show.

@@ -20,7 +20,15 @@ struct PWUsageApp: App {
 
     init() {
         BackgroundSolarLayoutDetection.register()
-        launchTask = Task { @MainActor in await Self.prepareLaunch() }
+        launchTask = Task { @MainActor in
+            #if DEBUG
+                // The App Store screenshot run: demo data, no startup maintenance.
+                if ScreenshotLaunch.isRequested(in: ProcessInfo.processInfo.arguments) {
+                    return .ready(ScreenshotLaunch.makeModel())
+                }
+            #endif
+            return await Self.prepareLaunch()
+        }
     }
 
     private static func prepareLaunch() async -> Launch {

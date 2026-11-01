@@ -7,3 +7,4 @@
 --import-grouping alpha
 --disable all
 --enable blankLineAfterImports,blankLinesAtEndOfScope,blankLinesAtStartOfScope,consecutiveBlankLines,duplicateImports,elseOnSameLine,indent,linebreakAtEndOfFile,linebreaks,sortImports,spaceAroundBraces,spaceAroundOperators,spaceInsideBraces,trailingCommas,trailingSpace
+--exclude cmd/ios-app/PWUsageScreenshots/SnapshotHelper.swift

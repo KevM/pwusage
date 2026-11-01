@@ -8,6 +8,8 @@ excluded:
   - cmd/ios-app/build
   - cmd/ios-app/PWUsage.xcodeproj
   - cmd/ios-app/.build
+  # Vendored from fastlane (`fastlane snapshot init`); keep it byte-identical for upgrades.
+  - cmd/ios-app/PWUsageScreenshots/SnapshotHelper.swift
 opt_in_rules:
   - sorted_imports
   - empty_count

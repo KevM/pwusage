@@ -33,3 +33,5 @@ cmd/ios-app/PWUsageTests/Fixtures/solcast-capture.json
 # Per-user Claude Code permissions
 **/.claude/settings.local.json
 .vercel
+cmd/ios-app/fastlane/screenshots/
+cmd/ios-app/fastlane/test_output/
