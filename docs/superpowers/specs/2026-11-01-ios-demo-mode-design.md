@@ -173,11 +173,13 @@ is a no-op and no Live Activity starts.
 
 ## Settled after builder review (Claude's calls)
 
-- **Scenario clock.** "Weekday peak afternoon" is delivered by a demo clock
-  injected wherever tariff period, bill-cycle and Smart Shift math read "now"
-  (not by fixtures alone), so the demo reads correctly on a Sunday night.
-  Threading a clock through those paths is in scope; if a path turns out too
-  invasive, the plan flags it rather than silently showing off-peak.
+- **Scenario clock.** No injected clock is needed: Smart Shift and Bill read
+  absolute-timestamp data from the server (`tariffTimeline`, `cycleStart`/
+  `cycleEnd`, `isActive` periods, precomputed phrases), so demo fixtures built
+  relative to the real "now" make On-peak active now, Off-peak start a few hours
+  later, and the cycle end 10 days out, at any real day or hour. Clock times
+  shown on screen follow the real clock (off-peak may read "starts at 2:15 AM"
+  rather than literally 8 PM); that's acceptable.
 - **Screenshots adopt the demo scenario.** One shared demo factory with two
   callers: the Release sign-in button and the DEBUG `-PWUsageScreenshotMode`
   launch argument. App Store screenshots change to match.
