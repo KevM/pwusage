@@ -34,10 +34,10 @@ extension PWUsageAppModel {
         let accountScopeID = ensureAccountScopeID()
         await forecastStore.activateAccountScope(accountScopeID)
         await forecastService?.activateAccountScope(accountScopeID)
-        await solarCloudSync.start()
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
+        startSolarCloudSync()
         controlSiteStore?.save(availableSites.map { BatteryHoldControlSite(id: $0.id, name: $0.name) })
         liveActivities?.sitesAuthorized(availableSites)
         guard !availableSites.isEmpty else {

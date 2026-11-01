@@ -175,6 +175,41 @@ struct SolarLayoutCloudSyncTests {
         #expect(record?.result?.status == .detected)
     }
 
+    @Test("Authorized session publishes while optional cloud startup is suspended")
+    @MainActor
+    func authorizationDoesNotWaitForCloud() async throws {
+        let harness = await AutomaticForecastHarness(seedDetected: false)
+        let model = try cloudSyncModel(harness: harness)
+        let gate = CloudStartupGate()
+        await harness.records.setOnSetSync { await gate.pause() }
+        let installation = Task {
+            await model.installAuthorizedSites(
+                [MobileSite(id: "site-a", name: "Home", utility: "Test")], generation: model.claimSiteInstall()
+            )
+        }
+        try await eventually { gate.entered }
+        let published = model.sessionVerified && model.screenState == .signedIn && model.coordinator != nil
+        model.teardownCoordinator()
+        await model.solarCloudSync.stop()
+        gate.resume()
+        await installation.value
+        #expect(published)
+        #expect(await harness.records.hasSync == false)
+        #expect(await model.solarCloudSync.isStarted == false)
+    }
+
+    @Test("Cancelled queued startup cannot attach after sign-out")
+    @MainActor
+    func cancelledStartupDoesNotAttach() async {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let records = SolarLayoutRecordStore(directory: folder)
+        let sync = SolarLayoutCloudSync(store: records)
+        let task = Task { await sync.start() }
+        task.cancel()
+        await task.value
+        #expect(await records.hasSync == false)
+    }
+
     @MainActor
     private func cloudSyncModel(harness: AutomaticForecastHarness) throws -> PWUsageAppModel {
         let defaults = try #require(UserDefaults(suiteName: "CloudSyncTests.\(UUID().uuidString)"))
@@ -214,4 +249,20 @@ private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
     func logout() async throws {}
     func clearSiteAuthCookie() async {}
+}
+
+@MainActor
+private final class CloudStartupGate {
+    var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func pause() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
+    }
 }

@@ -65,6 +65,8 @@ extension PWUsageAppModel {
     /// polling timer, which otherwise keeps a strong reference and keeps asking
     /// for authenticated data after the user has signed out.
     func teardownCoordinator() {
+        solarCloudStartup?.cancel()
+        solarCloudStartup = nil
         siteInstallGeneration += 1
         sessionVerified = false
         cache?.clear()

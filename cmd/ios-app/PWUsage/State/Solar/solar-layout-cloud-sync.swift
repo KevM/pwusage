@@ -54,7 +54,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     func start() async {
-        guard !isStarted, startingGeneration == nil else { return }
+        guard !Task.isCancelled, !isStarted, startingGeneration == nil else { return }
         lifecycleGeneration += 1
         let generation = lifecycleGeneration
         startingGeneration = generation
@@ -64,7 +64,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             }
         }
         await store.setSync(self, generation: generation)
-        guard generation == lifecycleGeneration else { return }
+        guard !Task.isCancelled, generation == lifecycleGeneration else { return }
         guard fileManager.fileExists(
             atPath: Bundle.main.bundleURL.appendingPathComponent("_CodeSignature").path
         ) else {
@@ -74,7 +74,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             systemFields = loadSystemFields()
             let container = CKContainer(identifier: containerIdentifier)
             let status = try await container.accountStatus()
-            guard generation == lifecycleGeneration, status == .available else { return }
+            guard !Task.isCancelled, generation == lifecycleGeneration, status == .available else { return }
             self.container = container
             self.database = container.privateCloudDatabase
             isStarted = true

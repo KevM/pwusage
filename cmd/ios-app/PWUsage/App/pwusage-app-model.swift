@@ -48,6 +48,7 @@ final class PWUsageAppModel: ObservableObject {
     let solarHistory: SolarHistoryStore
     let solarRecords: SolarLayoutRecordStore
     let solarRunner: SolarLayoutDetectionRunner?
+    var solarCloudStartup: Task<Void, Never>?
     let solarCloudSync: SolarLayoutCloudSync
     let coordinatorFactory: CoordinatorFactory
     var coordinatorAuthSubscription: AnyCancellable?
@@ -255,8 +256,17 @@ final class PWUsageAppModel: ObservableObject {
         selectedSiteID = chosen.id
         installCoordinator(siteID: chosen.id, accountScopeID: ensureAccountScopeID())
         screenState = .signedIn
+        startSolarCloudSync()
+    }
+
+    func startSolarCloudSync() {
+        guard solarCloudStartup == nil else { return }
         let sync = solarCloudSync
-        Task { await sync.start() }
+        solarCloudStartup = Task { [weak self] in
+            await sync.start()
+            guard !Task.isCancelled else { return }
+            self?.solarCloudStartup = nil
+        }
     }
 
     private func wireCloudSyncListener(
