@@ -41,9 +41,12 @@ final class FakeSolarCloudEngine: SolarCloudEngine {
 
     private let state = OSAllocatedUnfairLock(initialState: (saves: [CKRecord.ID](), counts: Counts()))
     private let fetchGate: LifecycleGate?
+    /// Weak, as `CKSyncEngine.Configuration` holds its delegate.
+    nonisolated(unsafe) private(set) weak var delegate: (any CKSyncEngineDelegate)?
 
-    init(fetchGate: LifecycleGate?) {
+    init(fetchGate: LifecycleGate?, delegate: any CKSyncEngineDelegate) {
         self.fetchGate = fetchGate
+        self.delegate = delegate
     }
 
     var pendingSaves: [CKRecord.ID] { state.withLock { $0.saves } }
@@ -99,8 +102,8 @@ final class FakeSolarCloudTransport: Sendable {
                 if let lookupGate { await lookupGate.pass() }
                 return status
             },
-            makeEngine: { [self] _, _ in
-                let engine = FakeSolarCloudEngine(fetchGate: fetchGate)
+            makeEngine: { [self] _, delegate in
+                let engine = FakeSolarCloudEngine(fetchGate: fetchGate, delegate: delegate)
                 state.withLock { $0.engines.append(engine) }
                 return engine
             }

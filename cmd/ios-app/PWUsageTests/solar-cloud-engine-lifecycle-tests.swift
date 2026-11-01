@@ -185,6 +185,19 @@ struct SolarCloudEngineLifecycleTests {
         }
     }
 
+    @Test("A running engine keeps its delegate alive, since CKSyncEngine holds it weakly")
+    func runningEngineRetainsDelegate() async throws {
+        let transport = FakeSolarCloudTransport()
+        let harness = try SolarCloudLifecycleHarness(transport: transport.transport)
+        defer { harness.removeFiles() }
+        let session = harness.sync.issueSession(accountScopeID: account)
+        await harness.sync.start(session: session)
+
+        let engine = try #require(transport.engines.first)
+        #expect(await harness.sync.isStarted)
+        #expect(engine.delegate != nil)
+    }
+
     @Test("Unavailable iCloud leaves the session offline with pending work for a later start")
     func unavailableCloudKeepsPendingWork() async throws {
         let transport = FakeSolarCloudTransport()

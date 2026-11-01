@@ -27,12 +27,12 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     private enum Engine {
         case offline
         case starting(SolarCloudEngineToken)
-        case running(SolarCloudEngineToken, any SolarCloudEngine)
+        case running(SolarCloudEngineToken, any SolarCloudEngine, SolarCloudEngineDelegate)
 
         var token: SolarCloudEngineToken? {
             switch self {
             case .offline: nil
-            case .starting(let token), .running(let token, _): token
+            case .starting(let token), .running(let token, _, _): token
             }
         }
     }
@@ -180,8 +180,9 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
             return releaseEngine(token)
         }
         systemFields = files.loadSystemFields()
-        let cloud = transport.makeEngine(files.loadState(), SolarCloudEngineDelegate(owner: self, token: token))
-        engine = .running(token, cloud)
+        let delegate = SolarCloudEngineDelegate(owner: self, token: token)
+        let cloud = transport.makeEngine(files.loadState(), delegate)
+        engine = .running(token, cloud, delegate)
         cloud.saveZoneIfNeeded(alreadySaved: files.hasSavedZone)
         cloud.addPendingSaves(pendingScopes.map { SolarLayoutCloudRecordSerializer.recordID(for: $0) })
         // CKSyncEngine retries failed fetches itself; the attempt stays running.
@@ -211,7 +212,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         if case .active(let session) = phase, let token = engine.token {
             session.detach(token)
         }
-        if case .running(_, let cloud) = engine {
+        if case .running(_, let cloud, _) = engine {
             Task { await cloud.cancelOperations() }
         }
         engine = .offline
@@ -220,12 +221,12 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     /// The session that owns a running attempt, or nil once the token is obsolete.
     private func session(owning token: SolarCloudEngineToken) -> SolarCloudSession? {
         guard case .active(let session) = phase, session.isValid,
-              case .running(let current, _) = engine, current == token else { return nil }
+              case .running(let current, _, _) = engine, current == token else { return nil }
         return session
     }
 
     private func runningEngine(_ token: SolarCloudEngineToken) -> (any SolarCloudEngine)? {
-        guard session(owning: token) != nil, case .running(_, let cloud) = engine else { return nil }
+        guard session(owning: token) != nil, case .running(_, let cloud, _) = engine else { return nil }
         return cloud
     }
 
@@ -248,7 +249,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         let accepted = pendingScopes.union(unsynced)
         do { try files.savePendingScopes(accepted) } catch { return }
         pendingScopes = accepted
-        if case .running(_, let cloud) = engine {
+        if case .running(_, let cloud, _) = engine {
             cloud.addPendingSaves(unsynced.map { SolarLayoutCloudRecordSerializer.recordID(for: $0) })
         }
         await store.acknowledge(markers, for: session)
@@ -379,9 +380,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
         guard let local = try? await store.recordForUpload(scope: scope),
               session(owning: token) === owner else { return nil }
         return SolarLayoutCloudRecordSerializer.makeRecord(
-            from: local, scope: scope, zoneID: recordID.zoneID,
-            systemFieldsData: systemFields[recordID.recordName]
-        )
+            from: local, scope: scope, zoneID: recordID.zoneID, systemFieldsData: systemFields[recordID.recordName])
     }
 
     // MARK: - Metadata
