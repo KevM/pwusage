@@ -1,0 +1,21 @@
+# App Store screenshots: `bundle exec fastlane ios screenshots`.
+# The app launches on demo data (ScreenshotLaunch); see PWUsageScreenshots.
+
+project("./PWUsage.xcodeproj")
+scheme("PWUsageScreenshots")
+
+# 6.9" iPhone and 13" iPad, the sizes App Store Connect requires. The iPad
+# test turns the device to landscape itself.
+devices([
+  "iPhone 18 Pro Max",
+  "iPad Pro 13-inch (M5)",
+])
+languages(["en-US"])
+
+output_directory("./fastlane/screenshots")
+clear_previous_screenshots(true)
+override_status_bar(true)
+dark_mode(false)
+skip_open_summary(true)
+concurrent_simulators(false)
+stop_after_first_error(true)

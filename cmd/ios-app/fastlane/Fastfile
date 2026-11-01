@@ -93,6 +93,30 @@ platform :ios do
     File.join(PWUSAGE_ROOT, "build", "PWUsage.ipa")
   end
 
+  desc "Capture App Store screenshots from demo data (local only)"
+  lane :screenshots do
+    UI.user_error!("Capture screenshots locally, not on CI") if is_ci
+    sh(File.join(PWUSAGE_ROOT, "generate.sh"))
+    capture_screenshots
+  end
+
+  desc "Replace the App Store listing's screenshots with fastlane/screenshots (local only)"
+  lane :upload_screenshots do
+    UI.user_error!("Upload screenshots locally, not on CI") if is_ci
+    upload_to_app_store(
+      api_key: connect_key,
+      app_identifier: PWUSAGE_BUNDLE_ID,
+      screenshots_path: File.join(PWUSAGE_ROOT, "fastlane", "screenshots"),
+      overwrite_screenshots: true,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_app_version_update: true,
+      submit_for_review: false,
+      run_precheck_before_submit: false,
+      force: true,
+    )
+  end
+
   desc "Archive a production build and upload it to TestFlight"
   lane :beta do
     ipa = archive

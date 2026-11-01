@@ -57,6 +57,20 @@ The lane queries TestFlight for the latest build of the marketing version and us
 
 Uploads use the **Release production API**, `https://pwusage.fm.rodeo`, and skip beta submission and processing waits. Assign processed builds to internal testers in App Store Connect. External testing requires Apple's beta review and completed test information. Uploading does not publish to the App Store or automatically distribute to external groups. See the [Fastlane TestFlight guide](https://docs.fastlane.tools/getting-started/ios/beta-deployment/).
 
+### App Store screenshots
+
+```bash
+bundle exec fastlane ios screenshots
+```
+
+Captures the listing screenshots into `fastlane/screenshots/en-US/` (git-ignored): five portrait shots on a 6.9" iPhone and four landscape shots on a 13" iPad. The `PWUsageScreenshots` UI test launches the app with `-PWUsageScreenshotMode`, a Debug-only switch that signs in to demo data, so no account, network or real home appears. It runs locally only and is not part of the release workflow. Look over the images before uploading them.
+
+```bash
+bundle exec fastlane ios upload_screenshots
+```
+
+Replaces the screenshots on the App Store version being prepared with those files. It sends no binary and no metadata.
+
 ### Release checks
 
 - Verify a signed archive/export and App Store upload with valid release credentials. An unsigned local archive proves compilation and bundle configuration, not distribution signing.
