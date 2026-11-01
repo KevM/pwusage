@@ -45,6 +45,13 @@ final class PWUsageAppModel: ObservableObject {
     var isBatteryHoldNavigationLoading: Bool { pendingBatteryHoldSiteID != nil && siteRequestCount > 0 }
     let forecastStore: any SolarForecastManaging
     let forecastService: SolarForecastService?
+    let solarHistory: SolarHistoryStore
+    let solarRecords: SolarLayoutRecordStore
+    let solarRunner: SolarLayoutDetectionRunner?
+    var solarCloudSession: SolarCloudSession?
+    var solarCloudStartup: Task<Void, Never>?
+    let solarCloudSync: SolarLayoutCloudSync
+    let solarSessionCleanup: SolarForecastStoreSessionCleanup
     let coordinatorFactory: CoordinatorFactory
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
@@ -64,7 +71,11 @@ final class PWUsageAppModel: ObservableObject {
         cache: DashboardCache? = nil,
         authService: MobileAuthService? = nil,
         controlSiteStore: BatteryHoldControlSiteStore? = nil,
-        liveActivities: BatteryHoldActivityCoordinator? = nil
+        liveActivities: BatteryHoldActivityCoordinator? = nil,
+        solarHistory: SolarHistoryStore = .shared,
+        solarRecords: SolarLayoutRecordStore = .shared,
+        solarRunner: SolarLayoutDetectionRunner? = nil,
+        solarCloudSync: SolarLayoutCloudSync = .shared
     ) {
         self.controlSiteStore = controlSiteStore
         self.liveActivities = liveActivities
@@ -73,35 +84,42 @@ final class PWUsageAppModel: ObservableObject {
         self.cache = cache
         self.forecastStore = forecastStore
         self.forecastService = forecastService
+        self.solarHistory = solarHistory
+        self.solarRecords = solarRecords
+        self.solarCloudSync = solarCloudSync
+        let runner = solarRunner ?? (forecastService != nil ? SolarLayoutDetectionRunner(
+            history: solarHistory, records: solarRecords, api: api
+        ) : nil)
+        self.solarRunner = runner
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
         } else {
-            self.coordinatorFactory = { siteID, accountScopeID in
+            self.coordinatorFactory = { [solarHistory, solarRecords, runner] siteID, accountScopeID in
                 DashboardCoordinator(
                     siteID: siteID,
                     api: api,
                     planningAPI: api,
                     forecastStore: forecastStore,
                     accountScopeID: accountScopeID,
-                    layoutAPI: api,
-                    forecastService: forecastService
+                    forecastService: forecastService,
+                    history: solarHistory,
+                    records: solarRecords,
+                    runner: runner
                 )
             }
         }
-        self.authService = authService ?? MobileAuthService(
-            configuration: configuration,
-            api: api,
-            forecastCleanup: SolarForecastStoreSessionCleanup(store: forecastStore, service: forecastService)
+        let sessionCleanup = SolarForecastStoreSessionCleanup(
+            store: forecastStore, service: forecastService,
+            historyStore: solarHistory, layoutRecordStore: solarRecords,
+            cloudSync: solarCloudSync
         )
-        if let cachedSites = cache?.snapshot.sites, !cachedSites.isEmpty {
-            sites = cachedSites
-            let savedID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey)
-            let chosen = cachedSites.first(where: { $0.id == savedID }) ?? cachedSites[0]
-            selectedSiteID = chosen.id
-            installCoordinator(siteID: chosen.id, accountScopeID: ensureAccountScopeID())
-            screenState = .signedIn
-        }
+        solarSessionCleanup = sessionCleanup
+        self.authService = authService ?? MobileAuthService(
+            configuration: configuration, api: api, forecastCleanup: sessionCleanup
+        )
+        wireCloudSyncListener(solarCloudSync, runner: runner)
+        restoreCachedSession()
     }
 
     /// Retries until a terminal state is reached. The `.task` that drives this is
@@ -147,7 +165,12 @@ final class PWUsageAppModel: ObservableObject {
         sceneIsActive = isActive
         if sessionVerified {
             coordinator?.scenePhaseChanged(isActive: isActive)
-            if isActive { liveActivities?.reconcileInBackground() }
+            guard isActive else { return }
+            liveActivities?.reconcileInBackground()
+            // Whatever left synchronization offline (iCloud signed out or switched, an
+            // account lookup failure), foregrounding an authorized session retries it.
+            // A running engine makes this a no-op.
+            startSolarCloudSync()
         } else if isActive, hasBootstrapAttempted, coordinator != nil, siteRequestCount == 0 {
             Task { await reloadSitesAfterSignIn() }
         }
@@ -230,5 +253,51 @@ final class PWUsageAppModel: ObservableObject {
                 batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
             }
         }
+    }
+
+    private func restoreCachedSession() {
+        guard let cachedSites = cache?.snapshot.sites, !cachedSites.isEmpty else { return }
+        sites = cachedSites
+        let savedID = userDefaults.string(forKey: Self.selectedSiteDefaultsKey)
+        let chosen = cachedSites.first(where: { $0.id == savedID }) ?? cachedSites[0]
+        selectedSiteID = chosen.id
+        installCoordinator(siteID: chosen.id, accountScopeID: ensureAccountScopeID())
+        screenState = .signedIn
+        startSolarCloudSync()
+    }
+
+    /// Optional and never awaited by session publication.
+    func startSolarCloudSync() {
+        guard solarCloudStartup == nil, let accountScopeID else { return }
+        let session = adoptSolarCloudSession(accountScopeID: accountScopeID)
+        let sync = solarCloudSync
+        solarCloudStartup = Task { [weak self] in
+            await sync.start(session: session)
+            guard !Task.isCancelled else { return }
+            self?.solarCloudStartup = nil
+        }
+    }
+
+    private func wireCloudSyncListener(
+        _ cloudSync: SolarLayoutCloudSync, runner: SolarLayoutDetectionRunner?
+    ) {
+        guard runner != nil else { return }
+        Task { [weak self] in
+            await cloudSync.setOnRemoteRecordApplied { [weak self] scope, session in
+                Task { @MainActor [weak self] in
+                    await self?.solarLayoutRecordChanged(scope, from: session)
+                }
+            }
+        }
+    }
+
+    /// A callback queued before sign-out must not start account work afterwards.
+    func solarLayoutRecordChanged(_ scope: SolarForecastSiteScope, from session: SolarCloudSession) async {
+        guard session.isValid, session === solarCloudSession else { return }
+        let activeScope = coordinator?.solarScope
+            ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
+        guard scope == activeScope else { return }
+        solarRunner?.onRecordChanged?(scope)
+        _ = await solarRunner?.runIfDue(scope: scope)
     }
 }

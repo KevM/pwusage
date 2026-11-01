@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import SwiftUI
 
 extension PWUsageAppModel {
@@ -31,11 +32,14 @@ extension PWUsageAppModel {
         sites = availableSites
         authService.restoreAuthenticatedSession()
         let accountScopeID = ensureAccountScopeID()
+        await activateSolarCloudSession(accountScopeID: accountScopeID, generation: generation)
+        guard generation == siteInstallGeneration else { return }
         await forecastStore.activateAccountScope(accountScopeID)
         await forecastService?.activateAccountScope(accountScopeID)
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
+        startSolarCloudSync()
         controlSiteStore?.save(availableSites.map { BatteryHoldControlSite(id: $0.id, name: $0.name) })
         liveActivities?.sitesAuthorized(availableSites)
         guard !availableSites.isEmpty else {
@@ -74,6 +78,32 @@ extension PWUsageAppModel {
         resolveBatteryHoldNavigation()
     }
 
+    /// Waits only for local cleanup of a previous session, never for iCloud. A failed
+    /// cleanup is retried once here. If it fails again, the dashboard still publishes but
+    /// solar layout synchronization stays closed (its writes are rejected) until a later
+    /// authorization retries the cleanup.
+    func activateSolarCloudSession(accountScopeID: String, generation: Int) async {
+        let activation = await solarCloudSync.activate(adoptSolarCloudSession(accountScopeID: accountScopeID))
+        guard activation == .cleanupRequired else { return }
+        if (try? await solarSessionCleanup.signOut()) != nil,
+           await solarCloudSync.activate(adoptSolarCloudSession(accountScopeID: accountScopeID)) == .active {
+            return
+        }
+        if generation == siteInstallGeneration {
+            signInMessage = "Could not clear local solar forecast data. Try again."
+        }
+    }
+
+    /// Cached-to-verified restoration and repeated authorization keep one session.
+    func adoptSolarCloudSession(accountScopeID: String) -> SolarCloudSession {
+        if let session = solarCloudSession, session.isValid, session.accountScopeID == accountScopeID {
+            return session
+        }
+        let session = solarCloudSync.issueSession(accountScopeID: accountScopeID)
+        solarCloudSession = session
+        return session
+    }
+
     func installCoordinator(siteID: String, accountScopeID: String) {
         let nextCoordinator = coordinatorFactory(siteID, accountScopeID)
         nextCoordinator.restoreLaunchCache(cache, sessionVerified: sessionVerified)
@@ -88,7 +118,7 @@ extension PWUsageAppModel {
     }
 
     static let selectedSiteDefaultsKey = "pwusage.selectedSiteID"
-    static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
+    nonisolated static let accountScopeDefaultsKey = "pwusage.localAccountScopeID"
     static let selectedTabDefaultsKey = "pwusage.selectedTab"
 
     /// The next session starts on Home, not on whatever tab this one ended on.

@@ -19,6 +19,7 @@ struct PWUsageApp: App {
     private let launchTask: Task<Launch, Never>
 
     init() {
+        BackgroundSolarLayoutDetection.register()
         launchTask = Task { @MainActor in await Self.prepareLaunch() }
     }
 
@@ -43,6 +44,8 @@ struct PWUsageApp: App {
             )
             let configuration = try AppConfiguration.fromBundle()
             let api = PWUsageAPI(configuration: configuration)
+            let detectionRunner = SolarLayoutDetectionRunner(history: .shared, records: .shared, api: api)
+            BackgroundSolarLayoutDetection.configure(runner: detectionRunner)
             return .ready(
                 PWUsageAppModel(
                     configuration: configuration,
@@ -55,7 +58,8 @@ struct PWUsageApp: App {
                         api: api,
                         apnsEnvironment: .fromBundle(),
                         store: .init(defaults: .standard)
-                    )
+                    ),
+                    solarRunner: detectionRunner
                 )
             )
         } catch let error as AppConfiguration.ValidationError {
@@ -115,7 +119,10 @@ struct PWUsageApp: App {
             if case .ready(let model) = prepared { await model.refreshBackgroundForecast() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { BackgroundSolarForecastRefresh.schedule() }
+            if phase == .background {
+                BackgroundSolarForecastRefresh.schedule()
+                Task { await BackgroundSolarLayoutDetection.scheduleSelectedRecordIfDue() }
+            }
         }
         .commands {
             if case .ready(let model) = launch {

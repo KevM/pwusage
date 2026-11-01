@@ -124,10 +124,10 @@ struct SolarLayoutFixture: Decodable {
         guard let url = Bundle(for: FixtureBundleToken.self).url(forResource: name, withExtension: "json") else {
             throw LoadError.missingResource(name)
         }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             let container = try decoder.singleValueContainer()
             let text = try container.decode(String.self)
             guard let date = formatter.date(from: text) else {

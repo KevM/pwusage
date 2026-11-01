@@ -15,13 +15,12 @@ enum SolarLocationShareResult: Equatable {
 
 extension DashboardCoordinator {
     /// Called only after the user confirmed they are at `confirmedSiteID`. Takes one fix,
-    /// posts it only if that account and site are still selected, then reads the layout again
-    /// so the server's pending status shows. Nothing here retries on its own.
+    /// saves it locally to records, and triggers on-device detection if due.
     func shareHomeLocation(
         confirmedSiteID: String,
         provider: any HomeLocationProviding
     ) async -> SolarLocationShareResult {
-        guard canRequestAccountData, let layoutAPI, let accountScopeID,
+        guard canRequestAccountData, let accountScopeID,
               confirmedSiteID == selectedSiteID else { return .cancelled }
         let generation = siteGeneration
         let location: SolarHomeLocation
@@ -38,14 +37,16 @@ extension DashboardCoordinator {
         }
         guard generation == siteGeneration, confirmedSiteID == selectedSiteID, canRequestAccountData,
               accountScopeID == self.accountScopeID else { return .cancelled }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: confirmedSiteID)
         do {
-            try await layoutAPI.postSolarLocation(
-                siteID: confirmedSiteID, latitude: location.latitude, longitude: location.longitude
-            )
+            try await records.setLocation(location, scope: scope, at: now())
         } catch {
             return .failed
         }
         guard generation == siteGeneration, confirmedSiteID == selectedSiteID else { return .cancelled }
+        Task { [weak self] in
+            _ = await self?.runner?.runIfDue(scope: scope)
+        }
         invalidateSolarLayout()
         await loadTimingDetailAppeared(surface: nil)
         return .shared
@@ -55,7 +56,6 @@ extension DashboardCoordinator {
     func solarSettingsAppeared() async {
         guard !Task.isCancelled else { return }
         solarSurfaceAppeared(.settings)
-        guard layoutAPI != nil else { return }
         invalidateSolarLayout()
         await loadTimingDetailAppeared(surface: nil)
     }

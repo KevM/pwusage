@@ -42,7 +42,7 @@ extension DashboardCoordinator {
         let siteID = selectedSiteID
         let status = await solarLayoutLookup(siteID: siteID, operation: operation)
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
-        if layoutAPI != nil, status != .disabled {
+        if runner != nil, status != .disabled {
             guard let planningAPI else {
                 clearAutomaticPublication()
                 return

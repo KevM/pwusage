@@ -8,7 +8,7 @@ extension DashboardCoordinator {
     }
 
     /// Unknown beta status stays on history until the server confirms a legacy site.
-    var usesAutomaticSolarForecast: Bool { layoutAPI != nil && solarLayoutStatus != .disabled }
+    var usesAutomaticSolarForecast: Bool { runner != nil && historyEnabled && solarLayoutStatus != .disabled }
 
     /// What forecast consumers treat as the connection: a published automatic forecast is
     /// ready even though Solcast is not connected.
@@ -171,27 +171,16 @@ extension DashboardCoordinator {
 
     // MARK: Actuals
 
-    /// Measured hourly solar for correction, cached for an hour. `nil` when disabled or failed,
+    /// Measured hourly solar for correction, derived from local history. `nil` when disabled or failed,
     /// which means the forecast is published uncorrected.
     func solarActuals(siteID: String) async -> [MobileSolarActualsHour]? {
-        guard let layoutAPI, let accountScopeID else { return nil }
+        guard let accountScopeID, historyEnabled else { return nil }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
-        let requestTime = now()
-        if let cached = solarActualsCache[scope],
-           (0 ..< SolarActualsCacheEntry.lifetime).contains(requestTime.timeIntervalSince(cached.fetchedAt)) {
-            return cached.hours
+        let isStale = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) != true
+        if isStale {
+            _ = await runner?.syncHistory(scope: scope)
         }
-        let hours: [MobileSolarActualsHour]?
-        do {
-            guard case .enabled(_, let fetched) = try await layoutAPI.fetchSolarActuals(siteID: siteID) else {
-                solarActualsCache[scope] = SolarActualsCacheEntry(hours: nil, fetchedAt: requestTime)
-                return nil
-            }
-            hours = fetched.filter { $0.hourStart < requestTime }
-        } catch {
-            return nil
-        }
-        solarActualsCache[scope] = SolarActualsCacheEntry(hours: hours, fetchedAt: requestTime)
-        return hours
+        let hours = try? await history.hourlyActuals(scope: scope, now: now())
+        return hours?.isEmpty == true ? nil : hours
     }
 }

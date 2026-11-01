@@ -8,10 +8,6 @@ struct MobileSolarLayoutTests {
         try MobileContractDecoder.make().decode(MobileSolarLayoutResponse.self, from: Data(json.utf8))
     }
 
-    private func actuals(_ json: String) throws -> MobileSolarActualsResponse {
-        try MobileContractDecoder.make().decode(MobileSolarActualsResponse.self, from: Data(json.utf8))
-    }
-
     private static let twoPlanes = """
     "layout":{"planes":[{"azimuth":90,"tilt":18,"dcKwp":5.6},{"azimuth":270,"tilt":18,"dcKwp":4.0}],
     "acClipKw":null,"confidence":"high","detectedAt":"2026-10-20T10:00:00Z"}
@@ -113,33 +109,5 @@ struct MobileSolarLayoutTests {
     @Test("Unsupported versions and invalid values are rejected", arguments: invalidLayouts)
     func rejected(json: String) {
         #expect(throws: (any Error).self) { try layout(json) }
-    }
-
-    @Test("Actuals decode when disabled and when enabled with incomplete hours")
-    func actualsDecode() throws {
-        #expect(try actuals(#"{"version":1,"enabled":false}"#) == .disabled)
-        let response = try actuals("""
-        {"version":1,"enabled":true,"asOf":"2026-10-28T15:05:00Z","hours":[
-        {"hourStart":"2026-10-28T14:00:00Z","wh":1234.5,"complete":true},
-        {"hourStart":"2026-10-28T15:00:00Z","wh":80,"complete":false}]}
-        """)
-        let asOf = try #require(ISO8601DateFormatter().date(from: "2026-10-28T15:05:00Z"))
-        let first = try #require(ISO8601DateFormatter().date(from: "2026-10-28T14:00:00Z"))
-        let hours = [
-            MobileSolarActualsHour(hourStart: first, energyWh: 1234.5, complete: true),
-            MobileSolarActualsHour(hourStart: first.addingTimeInterval(3600), energyWh: 80, complete: false)]
-        #expect(response == .enabled(asOf: asOf, hours: hours))
-    }
-
-    private static let invalidActuals: [String] = [
-        #"{"version":2,"enabled":false}"#,
-        #"{"version":2,"enabled":true,"asOf":"2026-10-28T15:05:00Z","hours":[]}"#,
-        #"{"version":1,"enabled":true,"asOf":"2026-10-28T15:05:00Z","hours":["#
-            + #"{"hourStart":"2026-10-28T14:00:00Z","wh":-1,"complete":true}]}"#,
-        #"{"version":1,"enabled":true,"hours":[]}"#]
-
-    @Test("Actuals reject unsupported versions and invalid energy", arguments: invalidActuals)
-    func actualsRejected(json: String) {
-        #expect(throws: (any Error).self) { try actuals(json) }
     }
 }
