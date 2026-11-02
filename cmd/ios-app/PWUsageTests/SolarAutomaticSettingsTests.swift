@@ -21,6 +21,13 @@ struct SolarAutomaticSettingsTests {
             for: .enabled(location: nil, layout: nil, reason: .pending)))
     }
 
+    /// The demo's Solcast connection is sample data: shown, never edited.
+    @Test("Solcast settings are read-only in the demo")
+    func demoSolcastIsReadOnly() {
+        #expect(SolarForecastSettingsStatus.allowsSolcastEditing(isDemo: false))
+        #expect(!SolarForecastSettingsStatus.allowsSolcastEditing(isDemo: true))
+    }
+
     @Test("Two faces, the source and the confidence are summarised")
     func twoFaces() {
         let response = MobileSolarLayoutResponse.enabled(

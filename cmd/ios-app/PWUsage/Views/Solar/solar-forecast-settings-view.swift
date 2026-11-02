@@ -40,6 +40,7 @@ struct SolarForecastSettingsSheet: View {
 /// The solar forecast settings, without navigation of their own.
 struct SolarForecastSettingsView: View {
     @ObservedObject var coordinator: DashboardCoordinator
+    @Environment(\.isDemo) private var isDemo
 
     @State private var apiKey = ""
     @State private var discoveredSites: [SolcastSite] = []
@@ -57,6 +58,7 @@ struct SolarForecastSettingsView: View {
             SolarForecastAutomaticSection(coordinator: coordinator)
             if SolarForecastSettingsStatus.showsSolcastSetup(for: coordinator.solarLayoutStatus) {
                 solcastSections
+                    .disabled(!SolarForecastSettingsStatus.allowsSolcastEditing(isDemo: isDemo))
             }
             if coordinator.solarLayoutStatus == nil {
                 Section { Text("Checking solar forecast availability…") }

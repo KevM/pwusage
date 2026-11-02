@@ -50,7 +50,8 @@ struct PWUsageApp: App {
                 reloadControls: {
                     // Rebuild templates only after an update; retain saved site configuration.
                     ControlCenter.shared.reloadControls(ofKind: BatteryHoldControlIdentity.kind)
-                }
+                },
+                clearDemo: { DemoSession.tearDown() }
             )
             let configuration = try AppConfiguration.fromBundle()
             let api = PWUsageAPI(configuration: configuration)
@@ -116,6 +117,7 @@ struct PWUsageApp: App {
                     .environmentObject(active)
                     .environment(active.liveActivities)
                     .environment(\.demoMode, DemoModeActions(controller: demo) { await model.signIn() })
+                    .environment(\.isDemo, active.isDemo)
             case .misconfigured(let message):
                 EmptyStateScreen(
                     symbol: "exclamationmark.triangle",

@@ -6,6 +6,11 @@ extension SolarForecastSettingsStatus {
         status == .disabled
     }
 
+    /// The demo's connection is sample data: it shows, but nothing in it saves.
+    static func allowsSolcastEditing(isDemo: Bool) -> Bool {
+        !isDemo
+    }
+
     /// Ordered lines for the settings sheet's automatic forecast section: source, panel faces,
     /// then confidence or the reason there is no layout yet. Empty outside the beta. The
     /// source's name comes from its registered descriptor.
