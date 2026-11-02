@@ -30,6 +30,10 @@ v1 ships the read-only demo (see `cmd/ios-app/README.md#demo-mode`); these were 
 
 - [ ] **Ask for a rating at a good moment:** the app never calls StoreKit's `requestReview`, so a new listing gets few ratings. Call it once after a positive moment (a Smart Shift saving, or a few days of use with a fresh bill estimate), never after an error, a sign-in, a demo session, or the first launch. iOS caps prompts at three a year and may show nothing, so never tie UI to it; remember the last-asked version in defaults so it's asked at most once per version.
 
+## App Store campaign links (2026-11-02, optional)
+
+- [ ] **Tag App Store links by source:** if the app is shared from the website or a forum, generate links with a campaign tag in App Store Connect (App Analytics → Acquisition → Campaigns, "Generate a Campaign Link") so Analytics shows which source brought in each download. Use one campaign name per place, e.g. the `/about` page's App Store badge vs. a forum post.
+
 ## Future iOS widgets
 
 **Note (2026-09-24, PR #110 / `codex/ios-foundation`):** Architecture only; no widget work is in progress. Keep the `MobileLoginHandoff` table as a one-time PKCE sign-in exchange. Widgets should use the resulting `site_auth` session, not redeem handoff codes or hold Tesla credentials. See [the authorization design](docs/plans/2026-09-24-ios-widget-authorization-design.md) for rationale and edge cases.
