@@ -1,16 +1,21 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyAccessMock, rolesMock, siteMock, readDaysMock } = vi.hoisted(() => ({
+const { verifyAccessMock, rolesMock, siteMock, readDaysMock, boundaryMock, clientMock, ensureMock } = vi.hoisted(() => ({
     verifyAccessMock: vi.fn(), rolesMock: vi.fn(), siteMock: vi.fn(), readDaysMock: vi.fn(),
+    boundaryMock: vi.fn(), clientMock: vi.fn(), ensureMock: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock, getCurrentRoles: rolesMock }));
-vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; } }));
+vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getHistoryBackfillFrom = boundaryMock; } }));
 vi.mock('@/lib/db', () => ({ pool: {} }));
 vi.mock('@/lib/prototypes/compact-history-store', () => ({ CompactHistoryStore: class { readSolarDays = readDaysMock; } }));
+vi.mock('@/lib/tesla-client-factory', () => ({ createTeslaClientForSite: clientMock }));
+vi.mock('@/lib/importer', () => ({ Importer: class { ensureDataForRange = ensureMock; } }));
 
-import { GET } from './route';
+import { TeslaRateLimitError } from '@/lib/tesla-client';
+import { TeslaConnectionRequiredError, TeslaRefreshBackoffError } from '@/lib/tesla-refresh-outcome';
+import { GET, POST } from './route';
 
 const URL_BASE = 'https://example.test/api/mobile/solar-history';
 const TZ = 'America/Chicago';
@@ -195,5 +200,136 @@ describe('mobile solar history route', () => {
         const body = await (await get('siteId=site-a&from=2026-10-01')).json();
         expect(body.days).toHaveLength(92);
         expect(body.nextFrom).toBeNull();
+    });
+});
+
+describe('mobile solar history fill', () => {
+    const fill = (body: unknown) => POST(new Request(URL_BASE, {
+        method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body), headers: { 'Content-Type': 'application/json' },
+    }));
+    const valid = { siteId: 'site-a', from: '2026-10-24', days: 3 };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.setSystemTime(new Date('2026-10-27T18:30:00.000Z'));
+        verifyAccessMock.mockResolvedValue(true);
+        rolesMock.mockResolvedValue(['solar-forecast-beta']);
+        siteMock.mockResolvedValue({ id: 'site-a', timezone: TZ, installed: new Date('2024-03-10T17:00:00Z') });
+        boundaryMock.mockResolvedValue(null);
+        clientMock.mockResolvedValue({});
+        ensureMock.mockReset();
+        ensureMock.mockResolvedValue({ complete: true, rows: [], processedWindows: 3, totalWindows: 3 });
+        readDaysMock.mockReset();
+        readDaysMock.mockResolvedValue([]);
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+
+    it.each([
+        ['malformed JSON', '{'],
+        ['a missing siteId', { from: '2026-10-24', days: 1 }],
+        ['an impossible date', { siteId: 'site-a', from: '2026-02-30', days: 1 }],
+        ['zero days', { ...valid, days: 0 }],
+        ['more than three days', { ...valid, from: '2026-10-23', days: 4 }],
+        ['fractional days', { ...valid, days: 1.5 }],
+        ['a range reaching today', { ...valid, from: '2026-10-25' }],
+        ['a start more than a year back', { ...valid, from: '2025-10-26', days: 1 }],
+    ])('rejects %s without importing', async (_label, body) => {
+        const res = await fill(body);
+        expect(res.status).toBe(400);
+        expect(res.headers.get('Cache-Control')).toBe(NO_STORE);
+        expect(ensureMock).not.toHaveBeenCalled();
+    });
+
+    it('accepts a start exactly a year back', async () => {
+        expect((await fill({ ...valid, from: '2025-10-27', days: 1 })).status).toBe(200);
+    });
+
+    it('requires access to the site', async () => {
+        verifyAccessMock.mockResolvedValueOnce(false);
+        expect((await fill(valid)).status).toBe(401);
+        expect(ensureMock).not.toHaveBeenCalled();
+    });
+
+    it('answers enabled:false without the beta role, and imports nothing', async () => {
+        rolesMock.mockResolvedValueOnce([]);
+        expect(await (await fill(valid)).json()).toEqual({ version: 1, enabled: false });
+        expect(ensureMock).not.toHaveBeenCalled();
+    });
+
+    it('fills the site-local slice with a short budget, then returns its stored days', async () => {
+        const start = midnight('2026-10-24');
+        readDaysMock.mockResolvedValueOnce([dayRow(start, [sample(start, 5)])]);
+        const res = await fill(valid);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe(NO_STORE);
+        expect(clientMock).toHaveBeenCalledWith('site-a', { rateLimit: 'surface' });
+        expect(ensureMock).toHaveBeenCalledWith('site-a', start, midnight('2026-10-27'), undefined, { maxWindows: 3, maxTimeMs: 15000 });
+        expect(readDaysMock).toHaveBeenCalledWith('site-a', start, midnight('2026-10-27'), null, 3);
+        const body = await res.json();
+        expect(body).toMatchObject({ version: 1, enabled: true, timeZone: TZ, status: 'complete', historyStart: '2024-03-10' });
+        expect(body.days.map((d: { day: string }) => d.day)).toEqual(['2026-10-24']);
+        expect(body.days[0].solarWh[0]).toBe(5);
+    });
+
+    it('reports a partial run and a busy lock as their own statuses', async () => {
+        ensureMock.mockResolvedValueOnce({ complete: false, rows: [], processedWindows: 1, totalWindows: 3 });
+        expect(await (await fill(valid)).json()).toMatchObject({ status: 'partial' });
+        ensureMock.mockResolvedValueOnce({ complete: false, rows: [], processedWindows: 0, totalWindows: 0 });
+        expect(await (await fill(valid)).json()).toMatchObject({ status: 'busy' });
+    });
+
+    it('answers a slice before the history start as complete without calling Tesla', async () => {
+        boundaryMock.mockResolvedValueOnce(midnight('2026-10-27'));
+        const body = await (await fill(valid)).json();
+        expect(body).toMatchObject({ status: 'complete', historyStart: '2026-10-27', days: [] });
+        expect(clientMock).not.toHaveBeenCalled();
+        expect(ensureMock).not.toHaveBeenCalled();
+    });
+
+    it('clips the import at the history start but reads the whole slice', async () => {
+        boundaryMock.mockResolvedValueOnce(midnight('2026-10-25'));
+        await fill(valid);
+        expect(ensureMock.mock.calls[0][1]).toEqual(midnight('2026-10-25'));
+        expect(readDaysMock.mock.calls[0][1]).toEqual(midnight('2026-10-24'));
+    });
+
+    it('asks for a Tesla reconnect when the account has no usable connection', async () => {
+        clientMock.mockResolvedValueOnce(null);
+        const res = await fill(valid);
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({ code: 'TESLA_CONNECTION_REQUIRED' });
+        ensureMock.mockRejectedValueOnce(new TeslaConnectionRequiredError());
+        expect((await fill(valid)).status).toBe(409);
+    });
+
+    it('returns 529 with Tesla\'s Retry-After when Tesla throttles, even after partial writes', async () => {
+        ensureMock.mockRejectedValueOnce(new TeslaRateLimitError(new Date('2026-10-27T19:30:00.000Z'), 'header'));
+        const res = await fill(valid);
+        expect(res.status).toBe(529);
+        expect(res.headers.get('Retry-After')).toBe('3600');
+        expect(res.headers.get('Cache-Control')).toBe(NO_STORE);
+        expect(await res.json()).toEqual({ error: 'Tesla is limiting requests', code: 'TESLA_RATE_LIMITED',
+            retryAt: '2026-10-27T19:30:00.000Z', retryAfterSource: 'header' });
+        expect(readDaysMock).not.toHaveBeenCalled();
+    });
+
+    it('rounds a sub-second Retry-After up and keeps a fallback labelled', async () => {
+        ensureMock.mockRejectedValueOnce(new TeslaRateLimitError(new Date(Date.now() + 1500), 'fallback'));
+        const res = await fill(valid);
+        expect(res.headers.get('Retry-After')).toBe('2');
+        expect(await res.json()).toMatchObject({ retryAfterSource: 'fallback' });
+    });
+
+    it('returns 503 with Retry-After while a token refresh backs off', async () => {
+        ensureMock.mockRejectedValueOnce(new TeslaRefreshBackoffError(Date.now() + 120_000));
+        const res = await fill(valid);
+        expect(res.status).toBe(503);
+        expect(res.headers.get('Retry-After')).toBe('120');
+        expect(await res.json()).toMatchObject({ code: 'TESLA_REFRESH_BACKOFF' });
+    });
+
+    it('returns 500 on any other failure', async () => {
+        ensureMock.mockRejectedValueOnce(new Error('Tesla API Error: 500'));
+        expect((await fill(valid)).status).toBe(500);
     });
 });

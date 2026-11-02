@@ -1,5 +1,5 @@
 import { assertTeslaConnection } from './tesla-refresh-outcome';
-import { TeslaClient } from './tesla-client';
+import { TeslaClient, type TeslaClientConfig } from './tesla-client';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
@@ -7,6 +7,7 @@ import { TeslaTokenRepo } from './tesla-token-repo';
 export interface TeslaClientFactoryOptions {
     onTokenUpdate?: () => void;
     onBaseUrlChange?: (baseUrl: string) => void | Promise<void>;
+    rateLimit?: TeslaClientConfig['rateLimit'];
 }
 
 /** Store a regional Fleet host Tesla pointed this user at (best effort; see TeslaClient). */
@@ -49,7 +50,8 @@ export async function createTeslaClientForSite(
         onTokenError: handlers.errorHandler,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: tokens.fleet_api_base_url,
-        onBaseUrlChange: options?.onBaseUrlChange ?? (tokens.user_id ? recordFleetBaseUrl(tokens.user_id) : undefined)
+        onBaseUrlChange: options?.onBaseUrlChange ?? (tokens.user_id ? recordFleetBaseUrl(tokens.user_id) : undefined),
+        rateLimit: options?.rateLimit,
     });
 }
 
