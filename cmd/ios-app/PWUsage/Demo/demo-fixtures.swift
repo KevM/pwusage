@@ -10,9 +10,7 @@ import Foundation
 /// real clock, so Off-peak may read "starts at 2:15 AM".
 enum DemoFixtures {
     static let site = MobileSite(id: "demo-home", name: "Cedar House", utility: "Hill Country Electric")
-    // A constant identifier the system always has.
-    // swiftlint:disable:next force_unwrapping
-    static let timeZone = TimeZone(identifier: "America/Chicago")!
+    static let timeZone = TimeZone(identifier: "America/Chicago") ?? .gmt
     static let tariffName = "Residential · Time of use"
     /// The battery's live charge, which the simulated hold keeps.
     static let stateOfCharge = 64
