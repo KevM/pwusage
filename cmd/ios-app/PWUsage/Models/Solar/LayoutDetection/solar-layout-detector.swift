@@ -30,6 +30,23 @@ struct DetectedSolarLayout: Codable, Equatable, Sendable {
     let clearDays: Int
     let firstDay: String?
     let lastDay: String?
+    /// Which early exit stopped the run; nil when the fit ran to an assessment, and for results
+    /// stored before it was recorded. Phone-only: `reasons` keeps the reference's labels.
+    var shortfall: Shortfall?
+
+    /// The detector's early exits. The reference labels the last three `few-clear-days`.
+    enum Shortfall: String, Codable, Sendable {
+        /// Fewer than `minHistoryDays` producing days.
+        case fewProducingDays = "few-producing-days"
+        /// Producing days, but no production with the sun more than 10° up: usually a wrong location.
+        case noDaylightProduction = "no-daylight-production"
+        /// Under 200 clear-sky samples.
+        case fewClearSamples = "few-clear-samples"
+        /// Under 200 samples or 5 days left after the shade mask and clear-day selection.
+        case fewUsableClearDays = "few-usable-clear-days"
+        /// The plane-count fit chose no layout.
+        case noPlaneFit = "no-plane-fit"
+    }
 }
 
 /// Intermediate values of one detection run, read by the parity tests against each fixture's
@@ -90,20 +107,20 @@ enum SolarLayoutDetector {
         let rng = LayoutFit.seededRng(0)
         let series = layoutSeries(samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone)
 
-        let producingDays = Set(series.points.filter { $0.powerKw > 0 }.map(\.localDay)).sorted()
+        let producingDays = producingDays(in: series)
         var stages = SolarLayoutDetectionStages(producingDays: producingDays.count)
         let summary = RunSummary(producingDays: producingDays)
-        guard producingDays.count >= minHistoryDays else { return summary.notEnoughHistory(stages) }
+        guard producingDays.count >= minHistoryDays else { return summary.notEnoughHistory(.fewProducingDays, stages) }
 
         let peak = quantile(series.points.filter { $0.sun.elevation > 10 }.map(\.powerKw), 0.999)
-        guard peak > 0 else { return summary.notEnoughHistory(stages) }
+        guard peak > 0 else { return summary.notEnoughHistory(.noDaylightProduction, stages) }
         let clipKw = detectClip(series)?.limitKw
         stages.clipKw = clipKw
         try checkCancellation()
 
         let clearIndices = selectClearIndices(series, peak: peak, clipKw: clipKw)
         let rowsC = LayoutFit.fitRows(series, selected: mask(of: clearIndices, count: series.points.count))
-        guard rowsC.powerKw.count >= 200 else { return summary.lowEvidence(acClipKw: nil, clearDays: 0, stages) }
+        guard rowsC.powerKw.count >= 200 else { return summary.lowEvidence(.fewClearSamples, stages) }
         let colsC = LayoutFit.gridColumns(rowsC)
         try checkCancellation()
 
@@ -120,7 +137,7 @@ enum SolarLayoutDetector {
         let rows = LayoutFit.subsetRows(rowsC) { finalKeep[$0] }
         stages.selectedRows = rows.powerKw.count
         guard rows.powerKw.count >= 200, rows.days.count >= 5 else {
-            return summary.lowEvidence(acClipKw: clipKw, clearDays: clearDays, stages)
+            return summary.lowEvidence(.fewUsableClearDays, acClipKw: clipKw, clearDays: clearDays, stages)
         }
         let keptIndices = (0 ..< rowCount).filter { finalKeep[$0] }
         let cols = colsC.map { column in keptIndices.map { column[$0] } }
@@ -129,7 +146,7 @@ enum SolarLayoutDetector {
         let choice = try LayoutFit.planeCountFromRows(
             rows, columns: cols, clipKw: clipKw, rng: rng, checkCancellation: checkCancellation)
         guard let chosen = choice.fits[choice.count] else {
-            return summary.lowEvidence(acClipKw: clipKw, clearDays: clearDays, stages)
+            return summary.lowEvidence(.noPlaneFit, acClipKw: clipKw, clearDays: clearDays, stages)
         }
         let best = LayoutFit.toPlanes(chosen.params)
         stages.planeCount = choice.count
@@ -148,11 +165,13 @@ enum SolarLayoutDetector {
     private struct RunSummary {
         let producingDays: [String]
 
-        func notEnoughHistory(_ stages: SolarLayoutDetectionStages) -> SolarLayoutDetectorOutcome {
+        func notEnoughHistory(
+            _ shortfall: DetectedSolarLayout.Shortfall, _ stages: SolarLayoutDetectionStages
+        ) -> SolarLayoutDetectorOutcome {
             SolarLayoutDetectorOutcome(result: DetectedSolarLayout(
                 status: .notEnoughHistory, confidence: nil, reasons: [], planes: [], acClipKw: nil,
                 historyDays: producingDays.count, clearDays: 0,
-                firstDay: producingDays.first, lastDay: producingDays.last), stages: stages)
+                firstDay: producingDays.first, lastDay: producingDays.last, shortfall: shortfall), stages: stages)
         }
 
         func detected(
@@ -170,12 +189,13 @@ enum SolarLayoutDetector {
         }
 
         func lowEvidence(
-            acClipKw: Double?, clearDays: Int, _ stages: SolarLayoutDetectionStages
+            _ shortfall: DetectedSolarLayout.Shortfall, acClipKw: Double? = nil, clearDays: Int = 0,
+            _ stages: SolarLayoutDetectionStages
         ) -> SolarLayoutDetectorOutcome {
             SolarLayoutDetectorOutcome(result: DetectedSolarLayout(
                 status: .lowConfidence, confidence: "low", reasons: ["few-clear-days"], planes: [],
                 acClipKw: acClipKw, historyDays: producingDays.count, clearDays: clearDays,
-                firstDay: producingDays.first, lastDay: producingDays.last), stages: stages)
+                firstDay: producingDays.first, lastDay: producingDays.last, shortfall: shortfall), stages: stages)
         }
     }
 
