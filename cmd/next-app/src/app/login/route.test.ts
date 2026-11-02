@@ -36,7 +36,7 @@ describe('GET /login', () => {
         const mobileState = 'B'.repeat(32);
         await startLogin(new NextRequest(`http://localhost:5173/login?callback=/settings&mobile_challenge=${challenge}&mobile_state=${mobileState}`));
         const { authorize, state, attempt, options } = issuedAttempt();
-        expect(state).toMatch(/^v2\.[a-f0-9]{32}$/);
+        expect(state).toMatch(/^v2\.m\.[a-f0-9]{32}$/);
         expect(attempt).toMatchObject({ callback: '/settings', mobileChallenge: challenge, mobileState });
         expect(attempt.mobileAttemptId).toMatch(/^[a-f0-9-]{36}$/);
         expect(authorize.searchParams.get('nonce')).toBe(attempt.nonce);

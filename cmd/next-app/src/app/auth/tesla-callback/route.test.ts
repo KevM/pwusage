@@ -481,6 +481,46 @@ describe('overlapping login attempts', () => {
         expect(mocks.handleTeslaCallback).toHaveBeenCalledWith(expect.objectContaining({ savedState: '', savedNonce: '' }));
     });
 
+    // ASWebAuthenticationSession only closes on a pwusage:// redirect. Without the
+    // attempt cookie (expired, or a cookieless browser context) the app state is
+    // unknown, so the error goes back without one and the app reports it as a
+    // failed sign-in instead of stranding the user on a JSON page.
+    it.each([
+        ['an expired attempt', 'expired'],
+        ['a missing attempt cookie', 'missing'],
+    ])('returns a mobile sign-in with %s to the app', async (_label, loss) => {
+        const attempt = await start(`?mobile_challenge=${'A'.repeat(43)}&mobile_state=${'B'.repeat(32)}`);
+        const name = loginAttemptCookieName(attempt.state) ?? '';
+        if (loss === 'expired') {
+            const data = JSON.parse(jar.get(name) ?? '{}') as Record<string, unknown>;
+            jar.set(name, JSON.stringify({ ...data, expiresAt: Date.now() - 1 }));
+        } else {
+            jar.delete(name);
+        }
+        const response = await callback(attempt);
+        const location = new URL(response.headers.get('location') ?? 'invalid:');
+        expect(location.protocol).toBe('pwusage:');
+        expect(Object.fromEntries(location.searchParams)).toEqual({ error: 'state_mismatch' });
+        expect(response.headers.get('cache-control')).toBe('no-store');
+        expect(mocks.createMobileLoginHandoff).not.toHaveBeenCalled();
+        expect(jar.has(name)).toBe(false);
+    });
+
+    it('returns a denied mobile sign-in without its cookie to the app', async () => {
+        const attempt = await start(`?mobile_challenge=${'A'.repeat(43)}&mobile_state=${'B'.repeat(32)}`);
+        jar.delete(loginAttemptCookieName(attempt.state) ?? '');
+        const response = await GET(new NextRequest(`https://pwusage.test/auth/tesla-callback?error=access_denied&state=${attempt.state}`));
+        expect(response.headers.get('location')).toBe('pwusage://auth/callback?error=access_denied');
+    });
+
+    it('keeps a web sign-in without its cookie on the JSON error', async () => {
+        const attempt = await start('');
+        jar.delete(loginAttemptCookieName(attempt.state) ?? '');
+        const response = await callback(attempt);
+        expect(response.status).toBe(401);
+        expect(response.headers.get('location')).toBeNull();
+    });
+
     it('consumes only a denied attempt and leaves another attempt usable', async () => {
         const denied = await start('');
         const second = await start('');
