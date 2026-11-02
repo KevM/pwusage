@@ -2,7 +2,7 @@
 
 **Goal:** Load useful site history without blocking the user and extend the search when detector feedback shows that more solar evidence may help.
 
-**Architecture:** A persisted, account-and-site-scoped iOS coordinator requests bounded recent-to-oldest chunks from an authorized server proxy. The existing server importer stores shared history and coordinates with gap healing; the phone syncs solar samples and uses detector feedback to decide whether to continue. The Settings row is permanent and the tab accessory is temporary.
+**Architecture:** A persisted, account-and-site-scoped iOS coordinator owns a cursor and requests short, fixed site-local date slices from an authorized JSON proxy. It advances only after a whole slice is confirmed complete; retrying a slice is idempotent through the existing importer coverage audit. The phone syncs solar samples and uses detector feedback to decide whether to continue. The Settings row is permanent and the tab accessory is temporary.
 
 **Tech Stack:** SwiftUI, Swift concurrency, BackgroundTasks, Swift Testing, Next.js route handlers, TypeScript, Vitest, PostgreSQL.
 
@@ -15,8 +15,8 @@
 **Inspect:** `cmd/next-app/src/app/api/sync/route.ts`, `cmd/next-app/src/lib/importer/index.ts`, `cmd/next-app/src/lib/importer/import-planner.ts`, `cmd/next-app/src/lib/prototypes/compact-history-store.ts`, `cmd/next-app/src/lib/site-repo.ts`, and `Authentication.md`.
 
 1. Trace mobile session authentication, per-site lock behavior, settled/open/empty statuses, installation and `history_backfill_from` bounds, request cost and existing range order. Document whether `/api/sync` can report completed coverage after cancellation and work within iOS background deadlines.
-2. Add focused server tests in `cmd/next-app/src/app/api/sync/route.test.ts` or a new mobile route test for authorized and unauthorized sites, invalid/bounded local-day ranges, idempotent already-covered days, empty days, partial budget, busy lock, and upstream failures. Run the focused Vitest file and confirm new contract tests fail before implementation.
-3. Reuse or add an authenticated mobile-friendly bounded operation with explicit checked/available coverage and structured complete, partial, busy and failure outcomes. Never report unconfirmed work as checked. Preserve existing import and gap-heal semantics. If `/api/sync` cannot safely satisfy this contract, implement a dedicated mobile route rather than parsing progress text.
+2. Add focused tests for a new mobile JSON route: authorized and unauthorized sites, invalid site-local dates, ranges over three days or beyond one year, installation and known-empty boundaries, already-covered/settled-empty slices, partial budget, busy lock and upstream failures. Run the focused Vitest file and confirm new contract tests fail before implementation.
+3. Add a mobile JSON operation that calls `ensureDataForRange` with a short time budget and at most three windows. Report only whole-slice `complete`, `partial`, `busy` or actionable failure; do not expose importer progress strings or add per-day progress storage. Preserve existing import and gap-heal semantics. The phone derives checked days from confirmed slices and available solar days from solar-history sync.
 4. Run the focused server tests and confirm they pass. Verify retries do not refetch settled days, and document request/time caps and SOE cost.
 
 ### Task 2: Detector readiness and feedback
@@ -33,8 +33,8 @@
 **Modify:** `cmd/ios-app/PWUsage/Networking/PWUsageAPI.swift` and related API models, `cmd/ios-app/PWUsage/State/Solar/solar-history-store.swift`, and `solar-layout-detection-runner.swift` as required.
 
 1. Test a deterministic job using injected clock, proxy and detector: recent 14 days first; newest-first continuation; 90-day checkpoint; stop on usable layout, installation/known-empty boundary, or one year; bounded reassessment when more evidence may help; no solar dependency for initial recent history.
-2. Test persisted progress on relaunch, response loss and partial results, lock contention, retry/backoff and rate limits, authentication pause, cancellation and expiration, account/site isolation, multiple-device overlap and empty days. Assert no work is marked checked without confirmation.
-3. Implement the minimal state machine and persistent store, with explicit queued/running/paused/completed outcomes, checked and available coverage, retry timing and checkpoint decisions. Use site-local calendar operations rather than fixed 24-hour arithmetic. Integrate the structured proxy contract.
+2. Test one persisted oldest-confirmed-slice cursor on relaunch, response loss and partial results, lock contention, retry/backoff and rate limits, authentication pause, cancellation and expiration, account/site isolation, multiple-device overlap and empty days. Assert the cursor never advances without whole-slice confirmation and that retry requests the same slice.
+3. Implement the minimal state machine and persistent cursor, with explicit queued/running/paused/completed outcomes and retry timing. Use site-local calendar operations rather than fixed 24-hour arithmetic. Derive checked-day progress from confirmed slices and available solar days from the existing history store; do not persist a second per-day ledger.
 4. Sync new solar data at bounded checkpoints; trigger detector runs on material history changes without waiting for the normal 30-day low-confidence cadence. Deduplicate existing sync/detection tasks and preserve their scope and location generation checks. Run targeted tests and verify all cases pass.
 
 ### Task 4: Lifecycle and background opportunities
