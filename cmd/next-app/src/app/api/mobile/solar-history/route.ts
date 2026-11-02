@@ -19,9 +19,8 @@ const PRIVATE_NO_STORE = 'private, no-store, max-age=0';
 /** Days per response. The read asks for one more, which reveals whether a next page exists. */
 const PAGE_DAYS = 92;
 const MAX_DAYS_BACK = 400;
-/** A fill asks for at most this many complete site-local days, starting no more than a year back. */
+/** A fill asks for at most this many complete site-local days; how far back is the caller's policy. */
 const MAX_FILL_DAYS = 3;
-const MAX_FILL_DAYS_BACK = 365;
 const FILL_BUDGET = { maxWindows: MAX_FILL_DAYS, maxTimeMs: 15000 };
 const SLOT_MS = 300000;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -154,7 +153,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             const today = Temporal.PlainDate.from(formatSiteDate(new Date(), timeZone));
             const until = from.add({ days });
             if (Temporal.PlainDate.compare(until, today) > 0) return json({ error: 'Range must end by today' }, 400);
-            if (Temporal.PlainDate.compare(from, today.subtract({ days: MAX_FILL_DAYS_BACK })) < 0) return json({ error: 'from is more than a year back' }, 400);
 
             const boundary = await repo.getHistoryBackfillFrom(siteId);
             const installed = Temporal.PlainDate.from(formatSiteDate(site.installed, timeZone));

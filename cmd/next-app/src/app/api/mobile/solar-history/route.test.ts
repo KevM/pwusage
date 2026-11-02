@@ -232,7 +232,6 @@ describe('mobile solar history fill', () => {
         ['more than three days', { ...valid, from: '2026-10-23', days: 4 }],
         ['fractional days', { ...valid, days: 1.5 }],
         ['a range reaching today', { ...valid, from: '2026-10-25' }],
-        ['a start more than a year back', { ...valid, from: '2025-10-26', days: 1 }],
     ])('rejects %s without importing', async (_label, body) => {
         const res = await fill(body);
         expect(res.status).toBe(400);
@@ -240,8 +239,12 @@ describe('mobile solar history fill', () => {
         expect(ensureMock).not.toHaveBeenCalled();
     });
 
-    it('accepts a start exactly a year back', async () => {
-        expect((await fill({ ...valid, from: '2025-10-27', days: 1 })).status).toBe(200);
+    it('sets no limit on how far back a fill may start; the history start bounds it', async () => {
+        expect((await fill({ ...valid, from: '2019-06-01', days: 1 })).status).toBe(200);
+        expect(ensureMock).not.toHaveBeenCalled();
+        siteMock.mockResolvedValueOnce({ id: 'site-a', timezone: TZ, installed: new Date('2019-01-01T18:00:00Z') });
+        expect((await fill({ ...valid, from: '2019-06-01', days: 1 })).status).toBe(200);
+        expect(ensureMock.mock.calls[0][1]).toEqual(midnight('2019-06-01'));
     });
 
     it('requires access to the site', async () => {
