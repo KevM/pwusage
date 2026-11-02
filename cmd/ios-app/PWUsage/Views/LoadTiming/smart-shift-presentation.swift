@@ -94,8 +94,9 @@ enum SmartShiftPresentation {
         return ([comparison.recommendedStart] + comparison.periodSwitches).filter { $0 > now }.min()
     }
 
-    static let connectSolcastNote = "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar."
-    static let connectSolcastHistoryNote = "Without a solar forecast, banks follow your last four weeks. Connect Solcast to see this week's solar."
+    static let noForecastNote = "Solar forecasts aren't available for this home, so banks are shown as they stand now."
+    static let noForecastHistoryNote =
+        "Solar forecasts aren't available for this home, so banks follow your last four weeks."
     static let checkingSolarNote = "Checking today's solar…"
     static let unobservedBalanceNote = "Some rate periods have no bank yet, so they're priced at the full rate."
 

@@ -38,12 +38,6 @@ struct PWUsageApp: App {
             try await AppLaunchMaintenance.run(
                 defaults: .standard,
                 buildVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
-                hasPersistedForecastState: {
-                    try DeviceSolarForecastPersistence.hasPersistedState()
-                },
-                sweepCredentials: {
-                    try await DeviceSolcastCredentialStore.shared.deleteAllCredentials()
-                },
                 clearSessionCookie: {
                     SharedWebSession.clearSessionCookies()
                 },
@@ -89,10 +83,10 @@ struct PWUsageApp: App {
     }
 
     /// Every forecast provider is registered here and nowhere else. Open-Meteo is the
-    /// exclusive automatic provider for beta sites, regardless of saved Solcast credentials.
+    /// exclusive automatic provider.
     private static func makeForecastService() -> SolarForecastService {
         SolarForecastService(
-            providers: [SolcastForecastProvider(store: SolarForecastStore.shared), OpenMeteoProvider()],
+            providers: [OpenMeteoProvider()],
             policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
             history: .shared
         )

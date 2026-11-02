@@ -179,9 +179,8 @@ struct SolarCloudLifecycleHarness {
 
     /// The production sign-out cleanup over this harness's stores.
     @MainActor
-    func sessionCleanup(forecastStore: FakeSolcastStore = FakeSolcastStore()) -> SolarForecastStoreSessionCleanup {
-        SolarForecastStoreSessionCleanup(
-            store: forecastStore,
+    func sessionCleanup() -> SolarSessionCleanup {
+        SolarSessionCleanup(
             historyStore: SolarHistoryStore(directory: folder.appendingPathComponent("history")),
             layoutRecordStore: records, cloudSync: sync
         )

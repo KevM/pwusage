@@ -193,9 +193,12 @@ struct SolarCloudSessionLifecycleTests {
         let oldScope = scope("site-old")
         try await harness.records.setLocation(.lifecycleHome, scope: oldScope)
         try await eventually { (try? harness.persistedPendingScopes()) == [oldScope] }
-        let forecastStore = FakeSolcastStore()
-        await forecastStore.setSignOutError(LifecycleCleanupFailure())
-        let cleanup = harness.sessionCleanup(forecastStore: forecastStore)
+        final class CleanupGate: @unchecked Sendable { var shouldFail = true }
+        let gateState = CleanupGate()
+        var cleanup = harness.sessionCleanup()
+        cleanup.additionalCleanup = {
+            if gateState.shouldFail { throw LifecycleCleanupFailure() }
+        }
         let gate = LifecycleGate()
         await harness.records.setOnBindingChange { await gate.pass() }
         old.revoke()
@@ -215,7 +218,7 @@ struct SolarCloudSessionLifecycleTests {
             try await harness.records.setLocation(.lifecycleOther, scope: scope("site-new"))
         }
 
-        await forecastStore.setSignOutError(nil)
+        gateState.shouldFail = false
         try await cleanup.signOut()
         let retried = harness.sync.issueSession(accountScopeID: account)
         #expect(next.isValid == false)

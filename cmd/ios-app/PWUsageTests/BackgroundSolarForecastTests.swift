@@ -18,7 +18,7 @@ struct BackgroundSolarForecastTests {
         #expect(!harness.model.sessionVerified)
     }
 
-    @Test("Enabled beta refresh bypasses configured Solcast and locked credential metadata")
+    @Test("Automatic provider refreshes background forecast")
     func automaticProviderIgnoresSavedCredentials() async throws {
         let harness = try await BackgroundForecastHarness()
         let refreshed = await harness.model.refreshBackgroundForecast(
@@ -26,11 +26,9 @@ struct BackgroundSolarForecastTests {
         )
         #expect(refreshed)
         #expect(await harness.provider.refreshes == 1)
-        #expect(await harness.credentialProvider.configurationReads == 0)
-        #expect(await harness.credentialProvider.refreshes == 0)
     }
 
-    @Test("Missing beta layout does not fall through to saved Solcast")
+    @Test("Missing layout does not refresh")
     func missingLayoutUsesHistory() async throws {
         let harness = try await BackgroundForecastHarness()
         let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
@@ -40,11 +38,9 @@ struct BackgroundSolarForecastTests {
             using: harness.api, now: harness.api.clock.now(), lowPowerMode: false
         ))
         #expect(await harness.provider.refreshes == 0)
-        #expect(await harness.credentialProvider.configurationReads == 0)
-        #expect(await harness.credentialProvider.refreshes == 0)
     }
 
-    @Test("An automatic forecast failure does not fall through to saved Solcast")
+    @Test("An automatic forecast failure returns false")
     func failedAutomaticUsesHistory() async throws {
         let harness = try await BackgroundForecastHarness()
         await harness.provider.setFailing(true)
@@ -52,8 +48,6 @@ struct BackgroundSolarForecastTests {
             using: harness.api, now: harness.api.clock.now(), lowPowerMode: false
         ))
         #expect(await harness.provider.refreshes == 1)
-        #expect(await harness.credentialProvider.configurationReads == 0)
-        #expect(await harness.credentialProvider.refreshes == 0)
     }
 
     @Test("Low Power Mode and missing account do not issue requests")
@@ -138,7 +132,6 @@ private struct BackgroundForecastHarness {
     let api = BackgroundForecastAPI()
     let defaults: UserDefaults
     let provider: StubAutomaticProvider
-    let credentialProvider = BackgroundCredentialProvider()
     let records: SolarLayoutRecordStore
     let historyStore: SolarHistoryStore
     let model: PWUsageAppModel
@@ -171,13 +164,13 @@ private struct BackgroundForecastHarness {
         let clock = api.clock
         provider = StubAutomaticProvider(now: { clock.now() })
         let service = SolarForecastService(
-            providers: [credentialProvider, provider],
+            providers: [provider],
             policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
             history: SolarForecastHistory(file: InMemorySolarFile(), clock: clock), clock: clock
         )
         model = PWUsageAppModel(
             configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
-            api: api, userDefaults: defaults, forecastStore: FakeSolcastStore(), forecastService: service,
+            api: api, userDefaults: defaults, forecastService: service,
             solarHistory: historyStore, solarRecords: records
         )
     }
@@ -247,30 +240,4 @@ struct BackgroundForecastPolicyTests {
         #expect(await foreground.fileURL.deletingLastPathComponent().lastPathComponent == "SolarForecast")
         #expect(await background.fileURL.deletingLastPathComponent().lastPathComponent == "SolarForecastBackground")
     }
-}
-
-/// Represents saved Solcast configuration whose protected metadata need not be opened.
-/// Configuration is ready if queried, so a credential-first selection would take it.
-private actor BackgroundCredentialProvider: SolarForecastProviding {
-    nonisolated let descriptor = SolarForecastProviderDescriptor(
-        id: .solcast, displayName: "Solcast", attribution: "Forecast by Solcast.",
-        requirement: .credential, providesCautiousPower: true,
-        refreshThreshold: 3 * 3600, maximumUsableAge: 6 * 3600, modelVersion: "test"
-    )
-    private(set) var configurationReads = 0
-    private(set) var refreshes = 0
-
-    func configuration(for request: SolarForecastRequest) -> SolarForecastConfiguration {
-        configurationReads += 1
-        return SolarForecastConfiguration(readiness: .ready, fingerprint: "saved-solcast", cacheRevision: "saved")
-    }
-
-    func refresh(_ request: SolarForecastRequest) -> SolarForecastProviderResult {
-        refreshes += 1
-        return SolarForecastProviderResult(batch: nil, outcome: .unavailable)
-    }
-
-    func cachedForecast(for request: SolarForecastRequest) -> SolarForecastRawBatch? { nil }
-    func activateAccountScope(_ accountScopeID: String?) {}
-    func clearAccountData() {}
 }

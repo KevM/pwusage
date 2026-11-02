@@ -101,7 +101,7 @@ struct SmartShiftPresentationTests {
         #expect(verdict.percentLess == "36% less")
         #expect(verdict.laterLabel == "Charge later")
         #expect(verdict.nowLabel == "Charge now")
-        #expect(verdict.notes == [.connectSolcast(usesHistory: false)])
+        #expect(verdict.notes == [.noForecast(usesHistory: false)])
         // Now, each run's end, and each rate-period switch.
         #expect(verdict.axisDates == [Self.now, Self.at(14.4), Self.at(16.5), Self.at(22.4), Self.at(31), Self.at(40.5)])
     }
@@ -150,7 +150,7 @@ struct SmartShiftPresentationTests {
         let ready = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil), forecast: .ready))
         #expect(ready.notes == [.unobservedBalance])
         let none = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil), forecast: .none))
-        #expect(none.notes == [.connectSolcast(usesHistory: false), .unobservedBalance])
+        #expect(none.notes == [.noForecast(usesHistory: false), .unobservedBalance])
     }
 
     @Test func fallbackCopyUsesBankTerms() {
@@ -160,8 +160,8 @@ struct SmartShiftPresentationTests {
 
     @Test func forecastStatesBecomeNotes() throws {
         #expect(try Self.verdict(Self.make(forecast: .ready)).notes.isEmpty)
-        #expect(try Self.verdict(Self.make(forecast: .unusable("Solcast is limiting requests."))).notes
-            == [.forecastState("Solcast is limiting requests.")])
+        #expect(try Self.verdict(Self.make(forecast: .unusable("The forecast provider is limiting requests."))).notes
+            == [.forecastState("The forecast provider is limiting requests.")])
     }
 
     @Test func customJobLegend() throws {
@@ -603,12 +603,12 @@ extension SmartShiftPresentationTests {
                                            recommendedCost: dip.recommendedCost, savings: dip.savings,
                                            onPeak: (5, -19.7, 33, 60, 7.3, 60), offPeak: (-64, -64, -116.7, -90, -90, -142.7),
                                            usesHistory: true)
-        #expect(try Self.cycleVerdict(history, now: now, forecast: .none).notes == [.connectSolcast(usesHistory: true)])
-        #expect(try Self.cycleVerdict(dip, now: now, forecast: .none).notes == [.connectSolcast(usesHistory: false)])
-        #expect(SmartShiftPresentation.connectSolcastHistoryNote
-            == "Without a solar forecast, banks follow your last four weeks. Connect Solcast to see this week's solar.")
-        #expect(SmartShiftPresentation.connectSolcastNote
-            == "Without a solar forecast, banks are shown as they stand now. Connect Solcast to see today's solar.")
+        #expect(try Self.cycleVerdict(history, now: now, forecast: .none).notes == [.noForecast(usesHistory: true)])
+        #expect(try Self.cycleVerdict(dip, now: now, forecast: .none).notes == [.noForecast(usesHistory: false)])
+        #expect(SmartShiftPresentation.noForecastHistoryNote
+            == "Solar forecasts aren't available for this home, so banks follow your last four weeks.")
+        #expect(SmartShiftPresentation.noForecastNote
+            == "Solar forecasts aren't available for this home, so banks are shown as they stand now.")
     }
 
     // MARK: Projection choice and assumptions
@@ -654,7 +654,9 @@ extension SmartShiftPresentationTests {
             context: Self.historyContext(asOf: now), balanceSourceTime: now, billingCycleEnd: Self.at(48),
             currencyCode: "USD", timeZone: "UTC")
         let assumptions = try #require(evaluation.result.comparison).assumptions
-        #expect(assumptions.contains("Solar follows your Solcast forecast for the next 7 days, then your last four weeks through the bill date."))
+        let expectedAssumption = "Solar follows your solar forecast for the next 7 days, "
+            + "then your last four weeks through the bill date."
+        #expect(assumptions.contains(expectedAssumption))
         #expect(assumptions.contains("A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."))
         #expect(assumptions.contains("Typical household and battery behavior follows the historical local-time profile."))
     }

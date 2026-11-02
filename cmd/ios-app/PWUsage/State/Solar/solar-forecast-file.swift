@@ -53,3 +53,12 @@ actor ProtectedSolarForecastFile<Value: Codable & Sendable>: SolarForecastFileSt
         }
     }
 }
+
+/// A value kept only in memory, for sessions that must leave nothing on disk (the demo).
+actor MemorySolarForecastFile<Value: Codable & Sendable>: SolarForecastFileStoring {
+    private var value: Value?
+
+    func load() -> Value? { value }
+
+    func save(_ newValue: Value) { value = newValue }
+}

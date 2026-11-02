@@ -30,7 +30,8 @@ struct DemoAPITests {
         _ = try await api.fetchTariffs(siteID: DemoFixtures.site.id).validating(siteID: DemoFixtures.site.id)
         let context = try await api.fetchLoadPlanningContext(siteID: DemoFixtures.site.id)
         _ = try context.validating(siteID: DemoFixtures.site.id, now: clock.now)
-        #expect(try await api.fetchSolarHistory(siteID: DemoFixtures.site.id, from: "", changedSince: nil) == .disabled)
+        let history = try await api.fetchSolarHistory(siteID: DemoFixtures.site.id, from: "", changedSince: nil)
+        #expect(history == .enabled(timeZone: DemoFixtures.timeZone, days: [], nextFrom: nil))
     }
 
     /// Minute timelines render with the minute's start, so a source inside the

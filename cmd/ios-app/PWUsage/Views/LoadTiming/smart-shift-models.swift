@@ -1,12 +1,12 @@
 import Foundation
 
 enum ForecastAvailability: Equatable {
-    /// No Solcast key on this device.
+    /// This site doesn't use the automatic forecast, so there is none to add.
     case none
     case loading
     /// Connected, but the forecast comparison can't run; carries a one-sentence reason.
     case unusable(String)
-    /// Beta automatic setup is unavailable; opens automatic settings rather than Solcast.
+    /// Automatic setup is unavailable; the note opens solar forecast settings.
     case automaticUnavailable(String)
     case ready
 }
@@ -45,7 +45,7 @@ struct LaneDisplay: Equatable {
 struct SmartShiftVerdict: Equatable {
     enum Note: Equatable {
         /// `usesHistory`: banks followed the site's last four weeks rather than holding still.
-        case connectSolcast(usesHistory: Bool)
+        case noForecast(usesHistory: Bool)
         case forecastState(String)
         case automaticForecast(String)
         case unobservedBalance

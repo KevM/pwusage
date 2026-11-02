@@ -249,12 +249,13 @@ struct SolarLayoutCloudSyncTests {
     @MainActor
     func failedCleanupIsRetriedAtAuthorization() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
-        let forecastStore = FakeSolcastStore()
-        let model = try cloudSyncModel(harness: harness, forecastStore: forecastStore)
+        let gate = CleanupForecastService.CleanupGate()
+        let forecastService = CleanupForecastService(gate: gate)
+        let model = try cloudSyncModel(harness: harness, forecastService: forecastService)
         let site = MobileSite(id: "site-a", name: "Home", utility: "Test")
         await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
         #expect(await harness.records.isWritable)
-        await forecastStore.setSignOutError(LifecycleCleanupFailure())
+        gate.shouldFail = true
         await model.signOut()
         #expect(model.signInMessage?.contains("Could not clear local solar forecast data") == true)
 
@@ -264,7 +265,7 @@ struct SolarLayoutCloudSyncTests {
         #expect(model.signInMessage?.contains("Could not clear local solar forecast data") == true)
         #expect(await harness.records.isWritable == false)
 
-        await forecastStore.setSignOutError(nil)
+        gate.shouldFail = false
         await model.installAuthorizedSites([site], generation: model.claimSiteInstall())
 
         #expect(await harness.records.isWritable)
@@ -326,7 +327,7 @@ struct SolarLayoutCloudSyncTests {
     @MainActor
     private func cloudSyncModel(
         harness: AutomaticForecastHarness, transport: FakeSolarCloudTransport? = nil, cache: DashboardCache? = nil,
-        forecastStore: FakeSolcastStore = FakeSolcastStore()
+        forecastService: (any SolarForecastServing)? = nil
     ) throws -> PWUsageAppModel {
         let defaults = try #require(UserDefaults(suiteName: "CloudSyncTests.\(UUID().uuidString)"))
         defaults.set("account-a", forKey: PWUsageAppModel.accountScopeDefaultsKey)
@@ -335,7 +336,7 @@ struct SolarLayoutCloudSyncTests {
             configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
             api: CloudSyncTestAppAPI(historyAPI: harness.api),
             userDefaults: defaults,
-            forecastStore: forecastStore,
+            forecastService: forecastService,
             cache: cache,
             solarHistory: harness.historyStore,
             solarRecords: harness.records,
@@ -358,13 +359,28 @@ struct SolarLayoutCloudSyncTests {
         )
     }
 }
+
+private actor CleanupForecastService: SolarForecastServing {
+    final class CleanupGate: @unchecked Sendable { var shouldFail = false }
+    let gate: CleanupGate
+    init(gate: CleanupGate) { self.gate = gate }
+    nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? { nil }
+    nonisolated func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor? { nil }
+    func activateAccountScope(_ accountScopeID: String?) async {}
+    func publicationAttempt(
+        for request: SolarForecastRequest, actuals: [MobileSolarActualsHour]?
+    ) async -> SolarForecastPublicationAttempt {
+        SolarForecastPublicationAttempt(publication: nil, providerID: nil, outcome: .unavailable, diagnostic: nil)
+    }
+    func clearAccountData() async throws {
+        if gate.shouldFail { throw LifecycleCleanupFailure() }
+    }
+}
 @MainActor
 private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     let historyAPI: AutomaticForecastAPISpy
 
-    init(historyAPI: AutomaticForecastAPISpy) {
-        self.historyAPI = historyAPI
-    }
+    init(historyAPI: AutomaticForecastAPISpy) { self.historyAPI = historyAPI }
 
     func fetchSites() async throws -> [MobileSite] { [MobileSite(id: "site-a", name: "Home", utility: "Test")] }
     func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }

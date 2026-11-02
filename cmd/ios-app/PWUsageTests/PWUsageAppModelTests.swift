@@ -433,12 +433,10 @@ struct PWUsageAppModelTests {
         let api = ApplicationAPISpy(sites: [], sitesError: PWUsageAPIError.signInRequired)
         let defaults = makeDefaults()
         defaults.set("stale-account-scope", forKey: PWUsageAppModel.accountScopeDefaultsKey)
-        let forecast = AppForecastManagerSpy()
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(),
             api: api,
-            userDefaults: defaults,
-            forecastStore: forecast
+            userDefaults: defaults
         )
 
         await model.bootstrap()
@@ -448,7 +446,6 @@ struct PWUsageAppModelTests {
         #expect(api.cookieClearCount == 1)
         #expect(model.coordinator == nil)
         #expect(defaults.string(forKey: PWUsageAppModel.accountScopeDefaultsKey) == nil)
-        #expect(await forecast.activations == [nil])
     }
 
     @Test("Authorized account without sites gets distinct empty state")
@@ -484,75 +481,67 @@ struct PWUsageAppModelTests {
     func accountScopeLifecycleFollowsAuthentication() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         let defaults = makeDefaults()
-        let forecast = AppForecastManagerSpy()
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(),
             api: api,
-            userDefaults: defaults,
-            forecastStore: forecast
+            userDefaults: defaults
         )
 
         await model.bootstrap()
         let originalScope = try #require(model.accountScopeID)
         #expect(UUID(uuidString: originalScope) != nil)
         #expect(defaults.string(forKey: PWUsageAppModel.accountScopeDefaultsKey) == originalScope)
-        let signedInActivations = await forecast.activations
-        #expect(signedInActivations == [originalScope])
 
         await model.signOut()
         #expect(model.accountScopeID == nil)
         #expect(defaults.string(forKey: PWUsageAppModel.accountScopeDefaultsKey) == nil)
-        let signedOutActivations = await forecast.activations
-        #expect(signedOutActivations.count == 2)
-        #expect(signedOutActivations[1] == nil)
 
         let nextModel = PWUsageAppModel(
             configuration: try Self.makeConfiguration(),
             api: api,
-            userDefaults: defaults,
-            forecastStore: forecast
+            userDefaults: defaults
         )
         await nextModel.bootstrap()
         let replacementScope = try #require(nextModel.accountScopeID)
         #expect(replacementScope != originalScope)
     }
 
-    @Test("Signing out clears the injected forecast store rather than the shared one")
-    func signOutUsesTheInjectedForecastStore() async throws {
+    @Test("Signing out runs session cleanup")
+    func signOutUsesSessionCleanup() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        let defaults = makeDefaults()
-        let forecast = AppForecastManagerSpy()
+        final class CleanupSpy: @unchecked Sendable { var count = 0 }
+        let spy = CleanupSpy()
+        var cleanup = SolarSessionCleanup()
+        cleanup.additionalCleanup = { spy.count += 1 }
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(),
             api: api,
-            userDefaults: defaults,
-            forecastStore: forecast
+            userDefaults: makeDefaults(),
+            sessionCleanup: cleanup
         )
 
         await model.bootstrap()
         await model.signOut()
 
-        #expect(await forecast.signOutCount == 1)
+        #expect(spy.count == 1)
     }
 
     @Test("A failing forecast sign-out is reported to the user instead of silently ignored")
     func forecastSignOutFailureSurfaces() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        let defaults = makeDefaults()
-        let forecast = AppForecastManagerSpy()
-        await forecast.setSignOutError(.cleanupFailed)
+        var cleanup = SolarSessionCleanup()
+        cleanup.additionalCleanup = { throw PWUsageAPIError.invalidResponse }
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(),
             api: api,
-            userDefaults: defaults,
-            forecastStore: forecast
+            userDefaults: makeDefaults(),
+            sessionCleanup: cleanup
         )
 
         await model.bootstrap()
         try #require(model.signInMessage == nil)
         await model.signOut()
 
-        #expect(await forecast.signOutCount == 1)
         #expect(model.signInMessage?.contains("Could not clear local solar forecast data") == true)
         #expect(model.screenState == .signedOut)
     }
@@ -694,11 +683,11 @@ struct PWUsageAppModelTests {
     @Test("A cancellation inside installAuthorizedSites leaves a retryable bootstrapping screen")
     func cancellationInsideSiteInstallRetriesOnTheNextBootstrap() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        let forecast = AppForecastManagerSpy()
+        let forecast = ForecastServiceSpy()
         // Park the first bootstrap inside installAuthorizedSites, after `sites`
         // is populated but before `screenState` is settled.
         await forecast.setHoldActivation(true)
-        let model = try makeModel(api: api, forecast: forecast)
+        let model = try makeModel(api: api, forecastService: forecast)
 
         let cancelled = Task { await model.bootstrap() }
         try await waitUntil { await forecast.activationIsParked }
@@ -726,9 +715,9 @@ struct PWUsageAppModelTests {
         // The first attempt parks mid-install; the second completes and installs
         // site-2. When the first finally resumes it must not publish site-1 over it.
         let api = ApplicationAPISpy(sites: [Self.site("site-2")], sitesSequence: [[Self.site("site-1")]])
-        let forecast = AppForecastManagerSpy()
+        let forecast = ForecastServiceSpy()
         await forecast.setHoldActivation(true)
-        let model = try makeModel(api: api, forecast: forecast)
+        let model = try makeModel(api: api, forecastService: forecast)
 
         let stale = Task { await model.bootstrap() }
         try await waitUntil { await forecast.activationIsParked }
@@ -794,10 +783,10 @@ struct PWUsageAppModelTests {
         let cache = DashboardCache(fileURL: fileURL)
         cache.storeSites([Self.site("site-1"), Self.site("site-2")])
         let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")], sitesError: URLError(.notConnectedToInternet))
-        let forecast = AppForecastManagerSpy(configured: true)
+        let forecast = ForecastServiceSpy()
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(),
-            forecastStore: forecast, cache: cache
+            forecastService: forecast, cache: cache
         )
         let coordinator = try #require(model.coordinator)
 
@@ -807,15 +796,6 @@ struct PWUsageAppModelTests {
             await coordinator.loadTimingDetailAppeared()
             await coordinator.loadTimingDetailRefreshed()
             await coordinator.refreshSolarForecast(manual: true)
-            await #expect(throws: PWUsageAPIError.signInRequired) {
-                _ = try await coordinator.connectSolarForecast(apiKey: "fixture")
-            }
-            await #expect(throws: PWUsageAPIError.signInRequired) {
-                _ = try await coordinator.discoverSolarSites()
-            }
-            await #expect(throws: PWUsageAPIError.signInRequired) {
-                try await coordinator.selectSolarArrays(["east"])
-            }
         }
 
         await attemptDetailActions()
@@ -833,7 +813,6 @@ struct PWUsageAppModelTests {
         #expect(api.liveSiteIDs.isEmpty)
         #expect(api.billSiteIDs.isEmpty)
         #expect(api.contextSiteIDs.isEmpty)
-        #expect(await forecast.refreshCount == 0)
         #expect(!coordinator.pollingTimerIsActive)
         #expect(coordinator.live.lastAttempt == nil)
         #expect(coordinator.bill.lastAttempt == nil)
@@ -844,7 +823,7 @@ struct PWUsageAppModelTests {
         await coordinator.loadTimingDetailAppeared()
         #expect(api.billSiteIDs == ["site-2"])
         #expect(api.contextSiteIDs == ["site-2"])
-        #expect(await forecast.refreshCount == 1)
+        #expect(await forecast.refreshCount == 0)
         await coordinator.refreshAll(trigger: .userGesture)
         #expect(api.liveSiteIDs == ["site-2"])
     }
@@ -912,7 +891,6 @@ struct PWUsageAppModelTests {
             configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: makeDefaults(),
-            forecastStore: AppForecastManagerSpy(),
             authService: MobileAuthService(
                 configuration: try Self.makeConfiguration(),
                 api: api,
@@ -951,7 +929,6 @@ struct PWUsageAppModelTests {
             configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: makeDefaults(),
-            forecastStore: AppForecastManagerSpy(),
             authService: MobileAuthService(
                 configuration: try Self.makeConfiguration(),
                 api: api,
@@ -1005,7 +982,7 @@ struct PWUsageAppModelTests {
 
     private func makeModel(
         api: ApplicationAPISpy,
-        forecast: any SolarForecastManaging = AppForecastManagerSpy(),
+        forecastService: (any SolarForecastServing)? = nil,
         timerInterval: Duration? = nil,
         now: @escaping () -> Date = Date.init,
         cache: DashboardCache? = nil,
@@ -1015,16 +992,15 @@ struct PWUsageAppModelTests {
             configuration: try Self.makeConfiguration(),
             api: api,
             userDefaults: userDefaults ?? makeDefaults(),
-            forecastStore: forecast,
+            forecastService: forecastService,
             coordinatorFactory: { siteID, accountScopeID in
                 DashboardCoordinator(
-                    siteID: siteID,
-                    api: api,
+                    siteID: siteID, api: api,
                     planningAPI: api,
-                    forecastStore: forecast,
                     accountScopeID: accountScopeID,
                     now: now,
-                    timerInterval: timerInterval
+                    timerInterval: timerInterval,
+                    forecastService: forecastService
                 )
             },
             cache: cache
@@ -1184,24 +1160,15 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
     }
 }
 
-private actor AppForecastManagerSpy: SolarForecastManaging {
-    private let configured: Bool
-    private(set) var refreshCount = 0
-
-    init(configured: Bool = false) { self.configured = configured }
-
-    private(set) var activations: [String?] = []
-    private(set) var signOutCount = 0
-    private var signOutError: SolarForecastStore.StoreError?
-
+private actor ForecastServiceSpy: SolarForecastServing {
     private var holdActivation = false
     private var activationParked = false
     private var parkedActivation: CheckedContinuation<Void, Never>?
 
-    func setSignOutError(_ error: SolarForecastStore.StoreError?) { signOutError = error }
     func setHoldActivation(_ value: Bool) { holdActivation = value }
     var activationIsParked: Bool { activationParked }
     func resumeActivation() { parkedActivation?.resume(); parkedActivation = nil }
+
     func activateAccountScope(_ accountScopeID: String?) async {
         if holdActivation {
             holdActivation = false
@@ -1209,31 +1176,19 @@ private actor AppForecastManagerSpy: SolarForecastManaging {
             await withCheckedContinuation { parkedActivation = $0 }
             activationParked = false
         }
-        activations.append(accountScopeID)
     }
-    func signOut() async throws {
-        signOutCount += 1
-        if let signOutError { throw signOutError }
-    }
-    func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? {
-        guard configured else { return nil }
-        return SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID, credentialID: "fixture", resourceIDs: ["east"])
-    }
-    func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) throws -> String {
-        throw SolarForecastStore.StoreError.invalidConfiguration
-    }
-    func discoverSites(accountScopeID: String, siteID: String, manual: Bool) throws -> [SolcastSite] { [] }
-    func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) throws {}
-    func refresh(accountScopeID: String, siteID: String, manual: Bool) -> SolarForecastRefreshResult {
+    nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? { nil }
+    nonisolated func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor? { nil }
+    private(set) var refreshCount = 0
+    func publicationAttempt(
+        for request: SolarForecastRequest, actuals: [MobileSolarActualsHour]?
+    ) async -> SolarForecastPublicationAttempt {
         refreshCount += 1
-        return .notConfigured
+        return SolarForecastPublicationAttempt(
+            publication: nil, providerID: nil, outcome: .unavailable, diagnostic: nil
+        )
     }
-    func cachedBatch(accountScopeID: String, siteID: String) -> SolarForecastBatch? { nil }
-    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { false }
-    func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
-        SolarForecastBudget(utcDay: Date(timeIntervalSince1970: 0), totalAttempts: 0, automaticAttempts: 0, deferredUntil: nil)
-    }
-    func disconnect(accountScopeID: String, siteID: String) throws {}
+    func clearAccountData() async throws {}
 }
 
 @MainActor

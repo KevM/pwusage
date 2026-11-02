@@ -23,8 +23,7 @@ struct SolarLayoutSessionCleanupTests {
             // Represents an already-dispatched application completing while stop detaches the store.
             _ = try? await records.applyRemoteRecord(remote, scope: scope)
         }
-        let cleanup = SolarForecastStoreSessionCleanup(
-            store: FakeSolcastStore(),
+        let cleanup = SolarSessionCleanup(
             historyStore: SolarHistoryStore(directory: folder.appendingPathComponent("history")),
             layoutRecordStore: records, cloudSync: sync
         )

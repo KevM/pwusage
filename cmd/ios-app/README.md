@@ -38,7 +38,7 @@ bundle exec fastlane lanes
 3. Provide `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` (base64-encoded `.p8`), `MATCH_GIT_URL`, and `MATCH_PASSWORD`. Git authentication uses either `MATCH_GIT_BASIC_AUTHORIZATION` (base64-encoded Git credentials, for HTTPS) or `MATCH_GIT_PRIVATE_KEY` (SSH key path/content, for an SSH URL), never both. Keep credentials in a private environment or ignored `fastlane/.env` file. Do not commit credentials. The team ID is intentionally checked in; no team secret is required. Televista's existing credentials were verified for this app; SleepDaddy's local API-key copy was not valid.
 4. From an authorized local machine, run `bundle exec fastlane ios prepare_signing` once to add pwusage's App Store profile to the shared signing repository. This lane can create signing assets; the release lane uses `match` in readonly mode.
 5. CI is configured with `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT`, `MATCH_PASSWORD`, `MATCH_GIT_URL=git@github.com:KevM/20four7-certs.git`, and `MATCH_GIT_PRIVATE_KEY`. The deploy key on `KevM/20four7-certs` is read-only and dedicated to pwusage. Signing assets live on its `master` branch. Local signing preparation needs write access; the CI deploy key cannot create or update profiles.
-6. Deploy the website's public pages and use `https://pwusage.fm.rodeo/privacy` for the App Store privacy-policy URL and `https://pwusage.fm.rodeo/support` for its support URL. The policy describes server account/energy data and optional device-local Solcast credentials; review it when data handling changes.
+6. Deploy the website's public pages and use `https://pwusage.fm.rodeo/privacy` for the App Store privacy-policy URL and `https://pwusage.fm.rodeo/support` for its support URL. The policy describes server account/energy data; review it when data handling changes.
 
 Privacy and support links are also available on the native sign-in screen and the About sheet, opened from the dashboard’s More menu.
 
@@ -95,8 +95,6 @@ npx tsx scripts/check-mobile-routes-on-base.ts [baseRef]   # from the repository
 
 This exits non-zero when a route the app calls is absent from the base ref. A 404 from `/api/mobile/load-planning-context` means the deployment predates that route, and the app reports it as an out-of-date server rather than as missing household data.
 
-The Solcast enhancement is split this way: the Solcast forecast itself is device-local and works without any server route, but the household profile it is compared against comes from `/api/mobile/load-planning-context`. If that route is missing, the forecast half succeeds while the app still shows no recommendation, because there is no baseline to compare it to.
-
 ## First-release behavior
 
 - The native dashboard shows live solar, home, battery, and grid power; today’s energy totals; the active tariff; and the current bill estimate.
@@ -112,11 +110,11 @@ SwiftUI previews under `PWUsage/Views/DashboardPreviews.swift` use fixed, local 
 
 The previews compiled as part of the simulator build, but they were not visually inspected in this run because the Mac UI session was locked.
 
-Native sign-in requires the server’s mobile handoff migration to be deployed. The Solcast enhancement additionally requires `/api/mobile/load-planning-context` to be deployed; see [Server routes the app depends on](#server-routes-the-app-depends-on). Production deployment and real-device cookie renewal/logout checks remain release gates; they are intentionally outside this implementation task.
+Native sign-in requires the server’s mobile handoff migration to be deployed. Production deployment and real-device cookie renewal/logout checks remain release gates; they are intentionally outside this implementation task.
 
 ## Diagnosing an unavailable forecast
 
-The Load timing screen shows one small note when the optional forecast cannot be used, and the note names the actual blocker rather than blaming the forecast in general. A "could not reach your server" note points at sign-in or connectivity; an "app build is newer than the server" note points at a deployment gap; notes naming household history describe the server’s 14-day window, which is a server-side data question rather than a device or Solcast one.
+The Load timing screen shows one small note when the optional forecast cannot be used, and the note names the actual blocker rather than blaming the forecast in general. A "could not reach your server" note points at sign-in or connectivity; an "app build is newer than the server" note points at a deployment gap; notes naming household history describe the server’s 14-day window, which is a server-side data question rather than a device one.
 
 To investigate a household-data problem, query the real database rather than trusting a note:
 
@@ -202,7 +200,7 @@ SOC to an atomic, versioned JSON file in its App Group, protected until first un
 Both widget timeline providers independently fetch `/api/site-live-data?view=mobile`
 for that selected site. The app and extension use Foundation's persistent App Group
 cookie store for `site_auth`; existing app-private sessions migrate once on launch.
-No Tesla tokens, Solcast keys or battery commands are shared. Debug and Release use
+No Tesla tokens or battery commands are shared. Debug and Release use
 separate groups and matching API origins.
 
 The extension keeps its last successful response in a separate protected cache tied

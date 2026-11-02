@@ -21,7 +21,7 @@ struct DemoSessionTests {
         #expect(model.controlSiteStore == nil)
         #expect(model.liveActivities == nil)
         #expect(model.api is DemoAPI)
-        #expect(model.forecastStore is DemoForecastStore)
+        #expect(model.forecastService != nil)
         #expect(model.coordinator?.timerInterval == .seconds(30))
     }
 
@@ -61,8 +61,16 @@ struct DemoSessionTests {
         await coordinator.loadTimingDetailAppeared()
         #expect(coordinator.live.response?.site.name == "Cedar House")
         #expect(coordinator.bill.response?.loadTiming?.nextCheaper?.name == "Off-peak")
-        #expect(coordinator.solarForecastConnection == .ready)
+        #expect(coordinator.forecastConnectionForConsumers == .ready)
         #expect(coordinator.solarForecastState == .enhanced)
+    }
+
+    @Test("Forecasts the demo fetches stay out of the real forecast history")
+    func ownForecastHistory() throws {
+        let model = DemoSession.makeModel(suiteName: suiteName)
+        defer { DemoSession.tearDown(suiteName: suiteName) }
+        let service = try #require(model.forecastService as? SolarForecastService)
+        #expect(service.history !== SolarForecastHistory.shared)
     }
 
     @Test("The default suite is the demo's own")

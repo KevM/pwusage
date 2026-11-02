@@ -6,7 +6,7 @@ import SwiftUI
 struct SmartShiftVerdictView: View {
     let verdict: SmartShiftVerdict
     let timeZone: String
-    var onConnectSolcast: () -> Void = {}
+    var onOpenSolarSettings: () -> Void = {}
 
     /// Bar column width beside the why line: about a phone's worth, so a small
     /// saving still shows as a visible gap.
@@ -65,17 +65,12 @@ struct SmartShiftVerdictView: View {
     @ViewBuilder
     private func noteView(_ note: SmartShiftVerdict.Note) -> some View {
         switch note {
-        case .connectSolcast(let usesHistory):
-            VStack(alignment: .leading, spacing: 6) {
-                noteText(usesHistory ? SmartShiftPresentation.connectSolcastHistoryNote : SmartShiftPresentation.connectSolcastNote)
-                Button("Connect Solcast", systemImage: "sun.max", action: onConnectSolcast)
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.borderless)
-            }
+        case .noForecast(let usesHistory):
+            noteText(usesHistory ? SmartShiftPresentation.noForecastHistoryNote : SmartShiftPresentation.noForecastNote)
         case .automaticForecast(let message):
             VStack(alignment: .leading, spacing: 6) {
                 noteText(message)
-                Button("Solar Forecast Settings", systemImage: "sun.max", action: onConnectSolcast)
+                Button("Solar Forecast Settings", systemImage: "sun.max", action: onOpenSolarSettings)
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.borderless)
             }

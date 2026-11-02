@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @testable import PWUsage
 import Testing
@@ -61,22 +62,40 @@ struct PreviewFixtureTests {
     @Test("The solar preview reaches the enhanced state without a real Solcast key")
     func solarPreviewReachesEnhanced() async {
         let now = Date.now
+        let clock = MutableSolarClock(now)
+        let store = PreviewForecastStore(mode: .combinedArrays, now: now)
+        let service = SolarForecastService(
+            providers: [store],
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
+            history: SolarForecastHistory(file: InMemorySolarFile(), clock: clock),
+            clock: clock
+        )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("preview-test-\(UUID().uuidString)")
+        let recordsDir = tempDir.appendingPathComponent("records")
+        let historyStore = SolarHistoryStore(directory: tempDir.appendingPathComponent("history"))
+        let scope = SolarForecastSiteScope(accountScopeID: "preview-account", siteID: "preview-home")
+        let records = Self.makeSeededRecords(recordsDir: recordsDir, scope: scope, now: now)
+        let api = DashboardPreviewAPI(mode: .normal)
+        let runner = SolarLayoutDetectionRunner(history: historyStore, records: records, api: api)
         let coordinator = DashboardCoordinator(
             siteID: "preview-home",
-            api: DashboardPreviewAPI(mode: .normal),
+            api: api,
             planningAPI: PreviewPlanningAPI(mode: .combinedArrays, now: now),
-            forecastStore: PreviewForecastStore(mode: .combinedArrays, now: now),
             accountScopeID: "preview-account",
             now: { now },
-            timerInterval: nil
+            timerInterval: nil,
+            forecastService: service,
+            history: historyStore,
+            records: records,
+            runner: runner
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()
 
-        #expect(coordinator.solarForecastConnection == .ready)
+        #expect(coordinator.forecastConnectionForConsumers == .ready)
         #expect(coordinator.solarForecastState == .enhanced,
                 "The preview must render a real forecast comparison, not the fallback note")
-        #expect(coordinator.solarForecastBatch?.intervals.isEmpty == false)
+        #expect(coordinator.publishedForecastIntervals?.isEmpty == false)
         #expect(coordinator.loadPlanningContext != nil)
     }
 
@@ -101,7 +120,7 @@ struct PreviewFixtureTests {
             .fetchLoadPlanningContext(siteID: "preview-home")
         let estimatorContext = try #require(context.estimatorContext)
         let store = PreviewForecastStore(mode: .combinedArrays, now: now)
-        let batch = try #require(await store.cachedBatch(accountScopeID: "preview-account", siteID: "preview-home"))
+        let batch = await store.rawBatch()
         let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
 
         let result = LoadTimingForecastEstimator.evaluate(
@@ -138,8 +157,34 @@ struct PreviewFixtureTests {
         #expect(try verdict(.laterWithForecast).bars.count == 2)
         #expect(try verdict(.laterWithForecast).notes.isEmpty)
         #expect(try verdict(.laterWithoutForecast).bars.count == 2)
-        #expect(try verdict(.laterWithoutForecast).notes == [.connectSolcast(usesHistory: false)])
+        #expect(try verdict(.laterWithoutForecast).notes == [.noForecast(usesHistory: false)])
         #expect(try verdict(.nowIsCheapest).bars.count == 1)
         #expect(try verdict(.threePeriods).lanes.count >= 2)
+    }
+
+    private static func makeSeededRecords(
+        recordsDir: URL, scope: SolarForecastSiteScope, now: Date
+    ) -> SolarLayoutRecordStore {
+        try? FileManager.default.createDirectory(at: recordsDir, withIntermediateDirectories: true)
+        let location = SolarHomeLocation(latitude: 41.8781, longitude: -87.6298, source: .device)
+        let plane = DetectedSolarLayout.Plane(
+            azimuth: 180, tilt: 25, dcKwp: 6.0, effectiveKw: 5.5,
+            azimuthRange90: [170, 190], tiltRange90: [20, 30]
+        )
+        let detected = DetectedSolarLayout(
+            status: .detected, confidence: "high", reasons: [],
+            planes: [plane], acClipKw: nil, historyDays: 90, clearDays: 30,
+            firstDay: "2025-01-01", lastDay: "2025-04-01"
+        )
+        let record = SolarLayoutRecord(
+            location: location, locationSetAt: now, result: detected, detectedAt: now,
+            attemptedAt: now, detectorVersion: SolarLayoutDetector.version, resultLocation: location
+        )
+        let hash = SHA256.hash(data: Data("\(scope.accountScopeID)|\(scope.siteID)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        if let data = try? JSONEncoder().encode(record) {
+            try? data.write(to: recordsDir.appendingPathComponent("\(hash).json"))
+        }
+        return SolarLayoutRecordStore(directory: recordsDir) { "preview-account" }
     }
 }

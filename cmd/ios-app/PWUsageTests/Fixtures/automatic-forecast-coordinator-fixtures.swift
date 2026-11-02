@@ -122,7 +122,6 @@ actor StubAutomaticProvider: SolarForecastProviding {
 @MainActor
 final class AutomaticForecastHarness {
     let api = AutomaticForecastAPISpy()
-    let solcast = FakeSolcastStore()
     let automatic: StubAutomaticProvider
     let history: SolarForecastHistory
     let service: SolarForecastService
@@ -149,16 +148,13 @@ final class AutomaticForecastHarness {
         location: detectedLocation, layout: detectedLayout, reason: nil
     )
 
-    init(siteID: String = "site-a", correctsSolcast: Bool = false, seedDetected: Bool = true) async {
+    init(siteID: String = "site-a", seedDetected: Bool = true) async {
         let clock = api.clock
         automatic = StubAutomaticProvider { clock.now() }
         history = SolarForecastHistory(file: InMemorySolarFile(), clock: clock)
         service = SolarForecastService(
-            providers: [SolcastForecastProvider(store: solcast), automatic],
-            policy: SolarForecastSelectionPolicy(
-                automaticProviderID: .forecastSolar,
-                correctsCredentialProviders: correctsSolcast
-            ),
+            providers: [automatic],
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
             history: history, clock: clock
         )
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -172,7 +168,7 @@ final class AutomaticForecastHarness {
             now: { clock.now() }
         )
         coordinator = DashboardCoordinator(
-            siteID: siteID, api: api, planningAPI: api, forecastStore: solcast, accountScopeID: "account-a",
+            siteID: siteID, api: api, planningAPI: api, accountScopeID: "account-a",
             now: { clock.now() }, timerInterval: nil, forecastService: service,
             history: historyStore, records: records, runner: runner
         )

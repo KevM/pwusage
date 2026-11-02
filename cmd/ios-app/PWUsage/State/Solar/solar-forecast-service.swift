@@ -1,29 +1,46 @@
 import Foundation
 
-/// Which provider a site uses. Automatic-only beta requests bypass credentials entirely.
-/// For legacy requests, a credential provider wins, even
-/// while it awaits arrays or fails; otherwise the configured automatic provider; otherwise
-/// none, and the caller uses history. A failure never falls through to another provider.
+/// Which provider a site uses. All requests evaluate the automatic provider.
 struct SolarForecastSelectionPolicy: Sendable {
-    let automaticProviderID: SolarForecastProviderID?
-    /// Automatic providers are always corrected; credential providers only when the offline
-    /// check showed it helps.
-    var correctsCredentialProviders = SolarForecastCorrection.appliesToSolcast
+    var automaticProviderID: SolarForecastProviderID? = .openMeteo
+}
+
+/// The protocol for forecast service operations.
+protocol SolarForecastServing: Actor {
+    nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? { get }
+    nonisolated func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor?
+    func publication(
+        for request: SolarForecastRequest, actuals: [MobileSolarActualsHour]?
+    ) async -> SolarForecastPublication?
+    func publicationAttempt(
+        for request: SolarForecastRequest, actuals: [MobileSolarActualsHour]?
+    ) async -> SolarForecastPublicationAttempt
+    func activateAccountScope(_ accountScopeID: String?) async
+    func clearAccountData() async throws
+}
+
+extension SolarForecastServing {
+    func publication(
+        for request: SolarForecastRequest,
+        actuals: [MobileSolarActualsHour]? = nil
+    ) async -> SolarForecastPublication? {
+        await publicationAttempt(for: request, actuals: actuals).publication
+    }
 }
 
 /// The single place forecasts are selected, refreshed, recorded and published.
-actor SolarForecastService {
+actor SolarForecastService: SolarForecastServing {
     private let providers: [any SolarForecastProviding]
     private let policy: SolarForecastSelectionPolicy
-    private let history: SolarForecastHistory
+    nonisolated let history: SolarForecastHistory
     private let clock: any SolarForecastClock
     private var generation = 0
     private var accountScopeID: String?
 
     init(
         providers: [any SolarForecastProviding],
-        policy: SolarForecastSelectionPolicy,
-        history: SolarForecastHistory,
+        policy: SolarForecastSelectionPolicy = SolarForecastSelectionPolicy(),
+        history: SolarForecastHistory = .shared,
         clock: any SolarForecastClock = SystemSolarForecastClock()
     ) {
         self.providers = providers
@@ -43,8 +60,6 @@ actor SolarForecastService {
     nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? {
         policy.automaticProviderID.flatMap { descriptor(for: $0) }
     }
-
-    nonisolated var correctsCredentialProviders: Bool { policy.correctsCredentialProviders }
 
     /// Refreshes the selected provider and publishes its batch if it is fresh enough and
     /// covers the request, corrected once when measured `actuals` are given. `nil` means use
@@ -83,8 +98,7 @@ actor SolarForecastService {
         await history.record(identity: identity, intervals: batch.intervals, fetchedAt: batch.fetchedAt)
         var intervals = batch.intervals
         var summary = SolarForecastCorrectionSummary.identity
-        let corrects = provider.descriptor.requirement == .detectedLayout || policy.correctsCredentialProviders
-        if let actuals, corrects {
+        if let actuals {
             (intervals, summary) = await corrected(
                 batch, identity: identity, siteTimeZone: request.siteTimeZone, actuals: actuals
             )
@@ -152,10 +166,6 @@ actor SolarForecastService {
     private func select(
         _ request: SolarForecastRequest
     ) async -> (provider: any SolarForecastProviding, configuration: SolarForecastConfiguration)? {
-        for provider in providers where !request.automaticOnly && provider.descriptor.requirement == .credential {
-            let configuration = await provider.configuration(for: request)
-            if configuration.readiness != .notConfigured { return (provider, configuration) }
-        }
         guard let automatic = providers.first(where: { $0.descriptor.id == policy.automaticProviderID }) else {
             return nil
         }

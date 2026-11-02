@@ -9,7 +9,7 @@ enum BackgroundSolarForecastRefresh {
 
     static func request(now: Date = Date()) -> BGAppRefreshTaskRequest {
         let request = BGAppRefreshTaskRequest(identifier: identifier)
-        request.earliestBeginDate = now.addingTimeInterval(SolarForecastStore.foregroundRefreshThreshold)
+        request.earliestBeginDate = now.addingTimeInterval(SolarForecast.foregroundRefreshThreshold)
         return request
     }
 

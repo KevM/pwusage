@@ -5,14 +5,11 @@ import Foundation
 /// never match a registered provider.
 struct SolarForecastProviderID: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
-    static let solcast = SolarForecastProviderID(rawValue: "solcast")
     static let openMeteo = SolarForecastProviderID(rawValue: "open-meteo")
     static let forecastSolar = SolarForecastProviderID(rawValue: "forecast-solar")
 }
 
 enum SolarForecastProviderRequirement: Equatable, Sendable {
-    /// The user connected the provider with their own key.
-    case credential
     /// The provider works from the server-detected layout and home location.
     case detectedLayout
 }

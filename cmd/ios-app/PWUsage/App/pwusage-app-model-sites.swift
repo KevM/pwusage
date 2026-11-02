@@ -34,7 +34,6 @@ extension PWUsageAppModel {
         let accountScopeID = ensureAccountScopeID()
         await activateSolarCloudSession(accountScopeID: accountScopeID, generation: generation)
         guard generation == siteInstallGeneration else { return }
-        await forecastStore.activateAccountScope(accountScopeID)
         await forecastService?.activateAccountScope(accountScopeID)
         guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
@@ -141,7 +140,6 @@ extension PWUsageAppModel {
     func clearAccountScopeID() async {
         accountScopeID = nil
         userDefaults.removeObject(forKey: Self.accountScopeDefaultsKey)
-        await forecastStore.activateAccountScope(nil)
         await forecastService?.activateAccountScope(nil)
     }
 }

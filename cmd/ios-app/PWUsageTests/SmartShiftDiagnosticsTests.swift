@@ -13,15 +13,13 @@ struct SmartShiftDiagnosticsTests {
 
     /// The device's forecast bookkeeping after the day's allowance ran out.
     static func exhaustedForecast(now: Date) -> SmartShiftDiagnostics.SolarForecast {
-        let batch = SolarForecastBatch(credentialID: "cred-secret-id", resourceIDs: ["res-secret-east", "res-secret-west"],
-                                       intervals: intervals, fetchedAt: now.addingTimeInterval(-7 * 3600))
-        return SmartShiftDiagnostics.SolarForecast(
-            batch: batch, now: now, recommendationUsable: false,
-            budget: SolarForecastBudget(utcDay: Fixtures.day0, totalAttempts: 10, automaticAttempts: 8,
-                                        deferredUntil: now.addingTimeInterval(3600)),
+        SmartShiftDiagnostics.SolarForecast(
+            intervals: intervals, fetchedAt: now.addingTimeInterval(-7 * 3600),
+            now: now, recommendationUsable: false,
             lastErrorDescription: "Forecast request budget is exhausted", lastRefresh: .budgetExhausted,
             unavailableCause: .budgetExhausted, connection: .ready, state: .failedWithBasic,
-            unavailableReason: .forecastNotUsable)
+            unavailableReason: .forecastNotUsable
+        )
     }
 
     /// Diagnostics for a real pass, priced as the card prices it.
@@ -87,8 +85,6 @@ struct SmartShiftDiagnosticsTests {
         #expect(forecast.cautiousIntervalCount == 48)
         #expect(forecast.hasCautiousPowerKw)
         #expect(forecast.recommendationUsable == false)
-        #expect(forecast.budget == .init(utcDay: Fixtures.day0, automaticAttempts: 8, automaticLimit: 8,
-                                         totalAttempts: 10, totalLimit: 10, deferredUntil: now.addingTimeInterval(3600)))
         #expect(forecast.lastErrorDescription == "Forecast request budget is exhausted")
         #expect(forecast.lastRefreshResult == "budgetExhausted")
         #expect(forecast.unavailableCause == "budgetExhausted")
@@ -99,14 +95,14 @@ struct SmartShiftDiagnosticsTests {
 
     @Test func namesARefreshFailureWithoutTheModule() {
         let forecast = SmartShiftDiagnostics.SolarForecast(
-            batch: nil, now: Fixtures.now, recommendationUsable: false, budget: nil, lastErrorDescription: nil,
-            lastRefresh: .failed(.rateLimited), unavailableCause: .rateLimited, connection: .ready, state: .failedWithBasic,
-            unavailableReason: nil)
-        #expect(forecast.lastRefreshResult == "failed(rateLimited)")
+            now: Fixtures.now, recommendationUsable: false, lastErrorDescription: nil,
+            lastRefresh: .failed(.transient), unavailableCause: .requestFailed,
+            connection: .ready, state: .failedWithBasic, unavailableReason: nil
+        )
+        #expect(forecast.lastRefreshResult == "failed(PWUsage.SolarForecastFailureCategory.transient)")
         #expect(forecast.fetchedAt == nil)
         #expect(forecast.intervalCount == 0)
         #expect(forecast.hasCautiousPowerKw == false)
-        #expect(forecast.budget == nil)
     }
 
     @Test func replaysTheRecordedInputsToTheSameResult() throws {
