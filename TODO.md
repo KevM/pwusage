@@ -22,6 +22,10 @@ v1 ships the read-only demo (see `cmd/ios-app/README.md#demo-mode`); these were 
 - [ ] **Simulated hold Live Activity:** start a local-only Lock Screen / Dynamic Island activity for the demo hold, with no APNs registration and nothing that survives the demo.
 - [ ] **Demo site in the Control Center control:** offer the sample home in the Battery Saver control's site picker without writing it to `BatteryHoldControlSiteStore`, and route it into the demo.
 
+## App Store license agreement (2026-11-02)
+
+- [ ] **Write PWUsage's own license terms before App Store launch:** TestFlight (build 5) uses Apple's standard beta terms because the License Agreement field in TestFlight Test Information is blank, and the web app has `/privacy` but no terms or EULA page. Draft terms that say the bill, savings and Smart Shift figures are estimates, not billing or financial advice, and cover the Tesla account dependency and battery hold commands. Then put them in App Store Connect's custom EULA (and TestFlight's License Agreement field if wanted), and consider a matching `/terms` page.
+
 ## Future iOS widgets
 
 **Note (2026-09-24, PR #110 / `codex/ios-foundation`):** Architecture only; no widget work is in progress. Keep the `MobileLoginHandoff` table as a one-time PKCE sign-in exchange. Widgets should use the resulting `site_auth` session, not redeem handoff codes or hold Tesla credentials. See [the authorization design](docs/plans/2026-09-24-ios-widget-authorization-design.md) for rationale and edge cases.
