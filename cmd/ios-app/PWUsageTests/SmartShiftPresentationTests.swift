@@ -313,10 +313,10 @@ struct SmartShiftPresentationTests {
             + "At 4:30 PM it uses your Off-Peak bank, giving up \(Self.rate(0.26)) in credit.")
     }
 
-    @Test func accessibilitySummaryReadsEveryLane() throws {
-        let verdict = try Self.verdict(Self.make())
-        #expect(verdict.accessibilitySummary == "Peak bank: \u{2212}6 kWh owed now; charge later leaves 6 kWh owed, charge now leaves 20 kWh owed. "
-            + "Off-Peak bank: +18 kWh banked now; charge later leaves 4 kWh banked, charge now leaves 18 kWh banked.")
+    @Test func accessibilitySummaryReadsEveryLane() throws { let verdict = try Self.verdict(Self.make())
+        #expect(verdict.accessibilitySummary == "Peak bank: 6 kWh owed now; charge later leaves 6 kWh owed, "
+            + "charge now leaves 20 kWh owed. "
+            + "Off-Peak bank: 18 kWh banked now; charge later leaves 4 kWh banked, charge now leaves 18 kWh banked.")
     }
 
     // MARK: - How this is worked out

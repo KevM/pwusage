@@ -295,7 +295,7 @@ extension SmartShiftPresentation {
         var accessibilitySummary: String {
             comparison.lanes.map { lane in
                 let period = name(lane.periodKey)
-                let start = startLabel(lane.startKwh)
+                let start = "\(spokenBalance(lane.startKwh)) now"
                 let nowEnd = spokenBalance(lane.startNow.last?.kwh ?? lane.startKwh)
                 if isNow {
                     return "\(period) bank: \(start); \(nowLabel.lowercased()) leaves \(nowEnd)."
