@@ -1,14 +1,5 @@
 # TODO
 
-- [x] **Guard account-verification status writes against newer auth state:**
-  `UserRepo.verifyUserStatus` unconditionally writes revoked/error/active after
-  Fleet calls. A late result can disable a newer login or reactivate a newer
-  revocation. Bind status writes to the credential generation actually verified;
-  preserve genuine terminal failures and transient-error behavior. Add interleaved
-  login/revocation regression tests. Fixed with a User row-version guard,
-  ownership rechecks, retained-state reporting, and superseded events; see
-  `docs/plans/2026-10-27-tesla-verification-status.md`.
-
 Cross-session work that didn't fit the current focus. Pull from this list when picking up new work.
 
 ## How to use this list
@@ -38,8 +29,6 @@ v1 ships the read-only demo (see `cmd/ios-app/README.md#demo-mode`); these were 
 
 **Note (updated 2026-11-02):** Keep the `MobileLoginHandoff` table as a one-time PKCE sign-in exchange. Widgets use the resulting `site_auth` session, never handoff codes or Tesla credentials. See [the authorization design](docs/plans/2026-09-24-ios-widget-authorization-design.md) for rationale and edge cases.
 
-Done: the app and widget extension share the `site_auth` cookie through the App Group cookie store (`Shared/shared-web-session.swift`, with migration from `HTTPCookieStorage.shared`). `resolveAuth` checks active status, session version and current site membership in the DB, so `verifySiteAccess` takes effect without waiting for renewal. Today's Energy / Today's Metric widgets refresh on their own (#170, #183), and the Battery Hold Control Center launcher and Live Activity have shipped.
-
 - [ ] **Legacy tokens:** `resolveAuth` still trusts JWT claims for tokens without `sub` (pre-PR #86). Drop that branch once no such tokens can still be valid.
 - [ ] **More read-only widgets:** monthly bill estimate, and car-charge advice based primarily on bill impact and tariff. The advice recommends whether to charge; it does not control charging. Add a compact server-side charge-advice contract so tariff and billing rules stay consistent with the site. Show stale readings with their original timestamps.
 - [ ] **Add the interactive hold only after write safeguards:** The Control Center control only opens the app today. A `Hold battery` App Intent would start the existing automatic load-ended hold with its eight-hour backstop. Require local device authentication on tap and fresh server authorization before the Tesla command. Use server-fetched SoC/reserve; at 85–95% SoC, open the app for an explicit 80% or 100% choice. Make repeated/concurrent taps idempotent or serialized *before* the first Tesla write. Reject cross-origin browser writes without rejecting native requests that have no `Origin` header. Show the confirmed hold state and clear errors rather than optimistic success.
@@ -56,12 +45,8 @@ Audit and evidence: [multiplatform readiness audit](docs/superpowers/specs/2026-
 - [ ] **tvOS device-code login spec (item 13), blocked on a product decision:** `ASWebAuthenticationSession` is unavailable on tvOS. Spec a QR plus short-code flow reusing the `MobileLoginHandoff` PKCE exchange (`/api/mobile/device`, `/login/device`, poll, `/auth/tesla-callback` branch) and Keychain-stored session token. Needs a security decision on session storage before building.
 - [ ] **Revisit if we pursue Mac or TV (items 9–12, 14):** storage abstraction, `Shared/` reorganisation, `PWUsageCore` Swift package, native macOS target (menu bar extra, widgets), tvOS app. Unverified until then: tvOS cookie persistence, macOS app-group id format, `ControlCenter` macOS 26 requirement.
 
-## iOS: delete the pre-redesign Smart Shift card code (2026-10-18, branch `claude/smart-shift-energy-weather-5de814`)
+## iOS: Smart Shift polish (2026-10-18, branch `claude/smart-shift-energy-weather-5de814`)
 
-The energy weather redesign replaced the old Job card, but left its presentation code in place, now unreachable from any view. It still ships "export cushion" / "grid rate" copy.
-
-- [x] **Delete the dead copy and models (done 2026-10-25):** removed the overlay/placement presentation, unused `LoadTimingPresentation` statics, `LoadTimingRecommendation`, `LoadTimingAffordance`, and the StartNow/cost estimator APIs. Live forecast-note coverage now exercises `forecastAvailability` / `forecastUnavailableNote`.
-- [x] **Delete the remaining dashboard presentation helpers (done 2026-10-25):** removed the test-only live-update, battery, signed-energy, tariff-balance, and balance-formatting helpers, the unreachable stale Smart Shift summary path, and `chargeAgeLabel`. Tests now exercise the live balance semantics and `TodayEnergyPresentation` signed-energy formatting directly.
 - [ ] **Smart Shift polish from the branch review:**
   - "Covers all of this run" ignores periods the run crosses into.
   - After picking a Job, adding or editing another in Manage Jobs doesn't switch the card to it.
@@ -183,7 +168,6 @@ Delete items as they land.
 
 - **Note (2026-07-01):** The loose-pending fallback flow (installation row with NULL `uuid` and NULL `plugin_setting_id`, claimed by the next webhook within 15 minutes) has been retained. Database inspection confirmed that loose installations still occur (most recent on June 23, 2026). This fallback remains necessary to handle cases where `plugin_setting_id` is missing from the callback URL during manual setups or when the TRMNL API `fetchMe` fails. Revisit and remove this flow if loose installs stop appearing after the manual-install path is fixed.
 
-
 ## Remove Temporal polyfill after Vercel supports Node 26 (2026-10-01: blocked on Vercel, not on Node)
 
 `src/lib/billing-cycle.ts` and five other modules use `@js-temporal/polyfill` for
@@ -223,42 +207,10 @@ billing-window date math on a V8 experimental flag.
 
 **Change:** Once `eslint-plugin-react` (and `eslint-config-next`) declare eslint 10 support, bump `eslint` to `^10` and re-run `npm run lint`.
 
+## Tesla OAuth: JWKS transport failures surface as `invalid-id-token`
 
-## Tesla OAuth: stop interpolating upstream bodies into classified errors (fixed 2026-10-25)
-
-**Fixed.** Refresh errors now classify from the parsed JSON `error` code and echo
-only a recognized terminal code; `TeslaTokenEndpointError` keeps transport text
-in `console.warn` and throws the fixed summary `transport error`. The original
-finding is retained below for context.
-
-**This item replaces an earlier, partly-stale framing.** The old text claimed the
-callback reports `invalid-id-token` when both token-endpoint hosts fail. That is
-already fixed: `tesla-auth-service.ts:477-485` catches `TeslaTokenEndpointError`
-and returns `token-exchange-failed` with the upstream status (pinned by four
-tests). The real remaining defect was the second half, and
-`DesignDecisions.md` named both sites under "Previously known violations".
-
-`isTeslaAuthError` (`tesla-client.ts:154-169`) classifies **by substring**. Two
-paths build messages that classifier inspects out of upstream-controlled text:
-
-1. `tesla-auth.ts:67-77` — the refresh fallthrough throws
-   `` `Failed to refresh token: ${response.status} ${body}` `` with the **raw
-   body** interpolated, while its own 401/400 condition does *not* classify as
-   terminal. A 403 body containing `login_required`, or a 400 containing
-   `invalid authentication`, is "retry later" to one classifier and "revoke this
-   user" to the other. `tesla-token-repo.ts:72` feeds that into an atomic
-   `auth_status='revoked', is_active=false` write.
-2. `tesla-token-endpoint.ts:25-31` — `describeError` folds `err.cause.message`
-   in verbatim, so a proxy/TLS cause string containing a trigger substring makes
-   a `TeslaTokenEndpointError` classify as terminal.
-
-**Preserved:** the substring list itself remains load-bearing (pinned by
-`tesla-token-repo.test.ts`), and the `tesla-auth.test.ts` guardrail assertions
-(`not.toMatch(/login_required|invalid_grant/)`) still pass.
-
-**Still open:** transport/5xx failures on the **JWKS** leg surface as
-`invalid-id-token` (`tesla-auth-service.ts:526-539`), the outage-vs-invalid-login
-conflation in its current form.
+Transport/5xx failures on the **JWKS** leg of `handleTeslaCallback` (`tesla-auth-service.ts`) still return
+`invalid-id-token`, conflating a Tesla outage with an invalid login.
 
 ## Tesla OAuth: manual JWKS well-known key validation (paused 2026-10-25)
 
@@ -327,42 +279,3 @@ first scope addition.
 
 **Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
 why a partial grant is acceptable.
-
-## Tesla: bound the unbounded network calls in the Tesla callback path (2026-09-30, PR #118) — fixed 2026-10-25
-
-**Fixed 2026-10-25.** Every `TeslaClient` attempt now carries an 8-second
-`AbortSignal.timeout`, combined with the request-local I/O deadline and any
-caller signal. Retries (401, 421, 429) each get a fresh per-attempt deadline.
-This covers `getUserInfo`, `getProducts`, `resolveRegion`, and the
-`getEnergySiteInfo` call `ensureSite` makes for each site.
-
-`src/lib/tesla-client.ts` — `getUserInfo` and `getProducts` — and `importer.ensureSite`
-previously had **no timeouts whatsoever**. An earlier version of this item also
-claimed the token exchange was a bare `fetch` with no `AbortSignal`; that was
-stale, PR #118 routed it through `postToTeslaTokenEndpoint`, which sets
-`AbortSignal.timeout(8000)`.
-
-**Arithmetic.** The bounded legs stack to **≈18 s** for a login that *completes*: at most
-one timed-out host attempt (8 s) before the exchange succeeds, then 5 s of OIDC discovery
-and 5 s of JWKS fetch, and those two do stack (8 + 5 + 5). The exchange's own worst case is
-2 × 8 s = **16 s**, but that case never reaches verification — exhausting both hosts
-returns `token-exchange-failed` before `verifyTeslaIdToken` is called, so it cannot be
-added to the other legs. The route's `maxDuration` is 60 s, so there is headroom; the
-`tesla-client` calls are what can hang indefinitely.
-
-**Caveat on "worst case":** only the exchange and discovery figures are hard deadlines
-(`AbortSignal.timeout` fires on elapsed time). jwks-rsa's `timeout` is a
-**socket-inactivity** bound, so a trickling JWKS response can exceed 5 s in total. 5 s is
-not a deadline on that leg, and neither is any number that includes it.
-
-**Change:** add request timeouts to `tesla-client.ts`. Prefer bounded per-request
-`AbortSignal.timeout` over a whole-request race, which is what PR #118 removed from the
-verification path.
-
-## Solar forecast correction for Solcast (revisit)
-
-`SolarForecastCorrection.appliesToSolcast` is `false` because the 2026-10-30 offline check
-(`.forecast-compare/score.py`, `solcast_corrected` vs `solcast`) had only 4 scored day-ahead
-days for one site — under the 10-day minimum. Re-run the scoring once at least 10 day-ahead
-days exist and switch it on only if the corrected forecast beats raw Solcast on both daily and
-hourly error. This is separate from the ≥20-day automatic-provider release gate.
