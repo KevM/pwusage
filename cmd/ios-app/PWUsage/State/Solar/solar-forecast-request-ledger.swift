@@ -1,12 +1,12 @@
 import Foundation
 
-struct ForecastSolarLedgerState: Codable, Equatable, Sendable {
+struct SolarForecastRequestLedgerState: Codable, Equatable, Sendable {
     /// Start times of every request sent in the last hour, failures included.
     var requests: [Date] = []
     var deferredUntil: Date?
 }
 
-enum ForecastSolarReservation: Equatable, Sendable {
+enum SolarForecastRequestReservation: Equatable, Sendable {
     case granted
     case deferred(until: Date)
     case exhausted
@@ -14,20 +14,19 @@ enum ForecastSolarReservation: Equatable, Sendable {
     case storageFailed
 }
 
-/// The device-wide Forecast.Solar request budget: every site and account on this phone shares
+/// A device-wide solar forecast request budget: every site and account on this phone shares
 /// it, and it survives relaunch and sign-out. Reservations are saved before anything is sent.
-actor ForecastSolarRequestLedger {
-    static let shared = ForecastSolarRequestLedger(file: ProtectedSolarForecastFile(name: "forecast-solar-ledger.json"))
+actor SolarForecastRequestLedger {
     static let requestsPerHour = 6
     static let window: TimeInterval = 60 * 60
 
-    private let file: any SolarForecastFileStoring<ForecastSolarLedgerState>
+    private let file: any SolarForecastFileStoring<SolarForecastRequestLedgerState>
     private let clock: any SolarForecastClock
-    private var state = ForecastSolarLedgerState()
+    private var state = SolarForecastRequestLedgerState()
     private var loaded = false
 
     init(
-        file: any SolarForecastFileStoring<ForecastSolarLedgerState>,
+        file: any SolarForecastFileStoring<SolarForecastRequestLedgerState>,
         clock: any SolarForecastClock = SystemSolarForecastClock()
     ) {
         self.file = file
@@ -35,7 +34,7 @@ actor ForecastSolarRequestLedger {
     }
 
     /// Reserves `count` requests at once, or none.
-    func reserve(_ count: Int) async -> ForecastSolarReservation {
+    func reserve(_ count: Int) async -> SolarForecastRequestReservation {
         guard await loadIfNeeded() else { return .storageFailed }
         let now = clock.now()
         if let until = state.deferredUntil, until > now { return .deferred(until: until) }

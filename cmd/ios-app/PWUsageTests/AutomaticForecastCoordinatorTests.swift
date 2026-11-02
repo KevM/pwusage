@@ -10,10 +10,10 @@ struct AutomaticForecastCoordinatorTests {
         let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastState == .enhanced)
-        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        #expect(harness.coordinator.solarForecastSource == .openMeteo)
         let intervals = try #require(harness.coordinator.publishedForecastIntervals)
         #expect(intervals.allSatisfy { $0.powerKw == 2 })
-        #expect(harness.coordinator.solarForecastAttribution == "Forecast by Forecast.Solar.")
+        #expect(harness.coordinator.solarForecastAttribution == "Forecast by Open-Meteo.")
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
     }
 
@@ -32,7 +32,7 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.api.historyFetches.count == fetches)
         #expect(harness.coordinator.historyEnabled == persistedEnabled)
         #expect((harness.coordinator.solarLayoutStatus == .disabled) == !persistedEnabled)
-        #expect((harness.coordinator.solarForecastSource == .forecastSolar) == persistedEnabled)
+        #expect((harness.coordinator.solarForecastSource == .openMeteo) == persistedEnabled)
     }
 
     @Test("Outside the beta: no actuals, no automatic refresh, basic estimate")
@@ -63,7 +63,7 @@ struct AutomaticForecastCoordinatorTests {
     @Test("Correction scales the automatic forecast; failed actuals leave it raw")
     func correction() async throws {
         let harness = await AutomaticForecastHarness()
-        try await harness.seedCorrection(ratio: 0.8, providerID: .forecastSolar, fingerprint: "stub")
+        try await harness.seedCorrection(ratio: 0.8, providerID: .openMeteo, fingerprint: "stub")
         await harness.coordinator.loadTimingDetailAppeared()
         let corrected = try #require(harness.coordinator.publishedForecastIntervals)
         #expect(corrected.allSatisfy { abs($0.powerKw - 1.6) < 1e-9 })
@@ -90,11 +90,11 @@ struct AutomaticForecastCoordinatorTests {
     @Test("Diagnostics name the provider, revision, age, coverage and factors without secrets")
     func diagnostics() async throws {
         let harness = await AutomaticForecastHarness()
-        try await harness.seedCorrection(ratio: 0.8, providerID: .forecastSolar, fingerprint: "stub")
+        try await harness.seedCorrection(ratio: 0.8, providerID: .openMeteo, fingerprint: "stub")
         await harness.coordinator.loadTimingDetailAppeared()
         let diagnostics = try #require(await harness.coordinator.solarForecastDiagnostics())
         let source = try #require(diagnostics.source)
-        #expect(source.providerID == "forecast-solar")
+        #expect(source.providerID == "open-meteo")
         #expect(source.configurationRevision == "stub")
         #expect(source.ageMinutes == 0)
         #expect(source.coverageEnd > source.coverageStart)
@@ -110,7 +110,7 @@ extension AutomaticForecastCoordinatorTests {
         await harness.automatic.setFailing(true)
         await harness.coordinator.loadTimingDetailAppeared()
         let diagnostics = try #require(await harness.coordinator.solarForecastDiagnostics())
-        #expect(diagnostics.automaticProviderID == "forecast-solar")
+        #expect(diagnostics.automaticProviderID == "open-meteo")
         #expect(diagnostics.automaticRefreshOutcome != nil)
         #expect(harness.coordinator.solarForecastUnavailableReason == .forecastNotUsable)
         #expect(harness.coordinator.publishedForecastIntervals == nil)
@@ -208,7 +208,7 @@ extension AutomaticForecastCoordinatorTests {
 
         try await eventually {
             harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse
-                && harness.coordinator.solarForecastSource == .forecastSolar
+                && harness.coordinator.solarForecastSource == .openMeteo
         }
     }
 }

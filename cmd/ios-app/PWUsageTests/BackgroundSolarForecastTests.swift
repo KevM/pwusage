@@ -165,7 +165,7 @@ private struct BackgroundForecastHarness {
         provider = StubAutomaticProvider(now: { clock.now() })
         let service = SolarForecastService(
             providers: [provider],
-            policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
             history: SolarForecastHistory(file: InMemorySolarFile(), clock: clock), clock: clock
         )
         model = PWUsageAppModel(

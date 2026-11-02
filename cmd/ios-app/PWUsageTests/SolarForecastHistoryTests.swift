@@ -6,7 +6,7 @@ import Testing
 struct SolarForecastHistoryTests {
     private typealias Fixture = SolarProviderFixture
     private static let identity = SolarForecastHistoryIdentity(
-        accountScopeID: "account-a", siteID: "site-a", providerID: .forecastSolar, fingerprint: "geometry-1"
+        accountScopeID: "account-a", siteID: "site-a", providerID: .openMeteo, fingerprint: "geometry-1"
     )
 
     private static func history(
@@ -57,7 +57,7 @@ struct SolarForecastHistoryTests {
             fetchedAt: Self.hour("2026-10-28 05:00:00")
         )
         let other = SolarForecastHistoryIdentity(
-            accountScopeID: "account-a", siteID: "site-a", providerID: .forecastSolar, fingerprint: "geometry-2"
+            accountScopeID: "account-a", siteID: "site-a", providerID: .openMeteo, fingerprint: "geometry-2"
         )
         let from = Self.hour("2026-10-28 08:00:00")
         let end = Self.hour("2026-10-28 12:00:00")

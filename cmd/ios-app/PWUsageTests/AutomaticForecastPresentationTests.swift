@@ -97,8 +97,8 @@ struct AutomaticForecastPresentationTests {
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.attributionDescriptor(usesSolar: false) == nil)
         let source = try #require(harness.coordinator.attributionDescriptor(usesSolar: true))
-        #expect(source.id == .forecastSolar)
-        #expect(source.attribution == "Forecast by Forecast.Solar.")
+        #expect(source.id == .openMeteo)
+        #expect(source.attribution == "Forecast by Open-Meteo.")
     }
 }
 

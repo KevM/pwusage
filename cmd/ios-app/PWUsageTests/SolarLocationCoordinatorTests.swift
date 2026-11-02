@@ -78,7 +78,7 @@ struct SolarLocationCoordinatorTests {
 
         // Runner runs in background, performs history sync (the only network call) and detects
         try await eventually {
-            harness.coordinator.solarForecastSource == .forecastSolar
+            harness.coordinator.solarForecastSource == .openMeteo
         }
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
         // A single initial sync issues exactly two fetches: the 364-day UTC discovery page,
@@ -90,12 +90,12 @@ struct SolarLocationCoordinatorTests {
     func refineEstimated() async throws {
         let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        #expect(harness.coordinator.solarForecastSource == .openMeteo)
         let result = await harness.coordinator.shareHomeLocation(
             confirmedSiteID: "site-a", provider: StubHomeLocationProvider(.success(Self.home))
         )
         #expect(result == .shared)
-        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        #expect(harness.coordinator.solarForecastSource == .openMeteo)
         #expect(SolarLocationInvitation.kind(status: harness.coordinator.solarLayoutStatus) == nil)
     }
 
