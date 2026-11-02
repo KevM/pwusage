@@ -45,4 +45,6 @@ struct DemoModeActions {
 extension EnvironmentValues {
     /// Nil where the demo isn't offered. `@Entry` needs the explicit default.
     @Entry var demoMode: DemoModeActions? = nil // swiftlint:disable:this implicit_optional_initialization
+    /// True under the demo's model, for screens that show sample data read-only.
+    @Entry var isDemo = false
 }

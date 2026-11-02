@@ -48,6 +48,27 @@ struct AppLaunchMaintenanceTests {
         #expect(cookieClears == 2)
     }
 
+    /// The demo lives in memory, but a session killed mid-demo never reaches
+    /// Exit Demo, so its suite and temporary files would outlive the relaunch.
+    @Test("Every launch clears what a killed demo left behind")
+    func clearsDemoLeftovers() async throws {
+        let suite = "AppLaunchMaintenanceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var demoClears = 0
+        for _ in 0 ..< 2 {
+            try await AppLaunchMaintenance.run(
+                defaults: defaults, buildVersion: "1",
+                hasPersistedForecastState: { true },
+                sweepCredentials: {},
+                clearSessionCookie: {},
+                reloadControls: {},
+                clearDemo: { demoClears += 1 }
+            )
+        }
+        #expect(demoClears == 2)
+    }
+
     @Test("An existing installation migrates its marker without deleting valid credentials")
     func upgradePreservesCredentials() async throws {
         let suite = "AppLaunchMaintenanceTests.\(UUID().uuidString)"

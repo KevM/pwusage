@@ -12,8 +12,12 @@ enum AppLaunchMaintenance {
         hasPersistedForecastState: @MainActor () throws -> Bool,
         sweepCredentials: @MainActor () async throws -> Void,
         clearSessionCookie: @MainActor () -> Void,
-        reloadControls: @MainActor () -> Void
+        reloadControls: @MainActor () -> Void,
+        clearDemo: @MainActor () -> Void = {}
     ) async throws {
+        // The demo is never persisted, but one killed mid-session never reached
+        // Exit Demo and left its defaults suite and temporary files behind.
+        clearDemo()
         if !defaults.bool(forKey: credentialSweepKey) {
             // The marker is also absent on an upgrade from an older app. Existing
             // sandbox metadata owns valid credentials, so migrate without deleting them.

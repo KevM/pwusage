@@ -270,9 +270,9 @@ enum DemoFixtures {
             tariffs: [.init(id: 1, name: tariffName, seasons: [.init(
                 id: 1, name: "All year", dates: "Jan 1 – Dec 31", isActive: true,
                 periods: [
-                    .init(id: 1, name: onPeak.name, days: "Mon – Fri", times: "8 AM – 8 PM",
+                    .init(id: 1, name: onPeak.name, days: "Every day", times: "12 hours a day",
                           buyRate: onPeak.buy, sellRate: onPeak.sell, isActive: true),
-                    .init(id: 2, name: offPeak.name, days: "Every day", times: "All other times",
+                    .init(id: 2, name: offPeak.name, days: "Every day", times: "The other 12 hours",
                           buyRate: offPeak.buy, sellRate: offPeak.sell, isActive: false)]
             )])]
         )
