@@ -12,11 +12,12 @@ struct DemoNavigationTests {
     private let suiteName = "pwusage.demo.tests.\(UUID().uuidString)"
 
     @Test("An external launch shows the demo sheet and stays on the demo home", arguments: [
-        BatteryHoldLink.url(siteID: "site-123"),
-        DashboardLink.url,
-        URL(string: "pwusage://battery-hold")!,
-        URL(string: "https://pwusage.fm.rodeo/continue?next=%2Fsite%2F123")!])
-    func externalNavigationShowsDemoSheet(_ url: URL) async {
+        BatteryHoldLink.url(siteID: "site-123").absoluteString,
+        DashboardLink.url.absoluteString,
+        "pwusage://battery-hold",
+        "https://pwusage.fm.rodeo/continue?next=%2Fsite%2F123"])
+    func externalNavigationShowsDemoSheet(_ urlString: String) async throws {
+        let url = try #require(URL(string: urlString))
         let model = DemoSession.makeModel(suiteName: suiteName)
         defer { DemoSession.tearDown(suiteName: suiteName) }
         let navigationID = model.externalNavigationID
