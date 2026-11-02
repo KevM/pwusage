@@ -184,9 +184,4 @@ struct SolarForecastCorrectionTests {
         )
         #expect(correction.samples == 2)
     }
-
-    @Test("The Solcast decision comes from the offline check")
-    func solcastDecision() {
-        #expect(SolarForecastCorrection.appliesToSolcast == false)
-    }
 }

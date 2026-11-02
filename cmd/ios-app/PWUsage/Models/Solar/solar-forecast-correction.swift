@@ -15,10 +15,6 @@ struct SolarForecastCorrection: Equatable, Sendable {
     static let minimumForecastWh = 50.0
     static let trainingDays = 14
 
-    /// Whether Solcast is corrected too. Off: the offline check had fewer than ten scored days
-    /// (2026-10-30), so it is revisited once enough captures exist.
-    static let appliesToSolcast = false
-
     /// Pairs UTC-hour forecasts with complete actuals from the 14 site-local days before
     /// today and today so far.
     static func derive(
