@@ -160,8 +160,8 @@ struct SmartShiftPresentationTests {
 
     @Test func forecastStatesBecomeNotes() throws {
         #expect(try Self.verdict(Self.make(forecast: .ready)).notes.isEmpty)
-        #expect(try Self.verdict(Self.make(forecast: .unusable("Solcast is limiting requests."))).notes
-            == [.forecastState("Solcast is limiting requests.")])
+        #expect(try Self.verdict(Self.make(forecast: .unusable("The forecast provider is limiting requests."))).notes
+            == [.forecastState("The forecast provider is limiting requests.")])
     }
 
     @Test func customJobLegend() throws {
@@ -654,7 +654,9 @@ extension SmartShiftPresentationTests {
             context: Self.historyContext(asOf: now), balanceSourceTime: now, billingCycleEnd: Self.at(48),
             currencyCode: "USD", timeZone: "UTC")
         let assumptions = try #require(evaluation.result.comparison).assumptions
-        #expect(assumptions.contains("Solar follows your Solcast forecast for the next 7 days, then your last four weeks through the bill date."))
+        let expectedAssumption = "Solar follows your solar forecast for the next 7 days, "
+            + "then your last four weeks through the bill date."
+        #expect(assumptions.contains(expectedAssumption))
         #expect(assumptions.contains("A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."))
         #expect(assumptions.contains("Typical household and battery behavior follows the historical local-time profile."))
     }

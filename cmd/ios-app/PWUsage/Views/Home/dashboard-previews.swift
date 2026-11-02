@@ -16,7 +16,7 @@
     }
 
     @MainActor
-    final class DashboardPreviewAPI: MobileDashboardDataAPI {
+    final class DashboardPreviewAPI: MobileDashboardDataAPI, MobileSolarHistoryDataAPI {
         let mode: DashboardPreviewMode
         // Held as JSON and decoded on demand rather than decoded once in `init`.
         // This file is an app-target `#if DEBUG` file that the test target also
@@ -126,6 +126,12 @@
             if mode == .error { throw PWUsageAPIError.recoverableServerError(statusCode: 503) }
             return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(billJSON.utf8))
         }
+
+        func fetchSolarHistory(
+            siteID: String, from: String, changedSince: Date?
+        ) async throws -> MobileSolarHistoryResponse {
+            .enabled(timeZone: .gmt, days: [], nextFrom: nil)
+        }
     }
 
     extension MobileSite {
@@ -164,7 +170,7 @@
         func fetchSolarHistory(
             siteID: String, from: String, changedSince: Date?
         ) async throws -> MobileSolarHistoryResponse {
-            .disabled
+            .enabled(timeZone: .gmt, days: [], nextFrom: nil)
         }
         func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
         func logout() async throws {}

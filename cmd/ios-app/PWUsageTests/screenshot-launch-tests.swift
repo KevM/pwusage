@@ -33,7 +33,7 @@
             #expect(coordinator.bill.response?.currentBill.estimatedCost != nil)
         }
 
-        @Test("Smart Shift reaches the solar forecast, not the Connect Solcast note")
+        @Test("Smart Shift reaches the solar forecast")
         func smartShiftHasForecast() async throws {
             let model = ScreenshotLaunch.makeModel()
             let coordinator = try #require(model.coordinator)
@@ -41,7 +41,7 @@
             coordinator.authenticationRestored()
             await coordinator.refreshAll(trigger: .userGesture)
             await coordinator.loadTimingDetailAppeared()
-            #expect(coordinator.solarForecastConnection == .ready)
+            #expect(coordinator.forecastConnectionForConsumers == .ready)
             #expect(coordinator.solarForecastState == .enhanced)
         }
 
@@ -64,7 +64,7 @@
             #expect(model.solarCloudSync !== SolarLayoutCloudSync.shared)
             #expect(model.solarRecords !== SolarLayoutRecordStore.shared)
             #expect(model.solarHistory !== SolarHistoryStore.shared)
-            #expect(model.forecastStore is DemoForecastStore)
+            #expect(model.forecastService != nil)
         }
 
         @Test("The screenshot model never touches standard defaults")

@@ -9,8 +9,8 @@ actor ForecastSolarProvider: SolarForecastProviding {
         attribution: "Forecast by Forecast.Solar.",
         requirement: .detectedLayout,
         providesCautiousPower: false,
-        refreshThreshold: SolarForecastStore.foregroundRefreshThreshold,
-        maximumUsableAge: SolarForecastStore.recommendationFreshness,
+        refreshThreshold: SolarForecast.foregroundRefreshThreshold,
+        maximumUsableAge: SolarForecast.recommendationFreshness,
         modelVersion: "forecast-solar-1"
     )
 

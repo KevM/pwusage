@@ -9,7 +9,6 @@ struct SolarForecastServiceTests {
 
     private struct Setup {
         let service: SolarForecastService
-        let solcast: FakeSolcastStore
         let automatic: ForecastSolarHarness
         let history: SolarForecastHistory
         let clock: MutableSolarClock
@@ -21,7 +20,6 @@ struct SolarForecastServiceTests {
         automaticStatus: Int = 200
     ) -> Setup {
         let clock = MutableSolarClock(now)
-        let solcast = FakeSolcastStore()
         let automatic = ForecastSolarHarness(
             clock: clock,
             body: Fixture.forecastSolarBody(now: now),
@@ -29,15 +27,11 @@ struct SolarForecastServiceTests {
         )
         let history = SolarForecastHistory(file: InMemorySolarFile(), clock: clock)
         let service = SolarForecastService(
-            providers: [SolcastForecastProvider(store: solcast), automatic.provider] + extra,
+            providers: [automatic.provider] + extra,
             policy: SolarForecastSelectionPolicy(automaticProviderID: automaticID),
             history: history, clock: clock
         )
-        return Setup(service: service, solcast: solcast, automatic: automatic, history: history, clock: clock)
-    }
-
-    private static func solcastCredential(arrays: [String] = ["r1"]) -> SolarForecastCredential {
-        SolarForecastCredential(accountScopeID: "account-a", siteID: "site-a", credentialID: "c", resourceIDs: arrays)
+        return Setup(service: service, automatic: automatic, history: history, clock: clock)
     }
 
     @Test("Without Solcast, a detected layout publishes the automatic provider")
@@ -47,65 +41,6 @@ struct SolarForecastServiceTests {
         #expect(publication.descriptor.id == .forecastSolar)
         #expect(publication.intervals.count == 48)
         #expect(publication.outcome == .refreshed)
-    }
-
-    @Test("Any Solcast credential reserves precedence, even without arrays or after a failure")
-    func solcastPrecedence() async {
-        for (arrays, result) in [(["r1"], SolarForecastRefreshResult.failed(.requestFailed)), ([], .notConfigured)] {
-            let setup = Self.setup()
-            await setup.solcast.configure(
-                credential: Self.solcastCredential(arrays: arrays),
-                batch: nil,
-                result: result
-            )
-            let selection = await setup.service.selectedProviderID(for: Fixture.request(now: Self.now))
-            #expect(selection == .solcast)
-            #expect(await setup.service.publication(for: Fixture.request(now: Self.now)) == nil)
-            #expect(setup.automatic.transport.requests.isEmpty)
-        }
-    }
-
-    @Test("A connected Solcast forecast is published as Solcast")
-    func solcastPublished() async throws {
-        let setup = Self.setup()
-        let batch = SolarForecastBatch(
-            credentialID: "c", resourceIDs: ["r1"], intervals: Fixture.intervals(from: Self.now, hours: 72, powerKw: 1),
-            fetchedAt: Self.now
-        )
-        await setup.solcast.configure(credential: Self.solcastCredential(), batch: batch)
-        let publication = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
-        #expect(publication.descriptor.id == .solcast)
-        #expect(publication.intervals == batch.intervals)
-        #expect(setup.automatic.transport.requests.isEmpty)
-    }
-
-    @Test("Beta automatic-only requests ignore saved credentials, including setup and failure")
-    func automaticOnlyIgnoresCredentials() async throws {
-        for arrays in [["r1"], []] {
-            let setup = Self.setup()
-            await setup.solcast.configure(credential: Self.solcastCredential(arrays: arrays), batch: nil)
-            var request = Fixture.request(now: Self.now)
-            request.automaticOnly = true
-            let publication = try #require(await setup.service.publication(for: request))
-            #expect(publication.descriptor.id == .forecastSolar)
-        }
-    }
-
-    @Test("Beta automatic failures and missing layouts never fall through to Solcast")
-    func automaticOnlyHistoryFallback() async {
-        let setup = Self.setup(automaticStatus: 500)
-        let batch = SolarForecastBatch(
-            credentialID: "c", resourceIDs: ["r1"],
-            intervals: Fixture.intervals(from: Self.now, hours: 72, powerKw: 1), fetchedAt: Self.now)
-        await setup.solcast.configure(credential: Self.solcastCredential(), batch: batch)
-        var request = Fixture.request(now: Self.now)
-        request.automaticOnly = true
-        #expect(await setup.service.selectedProviderID(for: request) == .forecastSolar)
-        #expect(await setup.service.publication(for: request) == nil)
-        var noLayout = Fixture.request(now: Self.now, layout: nil)
-        noLayout.automaticOnly = true
-        #expect(await setup.service.selectedProviderID(for: noLayout) == nil)
-        #expect(await setup.service.publication(for: noLayout) == nil)
     }
 
     @Test("A synthetic third provider works through composition alone")
@@ -119,7 +54,7 @@ struct SolarForecastServiceTests {
         #expect(await synthetic.refreshes == 1)
     }
 
-    @Test("No credential and no layout falls back to history")
+    @Test("No layout falls back to history")
     func historyFallback() async {
         let setup = Self.setup()
         #expect(await setup.service.selectedProviderID(for: Fixture.request(now: Self.now, layout: nil)) == nil)
@@ -171,12 +106,12 @@ struct SolarForecastServiceTests {
         #expect(past[noon] == expected * 1000)
     }
 
-    @Test("Session cleanup clears service history and still reports a store failure")
+    @Test("Session cleanup clears service history")
     func sessionCleanup() async throws {
         let setup = Self.setup()
         _ = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
-        let cleanup = SolarForecastStoreSessionCleanup(store: FailingSignOutStore(), service: setup.service)
-        await #expect(throws: CocoaError.self) { try await cleanup.signOut() }
+        let cleanup = SolarSessionCleanup(service: setup.service)
+        try await cleanup.signOut()
         #expect(await setup.automatic.provider.cachedForecast(for: Fixture.request(now: Self.now)) == nil)
         let refused = await setup.automatic.provider.refresh(Fixture.request(now: Self.now, manual: true))
         #expect(refused.outcome == .refreshed, "Cleanup keeps the device ledger, which still has room")
@@ -239,32 +174,6 @@ actor GatedForecastProvider: SolarForecastProviding {
 
     func activateAccountScope(_ accountScopeID: String?) async {}
     func clearAccountData() async throws {}
-}
-
-private actor FailingSignOutStore: SolarForecastManaging {
-    func activateAccountScope(_ accountScopeID: String?) async {}
-    func credential(accountScopeID: String, siteID: String) async -> SolarForecastCredential? { nil }
-    func connect(
-        apiKey: String,
-        accountScopeID: String,
-        siteID: String,
-        resourceIDs: [String]?
-    ) async throws -> String { "" }
-    func discoverSites(accountScopeID: String, siteID: String, manual: Bool) async throws -> [SolcastSite] { [] }
-    func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) async throws {}
-    func refresh(
-        accountScopeID: String,
-        siteID: String,
-        manual: Bool
-    ) async -> SolarForecastRefreshResult { .notConfigured }
-    func cachedBatch(accountScopeID: String, siteID: String) async -> SolarForecastBatch? { nil }
-    func isRecommendationUsable(accountScopeID: String, siteID: String) async -> Bool { false }
-    func budget(for accountScopeID: String, siteID: String) async -> SolarForecastBudget {
-        SolarForecastBudget(utcDay: .distantPast, totalAttempts: 0, automaticAttempts: 0, deferredUntil: nil)
-    }
-
-    func disconnect(accountScopeID: String, siteID: String) async throws {}
-    func signOut() async throws { throw CocoaError(.fileWriteNoPermission) }
 }
 
 extension SolarForecastServiceTests {

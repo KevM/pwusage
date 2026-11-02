@@ -9,8 +9,8 @@ actor OpenMeteoProvider: SolarForecastProviding {
         attribution: "Forecast by Open-Meteo.",
         requirement: .detectedLayout,
         providesCautiousPower: false,
-        refreshThreshold: SolarForecastStore.foregroundRefreshThreshold,
-        maximumUsableAge: SolarForecastStore.recommendationFreshness,
+        refreshThreshold: SolarForecast.foregroundRefreshThreshold,
+        maximumUsableAge: SolarForecast.recommendationFreshness,
         modelVersion: "open-meteo-haydavies-1",
         attributionURL: URL(string: "https://open-meteo.com/")
     )

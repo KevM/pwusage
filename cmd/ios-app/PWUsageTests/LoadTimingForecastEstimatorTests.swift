@@ -1204,7 +1204,7 @@ extension LoadTimingForecastEstimatorTests {
                                         currencyCode: "USD")
 
         let comparison = try #require(result.comparison, "\(String(describing: result.unavailableReason))")
-        #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your Solcast forecast") })
+        #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your solar forecast") })
         let lane = try #require(comparison.lanes.first { $0.periodKey == "p" })
         #expect(abs(lane.projectedKwh - (2 + 6 * 5.0 / 60 + 2 * 1.5)) < 1e-9)
     }
@@ -1228,7 +1228,7 @@ extension LoadTimingForecastEstimatorTests {
         }
 
         let comparison = try #require(run(ageMinutes: 33).comparison, "\(String(describing: run(ageMinutes: 33).unavailableReason))")
-        #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your Solcast forecast") })
+        #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your solar forecast") })
         let lane = try #require(comparison.lanes.first { $0.periodKey == "p" })
         #expect(abs(lane.projectedKwh - (2 + 6 * 25.0 / 60 + 2 * 1.5)) < 1e-9)
 

@@ -5,27 +5,11 @@ import Testing
 @Suite("Automatic solar forecast settings copy and invitation")
 struct SolarAutomaticSettingsTests {
     private static let forecastSolar = ForecastSolarProvider().descriptor
-    private static let solcast = SolcastForecastProvider(store: FakeSolcastStore()).descriptor
+    private static let openMeteo = OpenMeteoProvider().descriptor
     private static let device = SolarHomeLocation(latitude: 1, longitude: 2, source: .device)
 
     private static func layout(_ planes: [SolarLayoutPlane], confidence: SolarLayoutConfidence = .high) -> SolarLayout {
         SolarLayout(planes: planes, acClipKw: nil, confidence: confidence, detectedAt: nil)
-    }
-
-    @Test("Solcast setup is shown only when the server confirms the site is outside beta")
-    func legacySetupVisibility() {
-        let showsSetup = SolarForecastSettingsStatus.showsSolcastSetup(for: .disabled)
-        #expect(showsSetup)
-        #expect(!SolarForecastSettingsStatus.showsSolcastSetup(for: nil))
-        #expect(!SolarForecastSettingsStatus.showsSolcastSetup(
-            for: .enabled(location: nil, layout: nil, reason: .pending)))
-    }
-
-    /// The demo's Solcast connection is sample data: shown, never edited.
-    @Test("Solcast settings are read-only in the demo")
-    func demoSolcastIsReadOnly() {
-        #expect(SolarForecastSettingsStatus.allowsSolcastEditing(isDemo: false))
-        #expect(!SolarForecastSettingsStatus.allowsSolcastEditing(isDemo: true))
     }
 
     @Test("Two faces, the source and the confidence are summarised")
@@ -47,15 +31,18 @@ struct SolarAutomaticSettingsTests {
             "High confidence"])
     }
 
-    @Test("One southwest face with medium confidence, read-only under Solcast")
-    func oneFaceUnderSolcast() {
+    @Test("One southwest face with medium confidence")
+    func oneFaceWithMediumConfidence() {
         let response = MobileSolarLayoutResponse.enabled(
             location: Self.device,
             layout: Self.layout([SolarLayoutPlane(azimuth: 205, tilt: 20, dcKwp: 5.2)], confidence: .medium),
             reason: nil
         )
-        let lines = SolarForecastSettingsStatus.automaticSummary(response: response, source: Self.solcast)
-        #expect(lines == ["Forecast from Solcast", "1 panel face: southwest-facing about 5.2 kW", "Medium confidence"])
+        let lines = SolarForecastSettingsStatus.automaticSummary(response: response, source: Self.openMeteo)
+        #expect(lines == [
+            "Automatic forecast from Open-Meteo",
+            "1 panel face: southwest-facing about 5.2 kW",
+            "Medium confidence"])
     }
 
     @Test("Every reason has its sentence; disabled says nothing", arguments: [

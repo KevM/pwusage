@@ -21,7 +21,6 @@ extension DashboardCoordinator {
         await loadTimingDetailAppeared(surface: nil)
     }
 
-    /// Beta sites use the automatic provider exclusively; other sites retain Solcast.
     /// This path refreshes bill/context data but never live data.
     func loadTimingDetailAppeared(manual: Bool = false, surface: SolarForecastSurface? = .smartShift) async {
         guard canRequestAccountData, !Task.isCancelled else { return }
@@ -31,7 +30,7 @@ extension DashboardCoordinator {
         defer {
             if operation == forecastGeneration { forecastOperationPending = false }
         }
-        guard let forecastStore, let planningAPI, let accountScopeID else {
+        guard let planningAPI else {
             solarForecastState = .basic
             solarForecastConnection = .notConnected
             return
@@ -44,105 +43,16 @@ extension DashboardCoordinator {
                 siteID: siteID, api: planningAPI, operation: operation, status: status, manual: manual)
             return
         }
-        let credential = await forecastStore.credential(accountScopeID: accountScopeID, siteID: siteID)
-        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-        guard let credential, !credential.resourceIDs.isEmpty else {
-            resetForecastEnhancement(
-                state: .basic, connection: credential == nil ? .notConnected : .awaitingArraySelection)
-            await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
-            return
-        }
-        guard canRequestAccountData else { return }
-        solarForecastState = .loadingWithBasic
-        solarForecastConnection = .ready
-        solarForecastUnavailableCause = nil
-        solarForecastPublication = nil
-        solarForecastAttempt = nil
-        await loadSolcastEnhancement(
-            planningAPI: planningAPI, accountScopeID: accountScopeID,
-            siteID: siteID, operation: operation, manual: manual
-        )
-    }
-
-    /// The Solcast half of `loadTimingDetailAppeared`, unchanged apart from beta correction.
-    private func loadSolcastEnhancement(
-        planningAPI: any MobileLoadPlanningDataAPI,
-        accountScopeID: String,
-        siteID: String,
-        operation: Int,
-        manual: Bool
-    ) async {
-        guard let forecastStore else { return }
-        let billSuccessBeforeRefresh = billSuccessGeneration
-        async let billRefresh: Void = refreshBill(trigger: .screenAppearance)
-        async let refreshResult = forecastStore.refresh(accountScopeID: accountScopeID, siteID: siteID, manual: manual)
-        async let contextResult = planningContext(siteID: siteID, api: planningAPI)
-        let (refresh, outcome) = await (refreshResult, contextResult)
-        let context = outcome.context
-        await billRefresh
-        guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
-        solarForecastLastRefresh = refresh
-        // Published even when the forecast half fails, so the card can fall back to history.
-        householdPattern = context
-        solarForecastUnavailableCause = SolarForecastUnavailableCause(refresh)
-        // A save failure is not an unavailable forecast, on this path exactly as
-        // on `refreshSolarForecast`. The batch is fresh and in memory — the store
-        // kept it deliberately — so tearing the enhancement down here would show
-        // "The forecast was too old or incomplete to use. Pull down to refresh it"
-        // after a *successful* fetch of a brand-new forecast, which is the symptom
-        // §5.5 was filed to remove. This path is the dominant one (pull-to-refresh
-        // is the exception), so the omission is the more visible half of the bug.
-        let saveFailed = refresh == .failed(.saveFailed)
-        // A refused or failed refresh (budget, rate limit, network) doesn't dismiss
-        // a forecast the store still trusts: the store disables it only for
-        // key or array problems, and it ages out after six hours.
-        let usableDespiteRefresh = await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
-        let refreshSucceeded = saveFailed || refresh == .refreshed || refresh == .alreadyFresh || usableDespiteRefresh
-        // The appearance-driven bill refresh is floored, so a bill fetched
-        // moments ago by an earlier appearance, a site switch, or a pull is
-        // already fresh. Requiring a brand new success here would drop the
-        // enhancement every time the screen is reopened inside the floor.
-        // Measured at the decision point, not before the awaits, so a slow
-        // planning-context fetch cannot age a stale bill back into freshness.
-        let billSucceeded = billSuccessGeneration > billSuccessBeforeRefresh || billIsFresh(at: now())
-        let siteMatches = bill.response?.site.id == siteID
-        let timeZoneMatches = context != nil && bill.response?.site.timezone == context?.timeZone
-        let forecastUsable = await forecastStore.isRecommendationUsable(accountScopeID: accountScopeID, siteID: siteID)
-        let batch = await forecastStore.cachedBatch(accountScopeID: accountScopeID, siteID: siteID)
-        guard refreshSucceeded, billSucceeded, siteMatches, timeZoneMatches,
-              forecastUsable, let batch, let context else {
-            // The server's wire reason is more specific than anything inferred
-            // locally, so it takes priority when present.
-            solarForecastUnavailableReason = outcome.unavailableReason
-                ?? Self.enhancementUnavailableReason(
-                    refreshSucceeded: refreshSucceeded,
-                    billSucceeded: billSucceeded,
-                    siteMatches: siteMatches,
-                    timeZoneMatches: timeZoneMatches,
-                    forecastUsable: forecastUsable,
-                    hasBatch: batch != nil,
-                    hasContext: context != nil
-                )
-            solarForecastBatch = nil
-            loadPlanningContext = nil
-            solarForecastState = .failedWithBasic
-            solarForecastSaveFailure = false
-            return
-        }
-        let published = await correctedSolcastBatch(batch, siteID: siteID, context: context)
-        guard operation == forecastGeneration, siteID == selectedSiteID else { return }
-        solarForecastBatch = published
-        loadPlanningContext = context
-        solarForecastUnavailableReason = nil
-        solarForecastState = .enhanced
-        solarForecastSource = .solcast
-        solarForecastSaveFailure = saveFailed
+        resetForecastEnhancement(state: .basic, connection: .notConnected)
+        await loadHouseholdPattern(siteID: siteID, api: planningAPI, operation: operation)
     }
 
     /// The forecast-free path's household pattern: the same cached request the
     /// Solcast path makes, so the pattern costs at most one request a day.
     func loadHouseholdPattern(siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int) async {
+        async let billRefresh: Void = refreshBill(trigger: .screenAppearance)
         let outcome = await planningContext(siteID: siteID, api: api)
+        await billRefresh
         guard operation == forecastGeneration, siteID == selectedSiteID, canRequestAccountData else { return }
         householdPattern = outcome.context
     }

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Builds the demo's model: signed in on the sample home, answered by
@@ -33,18 +34,24 @@ enum DemoSession {
         let cache = DashboardCache(fileURL: folder.appendingPathComponent("dashboard.json"))
         cache.storeSites([DemoFixtures.site])
         let solar = Solar(folder: folder, suiteName: suiteName)
-        let forecastStore = DemoForecastStore()
+        let demoProvider = DemoForecastStore()
+        let forecastService = SolarForecastService(
+            providers: [demoProvider],
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo)
+        )
+        let runner = SolarLayoutDetectionRunner(history: solar.history, records: solar.records, api: api)
         return PWUsageAppModel(
             configuration: configuration,
             api: api,
             userDefaults: defaults,
-            forecastStore: forecastStore,
-            forecastService: nil,
-            coordinatorFactory: { siteID, _ in
+            forecastService: forecastService,
+            coordinatorFactory: { [solar, runner] siteID, _ in
                 DashboardCoordinator(
-                    siteID: siteID, api: api, planningAPI: api, forecastStore: forecastStore,
+                    siteID: siteID, api: api, planningAPI: api,
                     accountScopeID: accountScopeID, timerInterval: timerInterval,
-                    history: solar.history, records: solar.records
+                    forecastService: forecastService,
+                    history: solar.history, records: solar.records,
+                    runner: runner
                 )
             },
             cache: cache,
@@ -52,6 +59,7 @@ enum DemoSession {
             liveActivities: nil,
             solarHistory: solar.history,
             solarRecords: solar.records,
+            solarRunner: runner,
             solarCloudSync: solar.cloudSync,
             isDemo: isDemo
         )
@@ -77,7 +85,8 @@ enum DemoSession {
         init(folder: URL, suiteName: String) {
             let scopeKey = PWUsageAppModel.accountScopeDefaultsKey
             history = SolarHistoryStore(directory: folder.appendingPathComponent("SolarHistory"))
-            records = SolarLayoutRecordStore(directory: folder.appendingPathComponent("SolarLayout")) {
+            let recordsDir = folder.appendingPathComponent("SolarLayout")
+            records = SolarLayoutRecordStore(directory: recordsDir) {
                 UserDefaults(suiteName: suiteName)?.string(forKey: scopeKey)
             }
             cloudSync = SolarLayoutCloudSync(
@@ -87,6 +96,37 @@ enum DemoSession {
                 pendingScopesURL: folder.appendingPathComponent("pending-scopes.json"),
                 transport: nil
             )
+            Self.seedDemoRecord(in: recordsDir)
+        }
+
+        private static func seedDemoRecord(in directory: URL) {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let scope = "\(DemoSession.accountScopeID)|\(DemoFixtures.site.id)"
+            let hash = SHA256.hash(data: Data(scope.utf8)).map { String(format: "%02x", $0) }.joined()
+            let fileURL = directory.appendingPathComponent("\(hash).json")
+            let location = SolarHomeLocation(latitude: 37.7749, longitude: -122.4194, source: .device)
+            let planes = [
+                DetectedSolarLayout.Plane(
+                    azimuth: 90, tilt: 20, dcKwp: 4.0, effectiveKw: 4.0,
+                    azimuthRange90: [85, 95], tiltRange90: [15, 25]
+                ),
+                DetectedSolarLayout.Plane(
+                    azimuth: 270, tilt: 20, dcKwp: 4.0, effectiveKw: 4.0,
+                    azimuthRange90: [265, 275], tiltRange90: [15, 25]
+                )]
+            let result = DetectedSolarLayout(
+                status: .detected, confidence: "high", reasons: [],
+                planes: planes, acClipKw: nil, historyDays: 90, clearDays: 30,
+                firstDay: "2026-01-01", lastDay: "2026-03-31"
+            )
+            let record = SolarLayoutRecord(
+                location: location, locationSetAt: Date(),
+                result: result, detectedAt: Date(), attemptedAt: Date(),
+                detectorVersion: SolarLayoutDetector.version, resultLocation: location
+            )
+            if let data = try? JSONEncoder().encode(record) {
+                try? data.write(to: fileURL)
+            }
         }
     }
 }

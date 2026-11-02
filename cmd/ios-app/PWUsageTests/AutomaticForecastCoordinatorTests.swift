@@ -3,74 +3,18 @@ import Foundation
 import Testing
 
 @MainActor
-@Suite("Automatic solar forecast in the dashboard coordinator")
+@Suite("Automatic solar forecast coordinator")
 struct AutomaticForecastCoordinatorTests {
-    private static let credential = SolarForecastCredential(
-        accountScopeID: "account-a", siteID: "site-a", credentialID: "cred", resourceIDs: ["r1"]
-    )
-
-    private static func solcastBatch(now: Date) -> SolarForecastBatch {
-        SolarForecastBatch(
-            credentialID: "cred", resourceIDs: ["r1"],
-            intervals: SolarProviderFixture.intervals(from: now.addingTimeInterval(-3600), hours: 72, powerKw: 3),
-            fetchedAt: now
-        )
-    }
-
     @Test("Without Solcast, a detected layout publishes the automatic forecast")
-    func automaticPublished() async throws {
+    func detectedLayoutPublishes() async throws {
         let harness = await AutomaticForecastHarness()
-        await harness.coordinator.loadTimingDetailAppeared()
-        let coordinator = harness.coordinator
-        #expect(coordinator.solarForecastState == .enhanced)
-        #expect(coordinator.solarForecastSource == .forecastSolar)
-        #expect(coordinator.solarForecastConnection == .notConnected)
-        #expect(coordinator.forecastConnectionForConsumers == .ready)
-        let intervals = try #require(coordinator.publishedForecastIntervals)
-        #expect(intervals.allSatisfy { $0.powerKw == 2 })
-        #expect(coordinator.solarForecastAttribution == "Forecast by Forecast.Solar.")
-        #expect(coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
-    }
-
-    @Test("A beta site uses automatic even with a saved Solcast credential")
-    func betaIgnoresSavedSolcast() async throws {
-        let harness = await AutomaticForecastHarness()
-        await harness.solcast.configure(credential: Self.credential, batch: Self.solcastBatch(now: harness.api.now))
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastState == .enhanced)
         #expect(harness.coordinator.solarForecastSource == .forecastSolar)
-        #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 2)
-        #expect(harness.coordinator.solarForecastBatch == nil)
-        #expect(await harness.solcast.refreshCount == 0)
-        let request = try #require(await harness.automatic.requests.last)
-        #expect(request.automaticOnly)
-    }
-
-    @Test("Changing beta eligibility clears the previous source's published batch")
-    func switchingSources() async throws {
-        let harness = await AutomaticForecastHarness()
-        await harness.solcast.configure(credential: Self.credential, batch: Self.solcastBatch(now: harness.api.now))
-        harness.coordinator.historyEnabled = false
-        await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.coordinator.solarForecastSource == .solcast)
-        #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 3)
-        harness.coordinator.historyEnabled = true
-        harness.coordinator.invalidateSolarLayout()
-        await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
-        #expect(harness.coordinator.solarForecastBatch == nil)
-        #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 2)
-        // Beta access is revoked and a history sync (here, a background refresh) records it.
-        harness.api.historyResponse = .disabled
-        _ = try await harness.historyStore.sync(
-            scope: SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a"),
-            api: harness.api, now: harness.api.now
-        )
-        harness.coordinator.invalidateSolarLayout()
-        await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.coordinator.solarForecastSource == .solcast)
-        #expect(harness.coordinator.solarForecastPublication == nil)
-        #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 3)
+        let intervals = try #require(harness.coordinator.publishedForecastIntervals)
+        #expect(intervals.allSatisfy { $0.powerKw == 2 })
+        #expect(harness.coordinator.solarForecastAttribution == "Forecast by Forecast.Solar.")
+        #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
     }
 
     @Test("A persisted sync result overrides stale in-memory beta eligibility", arguments: [true, false])
@@ -80,7 +24,6 @@ struct AutomaticForecastCoordinatorTests {
         harness.api.historyResponse = persistedEnabled
             ? .enabled(timeZone: .gmt, days: [], nextFrom: nil) : .disabled
         _ = try await harness.historyStore.sync(scope: scope, api: harness.api, now: harness.api.now)
-        // The coordinator learned the opposite before a background refresh synced.
         harness.coordinator.historyEnabled = !persistedEnabled
         let fetches = harness.api.historyFetches.count
 
@@ -92,36 +35,6 @@ struct AutomaticForecastCoordinatorTests {
         #expect((harness.coordinator.solarForecastSource == .forecastSolar) == persistedEnabled)
     }
 
-    @Test("Missing beta layout, failed lookup and failed automatic provider use history, never saved Solcast")
-    func betaUnavailableNeverUsesSolcast() async throws {
-        for scenario in 0 ..< 3 {
-            let harness = await AutomaticForecastHarness()
-            await harness.solcast.configure(credential: Self.credential, batch: Self.solcastBatch(now: harness.api.now))
-            if scenario == 0 { try await harness.setNeedsLocation() }
-            if scenario == 1 { try await harness.setLowConfidence() }
-            if scenario == 2 { await harness.automatic.setFailing(true) }
-            harness.coordinator.solarForecastBatch = Self.solcastBatch(now: harness.api.now)
-            await harness.coordinator.loadTimingDetailAppeared()
-            #expect(harness.coordinator.solarForecastSource == nil, "scenario \(scenario)")
-            #expect(harness.coordinator.publishedForecastIntervals == nil)
-            #expect(harness.coordinator.householdPattern != nil)
-            #expect(await harness.solcast.refreshCount == 0)
-        }
-    }
-
-    @Test("Manual beta refresh requests fresh automatic data and never refreshes Solcast")
-    func manualUsesAutomatic() async throws {
-        let harness = await AutomaticForecastHarness()
-        await harness.solcast.configure(credential: Self.credential, batch: Self.solcastBatch(now: harness.api.now))
-        await harness.coordinator.loadTimingDetailAppeared()
-        await harness.coordinator.loadTimingDetailRefreshed()
-        let request = try #require(await harness.automatic.requests.last)
-        #expect(request.manual)
-        #expect(request.automaticOnly)
-        #expect(await harness.automatic.refreshes == 2)
-        #expect(await harness.solcast.refreshCount == 0)
-    }
-
     @Test("Outside the beta: no actuals, no automatic refresh, basic estimate")
     func disabled() async throws {
         let harness = await AutomaticForecastHarness()
@@ -131,23 +44,6 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarForecastSource == nil)
         #expect(harness.coordinator.householdPattern != nil)
         #expect(await harness.automatic.refreshes == 0)
-    }
-
-    @Test("Solcast without arrays, or failing, never invokes the automatic provider")
-    func solcastSetupOrFailureKeepsSolcast() async throws {
-        for (arrays, result) in [
-            ([String](), SolarForecastRefreshResult.notConfigured),
-            (["r1"], .failed(.requestFailed))] {
-            let harness = await AutomaticForecastHarness()
-            harness.coordinator.historyEnabled = false
-            let credential = SolarForecastCredential(
-                accountScopeID: "account-a", siteID: "site-a", credentialID: "cred", resourceIDs: arrays
-            )
-            await harness.solcast.configure(credential: credential, batch: nil, result: result)
-            await harness.coordinator.loadTimingDetailAppeared()
-            #expect(harness.coordinator.solarForecastSource != .forecastSolar)
-            #expect(await harness.automatic.refreshes == 0)
-        }
     }
 
     @Test("Low confidence keeps the basic estimate and exposes the reason")
@@ -177,16 +73,6 @@ struct AutomaticForecastCoordinatorTests {
         #expect(failing.coordinator.publishedForecastIntervals?.allSatisfy { $0.powerKw == 2 } == true)
     }
 
-    @Test("A Solcast correction policy cannot change the beta site's automatic choice")
-    func betaIgnoresSolcastCorrection() async throws {
-        let harness = await AutomaticForecastHarness(correctsSolcast: true)
-        await harness.solcast.configure(credential: Self.credential, batch: Self.solcastBatch(now: harness.api.now))
-        await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
-        #expect(harness.coordinator.publishedForecastIntervals?.first?.powerKw == 2)
-        #expect(await harness.solcast.refreshCount == 0)
-    }
-
     @Test("A suspended site A response is dropped after switching to site B")
     func siteSwitchDropsOldResponse() async throws {
         let harness = await AutomaticForecastHarness()
@@ -214,7 +100,6 @@ struct AutomaticForecastCoordinatorTests {
         #expect(source.coverageEnd > source.coverageStart)
         #expect(source.sameDaySamples > 0)
         #expect(source.dayAheadFactors.values.allSatisfy { abs($0 - 0.8) < 1e-9 })
-        #expect(diagnostics.budget == nil, "The Solcast daily budget is not the automatic budget")
     }
 }
 
@@ -229,27 +114,6 @@ extension AutomaticForecastCoordinatorTests {
         #expect(diagnostics.automaticRefreshOutcome != nil)
         #expect(harness.coordinator.solarForecastUnavailableReason == .forecastNotUsable)
         #expect(harness.coordinator.publishedForecastIntervals == nil)
-    }
-
-    @Test(
-        "Cold start on non-beta account learns disabled synchronously, preserves manual, and avoids needsLocation"
-    )
-    func coldStartDisabledPreservesManual() async throws {
-        let harness = await AutomaticForecastHarness(seedDetected: false)
-        try await harness.setNeedsLocation()
-        await harness.solcast.configure(
-            credential: Self.credential,
-            batch: Self.solcastBatch(now: harness.api.now)
-        )
-        harness.api.historyResponse = .disabled
-
-        await harness.coordinator.refreshSolarForecast(manual: true)
-
-        #expect(harness.coordinator.solarLayoutStatus == .disabled)
-        #expect(!harness.coordinator.historyEnabled)
-        #expect(harness.coordinator.solarForecastSource == .solcast)
-        #expect(await harness.solcast.refreshCount >= 1)
-        #expect(await harness.automatic.refreshes == 0)
     }
 
     @Test("Pull to refresh bypasses cached disabled status to pick up beta enrollment")
@@ -295,21 +159,6 @@ extension AutomaticForecastCoordinatorTests {
         await pending.value
         #expect(harness.coordinator.historyEnabled)
         #expect(harness.coordinator.solarLayoutStatus == nil)
-    }
-
-    @Test("History sync network failure leaves beta status unknown and preserves automatic forecast branch")
-    func historySyncNetworkFailureLeavesBetaStatusUnknown() async throws {
-        let harness = await AutomaticForecastHarness(seedDetected: false)
-        await harness.solcast.configure(
-            credential: Self.credential,
-            batch: nil
-        )
-        harness.api.historyError = PWUsageAPIError.invalidResponse
-        await harness.coordinator.refreshSolarForecast(manual: false)
-        #expect(harness.coordinator.historyEnabled)
-        #expect(harness.coordinator.solarLayoutStatus == nil)
-        let count = await harness.solcast.refreshCount
-        #expect(count == 0)
     }
 
     @Test("Offline history recheck with cached layout record preserves disabled beta status")

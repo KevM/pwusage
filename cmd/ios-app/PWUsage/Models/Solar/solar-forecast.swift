@@ -25,7 +25,20 @@ enum SolarForecastError: Error, Equatable {
     case nonFiniteValue
 }
 
+enum SolarForecastScope {
+    static func key(_ accountScopeID: String, _ siteID: String) -> String {
+        segment(accountScopeID) + segment(siteID)
+    }
+
+    static func prefix(_ accountScopeID: String) -> String { segment(accountScopeID) }
+
+    private static func segment(_ value: String) -> String { "\(value.utf8.count):\(value)" }
+}
+
 enum SolarForecast {
+    static let foregroundRefreshThreshold: TimeInterval = 3 * 60 * 60
+    static let recommendationFreshness: TimeInterval = 6 * 60 * 60
+
     static func energy(in intervals: [SolarForecastInterval], from start: Date, to end: Date) throws -> Double {
         guard start.timeIntervalSince1970.isFinite, end.timeIntervalSince1970.isFinite else {
             throw SolarForecastError.nonFiniteValue

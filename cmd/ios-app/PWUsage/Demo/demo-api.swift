@@ -55,7 +55,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
     func fetchSolarHistory(
         siteID: String, from: String, changedSince: Date?
     ) async throws -> MobileSolarHistoryResponse {
-        .disabled
+        .enabled(timeZone: DemoFixtures.timeZone, days: [], nextFrom: nil)
     }
 
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {

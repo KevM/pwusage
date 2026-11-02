@@ -88,9 +88,7 @@ struct DemoFixturesTests {
         let bill = try DemoFixtures.bill(asOf: asOf)
         let outlook = try #require(bill.outlook)
         let context = try #require(DemoFixtures.planningContext(asOf: asOf).estimatorContext)
-        let batch = await DemoForecastStore(now: { asOf })
-            .cachedBatch(accountScopeID: DemoSession.accountScopeID, siteID: DemoFixtures.site.id)
-        let forecast = try #require(batch?.intervals)
+        let forecast = await DemoForecastStore(now: { asOf }).intervals()
         let projection = BillOutlook.evaluate(history: outlook, context: context, forecast: forecast,
                                               now: asOf, cycleEnd: bill.currentBill.cycleEnd)
         #expect(projection.usesSolar)

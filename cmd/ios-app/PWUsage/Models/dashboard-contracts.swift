@@ -55,35 +55,6 @@ enum SolarForecastUnavailableCause: Equatable {
     case cleanupFailure
     case budgetExhausted
     case deferred
-
-    /// `nil` when the failure does not make the forecast unavailable. A save
-    /// failure is deliberately `nil`: the forecast is available in memory, so
-    /// `causeNote`'s "Solar forecast unavailable" prefix would be false. It is
-    /// surfaced by `DashboardCoordinator.solarForecastSaveFailure` instead.
-    init?(_ failure: SolarForecastRefreshFailure) {
-        switch failure {
-        case .unauthorized: self = .unauthorized
-        case .rateLimited: self = .rateLimited
-        case .requestFailed: self = .requestFailed
-        case .unknownResource: self = .unknownResource
-        case .invalidForecast: self = .invalidForecast
-        case .storageFailure: self = .storageFailure
-        case .cleanupFailure: self = .cleanupFailure
-        case .saveFailed: return nil
-        }
-    }
-
-    /// `nil` when the attempt succeeded or was never a provider failure.
-    init?(_ result: SolarForecastRefreshResult) {
-        switch result {
-        case .failed(let failure):
-            guard let cause = SolarForecastUnavailableCause(failure) else { return nil }
-            self = cause
-        case .budgetExhausted: self = .budgetExhausted
-        case .deferred: self = .deferred
-        case .refreshed, .alreadyFresh, .notConfigured, .cancelled: return nil
-        }
-    }
 }
 
 /// Why the optional enhancement is not showing, when the connection itself is

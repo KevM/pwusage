@@ -1,16 +1,6 @@
 import Foundation
 
 extension SolarForecastSettingsStatus {
-    /// Until eligibility is known, do not flash legacy setup or read its credential metadata.
-    static func showsSolcastSetup(for status: MobileSolarLayoutResponse?) -> Bool {
-        status == .disabled
-    }
-
-    /// The demo's connection is sample data: it shows, but nothing in it saves.
-    static func allowsSolcastEditing(isDemo: Bool) -> Bool {
-        !isDemo
-    }
-
     /// Ordered lines for the settings sheet's automatic forecast section: source, panel faces,
     /// then confidence or the reason there is no layout yet. Empty outside the beta. The
     /// source's name comes from its registered descriptor.
@@ -21,8 +11,7 @@ extension SolarForecastSettingsStatus {
         guard case .enabled(let location, let layout, let reason) = response else { return [] }
         var lines: [String] = []
         if let source {
-            lines.append(source.requirement == .detectedLayout
-                ? "Automatic forecast from \(source.displayName)" : "Forecast from \(source.displayName)")
+            lines.append("Automatic forecast from \(source.displayName)")
         }
         if let layout {
             let count = layout.planes.count

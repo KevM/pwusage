@@ -156,7 +156,7 @@ struct SolarForecastCorrectionTests {
         let clock = MutableSolarClock(Fixture.date("2026-10-29 12:00:00", in: kolkata))
         let history = SolarForecastHistory(file: InMemorySolarFile(), clock: clock)
         let identity = SolarForecastHistoryIdentity(
-            accountScopeID: "a", siteID: "s", providerID: .solcast, fingerprint: "f"
+            accountScopeID: "a", siteID: "s", providerID: .openMeteo, fingerprint: "f"
         )
         let localStart = Fixture.date("2026-10-28 09:00:00", in: kolkata)
         await history.record(

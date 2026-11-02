@@ -12,7 +12,7 @@ enum LoadTimingForecastPresentation {
     /// the server sent the wrong time. Point at the clock, which the user can fix,
     /// the same way `contextInvalid` does for `asOf`.
     static let futureDatedForecastNote = "This solar forecast is timestamped later than this device's clock, so its age cannot be checked and it is not being used for now. Check this device's date and time, then pull down to refresh."
-    /// Matches `SolarForecastStore.recommendationFreshness`. Data older than this
+    /// Matches `SolarForecast.recommendationFreshness`. Data older than this
     /// may be shown as stale, but must not produce a new recommendation.
     static let maximumForecastAge: TimeInterval = 6 * 60 * 60
 
@@ -143,14 +143,13 @@ enum LoadTimingForecastPresentation {
     ) -> String {
         switch cause {
         case .unauthorized:
-            return "Solcast rejected the saved key. Retry from Solar forecast settings."
+            return "The forecast provider rejected the request. Retry from Solar forecast settings."
         case .rateLimited:
-            return "Solcast is limiting requests. Retry later today."
+            return "The forecast provider is limiting requests. Retry later today."
         case .requestFailed:
-            return "Solcast could not be reached. Retry when you have a connection."
+            return "The forecast provider could not be reached. Retry when you have a connection."
         case .unknownResource:
-            return "Solcast does not recognise one of your Solar System IDs, "
-                + "so that request counted as an attempt. Choose your arrays again in Solar forecast settings."
+            return "The forecast provider does not recognise this location. Retry from Solar forecast settings."
         case .invalidForecast:
             return "An array returned no usable forecast. Retry the array selection or refresh."
         case .storageFailure, .cleanupFailure:

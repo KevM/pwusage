@@ -4,39 +4,23 @@ import Testing
 
 @Suite("Solar Forecast Aggregation Tests")
 struct SolarForecastTests {
-    @Test("Combines selected arrays by exact UTC interval despite shuffled order")
-    func combinesByIntervalRatherThanArrayPosition() throws {
-        let first = [point("12:30", power: 1), point("13:00", power: 0)]
-        let second = [point("13:00", power: 2), point("12:30", power: 3)]
-        let combined = try SolarForecast.combine([first, second])
-        #expect(combined.map(\.powerKw) == [4, 2])
-        #expect(combined.map(\.periodStart) == [date("12:00"), date("12:30")])
-    }
-
     @Test("Integrates 4 kW over a half hour to 2 kWh")
     func integratesPowerOverDuration() throws {
-        let forecast = try SolarForecast.combine([[point("12:30", power: 4)]])
-        #expect(try forecast[0].energyKwh() == 2)
+        let interval = interval("12:00", "12:30", power: 4)
+        #expect(try interval.energyKwh() == 2)
     }
 
     @Test("Integrates partial overlaps across adjacent intervals")
     func integratesPartialRunOverlaps() throws {
-        let forecast = try SolarForecast.combine([[point("12:30", power: 2), point("13:00", power: 4)]])
+        let forecast = [interval("12:00", "12:30", power: 2), interval("12:30", "13:00", power: 4)]
         let energy = try SolarForecast.energy(in: forecast, from: date("12:15"), to: date("12:45"))
         #expect(energy == 1.5)
     }
 
     @Test("Preserves explicit nighttime zero as known production")
     func preservesExplicitZero() throws {
-        let forecast = try SolarForecast.combine([[point("12:30", power: 0)]])
+        let forecast = [interval("12:00", "12:30", power: 0)]
         #expect(try SolarForecast.energy(in: forecast, from: date("12:00"), to: date("12:30")) == 0)
-    }
-
-    @Test("Rejects duplicate intervals instead of double counting")
-    func rejectsDuplicateIntervals() throws {
-        #expect(throws: SolarForecastError.duplicateInterval) {
-            try SolarForecast.combine([[point("12:30", power: 1), point("12:30", power: 1)]])
-        }
     }
 
     @Test("Rejects overlapping arbitrary intervals during integration")
@@ -53,13 +37,6 @@ struct SolarForecastTests {
         }
     }
 
-    @Test("Rejects overflow in summed interval power")
-    func rejectsSummedPowerOverflow() {
-        #expect(throws: SolarForecastError.nonFiniteValue) {
-            try SolarForecast.combine([[point("12:30", power: .greatestFiniteMagnitude)], [point("12:30", power: .greatestFiniteMagnitude)]])
-        }
-    }
-
     @Test("Rejects overflow in interval and partial energy calculations")
     func rejectsEnergyOverflow() throws {
         let start = date("12:00")
@@ -69,9 +46,6 @@ struct SolarForecastTests {
         #expect(throws: SolarForecastError.nonFiniteValue) {
             try SolarForecast.energy(in: [interval], from: start, to: end)
         }
-
-        let forecastPoint = SolcastForecastPoint(periodEnd: end, periodDuration: 7200, pvEstimateKw: .greatestFiniteMagnitude, pvEstimate10Kw: nil, pvEstimate90Kw: nil)
-        #expect(throws: SolarForecastError.nonFiniteValue) { try SolarForecast.combine([[forecastPoint]]) }
 
         let middle = date("13:00")
         let largeButFinitePower = Double.greatestFiniteMagnitude * 0.75
@@ -84,32 +58,10 @@ struct SolarForecastTests {
 
     @Test("Rejects a gap in the requested integration range")
     func rejectsGaps() throws {
-        let forecast = try SolarForecast.combine([[point("12:30", power: 2), point("13:30", power: 2)]])
+        let forecast = [interval("12:00", "12:30", power: 2), interval("13:00", "13:30", power: 2)]
         #expect(throws: SolarForecastError.incompleteCoverage) {
             try SolarForecast.energy(in: forecast, from: date("12:00"), to: date("13:30"))
         }
-    }
-
-    @Test("Requires every selected array and matching period boundaries")
-    func rejectsAbsentOrMismatchedArrayIntervals() {
-        #expect(throws: SolarForecastError.incompleteCoverage) {
-            try SolarForecast.combine([[point("12:30", power: 1)], []])
-        }
-        #expect(throws: SolarForecastError.incompleteCoverage) {
-            try SolarForecast.combine([[point("12:30", power: 1)], [point("13:00", power: 1)]])
-        }
-    }
-
-    @Test("combineKeepsCautiousSolar")
-    func combineKeepsCautiousSolar() throws {
-        let first = [point("12:30", power: 4, cautious: 1), point("13:00", power: 2, cautious: 0.5)]
-        let second = [point("12:30", power: 1, cautious: 0.25), point("13:00", power: 1, cautious: 0)]
-        let combined = try SolarForecast.combine([first, second])
-        #expect(combined.map(\.powerKw) == [5, 3])
-        #expect(combined.map(\.cautiousPowerKw) == [1.25, 0.5])
-
-        let partial = try SolarForecast.combine([first, [point("12:30", power: 1), point("13:00", power: 1)]])
-        #expect(partial.map(\.cautiousPowerKw) == [nil, nil])
     }
 
     @Test("oldBatchDecodesWithoutCautiousSolar")
@@ -121,22 +73,31 @@ struct SolarForecastTests {
 
         let roundTrip = try JSONDecoder().decode(
             [SolarForecastInterval].self,
-            from: JSONEncoder().encode([SolarForecastInterval(periodStart: .init(timeIntervalSinceReferenceDate: 0), periodEnd: .init(timeIntervalSinceReferenceDate: 1800), powerKw: 2, cautiousPowerKw: 0.5)])
+            from: JSONEncoder().encode([
+                SolarForecastInterval(
+                    periodStart: .init(timeIntervalSinceReferenceDate: 0),
+                    periodEnd: .init(timeIntervalSinceReferenceDate: 1800),
+                    powerKw: 2, cautiousPowerKw: 0.5
+                )])
         )
         #expect(roundTrip.first?.cautiousPowerKw == 0.5)
     }
 
-    private func point(_ end: String, power: Double, cautious: Double) -> SolcastForecastPoint {
-        SolcastForecastPoint(periodEnd: date(end), periodDuration: 1800, pvEstimateKw: power, pvEstimate10Kw: cautious, pvEstimate90Kw: nil)
-    }
-
-    private func point(_ end: String, power: Double) -> SolcastForecastPoint {
-        let value = SolcastForecastPoint(periodEnd: date(end), periodDuration: 1800, pvEstimateKw: power, pvEstimate10Kw: nil, pvEstimate90Kw: nil)
-        return value
+    private func interval(
+        _ start: String, _ end: String, power: Double, cautious: Double? = nil
+    ) -> SolarForecastInterval {
+        SolarForecastInterval(periodStart: date(start), periodEnd: date(end), powerKw: power, cautiousPowerKw: cautious)
     }
 
     private func date(_ time: String) -> Date {
         let parts = time.split(separator: ":").compactMap { Int($0) }
-        return Calendar(identifier: .gregorian).date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 9, day: 27, hour: parts[0], minute: parts[1]))!
+        let components = DateComponents(
+            timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 9, day: 27,
+            hour: parts[0], minute: parts[1]
+        )
+        guard let date = Calendar(identifier: .gregorian).date(from: components) else {
+            preconditionFailure("Invalid test date: \(time)")
+        }
+        return date
     }
 }

@@ -48,15 +48,14 @@ final class PWUsageAppModel: ObservableObject {
     var hasBootstrapAttempted = false
     @Published var siteRequestCount = 0
     var isBatteryHoldNavigationLoading: Bool { pendingBatteryHoldSiteID != nil && siteRequestCount > 0 }
-    let forecastStore: any SolarForecastManaging
-    let forecastService: SolarForecastService?
+    let forecastService: (any SolarForecastServing)?
     let solarHistory: SolarHistoryStore
     let solarRecords: SolarLayoutRecordStore
     let solarRunner: SolarLayoutDetectionRunner?
     var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
     let solarCloudSync: SolarLayoutCloudSync
-    let solarSessionCleanup: SolarForecastStoreSessionCleanup
+    let solarSessionCleanup: SolarSessionCleanup
     let coordinatorFactory: CoordinatorFactory
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
@@ -70,8 +69,7 @@ final class PWUsageAppModel: ObservableObject {
         configuration: AppConfiguration,
         api: any PWUsageApplicationAPI,
         userDefaults: UserDefaults = .standard,
-        forecastStore: any SolarForecastManaging = SolarForecastStore.shared,
-        forecastService: SolarForecastService? = nil,
+        forecastService: (any SolarForecastServing)? = nil,
         coordinatorFactory: CoordinatorFactory? = nil,
         cache: DashboardCache? = nil,
         authService: MobileAuthService? = nil,
@@ -81,6 +79,7 @@ final class PWUsageAppModel: ObservableObject {
         solarRecords: SolarLayoutRecordStore = .shared,
         solarRunner: SolarLayoutDetectionRunner? = nil,
         solarCloudSync: SolarLayoutCloudSync = .shared,
+        sessionCleanup: SolarSessionCleanup? = nil,
         isDemo: Bool = false
     ) {
         self.isDemo = isDemo
@@ -89,7 +88,6 @@ final class PWUsageAppModel: ObservableObject {
         self.api = api
         self.userDefaults = userDefaults
         self.cache = cache
-        self.forecastStore = forecastStore
         self.forecastService = forecastService
         self.solarHistory = solarHistory
         self.solarRecords = solarRecords
@@ -107,7 +105,6 @@ final class PWUsageAppModel: ObservableObject {
                     siteID: siteID,
                     api: api,
                     planningAPI: api,
-                    forecastStore: forecastStore,
                     accountScopeID: accountScopeID,
                     forecastService: forecastService,
                     history: solarHistory,
@@ -116,14 +113,15 @@ final class PWUsageAppModel: ObservableObject {
                 )
             }
         }
-        let sessionCleanup = SolarForecastStoreSessionCleanup(
-            store: forecastStore, service: forecastService,
+        var cleanup = sessionCleanup ?? SolarSessionCleanup(
+            service: forecastService,
             historyStore: solarHistory, layoutRecordStore: solarRecords,
             cloudSync: solarCloudSync
         )
-        solarSessionCleanup = sessionCleanup
+        cleanup.cloudSync = solarCloudSync
+        solarSessionCleanup = cleanup
         self.authService = authService ?? MobileAuthService(
-            configuration: configuration, api: api, forecastCleanup: sessionCleanup
+            configuration: configuration, api: api, forecastCleanup: cleanup
         )
         wireCloudSyncListener(solarCloudSync, runner: runner)
         restoreCachedSession()

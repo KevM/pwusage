@@ -1,4 +1,5 @@
 #if DEBUG
+    import CryptoKit
     import Foundation
     import SwiftUI
 
@@ -18,8 +19,6 @@
         case longCharge
         /// Cached batch present but older than the six-hour recommendation freshness.
         case staleCache
-        /// Key saved, arrays not chosen yet.
-        case incompleteArraySelection
         /// No historical household context available.
         case missingContext
         /// A modest array while Peak is a net buyer: the basic layer has no
@@ -27,7 +26,16 @@
         case peakDeficit
     }
 
-    actor PreviewForecastStore: SolarForecastManaging {
+    actor PreviewForecastStore: SolarForecastProviding {
+        private static let descriptorValue = SolarForecastProviderDescriptor(
+            id: .openMeteo, displayName: "Open-Meteo",
+            attribution: "Automatic forecast from Open-Meteo.",
+            requirement: .detectedLayout, providesCautiousPower: true,
+            refreshThreshold: 1800, maximumUsableAge: 86400 * 7, modelVersion: "preview-v1"
+        )
+
+        nonisolated var descriptor: SolarForecastProviderDescriptor { Self.descriptorValue }
+
         private let mode: ForecastPreviewMode
         private let now: Date
 
@@ -36,27 +44,18 @@
             self.now = now
         }
 
-        private var hasCredential: Bool { mode != .incompleteArraySelection }
-
-        private var resourceIDs: [String] {
-            switch mode {
-            case .combinedArrays: ["east-1234", "west-5678"]
-            default: ["east-1234"]
-            }
-        }
-
         private var fetchedAt: Date {
             mode == .staleCache ? now.addingTimeInterval(-9 * 60 * 60) : now.addingTimeInterval(-25 * 60)
         }
 
         /// A believable day: nothing overnight, a broad midday peak, tapering tails.
         /// Shaped in the site's local time so it lines up with the planning slots.
-        private func intervals() -> [SolarForecastInterval] {
+        func intervals() -> [SolarForecastInterval] {
             let step: TimeInterval = 30 * 60
             let start = now.addingTimeInterval(-30 * 60)
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = TimeZone(identifier: SITE_PREVIEW_TIME_ZONE) ?? .current
-            return (0 ..< 48).map { index in
+            return (0 ..< 120).map { index in
                 let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
                 let hour = calendar.component(.hour, from: periodStart)
                 let solarShape: Double
@@ -78,92 +77,106 @@
                 return SolarForecastInterval(
                     periodStart: periodStart,
                     periodEnd: periodStart.addingTimeInterval(step),
-                    powerKw: ceiling * solarShape * scale
+                    powerKw: ceiling * solarShape * scale,
+                    cautiousPowerKw: ceiling * solarShape * scale * 0.8
                 )
             }
         }
 
-        private var batch: SolarForecastBatch {
-            SolarForecastBatch(credentialID: "preview-credential", resourceIDs: resourceIDs,
-                               intervals: intervals(), fetchedAt: fetchedAt)
+        func rawBatch() -> SolarForecastRawBatch {
+            SolarForecastRawBatch(
+                providerID: .openMeteo,
+                fingerprint: "preview-fingerprint",
+                cacheRevision: "preview-revision",
+                intervals: intervals(),
+                fetchedAt: fetchedAt,
+                acClipKw: nil
+            )
+        }
+
+        func configuration(for request: SolarForecastRequest) async -> SolarForecastConfiguration {
+            SolarForecastConfiguration(
+                readiness: .ready, fingerprint: "preview-fingerprint", cacheRevision: "preview-revision"
+            )
+        }
+
+        func refresh(_ request: SolarForecastRequest) async -> SolarForecastProviderResult {
+            SolarForecastProviderResult(batch: rawBatch(), outcome: .refreshed)
+        }
+
+        func cachedForecast(for request: SolarForecastRequest) async -> SolarForecastRawBatch? {
+            rawBatch()
         }
 
         func activateAccountScope(_ accountScopeID: String?) async {}
-
-        func credential(accountScopeID: String, siteID: String) async -> SolarForecastCredential? {
-            guard hasCredential else { return nil }
-            return SolarForecastCredential(accountScopeID: accountScopeID, siteID: siteID,
-                                           credentialID: "preview-credential", resourceIDs: resourceIDs)
-        }
-
-        func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) async throws -> String {
-            "preview-credential"
-        }
-
-        func discoverSites(accountScopeID: String, siteID: String, manual: Bool) async throws -> [SolcastSite] {
-            [SolcastSite(resourceID: "east-1234", name: "East array", tags: ["roof-north"]),
-             SolcastSite(resourceID: "west-5678", name: "West array", tags: ["roof-south", "shaded"])]
-        }
-
-        func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) async throws {}
-
-        func refresh(accountScopeID: String, siteID: String, manual: Bool) async -> SolarForecastRefreshResult {
-            guard hasCredential, !resourceIDs.isEmpty else { return .notConfigured }
-            return mode == .staleCache ? .deferred : .refreshed
-        }
-
-        func cachedBatch(accountScopeID: String, siteID: String) async -> SolarForecastBatch? {
-            hasCredential ? batch : nil
-        }
-
-        func isRecommendationUsable(accountScopeID: String, siteID: String) async -> Bool {
-            hasCredential && mode != .staleCache
-        }
-
-        func budget(for accountScopeID: String, siteID: String) async -> SolarForecastBudget {
-            SolarForecastBudget(utcDay: now, totalAttempts: 2, automaticAttempts: 1, deferredUntil: nil)
-        }
-
-        func disconnect(accountScopeID: String, siteID: String) async throws {}
-        func signOut() async throws {}
+        func clearAccountData() async throws {}
     }
 
     @MainActor
     final class PreviewPlanningAPI: MobileLoadPlanningDataAPI {
-        private let mode: ForecastPreviewMode
         private let response: MobileLoadPlanningContextResponse
 
         init(mode: ForecastPreviewMode, now: Date) {
-            self.mode = mode
             let slots: [MobileLoadPlanningContextResponse.Slot] = (0 ..< 48).map { index in
                 let minute = index * 30
-                // Missing context stays absent; it is never reported as zero.
                 let absent = mode == .missingContext && (8 ... 20).contains(minute / 60)
                 return MobileLoadPlanningContextResponse.Slot(
-                    localMinute: minute,
-                    homeKw: absent ? nil : 0.35,
+                    localMinute: minute, homeKw: absent ? nil : 0.35,
                     batteryNetChargeKw: absent ? nil : 0.1,
-                    sampleCount: absent ? 0 : 12,
-                    coverage: absent ? 0 : 1
+                    sampleCount: absent ? 0 : 12, coverage: absent ? 0 : 1
                 )
             }
             response = MobileLoadPlanningContextResponse(
-                version: 1,
-                site: .init(id: "preview-home", timezone: SITE_PREVIEW_TIME_ZONE),
-                units: .init(power: "kW", localMinute: "minute-of-day"),
-                asOf: now,
+                version: 1, site: .init(id: "preview-home", timezone: SITE_PREVIEW_TIME_ZONE),
+                units: .init(power: "kW", localMinute: "minute-of-day"), asOf: now,
                 availability: mode == .missingContext ? .unavailable : .available,
                 unavailableReason: mode == .missingContext ? "not_enough_days" : nil,
                 usableDayCount: mode == .missingContext ? 3 : 14,
                 historyStart: now.addingTimeInterval(-14 * 86400),
-                historyEnd: now.addingTimeInterval(-86400),
-                slots: slots
+                historyEnd: now.addingTimeInterval(-86400), slots: slots
             )
         }
 
         func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
             response
         }
+    }
+
+    @MainActor
+    private func makePreviewCoordinator(mode: ForecastPreviewMode, now: Date) -> DashboardCoordinator {
+        let api = DashboardPreviewAPI(mode: .normal)
+        let store = PreviewForecastStore(mode: mode, now: now)
+        let service = SolarForecastService(
+            providers: [store], policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo)
+        )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("preview-\(UUID().uuidString)")
+        let recordsDir = tempDir.appendingPathComponent("records")
+        try? FileManager.default.createDirectory(at: recordsDir, withIntermediateDirectories: true)
+        let historyStore = SolarHistoryStore(directory: tempDir.appendingPathComponent("history"))
+        let scope = SolarForecastSiteScope(accountScopeID: "preview-account", siteID: "preview-home")
+        let location = SolarHomeLocation(latitude: 41.8781, longitude: -87.6298, source: .device)
+        let plane = DetectedSolarLayout.Plane(
+            azimuth: 180, tilt: 25, dcKwp: 6.0, effectiveKw: 5.5, azimuthRange90: [170, 190], tiltRange90: [20, 30]
+        )
+        let detected = DetectedSolarLayout(
+            status: .detected, confidence: "high", reasons: [], planes: [plane], acClipKw: nil,
+            historyDays: 90, clearDays: 30, firstDay: "2025-01-01", lastDay: "2025-04-01"
+        )
+        let record = SolarLayoutRecord(
+            location: location, locationSetAt: now, result: detected, detectedAt: now,
+            attemptedAt: now, detectorVersion: SolarLayoutDetector.version, resultLocation: location
+        )
+        let hash = SHA256.hash(data: Data("\(scope.accountScopeID)|\(scope.siteID)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        if let data = try? JSONEncoder().encode(record) {
+            try? data.write(to: recordsDir.appendingPathComponent("\(hash).json"))
+        }
+        let records = SolarLayoutRecordStore(directory: recordsDir) { "preview-account" }
+        return DashboardCoordinator(
+            siteID: "preview-home", api: api, planningAPI: PreviewPlanningAPI(mode: mode, now: now),
+            accountScopeID: "preview-account", now: { now }, timerInterval: nil,
+            forecastService: service, history: historyStore, records: records
+        )
     }
 
     @MainActor
@@ -175,25 +188,20 @@
 
         init(mode: ForecastPreviewMode) {
             self.mode = mode
-            let api = DashboardPreviewAPI(mode: .normal)
             let now = Date.now
-            _coordinator = StateObject(wrappedValue: DashboardCoordinator(
-                siteID: "preview-home",
-                api: api,
-                planningAPI: PreviewPlanningAPI(mode: mode, now: now),
-                forecastStore: PreviewForecastStore(mode: mode, now: now),
-                accountScopeID: "preview-account",
-                now: { now },
-                timerInterval: nil
-            ))
+            _coordinator = StateObject(wrappedValue: makePreviewCoordinator(mode: mode, now: now))
             let suiteName = "pwusage.preview.solar.\(mode.rawValue)"
-            let defaults = UserDefaults(suiteName: suiteName)!
+            let defaults = UserDefaults(suiteName: suiteName) ?? .standard
             defaults.removePersistentDomain(forName: suiteName)
             let store = LoadProfileStore(userDefaults: defaults)
             if mode == .longCharge {
-                _ = try? store.editProfile(id: "car", energyKwh: 36, durationHours: 20,
-                                           carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20,
-                                                                        targetStateOfCharge: 80, chargingLevel: .level1))
+                _ = try? store.editProfile(
+                    id: "car", energyKwh: 36, durationHours: 20,
+                    carSettings: CarLoadSettings(
+                        capacityKwh: 60, initialStateOfCharge: 20,
+                        targetStateOfCharge: 80, chargingLevel: .level1
+                    )
+                )
             }
             profileStore = store
         }
@@ -227,10 +235,6 @@
 
     #Preview("Solar · Stale cache") {
         SolarForecastPreview(mode: .staleCache)
-    }
-
-    #Preview("Solar · Arrays not chosen") {
-        SolarForecastPreview(mode: .incompleteArraySelection)
     }
 
     #Preview("Solar · Missing household context") {

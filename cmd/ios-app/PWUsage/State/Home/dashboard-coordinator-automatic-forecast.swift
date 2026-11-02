@@ -11,22 +11,21 @@ extension DashboardCoordinator {
     var usesAutomaticSolarForecast: Bool { runner != nil && historyEnabled && solarLayoutStatus != .disabled }
 
     /// What forecast consumers treat as the connection: a published automatic forecast is
-    /// ready even though Solcast is not connected.
+    /// ready, evaluating while pending, and not connected otherwise.
     var forecastConnectionForConsumers: SolarForecastConnectionState {
         if solarForecastPublication != nil { return .ready }
-        if !usesAutomaticSolarForecast, solarForecastConnection == .ready, solarForecastBatch != nil { return .ready }
         if forecastOperationPending || (solarLayoutStatus == nil && solarForecastConnection == .checking) {
             return .checking
         }
-        return usesAutomaticSolarForecast ? .notConnected : solarForecastConnection
+        return .notConnected
     }
 
     var publishedForecastIntervals: [SolarForecastInterval]? {
-        solarForecastPublication?.intervals ?? (usesAutomaticSolarForecast ? nil : solarForecastBatch?.intervals)
+        solarForecastPublication?.intervals
     }
 
     var publishedForecastFetchedAt: Date? {
-        solarForecastPublication?.fetchedAt ?? (usesAutomaticSolarForecast ? nil : solarForecastBatch?.fetchedAt)
+        solarForecastPublication?.fetchedAt
     }
 
     /// Shown wherever an automatic forecast is in use.
@@ -50,10 +49,8 @@ extension DashboardCoordinator {
         siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int,
         status: MobileSolarLayoutResponse?, manual: Bool
     ) async {
-        solarForecastBatch = nil
         solarForecastConnection = .notConnected
         solarForecastUnavailableCause = nil
-        solarForecastLastRefresh = nil
         solarForecastSaveFailure = false
         solarForecastState = solarForecastPublication == nil ? .basic : .loadingWithBasic
         guard let service = forecastService, let scope = solarScope,
@@ -100,34 +97,7 @@ extension DashboardCoordinator {
         solarForecastState = .enhanced
     }
 
-    /// Beta correction for a connected Solcast forecast, only when the policy allows it.
-    func correctedSolcastBatch(
-        _ batch: SolarForecastBatch,
-        siteID: String,
-        context: LoadTimingForecastEstimator.PlanningContext
-    ) async -> SolarForecastBatch {
-        guard let service = forecastService, service.correctsCredentialProviders, let scope = solarScope,
-              case .enabled = await solarLayoutLookup(siteID: siteID, operation: forecastGeneration),
-              let timeZone = TimeZone(identifier: context.timeZone),
-              let actuals = await solarActuals(siteID: siteID) else { return batch }
-        let fingerprint = SolcastForecastProvider.fingerprint(
-            credentialID: batch.credentialID, resourceIDs: batch.resourceIDs
-        )
-        let identity = SolarForecastHistoryIdentity(
-            accountScopeID: scope.accountScopeID, siteID: siteID, providerID: .solcast, fingerprint: fingerprint
-        )
-        let raw = SolarForecastRawBatch(
-            providerID: .solcast, fingerprint: fingerprint, cacheRevision: fingerprint,
-            intervals: batch.intervals, fetchedAt: batch.fetchedAt, acClipKw: nil
-        )
-        let (intervals, _) = await service.corrected(raw, identity: identity, siteTimeZone: timeZone, actuals: actuals)
-        return SolarForecastBatch(
-            credentialID: batch.credentialID, resourceIDs: batch.resourceIDs, intervals: intervals,
-            fetchedAt: batch.fetchedAt
-        )
-    }
-
-    /// Keeps the selected site's status current for settings, even while Solcast is used.
+    /// Keeps the selected site's status current for settings.
     func refreshSolarLayoutStatus(siteID: String, operation: Int) async {
         _ = await solarLayoutLookup(siteID: siteID, operation: operation)
     }
@@ -153,7 +123,6 @@ extension DashboardCoordinator {
         solarForecastUnavailableReason = nil
         solarForecastUnavailableCause = nil
         solarForecastAttempt = nil
-        solarForecastBatch = nil
         solarForecastPublication = nil
         solarForecastSource = nil
         loadPlanningContext = nil

@@ -529,9 +529,8 @@ struct DashboardCoordinatorTests {
     func screenAppearancesFloorTheBillRequest() async throws {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            siteID: "site-1", api: api, planningAPI: api,
             accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
         )
 
@@ -549,66 +548,38 @@ struct DashboardCoordinatorTests {
                 "Past the floor an appearance requests again.")
     }
 
-    @Test("Smart Shift diagnostics gather the forecast store's bookkeeping")
-    func diagnosticsGatherTheForecastStoresBookkeeping() async throws {
-        let clock = DashboardTestClock()
-        let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
-        let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
-        )
-        #expect(await coordinator.solarForecastDiagnostics()?.lastRefreshResult == nil)
-
-        await coordinator.loadTimingDetailAppeared()
-        let diagnostics = try #require(await coordinator.solarForecastDiagnostics())
-        #expect(diagnostics.fetchedAt == Date(timeIntervalSince1970: 1_800_000_000))
-        #expect(diagnostics.intervalCount == 1)
-        #expect(diagnostics.recommendationUsable)
-        #expect(diagnostics.budget?.totalAttempts == 1)
-        #expect(diagnostics.budget?.totalLimit == SolarForecastStore.totalAttemptsPerUTCDay)
-        #expect(diagnostics.lastErrorDescription == "Forecast request failed")
-        #expect(diagnostics.lastRefreshResult == "refreshed")
-        #expect(diagnostics.connection == "ready")
-        #expect(diagnostics.state == "enhanced")
-    }
-
-    @Test("Reopening the detail inside the bill floor keeps the enhancement")
+    @Test("Reopening the detail inside the bill floor keeps household pattern")
     func reopeningInsideTheBillFloorKeepsTheEnhancement() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            siteID: "site-1", api: api, planningAPI: api,
             accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
         )
 
         await coordinator.loadTimingDetailAppeared()
-        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.householdPattern != nil)
         clock.advance(minutes: 1)
         await coordinator.loadTimingDetailAppeared()
 
         #expect(api.billSiteIDs == ["site-1"], "The floor suppresses the second request.")
-        #expect(coordinator.solarForecastState == .enhanced,
-                "A bill fetched inside the floor is fresh, so the enhancement must not be dropped.")
+        #expect(coordinator.householdPattern != nil,
+                "A bill fetched inside the floor is fresh, so the household pattern must not be dropped.")
     }
 
     @Test("Manual refresh with a missing planning context re-fetches the context")
     func manualRefreshRefetchesAMissingPlanningContext() async throws {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            siteID: "site-1", api: api, planningAPI: api,
             accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
 
         api.contextError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
         await coordinator.loadTimingDetailAppeared()
-        #expect(coordinator.solarForecastState == .failedWithBasic)
-        #expect(coordinator.loadPlanningContext == nil)
-        #expect(coordinator.solarForecastUnavailableReason == .serverOutdated)
+        #expect(coordinator.householdPattern == nil)
         #expect(api.contextSiteIDs == ["site-1"])
 
         api.contextError = nil
@@ -616,38 +587,28 @@ struct DashboardCoordinatorTests {
 
         #expect(api.contextSiteIDs == ["site-1", "site-1"],
                 "A pull must re-fetch the household profile instead of failing forever.")
-        #expect(coordinator.loadPlanningContext != nil)
-        #expect(coordinator.solarForecastState == .enhanced)
+        #expect(coordinator.householdPattern != nil)
     }
 
     @Test("Regression pin: a non-manual forecast refresh does not re-fetch a missing planning context")
     func automaticRefreshDoesNotRefetchAMissingPlanningContext() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            siteID: "site-1", api: api, planningAPI: api,
             accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
         )
         api.contextError = URLError(.notConnectedToInternet)
         await coordinator.loadTimingDetailAppeared()
-        #expect(coordinator.loadPlanningContext == nil)
+        #expect(coordinator.householdPattern == nil)
         #expect(api.contextSiteIDs == ["site-1"])
 
         api.contextError = nil
         await coordinator.refreshSolarForecast(manual: false)
 
-        // What this proves: re-fetching the household profile is gated on
-        // `manual`, so the automatic path cannot hammer it and cannot turn a
-        // diagnosed `serverOutdated`/`contextInvalid` into a generic retry.
-        // What it does not prove: anything new. The base revision reached the
-        // same outcome through a trailing `loadPlanningContext != nil` guard, and
-        // this test passed on it unchanged. Kept as the negative control for
-        // `manualRefreshRefetchesAMissingPlanningContext`, which cannot show that
-        // the `manual` gate is real without a case that stays shut.
         #expect(api.contextSiteIDs == ["site-1"],
                 "Only a manual refresh may re-fetch the household profile.")
-        #expect(coordinator.solarForecastState == .failedWithBasic)
+        #expect(coordinator.householdPattern == nil)
     }
 
     /// The cache self-heals: an entry the device clock has carried past the
@@ -659,15 +620,14 @@ struct DashboardCoordinatorTests {
     func poisonedCacheEntryIsReplacedOnNextFetch() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         api.contextAsOf = clock.now.addingTimeInterval(-60)
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            siteID: "site-1", api: api, planningAPI: api,
             accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()
-        #expect(coordinator.loadPlanningContext != nil)
+        #expect(coordinator.householdPattern != nil)
         let fetchesAfterFirstLoad = api.contextSiteIDs.count
 
         // Age past the context's own 24h bound and let a valid response arrive.
@@ -675,8 +635,7 @@ struct DashboardCoordinatorTests {
         api.contextAsOf = clock.now
         await coordinator.loadTimingDetailAppeared()
 
-        #expect(coordinator.solarForecastUnavailableReason == nil)
-        #expect(coordinator.loadPlanningContext != nil)
+        #expect(coordinator.householdPattern != nil)
         #expect(api.contextSiteIDs.count > fetchesAfterFirstLoad)
     }
 
@@ -691,16 +650,15 @@ struct DashboardCoordinatorTests {
     func revalidationFailureInsideTheLifetimeRefetchesAndReplaces() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let forecast = DashboardForecastStoreSpy(siteID: "site-1")
         // Exactly at the 24h `maximumAge` edge, which `validating` accepts (`<=`).
         api.contextAsOf = clock.now.addingTimeInterval(-24 * 60 * 60)
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, planningAPI: api, forecastStore: forecast,
+            siteID: "site-1", api: api, planningAPI: api,
             accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()
-        #expect(coordinator.loadPlanningContext != nil)
+        #expect(coordinator.householdPattern != nil)
         let fetchesAfterFirstLoad = api.contextSiteIDs.count
 
         // One minute on: the entry is a minute inside its lifetime, but its own
@@ -710,7 +668,7 @@ struct DashboardCoordinatorTests {
         await coordinator.loadTimingDetailAppeared()
 
         #expect(coordinator.solarForecastUnavailableReason == nil)
-        #expect(coordinator.loadPlanningContext != nil)
+        #expect(coordinator.householdPattern != nil)
         #expect(api.contextSiteIDs.count > fetchesAfterFirstLoad,
                 "A cached entry that fails re-validation must still be refetched.")
     }
@@ -968,51 +926,6 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
             }
         )
     }
-}
-
-/// A configured forecast store, so the Load timing appearance path runs far
-/// enough to exercise the bill refresh and the planning-context fetch.
-private actor DashboardForecastStoreSpy: SolarForecastManaging {
-    private let siteID: String
-
-    init(siteID: String) {
-        self.siteID = siteID
-    }
-
-    func activateAccountScope(_ accountScopeID: String?) {}
-    func credential(accountScopeID: String, siteID: String) -> SolarForecastCredential? {
-        guard siteID == self.siteID else { return nil }
-        return SolarForecastCredential(
-            accountScopeID: accountScopeID, siteID: siteID, credentialID: "fixture", resourceIDs: ["east"]
-        )
-    }
-    func connect(apiKey: String, accountScopeID: String, siteID: String, resourceIDs: [String]?) throws -> String {
-        throw SolarForecastStore.StoreError.invalidConfiguration
-    }
-    func discoverSites(accountScopeID: String, siteID: String, manual: Bool) throws -> [SolcastSite] { [] }
-    func selectArrays(_ resourceIDs: [String], accountScopeID: String, siteID: String) throws {}
-    func refresh(accountScopeID: String, siteID: String, manual: Bool) -> SolarForecastRefreshResult { .refreshed }
-    func cachedBatch(accountScopeID: String, siteID: String) -> SolarForecastBatch? {
-        SolarForecastBatch(
-            credentialID: "fixture",
-            resourceIDs: ["east"],
-            intervals: [SolarForecastInterval(
-                periodStart: Date(timeIntervalSince1970: 1_800_000_000),
-                periodEnd: Date(timeIntervalSince1970: 1_800_001_800),
-                powerKw: 2
-            )],
-            fetchedAt: Date(timeIntervalSince1970: 1_800_000_000)
-        )
-    }
-    func isRecommendationUsable(accountScopeID: String, siteID: String) -> Bool { true }
-    func budget(for accountScopeID: String, siteID: String) -> SolarForecastBudget {
-        SolarForecastBudget(
-            utcDay: Date(timeIntervalSince1970: 1_800_000_000), totalAttempts: 1, automaticAttempts: 1, deferredUntil: nil
-        )
-    }
-    var lastErrorDescription: String? { "Forecast request failed" }
-    func disconnect(accountScopeID: String, siteID: String) throws {}
-    func signOut() async throws {}
 }
 
 @MainActor

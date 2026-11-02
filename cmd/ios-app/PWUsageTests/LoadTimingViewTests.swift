@@ -106,8 +106,10 @@ struct LoadTimingViewTests {
                                        forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
         #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
                                        forecastFetchedAt: fresh, now: now) == .ready)
-        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: .rateLimited, reason: nil,
-                                       forecastFetchedAt: fresh, now: now) == .unusable("Solcast is limiting requests."))
+        #expect(P.forecastAvailability(
+            state: .failedWithBasic, connection: .ready, cause: .rateLimited, reason: nil,
+            forecastFetchedAt: fresh, now: now
+        ) == .unusable("The forecast provider is limiting requests."))
         #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
                                        forecastFetchedAt: fresh, now: now)
                 == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))

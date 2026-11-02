@@ -343,8 +343,7 @@ extension SolarHistoryStoreTests {
         #expect(FileManager.default.fileExists(atPath: folder.path))
         let sync = Task { try await store.sync(scope: scope, api: api, now: now) }
         await api.waitUntilRequested()
-        let cleanup = SolarForecastStoreSessionCleanup(
-            store: FakeSolcastStore(), historyStore: store, layoutRecordStore: layoutStore)
+        let cleanup = SolarSessionCleanup(historyStore: store, layoutRecordStore: layoutStore)
         let configuration = try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
         let auth = MobileAuthService(configuration: configuration, forecastCleanup: cleanup)
         try await auth.invalidateAuthenticatedSession()

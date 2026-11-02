@@ -4,7 +4,7 @@ import Foundation
 /// owner can paste into a debugging chat. It carries every input
 /// `LoadTimingForecastEstimator` needs, so `replay()` re-runs the pass offline.
 ///
-/// It never carries a credential: the Solcast key and resource IDs, cookies and
+/// It never carries a credential: cookies and
 /// tokens are not inputs to the estimator, and nothing here is handed them.
 struct SmartShiftDiagnostics: Codable, Equatable {
     typealias Estimator = LoadTimingForecastEstimator
@@ -39,19 +39,9 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         }
     }
 
-    /// The device's Solcast bookkeeping when the copy was made. Built from the
-    /// cached batch's intervals and fetch time only: its credential and
-    /// resource IDs are deliberately left behind.
+    /// The device's solar forecast bookkeeping when the copy was made. Built from the
+    /// publication's intervals and fetch time.
     struct SolarForecast: Codable, Equatable {
-        struct Budget: Codable, Equatable {
-            let utcDay: Date
-            let automaticAttempts: Int
-            let automaticLimit: Int
-            let totalAttempts: Int
-            let totalLimit: Int
-            let deferredUntil: Date?
-        }
-
         let connection: String
         let state: String
         let unavailableReason: String?
@@ -62,9 +52,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         let lastPeriodStart: Date?
         let cautiousIntervalCount: Int
         let hasCautiousPowerKw: Bool
-        /// `SolarForecastStore.isRecommendationUsable`: fresh enough, and the scope hasn't failed.
         let recommendationUsable: Bool
-        let budget: Budget?
         let lastErrorDescription: String?
         let lastRefreshResult: String?
         let unavailableCause: String?
@@ -74,32 +62,34 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         var automaticRefreshOutcome: String?
         var automaticDiagnostic: String?
 
-        init(batch: SolarForecastBatch?, now: Date, recommendationUsable: Bool, budget: SolarForecastBudget?,
-             lastErrorDescription: String?, lastRefresh: SolarForecastRefreshResult?,
-             unavailableCause: SolarForecastUnavailableCause?, connection: SolarForecastConnectionState,
-             state: SolarForecastEnhancementState, unavailableReason: SolarForecastEnhancementUnavailableReason?) {
+        init(
+            publication: SolarForecastPublication? = nil,
+            intervals: [SolarForecastInterval]? = nil,
+            fetchedAt: Date? = nil,
+            now: Date,
+            recommendationUsable: Bool,
+            lastErrorDescription: String?,
+            lastRefresh: SolarForecastRefreshOutcome?,
+            unavailableCause: SolarForecastUnavailableCause?,
+            connection: SolarForecastConnectionState,
+            state: SolarForecastEnhancementState,
+            unavailableReason: SolarForecastEnhancementUnavailableReason?
+        ) {
             self.connection = "\(connection)"
             self.state = "\(state)"
             self.unavailableReason = unavailableReason.map { "\($0)" }
-            fetchedAt = batch?.fetchedAt
-            ageMinutes = batch.map { (now.timeIntervalSince($0.fetchedAt) / 60 * 10).rounded() / 10 }
-            let intervals = batch?.intervals ?? []
-            intervalCount = intervals.count
-            firstPeriodStart = intervals.first?.periodStart
-            lastPeriodStart = intervals.last?.periodStart
-            cautiousIntervalCount = intervals.filter { $0.cautiousPowerKw != nil }.count
+            let effectiveFetchedAt = publication?.fetchedAt ?? fetchedAt
+            self.fetchedAt = effectiveFetchedAt
+            ageMinutes = effectiveFetchedAt.map { (now.timeIntervalSince($0) / 60 * 10).rounded() / 10 }
+            let allIntervals = publication?.intervals ?? intervals ?? []
+            intervalCount = allIntervals.count
+            firstPeriodStart = allIntervals.first?.periodStart
+            lastPeriodStart = allIntervals.last?.periodStart
+            cautiousIntervalCount = allIntervals.filter { $0.cautiousPowerKw != nil }.count
             hasCautiousPowerKw = cautiousIntervalCount > 0
             self.recommendationUsable = recommendationUsable
-            self.budget = budget.map {
-                Budget(utcDay: $0.utcDay, automaticAttempts: $0.automaticAttempts,
-                       automaticLimit: SolarForecastStore.automaticAttemptsPerUTCDay, totalAttempts: $0.totalAttempts,
-                       totalLimit: SolarForecastStore.totalAttemptsPerUTCDay, deferredUntil: $0.deferredUntil)
-            }
             self.lastErrorDescription = lastErrorDescription
-            lastRefreshResult = lastRefresh.map { result in
-                if case .failed(let failure) = result { return "failed(\(failure))" }
-                return "\(result)"
-            }
+            lastRefreshResult = lastRefresh.map { "\($0)" }
             self.unavailableCause = unavailableCause.map { "\($0)" }
         }
     }

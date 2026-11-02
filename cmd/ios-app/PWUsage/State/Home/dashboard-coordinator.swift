@@ -66,9 +66,6 @@ final class DashboardCoordinator: ObservableObject {
     /// `.basic` or `.awaitingArraySelection`, which cannot reach it.
     @Published var solarForecastSaveFailure = false
     @Published var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
-    @Published var solarForecastBatch: SolarForecastBatch?
-    /// The last forecast refresh's outcome, kept for Smart Shift diagnostics only.
-    var solarForecastLastRefresh: SolarForecastRefreshResult?
     @Published var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
     /// The household pattern with grid history, published whether or not Solcast
     /// is connected, so Smart Shift can project banks from history alone.
@@ -89,9 +86,8 @@ final class DashboardCoordinator: ObservableObject {
 
     let api: any MobileDashboardDataAPI
     let planningAPI: (any MobileLoadPlanningDataAPI)?
-    let forecastStore: (any SolarForecastManaging)?
     let accountScopeID: String?
-    let forecastService: SolarForecastService?
+    let forecastService: (any SolarForecastServing)?
     let history: SolarHistoryStore
     let records: SolarLayoutRecordStore
     let runner: SolarLayoutDetectionRunner?
@@ -148,12 +144,11 @@ final class DashboardCoordinator: ObservableObject {
         siteID: String,
         api: any MobileDashboardDataAPI,
         planningAPI: (any MobileLoadPlanningDataAPI)? = nil,
-        forecastStore: (any SolarForecastManaging)? = nil,
         accountScopeID: String? = nil,
         now: @escaping () -> Date = Date.init,
         timerInterval: Duration? = .seconds(30),
         cache: DashboardCache? = nil,
-        forecastService: SolarForecastService? = nil,
+        forecastService: (any SolarForecastServing)? = nil,
         history: SolarHistoryStore = .shared,
         records: SolarLayoutRecordStore = .shared,
         runner: SolarLayoutDetectionRunner? = nil
@@ -161,7 +156,6 @@ final class DashboardCoordinator: ObservableObject {
         selectedSiteID = siteID
         self.api = api
         self.planningAPI = planningAPI
-        self.forecastStore = forecastStore
         self.accountScopeID = accountScopeID
         self.now = now
         self.timerInterval = timerInterval
