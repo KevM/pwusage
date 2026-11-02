@@ -165,4 +165,11 @@ struct AppConfigurationTests {
             )
         }
     }
+
+    @Test("Demo configuration is safe and uses default API origin")
+    func demoConfigurationIsSafe() {
+        let configuration = AppConfiguration.demo
+        #expect(configuration.apiOrigin == AppConfiguration.defaultAPIOrigin)
+        #expect(configuration.initializationError == nil)
+    }
 }

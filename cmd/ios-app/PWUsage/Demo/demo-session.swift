@@ -20,7 +20,10 @@ enum DemoSession {
 
     /// A fresh demo, whatever an earlier one left behind.
     @MainActor
-    static func makeModel(suiteName: String = defaultsSuiteName) -> PWUsageAppModel {
+    static func makeModel(
+        suiteName: String = defaultsSuiteName,
+        timerInterval: Duration? = .seconds(30)
+    ) -> PWUsageAppModel {
         let api = DemoAPI()
         let defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
@@ -39,7 +42,7 @@ enum DemoSession {
             coordinatorFactory: { siteID, _ in
                 DashboardCoordinator(
                     siteID: siteID, api: api, planningAPI: api, forecastStore: forecastStore,
-                    accountScopeID: accountScopeID, timerInterval: nil,
+                    accountScopeID: accountScopeID, timerInterval: timerInterval,
                     history: solar.history, records: solar.records
                 )
             },
@@ -59,11 +62,9 @@ enum DemoSession {
         try? FileManager.default.removeItem(at: folder(suiteName: suiteName))
     }
 
-    /// The API is never reached, but the auth service needs a configuration;
-    /// the production origin is a constant Release accepts.
+    /// The API is never reached, but the auth service needs a configuration.
     private static var configuration: AppConfiguration {
-        // swiftlint:disable:next force_try
-        try! AppConfiguration(apiOrigin: AppConfiguration.defaultAPIOrigin)
+        AppConfiguration.demo
     }
 
     /// Solar stores in the session's own folder, and a cloud sync with no transport.

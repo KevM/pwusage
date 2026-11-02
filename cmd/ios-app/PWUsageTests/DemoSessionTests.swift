@@ -22,6 +22,7 @@ struct DemoSessionTests {
         #expect(model.liveActivities == nil)
         #expect(model.api is DemoAPI)
         #expect(model.forecastStore is DemoForecastStore)
+        #expect(model.coordinator?.timerInterval == .seconds(30))
     }
 
     @Test("A real model is not a demo")
