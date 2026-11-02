@@ -55,7 +55,9 @@ final class SolarLayoutDetectionRunner {
         self.now = now
     }
 
-    func runIfDue(scope: SolarForecastSiteScope) async -> SolarLayoutRecord? {
+    /// `force` runs detection even when the ordinary cadence is not due (history onboarding
+    /// reassessing after a large import); it still needs a location and current history.
+    func runIfDue(scope: SolarForecastSiteScope, force: Bool = false) async -> SolarLayoutRecord? {
         while let current = inFlightRun {
             guard current.scope == scope else {
                 cancel()
@@ -73,7 +75,7 @@ final class SolarLayoutDetectionRunner {
             }
             guard let record = try? await records.record(scope: scope),
                   !solarLocationsShareCoordinates(record.location, lastRunLocation),
-                  SolarLayoutDetectionSchedule.isDue(record, now: now()),
+                  force || SolarLayoutDetectionSchedule.isDue(record, now: now()),
                   !Task.isCancelled else {
                 return result
             }
@@ -85,7 +87,7 @@ final class SolarLayoutDetectionRunner {
 
         let task = Task { @MainActor [weak self] () -> SolarLayoutRecord? in
             guard let self else { return nil }
-            return await self.performRunIfDue(scope: scope, run: run)
+            return await self.performRunIfDue(scope: scope, run: run, force: force)
         }
         inFlightRun = (scope: scope, task: task)
 
@@ -134,7 +136,7 @@ final class SolarLayoutDetectionRunner {
         }
     }
 
-    private func performRunIfDue(scope: SolarForecastSiteScope, run: Int) async -> SolarLayoutRecord? {
+    private func performRunIfDue(scope: SolarForecastSiteScope, run: Int, force: Bool) async -> SolarLayoutRecord? {
         guard isCurrent(run, scope: scope) else { return nil }
 
         var resolvedTimeZone: TimeZone?
@@ -149,7 +151,7 @@ final class SolarLayoutDetectionRunner {
             return nil
         }
         lastRunLocation = record.location
-        guard SolarLayoutDetectionSchedule.isDue(record, now: now()),
+        guard force || SolarLayoutDetectionSchedule.isDue(record, now: now()),
               let location = record.location else {
             return record
         }

@@ -34,6 +34,10 @@ actor SolarHistoryStore {
     private var cache: [SolarForecastSiteScope: Persisted] = [:]
     private var generation = 0
     private var scopeGenerations: [SolarForecastSiteScope: Int] = [:]
+    /// Syncs running per scope, and days merged while one ran: a sync saves the state it loaded
+    /// before its pages, so it reapplies these first.
+    private var activeSyncs: [SolarForecastSiteScope: Int] = [:]
+    private var lateDays: [SolarForecastSiteScope: [MobileSolarHistoryDay]] = [:]
 
     init(fileManager: FileManager = .default, directory customDirectory: URL? = nil) {
         self.fileManager = fileManager
@@ -47,6 +51,14 @@ actor SolarHistoryStore {
         now: Date = .now
     ) async throws -> SolarHistorySyncResult {
         scopeGenerations[scope, default: 0] += 1
+        activeSyncs[scope, default: 0] += 1
+        defer {
+            activeSyncs[scope, default: 1] -= 1
+            if activeSyncs[scope] == 0 {
+                activeSyncs.removeValue(forKey: scope)
+                lateDays.removeValue(forKey: scope)
+            }
+        }
         let syncGeneration = generation
         let scopeGeneration = scopeGenerations[scope, default: 0]
         var state = try load(scope)
@@ -81,10 +93,22 @@ actor SolarHistoryStore {
         if let maxFetchedAt { state.syncedThrough = maxFetchedAt.addingTimeInterval(-300) }
         state.syncedAt = now
         let pruneBefore = Self.localDay(daysBefore: 400, now: now, timeZone: timeZone)
+        _ = store(days: lateDays[scope] ?? [], in: &state, maximumFetchedAt: nil)
         state.days.removeAll { $0.dayStart < pruneBefore }
         try validateGeneration(syncGeneration, scope: scope, scopeGeneration: scopeGeneration)
         try save(state, scope: scope)
         return .synced(timeZone: timeZone)
+    }
+
+    /// Keep the days a history fill returned. The sync watermark does not move, so the next sync
+    /// still reads every day changed since it.
+    func merge(_ fill: MobileSolarHistoryFill, scope: SolarForecastSiteScope) throws {
+        var state = try load(scope)
+        state.timeZone = state.timeZone ?? fill.timeZone.identifier
+        state.isEnabled = true
+        _ = store(days: fill.days, in: &state, maximumFetchedAt: nil)
+        try save(state, scope: scope)
+        if activeSyncs[scope] != nil { lateDays[scope, default: []].append(contentsOf: fill.days) }
     }
 
     private func fetchPages(_ context: PageSyncContext, state: inout Persisted) async throws -> PageResult {

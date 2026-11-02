@@ -10,7 +10,7 @@ struct SolarLayoutReadiness: Equatable, Sendable {
 }
 
 /// What a detection result says about importing more history.
-enum SolarLayoutHistoryOutlook: Equatable, Sendable {
+enum SolarLayoutHistoryOutlook: String, Codable, Equatable, Sendable {
     /// The forecast can use the layout.
     case usable
     /// The result is limited by the amount or clarity of the history.
