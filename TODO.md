@@ -15,6 +15,13 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## iOS demo mode v2 (2026-11-01, branch `ios-demo-mode-impl`)
+
+v1 ships the read-only demo (see `cmd/ios-app/README.md#demo-mode`); these were deferred:
+
+- [ ] **Simulated hold Live Activity:** start a local-only Lock Screen / Dynamic Island activity for the demo hold, with no APNs registration and nothing that survives the demo.
+- [ ] **Demo site in the Control Center control:** offer the sample home in the Battery Saver control's site picker without writing it to `BatteryHoldControlSiteStore`, and route it into the demo.
+
 ## Future iOS widgets
 
 **Note (2026-09-24, PR #110 / `codex/ios-foundation`):** Architecture only; no widget work is in progress. Keep the `MobileLoginHandoff` table as a one-time PKCE sign-in exchange. Widgets should use the resulting `site_auth` session, not redeem handoff codes or hold Tesla credentials. See [the authorization design](docs/plans/2026-09-24-ios-widget-authorization-design.md) for rationale and edge cases.

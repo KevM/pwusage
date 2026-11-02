@@ -1,12 +1,16 @@
 import SwiftUI
 
-/// The Settings tab: site, Rate Plans, Solar Forecast, About, and Sign Out.
+/// The Settings tab: site, Rate Plans, Solar Forecast, About, and Sign Out
+/// (Exit Demo in the demo).
 /// It has no stack of its own; the tab's `NavigationStack` hosts the pushes.
 struct SettingsView: View {
     let site: MobileSite
     @ObservedObject var coordinator: DashboardCoordinator
     let onChooseSite: () -> Void
     let onSignOut: () -> Void
+    /// Set in the demo, where it replaces Sign Out. Nothing is lost by leaving,
+    /// so it asks no confirmation.
+    var onExitDemo: (() -> Void)?
 
     @State private var isConfirmingSignOut = false
 
@@ -42,12 +46,12 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
             }
-            Section {
-                Button("Sign Out", role: .destructive) { isConfirmingSignOut = true }
-                    .confirmationDialog("Sign out of pwusage?", isPresented: $isConfirmingSignOut, titleVisibility: .visible) {
-                        Button("Sign Out", role: .destructive, action: onSignOut)
-                        Button("Cancel", role: .cancel) {}
-                    }
+            if let onExitDemo {
+                Section {
+                    Button("Exit Demo", action: onExitDemo)
+                }
+            } else {
+                signOutSection
             }
         }
         .navigationTitle("Settings")
@@ -62,6 +66,17 @@ struct SettingsView: View {
             case .about:
                 AboutSheet()
             }
+        }
+    }
+
+    private var signOutSection: some View {
+        Section {
+            Button("Sign Out", role: .destructive) { isConfirmingSignOut = true }
+                .confirmationDialog("Sign out of pwusage?", isPresented: $isConfirmingSignOut,
+                                    titleVisibility: .visible) {
+                    Button("Sign Out", role: .destructive, action: onSignOut)
+                    Button("Cancel", role: .cancel) {}
+                }
         }
     }
 }

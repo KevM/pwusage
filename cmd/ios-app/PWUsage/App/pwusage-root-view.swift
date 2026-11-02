@@ -5,6 +5,7 @@ struct PWUsageRootView: View {
     @StateObject private var navigationInbox = BatteryHoldNavigationInbox.shared
     @EnvironmentObject private var model: PWUsageAppModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.demoMode) private var demoMode
 
     var body: some View {
         Group {
@@ -20,10 +21,10 @@ struct PWUsageRootView: View {
                 SignInView(
                     isWorking: model.isSigningIn || model.isSigningOut,
                     workingTitle: model.isSigningOut ? "Signing out…" : "Connecting…",
-                    message: model.signInMessage
-                ) {
-                    Task { await model.signIn() }
-                }
+                    message: model.signInMessage,
+                    onSignIn: { Task { await model.signIn() } },
+                    onTryDemo: model.isDemo ? nil : demoMode?.start
+                )
             case .signedIn:
                 if let coordinator = model.coordinator,
                    let site = model.sites.first(where: { $0.id == model.selectedSiteID }) {

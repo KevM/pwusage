@@ -109,3 +109,7 @@ Authentication and authorization documentation is consolidated in [`Authenticati
 - **Git Commits**: Automatically commit verified changes at the end of completed tasks using clear, conventional commit messages.
 - **Pull Requests**: Create pull requests as drafts initially unless the user requests otherwise. iOS CI runs on a self-hosted macOS runner (`self-hosted`) when PRs are ready for review or manually via `workflow_dispatch`. Tests can also be run locally with `./run-tests.sh`.
 - **Persona**: Helpful, competent software engineer pair programmer.
+
+## asc cli reference
+
+See `ASC.md` for the command catalog and workflows.

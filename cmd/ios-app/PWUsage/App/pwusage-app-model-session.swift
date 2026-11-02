@@ -8,6 +8,7 @@ extension PWUsageAppModel {
     }
 
     func signOut() async {
+        if isDemo { return presentDemoSheet() }
         guard !isSigningOut else { return }
         isSigningOut = true
         defer { isSigningOut = false }

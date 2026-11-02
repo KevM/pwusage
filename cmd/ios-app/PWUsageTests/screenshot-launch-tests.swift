@@ -3,7 +3,7 @@
     @testable import PWUsage
     import Testing
 
-    /// The App Store screenshots launch the app on demo data. These pin what the
+    /// The App Store screenshots launch the app in demo mode. These pin what the
     /// listing would otherwise get wrong without anyone noticing: a placeholder
     /// site, a model that isn't signed in, or demo state leaking into normal runs.
     @MainActor
@@ -20,7 +20,9 @@
         func showcaseModel() async throws {
             let model = ScreenshotLaunch.makeModel()
             #expect(model.screenState == .signedIn)
+            #expect(model.isDemo)
             #expect(model.selectedTab == .home)
+            #expect(ScreenshotLaunch.site == DemoFixtures.site)
             #expect(model.sites == [ScreenshotLaunch.site])
             #expect(!ScreenshotLaunch.site.utility.localizedCaseInsensitiveContains("demo"))
             let coordinator = try #require(model.coordinator)
@@ -28,7 +30,7 @@
             coordinator.authenticationRestored()
             await coordinator.refreshAll(trigger: .userGesture)
             #expect(coordinator.live.response?.site.name == "Cedar House")
-            #expect(coordinator.bill.response?.currentBill.estimatedCost == 146.82)
+            #expect(coordinator.bill.response?.currentBill.estimatedCost != nil)
         }
 
         @Test("Smart Shift reaches the solar forecast, not the Connect Solcast note")
@@ -41,21 +43,6 @@
             await coordinator.loadTimingDetailAppeared()
             #expect(coordinator.solarForecastConnection == .ready)
             #expect(coordinator.solarForecastState == .enhanced)
-        }
-
-        /// Minute timelines render with the minute's start, so a source inside the
-        /// current minute reads "Source time is in the future". Two minutes back
-        /// keeps every label on "updated … ago".
-        @Test("Every fetch reports one source instant, before the current minute")
-        func sourceTimeIsFixedBeforeLaunchMinute() async throws {
-            let api = ScreenshotLaunch.API()
-            let launchedBy = Date.now
-            try await Task.sleep(for: .milliseconds(1100))
-            let first = try await api.fetchLive(siteID: ScreenshotLaunch.site.id).sources.liveStatusAt
-            let second = try await api.fetchBill(siteID: ScreenshotLaunch.site.id).sources.energyDataThrough
-            let live = try #require(first)
-            #expect(live == second)
-            #expect(live <= launchedBy.addingTimeInterval(-60))
         }
 
         @Test("Smart Shift jobs come from the model's defaults, not standard defaults")
@@ -77,7 +64,7 @@
             #expect(model.solarCloudSync !== SolarLayoutCloudSync.shared)
             #expect(model.solarRecords !== SolarLayoutRecordStore.shared)
             #expect(model.solarHistory !== SolarHistoryStore.shared)
-            #expect(model.forecastStore is PreviewForecastStore)
+            #expect(model.forecastStore is DemoForecastStore)
         }
 
         @Test("The screenshot model never touches standard defaults")

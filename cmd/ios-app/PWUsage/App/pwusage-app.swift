@@ -16,6 +16,8 @@ struct PWUsageApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var launch: Launch = .starting
+    /// The demo, while it runs, is rendered in place of the real model.
+    @StateObject private var demo = DemoModeController()
     private let launchTask: Task<Launch, Never>
 
     init() {
@@ -107,9 +109,13 @@ struct PWUsageApp: App {
                 ProgressView("Starting pwusage…")
                     .task { launch = await launchTask.value }
             case .ready(let model):
+                let active = demo.model ?? model
                 PWUsageRootView()
-                    .environmentObject(model)
-                    .environment(model.liveActivities)
+                    // A fresh view tree per model, so no tab state crosses into or out of the demo.
+                    .id(ObjectIdentifier(active))
+                    .environmentObject(active)
+                    .environment(active.liveActivities)
+                    .environment(\.demoMode, DemoModeActions(controller: demo) { await model.signIn() })
             case .misconfigured(let message):
                 EmptyStateScreen(
                     symbol: "exclamationmark.triangle",
@@ -134,7 +140,7 @@ struct PWUsageApp: App {
         }
         .commands {
             if case .ready(let model) = launch {
-                PWUsageCommands(model: model)
+                PWUsageCommands(model: demo.model ?? model)
             }
         }
     }

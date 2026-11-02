@@ -23,6 +23,12 @@ struct AppConfiguration: Equatable {
     /// its own explicit sign-off rather than riding in on the host allowlist.
     static let releasedAPIOriginPort = 443
 
+    /// Safe default configuration for demo mode, guaranteed not to throw.
+    static let demo: AppConfiguration = {
+        (try? AppConfiguration(apiOrigin: defaultAPIOrigin))
+            ?? AppConfiguration(fallbackOrigin: defaultAPIOrigin, reason: "Demo configuration")
+    }()
+
     private static let logger = Logger(subsystem: "fm.rodeo.pwusage", category: "configuration")
 
     let apiOrigin: URL

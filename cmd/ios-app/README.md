@@ -63,7 +63,7 @@ Uploads use the **Release production API**, `https://pwusage.fm.rodeo`, and skip
 bundle exec fastlane ios screenshots
 ```
 
-Captures the listing screenshots into `fastlane/screenshots/en-US/` (git-ignored): five portrait shots on a 6.9" iPhone and four landscape shots on a 13" iPad. The `PWUsageScreenshots` UI test launches the app with `-PWUsageScreenshotMode`, a Debug-only switch that signs in to demo data, so no account, network or real home appears. It runs locally only and is not part of the release workflow. Look over the images before uploading them.
+Captures the listing screenshots into `fastlane/screenshots/en-US/` (git-ignored): five portrait shots on a 6.9" iPhone and four landscape shots on a 13" iPad. The `PWUsageScreenshots` UI test launches the app with `-PWUsageScreenshotMode`, a Debug-only switch that opens [demo mode](#demo-mode), so the listing shows what App Review sees and no account, network or real home appears. It runs locally only and is not part of the release workflow. Look over the images before uploading them.
 
 ```bash
 bundle exec fastlane ios upload_screenshots
@@ -125,6 +125,10 @@ cd cmd/next-app && npx tsx scripts/load-planning-context-capture.ts <siteId>
 ```
 
 This runs the same query and the same profile builder as the route and prints the diagnostics the route hides: row counts, per-day coverage against the 90 percent gate, off-grid timestamps, and non-finite values. It prints no site name, no credentials, and no per-interval values, so it is safe against production data.
+
+## Demo mode
+
+**Try the demo** on the signed-out sign-in screen opens a read-only tour of a sample home, "Cedar House" on "Hill Country Electric" (On-peak $0.31, Off-peak $0.10), for App Review and anyone without a Tesla account. The fixtures in `PWUsage/Demo/` ship in Release and are built relative to the real "now", so at any day or hour On-peak is active, Off-peak starts in three hours and is cheaper, and the bill cycle ends ten days out. `DemoSession` builds a second `PWUsageAppModel` (`isDemo`) on `DemoAPI`, which answers from memory and simulates the battery hold; it uses its own `pwusage.demo` defaults suite, a temporary folder, and no CloudKit, Control Center site store or Live Activity, and the real model is never touched. An In Demo Mode bar below the tab bar opens a sheet with Sign in with Tesla and Keep exploring, Settings shows Exit Demo instead of Sign Out, and any external launch (control, App Intent, link) shows that sheet rather than a real site. The demo lives only in memory: a relaunch returns to sign-in.
 
 ## Tariff sheet
 

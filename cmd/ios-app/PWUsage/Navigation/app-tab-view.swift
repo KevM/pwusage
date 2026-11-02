@@ -7,6 +7,7 @@ struct AppTabView: View {
     @ObservedObject var model: PWUsageAppModel
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
+    @Environment(\.demoMode) private var demoMode
 
     var body: some View {
         Group {
@@ -19,6 +20,14 @@ struct AppTabView: View {
                     subtitle: "Reconnect your Tesla account to update your energy data.",
                     buttonTitle: "Reconnect Tesla"
                 )
+            } else if model.isDemo {
+                // Stacked rather than a safe-area inset: the floating tab bar ignores
+                // an inset and would sit under the bar. Below the tab bar on iPhone,
+                // across the window's foot under the sidebar on iPad.
+                VStack(spacing: 0) {
+                    tabs
+                    DemoModeBar { model.presentDemoSheet() }
+                }
             } else {
                 tabs
             }
@@ -53,6 +62,12 @@ struct AppTabView: View {
             }
             .presentationDetents(model.sites.count > 4 ? [.medium, .large] : [.medium])
         }
+        .sheet(isPresented: $model.isDemoSheetPresented) {
+            DemoModeSheet(
+                onSignIn: { demoMode?.exitAndSignIn() },
+                onKeepExploring: { model.isDemoSheetPresented = false }
+            )
+        }
     }
 
     @ViewBuilder private func content(for tab: AppTab) -> some View {
@@ -69,7 +84,8 @@ struct AppTabView: View {
         case .settings:
             SettingsView(site: site, coordinator: coordinator,
                          onChooseSite: model.openSitePicker,
-                         onSignOut: { Task { await model.signOut() } })
+                         onSignOut: { Task { await model.signOut() } },
+                         onExitDemo: model.isDemo ? { demoMode?.exit() } : nil)
         }
     }
 
