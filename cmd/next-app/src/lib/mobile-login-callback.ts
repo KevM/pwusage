@@ -23,11 +23,15 @@ export type MobileLoginErrorCode =
 
 /**
  * Either a failure (which the app surfaces as `AuthError.serverRejectedLogin`)
- * or the one-time PKCE handoff exchange. Every payload carries `state` so the app
- * can match the response against the sign-in it started.
+ * or the one-time PKCE handoff exchange. Payloads carry `state` so the app can
+ * match the response against the sign-in it started. The one exception is a
+ * failure whose attempt cookie is gone: the app state is unknown, and the app
+ * reports the stateless callback as `AuthError.invalidCallback`, which still
+ * closes its sign-in sheet.
  */
 export type MobileCallbackParams =
   | { error: MobileLoginErrorCode; state: string }
+  | { error: MobileLoginErrorCode }
   | { code: string; attempt: string; state: string };
 
 /**

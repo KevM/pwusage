@@ -1,8 +1,13 @@
+import crypto from 'crypto';
 import type { NextRequest } from 'next/server';
 
 export const LOGIN_ATTEMPT_SECONDS = 10 * 60;
 export const MAX_LOGIN_ATTEMPTS = 8;
-const ATTEMPT_STATE = /^v2\.([a-f0-9]{32})$/;
+// `m.` marks a native app attempt, so a callback that has lost the attempt cookie
+// can still end the app's sign-in sheet. It is a routing hint only: nothing
+// trusts it for success, which still needs the cookie's PKCE metadata.
+const ATTEMPT_STATE = /^v2\.(?:m\.)?([a-f0-9]{32})$/;
+const MOBILE_ATTEMPT_STATE = /^v2\.m\.[a-f0-9]{32}$/;
 const COOKIE_PREFIX = 'auth_attempt_';
 const PRODUCTION_ORIGIN = 'https://pwusage.fm.rodeo';
 
@@ -14,6 +19,14 @@ export interface TeslaLoginAttempt {
     mobileAttemptId?: string;
     mobileChallenge?: string;
     mobileState?: string;
+}
+
+export function newLoginAttemptState(mobile: boolean): string {
+    return `v2.${mobile ? 'm.' : ''}${crypto.randomBytes(16).toString('hex')}`;
+}
+
+export function isMobileAttemptState(state: string): boolean {
+    return MOBILE_ATTEMPT_STATE.test(state);
 }
 
 export function loginAttemptCookieName(state: string): string | undefined {

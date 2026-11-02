@@ -10,7 +10,7 @@ import { buildTeslaAuthorizeUrl } from '@/lib/tesla-authorize-url';
 import { logEvent, observeRoute } from '@/lib/observability';
 import {
   LOGIN_ATTEMPT_SECONDS, MAX_LOGIN_ATTEMPTS, isAttemptCookie, isLoginPrefetch,
-  loginAttemptCookieName, productionLoginRedirect, safeLoginCallback, teslaLoginBaseUrl,
+  loginAttemptCookieName, newLoginAttemptState, productionLoginRedirect, safeLoginCallback, teslaLoginBaseUrl,
   type TeslaLoginAttempt,
 } from '@/lib/tesla-login-attempt';
 
@@ -63,7 +63,7 @@ async function handleGET(request: NextRequest) {
     return NextResponse.json({ error: 'Several sign-ins are already in progress. Finish one or try again in 10 minutes.' },
       { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': String(LOGIN_ATTEMPT_SECONDS) } });
   }
-  const state = `v2.${crypto.randomBytes(16).toString('hex')}`;
+  const state = newLoginAttemptState(isMobileLogin);
   const nonce = crypto.randomBytes(16).toString('hex');
   const attempt: TeslaLoginAttempt = {
     nonce,

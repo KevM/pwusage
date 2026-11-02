@@ -5,11 +5,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { TeslaAuthService } from '@/lib/tesla-auth-service';
 import { getAppBaseUrl } from '@/lib/url-utils';
 import { createMobileLoginHandoff } from '@/lib/mobile-login-handoff';
-import { mobileCallbackResponse } from '@/lib/mobile-login-callback';
+import { mobileCallbackResponse, type MobileLoginErrorCode } from '@/lib/mobile-login-callback';
 import { isValidAppState, isValidMobileLoginParameters } from '@/lib/mobile-login-validation';
 import { isSecureRequest } from '@/lib/request-security';
 import {
-    LOGIN_ATTEMPT_SECONDS, isLoginPrefetch, loginAttemptCookieName, productionLoginRedirect, readLoginAttempt, teslaLoginBaseUrl,
+    LOGIN_ATTEMPT_SECONDS, isLoginPrefetch, isMobileAttemptState, loginAttemptCookieName, productionLoginRedirect, readLoginAttempt, teslaLoginBaseUrl,
 } from '@/lib/tesla-login-attempt';
 
 export const maxDuration = 60; // Allow up to 60 seconds on Vercel to avoid timeouts during slow Tesla API / JWKS calls
@@ -50,6 +50,14 @@ async function handleGET(request: NextRequest) {
     // Consume this browser's attempt on every terminal path, including denial or throws.
     // Tesla's authorization code and the mobile handoff retain their server-side replay checks.
     if (scoped) clearAttempt();
+    // Ends a failed native sign-in with the app's own callback, so the sheet closes
+    // instead of showing JSON. A marked state whose cookie is gone (expired, or a
+    // cookieless browser context) still returns, without the unknown app state.
+    const mobileFailure = (error: MobileLoginErrorCode) => {
+        if (mobileState && isValidAppState(mobileState)) return mobileCallbackResponse({ error, state: mobileState });
+        if (state && isMobileAttemptState(state)) return mobileCallbackResponse({ error });
+        return undefined;
+    };
     logEvent('info', 'tesla.sign-in.callback', {
         loginId: attempt?.loginId, attemptFormat: scoped ? 'v2' : 'legacy',
         ageMs: attempt ? Date.now() - (attempt.expiresAt - LOGIN_ATTEMPT_SECONDS * 1000) : undefined,
@@ -82,30 +90,19 @@ async function handleGET(request: NextRequest) {
             hasClientSecret: !!clientSecret
         });
         if (hasMobileCookies) clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+        return mobileFailure('login_unavailable') ?? NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
 
     if (!code || !state) {
         if (hasMobileCookies) clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({
-                error: searchParams.get('error') === 'access_denied' ? 'access_denied' : 'missing_code_or_state',
-                state: mobileState,
-            });
-        }
-        return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
+        return mobileFailure(searchParams.get('error') === 'access_denied' ? 'access_denied' : 'missing_code_or_state')
+            ?? NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
     }
 
     if (hasMobileCookies && (!mobileAttemptId || !mobileChallenge || !mobileState
         || !isValidMobileLoginParameters(mobileChallenge, mobileState))) {
         clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'invalid_login_attempt', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Invalid mobile login attempt' }, { status: 401 });
+        return mobileFailure('invalid_login_attempt') ?? NextResponse.json({ error: 'Invalid mobile login attempt' }, { status: 401 });
     }
 
     const authService = new TeslaAuthService();
@@ -122,10 +119,7 @@ async function handleGET(request: NextRequest) {
         if (!hasMobileCookies) throw error;
         console.error('[AuthCallback] Mobile Tesla callback failed unexpectedly', error);
         clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Mobile login failed' }, { status: 500 });
+        return mobileFailure('login_unavailable') ?? NextResponse.json({ error: 'Mobile login failed' }, { status: 500 });
     }
 
     if (result.status === 'success') setLogContext({ siteIds: result.siteIds });
@@ -133,45 +127,27 @@ async function handleGET(request: NextRequest) {
 
     if (result.status === 'state-mismatch') {
         if (hasMobileCookies) clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'state_mismatch', state: mobileState });
-        }
-        return NextResponse.json({ error: 'State mismatch' }, { status: 401 });
+        return mobileFailure('state_mismatch') ?? NextResponse.json({ error: 'State mismatch' }, { status: 401 });
     }
     if (result.status === 'token-exchange-failed') {
         if (hasMobileCookies) clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'token_exchange_failed', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Failed to exchange token' }, { status: result.statusCode });
+        return mobileFailure('token_exchange_failed') ?? NextResponse.json({ error: 'Failed to exchange token' }, { status: result.statusCode });
     }
     if (result.status === 'invalid-id-token') {
         if (hasMobileCookies) clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'invalid_id_token', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Invalid ID token' }, { status: 401 });
+        return mobileFailure('invalid_id_token') ?? NextResponse.json({ error: 'Invalid ID token' }, { status: 401 });
     }
     if (result.status === 'nonce-mismatch') {
         if (hasMobileCookies) clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'nonce_mismatch', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Nonce mismatch' }, { status: 401 });
+        return mobileFailure('nonce_mismatch') ?? NextResponse.json({ error: 'Nonce mismatch' }, { status: 401 });
     }
     if (result.status === 'db-error') {
         clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'login_unavailable', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Could not finish Tesla sign-in' }, { status: 500 });
+        return mobileFailure('login_unavailable') ?? NextResponse.json({ error: 'Could not finish Tesla sign-in' }, { status: 500 });
     }
     if (result.status === 'fleet-api-failed') {
         clearAttempt();
-        if (mobileState && isValidAppState(mobileState)) {
-            return mobileCallbackResponse({ error: 'product_import_failed', state: mobileState });
-        }
-        return NextResponse.json({ error: 'Failed to load Tesla products' }, { status: 502 });
+        return mobileFailure('product_import_failed') ?? NextResponse.json({ error: 'Failed to load Tesla products' }, { status: 502 });
     }
 
     // Success flow - generate cookie & sign JWT
