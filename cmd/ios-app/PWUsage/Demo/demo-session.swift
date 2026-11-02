@@ -22,7 +22,8 @@ enum DemoSession {
     @MainActor
     static func makeModel(
         suiteName: String = defaultsSuiteName,
-        timerInterval: Duration? = .seconds(30)
+        timerInterval: Duration? = .seconds(30),
+        isDemo: Bool = true
     ) -> PWUsageAppModel {
         let api = DemoAPI()
         let defaults = UserDefaults(suiteName: suiteName) ?? .standard
@@ -52,7 +53,7 @@ enum DemoSession {
             solarHistory: solar.history,
             solarRecords: solar.records,
             solarCloudSync: solar.cloudSync,
-            isDemo: true
+            isDemo: isDemo
         )
     }
 

@@ -7,6 +7,10 @@ import Foundation
 actor DemoForecastStore: SolarForecastManaging {
     private static let credentialID = "demo-credential"
     private static let resourceIDs = ["demo-east", "demo-west"]
+    /// Daily weather multipliers across the 7-day forecast horizon (Day 0 through Day 6).
+    /// Models realistic weather progression: clear winter sun today, bright tomorrow, a low-solar
+    /// cloudy system moving through on days 2-3, clearing on day 4, high sun on day 5, and steady on day 6.
+    private static let dailyWeatherFactors: [Double] = [1.0, 1.25, 0.40, 0.20, 0.75, 1.30, 1.05]
     private let now: @Sendable () -> Date
 
     /// Follows the clock, so a long demo session never ages out of the
@@ -16,17 +20,23 @@ actor DemoForecastStore: SolarForecastManaging {
     }
 
     /// The planning history's winter curve, half-hourly for a week from the half
-    /// hour before now.
+    /// hour before now, shaped by day-to-day weather variation so the forecast is curvy.
     private func intervals() -> [SolarForecastInterval] {
         let step: TimeInterval = 30 * 60
         let start = Date(timeIntervalSince1970: floor(now().timeIntervalSince1970 / step) * step - step)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = DemoFixtures.timeZone
+        let startDay = calendar.startOfDay(for: start)
         return (0 ..< 7 * 48).map { index in
             let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
+            let periodDay = calendar.startOfDay(for: periodStart)
+            let dayOffset = max(0, min(Self.dailyWeatherFactors.count - 1,
+                                       calendar.dateComponents([.day], from: startDay, to: periodDay).day ?? 0))
+            let weatherFactor = Self.dailyWeatherFactors[dayOffset]
+            let baseKw = DemoFixtures.solarKw(hour: calendar.component(.hour, from: periodStart))
             return SolarForecastInterval(
                 periodStart: periodStart, periodEnd: periodStart.addingTimeInterval(step),
-                powerKw: DemoFixtures.solarKw(hour: calendar.component(.hour, from: periodStart))
+                powerKw: (baseKw * weatherFactor * 10).rounded() / 10
             )
         }
     }
