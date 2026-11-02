@@ -19,15 +19,19 @@ final class AppStoreScreenshots: XCTestCase {
         app = XCUIApplication()
         app.launchArguments += [Self.screenshotArgument]
         setupSnapshot(app)
+    }
+
+    private func prepareHome() {
         app.launch()
         // Bill and live readings load separately; wait for each placeholder to go.
         XCTAssertTrue(element("home.bill").waitForExistence(timeout: timeout), "Home never finished loading")
-        waitFor(label("Battery charge 72 percent"))
-        waitFor(app.staticTexts["18.4 kWh"])
+        waitFor(label("Battery charge 64 percent"))
+        waitFor(app.staticTexts["15.2 kWh"])
     }
 
     func testIPhoneShots() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "iPhone set only")
+        prepareHome()
         snapshot("01-home")
         scrollToToday()
         snapshot("02-home-today")
@@ -36,6 +40,7 @@ final class AppStoreScreenshots: XCTestCase {
 
     func testIPadShots() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad set only")
+        prepareHome()
         snapshot("01-home")
         captureTabs()
     }

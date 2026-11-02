@@ -30,7 +30,12 @@ extension PWUsageAppModel {
 
     func openNavigationURL(_ url: URL) async {
         // The demo never navigates to a real site, whatever opened the app.
-        if isDemo { return presentDemoSheet() }
+        // Dropping tab-level sheets ensures the root-level demo sheet can present.
+        if isDemo {
+            externalNavigationID = UUID()
+            presentDemoSheet()
+            return
+        }
         if url == DashboardLink.url {
             dismissCompetingPresentations()
             externalNavigationID = UUID()

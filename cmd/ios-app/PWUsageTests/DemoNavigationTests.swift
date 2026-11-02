@@ -25,7 +25,8 @@ struct DemoNavigationTests {
         #expect(model.pendingBatteryHoldSiteID == nil)
         #expect(model.selectedSiteID == DemoFixtures.site.id)
         #expect(model.batteryHoldNavigationMessage == nil)
-        #expect(model.externalNavigationID == navigationID)
+        #expect(model.externalNavigationID != nil)
+        #expect(model.externalNavigationID != navigationID)
         #expect(model.coordinator?.isBatteryHoldSheetPresented != true)
     }
 
