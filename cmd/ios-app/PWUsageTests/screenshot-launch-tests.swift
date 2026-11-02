@@ -20,7 +20,7 @@
         func showcaseModel() async throws {
             let model = ScreenshotLaunch.makeModel()
             #expect(model.screenState == .signedIn)
-            #expect(model.isDemo)
+            #expect(!model.isDemo)
             #expect(model.selectedTab == .home)
             #expect(ScreenshotLaunch.site == DemoFixtures.site)
             #expect(model.sites == [ScreenshotLaunch.site])

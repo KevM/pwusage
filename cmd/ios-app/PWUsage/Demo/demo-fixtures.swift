@@ -92,8 +92,22 @@ enum DemoFixtures {
         return segments
     }
 
+    /// Models cumulative energy with natural multi-day weather curvature across the cycle,
+    /// so the recorded line on the bill outlook chart curves realistically rather than
+    /// reading as a flat ruler line.
+    private static func curvedElapsedDays(through date: Date, cycleStart: Date) -> Double {
+        let elapsed = max(date.timeIntervalSince(cycleStart) / 86400, 0)
+        guard elapsed > 0 else { return 0 }
+        let omega1 = 2 * Double.pi / 6.0
+        let omega2 = 2 * Double.pi / 3.5
+        let primaryAmplitude = 0.5
+        let secondaryAmplitude = 0.2
+        return elapsed + (primaryAmplitude / omega1) * (1 - cos(omega1 * elapsed))
+            + (secondaryAmplitude / omega2) * sin(omega2 * elapsed)
+    }
+
     private static func usage(through date: Date, cycleStart: Date) -> Usage {
-        let days = max(date.timeIntervalSince(cycleStart) / 86400, 0)
+        let days = curvedElapsedDays(through: date, cycleStart: cycleStart)
         return Usage(onPeak: days * onPeakKwhPerDay, offPeak: days * offPeakKwhPerDay)
     }
 
