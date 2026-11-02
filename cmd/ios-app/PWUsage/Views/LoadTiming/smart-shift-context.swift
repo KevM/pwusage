@@ -282,7 +282,7 @@ extension SmartShiftPresentation {
         func notes(forecast: ForecastAvailability) -> [SmartShiftVerdict.Note] {
             var notes: [SmartShiftVerdict.Note]
             switch forecast {
-            case .none: notes = [.connectSolcast(usesHistory: comparison.usesHistory)]
+            case .none: notes = [.noForecast(usesHistory: comparison.usesHistory)]
             case .loading: notes = [.forecastState(checkingSolarNote)]
             case .unusable(let message): notes = [.forecastState(message)]
             case .automaticUnavailable(let message): notes = [.automaticForecast(message)]
