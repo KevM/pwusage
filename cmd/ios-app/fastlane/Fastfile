@@ -98,6 +98,9 @@ platform :ios do
     UI.user_error!("Capture screenshots locally, not on CI") if is_ci
     sh(File.join(PWUSAGE_ROOT, "generate.sh"))
     capture_screenshots
+    # App Store Connect rejects screenshots with an alpha channel.
+    pngs = Dir[File.join(PWUSAGE_ROOT, "fastlane", "screenshots", "**", "*.png")]
+    sh("swift", File.join(__dir__, "flatten-screenshots.swift"), *pngs) unless pngs.empty?
   end
 
   desc "Replace the App Store listing's screenshots with fastlane/screenshots (local only)"
