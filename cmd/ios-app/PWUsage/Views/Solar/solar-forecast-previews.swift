@@ -147,7 +147,8 @@
         let api = DashboardPreviewAPI(mode: .normal)
         let store = PreviewForecastStore(mode: mode, now: now)
         let service = SolarForecastService(
-            providers: [store], policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo)
+            providers: [store], policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
+            history: SolarForecastHistory(file: MemorySolarForecastFile())
         )
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("preview-\(UUID().uuidString)")
         let recordsDir = tempDir.appendingPathComponent("records")

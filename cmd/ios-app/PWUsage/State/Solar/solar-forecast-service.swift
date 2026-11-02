@@ -32,7 +32,7 @@ extension SolarForecastServing {
 actor SolarForecastService: SolarForecastServing {
     private let providers: [any SolarForecastProviding]
     private let policy: SolarForecastSelectionPolicy
-    private let history: SolarForecastHistory
+    nonisolated let history: SolarForecastHistory
     private let clock: any SolarForecastClock
     private var generation = 0
     private var accountScopeID: String?

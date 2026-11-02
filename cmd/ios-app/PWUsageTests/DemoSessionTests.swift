@@ -65,6 +65,14 @@ struct DemoSessionTests {
         #expect(coordinator.solarForecastState == .enhanced)
     }
 
+    @Test("Forecasts the demo fetches stay out of the real forecast history")
+    func ownForecastHistory() throws {
+        let model = DemoSession.makeModel(suiteName: suiteName)
+        defer { DemoSession.tearDown(suiteName: suiteName) }
+        let service = try #require(model.forecastService as? SolarForecastService)
+        #expect(service.history !== SolarForecastHistory.shared)
+    }
+
     @Test("The default suite is the demo's own")
     func defaultSuite() {
         #expect(DemoSession.defaultsSuiteName == "pwusage.demo")

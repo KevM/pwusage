@@ -37,7 +37,8 @@ enum DemoSession {
         let demoProvider = DemoForecastStore()
         let forecastService = SolarForecastService(
             providers: [demoProvider],
-            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo)
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
+            history: SolarForecastHistory(file: MemorySolarForecastFile())
         )
         let runner = SolarLayoutDetectionRunner(history: solar.history, records: solar.records, api: api)
         return PWUsageAppModel(
