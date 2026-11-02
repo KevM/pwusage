@@ -7,7 +7,7 @@ struct SolarForecastProviderTests {
     private typealias Fixture = SolarProviderFixture
     private static let now = Fixture.date("2026-10-28 09:00:00")
 
-    enum Kind: CaseIterable, Sendable { case forecastSolar, synthetic }
+    enum Kind: CaseIterable, Sendable { case openMeteo, synthetic }
 
     private struct Built {
         let provider: any SolarForecastProviding
@@ -18,9 +18,8 @@ struct SolarForecastProviderTests {
         let clock = MutableSolarClock(now)
         let request = Fixture.request(now: now)
         switch kind {
-        case .forecastSolar:
-            let body = Fixture.forecastSolarBody(now: now)
-            let harness = ForecastSolarHarness(clock: clock, body: body)
+        case .openMeteo:
+            let harness = OpenMeteoHarness(clock: clock, body: Fixture.openMeteoBody(now: now))
             return Built(provider: harness.provider, request: request)
         case .synthetic:
             return Built(provider: SyntheticForecastProvider(clock: clock), request: request)
@@ -43,24 +42,24 @@ struct SolarForecastProviderTests {
         #expect(await built.provider.cachedForecast(for: built.request) == batch)
     }
 
-    @Test("Forecast.Solar geometry changes isolate configuration; a new detection time only changes the cache")
-    func forecastSolarFingerprint() async {
-        let harness = ForecastSolarHarness(clock: MutableSolarClock(Self.now), body: "")
-        let base = await harness.provider.configuration(for: Fixture.request(now: Self.now))
-        let redetected = await harness.provider.configuration(for: Fixture.request(
+    @Test("Open-Meteo geometry changes isolate configuration; a new detection time only changes the cache")
+    func openMeteoFingerprint() async {
+        let provider = OpenMeteoHarness(clock: MutableSolarClock(Self.now), body: Data()).provider
+        let base = await provider.configuration(for: Fixture.request(now: Self.now))
+        let redetected = await provider.configuration(for: Fixture.request(
             now: Self.now, layout: Fixture.layout(detectedAt: Self.now)
         ))
         #expect(redetected.fingerprint == base.fingerprint)
         #expect(redetected.cacheRevision != base.cacheRevision)
-        let moved = await harness.provider.configuration(for: Fixture.request(
+        let moved = await provider.configuration(for: Fixture.request(
             now: Self.now, layout: Fixture.layout(planes: [SolarLayoutPlane(azimuth: 180, tilt: 18, dcKwp: 5.6)])
         ))
         #expect(moved.fingerprint != base.fingerprint)
-        let relocated = await harness.provider.configuration(for: Fixture.request(
+        let relocated = await provider.configuration(for: Fixture.request(
             now: Self.now, location: SolarHomeLocation(latitude: 44, longitude: -87.87, source: .device)
         ))
         #expect(relocated.fingerprint != base.fingerprint)
-        let missing = await harness.provider.configuration(for: Fixture.request(now: Self.now, location: nil))
+        let missing = await provider.configuration(for: Fixture.request(now: Self.now, location: nil))
         #expect(missing.readiness == .notConfigured)
     }
 }

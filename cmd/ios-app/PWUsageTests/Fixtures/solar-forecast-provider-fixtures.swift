@@ -57,15 +57,39 @@ enum SolarProviderFixture {
         }
     }
 
-    /// A Forecast.Solar body for today and tomorrow at the site, relative to `now`.
-    static func forecastSolarBody(now: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = chicago
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: now)
-        let tomorrow = formatter.string(from: now.addingTimeInterval(86400))
-        return ForecastSolarFixture.json(days: [.normal(today), .normal(tomorrow)])
+    /// An Open-Meteo body covering three days from UTC midnight of `now`.
+    static func openMeteoBody(now: Date) -> Data {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = .gmt
+        return (try? OpenMeteoFixture.body(start: utc.startOfDay(for: now))) ?? Data()
+    }
+}
+
+/// An Open-Meteo adapter over in-memory files and a recording transport.
+struct OpenMeteoHarness {
+    let clock: MutableSolarClock
+    let transport: OpenMeteoTestTransport
+    let ledgerFile: InMemorySolarFile<SolarForecastRequestLedgerState>
+    let cacheFile: InMemorySolarFile<SolarForecastAutomaticCacheState>
+    let provider: OpenMeteoProvider
+
+    init(
+        clock: MutableSolarClock,
+        body: Data,
+        status: Int = 200,
+        ledgerFile: InMemorySolarFile<SolarForecastRequestLedgerState> = InMemorySolarFile(),
+        cacheFile: InMemorySolarFile<SolarForecastAutomaticCacheState> = InMemorySolarFile()
+    ) {
+        self.clock = clock
+        transport = OpenMeteoTestTransport(body: body, status: status)
+        self.ledgerFile = ledgerFile
+        self.cacheFile = cacheFile
+        provider = OpenMeteoProvider(
+            client: OpenMeteoClient(transport: transport, clock: clock),
+            ledger: SolarForecastRequestLedger(file: ledgerFile, clock: clock),
+            cache: SolarForecastAutomaticCache(file: cacheFile),
+            clock: clock
+        )
     }
 }
 

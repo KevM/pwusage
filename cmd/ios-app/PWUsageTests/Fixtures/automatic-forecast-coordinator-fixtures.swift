@@ -58,7 +58,7 @@ final class AutomaticForecastAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
     }
 }
 
-/// An automatic provider with Forecast.Solar's identity that returns 2 kW for every hour
+/// An automatic provider with Open-Meteo's identity that returns 2 kW for every hour
 /// from local midnight to the end of the request window.
 actor StubAutomaticProvider: SolarForecastProviding {
     nonisolated let descriptor: SolarForecastProviderDescriptor
@@ -70,9 +70,9 @@ actor StubAutomaticProvider: SolarForecastProviding {
     private var continuations: [CheckedContinuation<Void, Never>] = []
     var hold = false
 
-    init(id: SolarForecastProviderID = .forecastSolar, now: @escaping @Sendable () -> Date) {
+    init(id: SolarForecastProviderID = .openMeteo, now: @escaping @Sendable () -> Date) {
         descriptor = SolarForecastProviderDescriptor(
-            id: id, displayName: "Forecast.Solar", attribution: "Forecast by Forecast.Solar.",
+            id: id, displayName: "Open-Meteo", attribution: "Forecast by Open-Meteo.",
             requirement: .detectedLayout, providesCautiousPower: false,
             refreshThreshold: 3 * 3600, maximumUsableAge: 6 * 3600, modelVersion: "stub-1"
         )
@@ -154,7 +154,7 @@ final class AutomaticForecastHarness {
         history = SolarForecastHistory(file: InMemorySolarFile(), clock: clock)
         service = SolarForecastService(
             providers: [automatic],
-            policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
+            policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
             history: history, clock: clock
         )
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(

@@ -4,7 +4,6 @@ import Testing
 
 @Suite("Automatic solar forecast settings copy and invitation")
 struct SolarAutomaticSettingsTests {
-    private static let forecastSolar = ForecastSolarProvider().descriptor
     private static let openMeteo = OpenMeteoProvider().descriptor
     private static let device = SolarHomeLocation(latitude: 1, longitude: 2, source: .device)
 
@@ -24,9 +23,9 @@ struct SolarAutomaticSettingsTests {
                 )]),
             reason: nil
         )
-        let lines = SolarForecastSettingsStatus.automaticSummary(response: response, source: Self.forecastSolar)
+        let lines = SolarForecastSettingsStatus.automaticSummary(response: response, source: Self.openMeteo)
         #expect(lines == [
-            "Automatic forecast from Forecast.Solar",
+            "Automatic forecast from Open-Meteo",
             "2 panel faces: east-facing about 5.6 kW, west-facing about 4 kW",
             "High confidence"])
     }

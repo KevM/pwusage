@@ -11,7 +11,7 @@ struct OpenMeteoProviderTests {
         let clock = MutableSolarClock(now)
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport),
-            ledger: ForecastSolarRequestLedger(file: InMemorySolarFile(), clock: clock),
+            ledger: SolarForecastRequestLedger(file: InMemorySolarFile(), clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         let layout = SolarProviderFixture.layout(planes: [
             SolarLayoutPlane(azimuth: 90, tilt: 20, dcKwp: 4),
@@ -30,7 +30,7 @@ struct OpenMeteoProviderTests {
         let transport = OpenMeteoTestTransport(body: Data(), status: 429)
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport, clock: clock),
-            ledger: ForecastSolarRequestLedger(file: InMemorySolarFile(), clock: clock),
+            ledger: SolarForecastRequestLedger(file: InMemorySolarFile(), clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         let request = SolarProviderFixture.request(now: now)
         let expected = SolarForecastRefreshOutcome.deferred(until: now.addingTimeInterval(3600))
@@ -92,7 +92,7 @@ extension OpenMeteoProviderTests {
         let clock = MutableSolarClock(now)
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport),
-            ledger: ForecastSolarRequestLedger(file: InMemorySolarFile(), clock: clock),
+            ledger: SolarForecastRequestLedger(file: InMemorySolarFile(), clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         await provider.activateAccountScope("account-a")
         let request = SolarProviderFixture.request(now: now)
@@ -112,7 +112,7 @@ extension OpenMeteoProviderTests {
         let clock = MutableSolarClock(now)
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport),
-            ledger: ForecastSolarRequestLedger(file: InMemorySolarFile(), clock: clock),
+            ledger: SolarForecastRequestLedger(file: InMemorySolarFile(), clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         let request = SolarProviderFixture.request(now: now)
         let fetch = Task { await provider.refresh(request) }
@@ -145,10 +145,10 @@ extension OpenMeteoProviderTests {
         let start = SolarProviderFixture.date("2026-10-28 00:00:00", in: .gmt)
         let transport = HeldOpenMeteoTransport(body: try OpenMeteoFixture.body(start: start))
         let clock = MutableSolarClock(now)
-        let ledgerFile = InMemorySolarFile<ForecastSolarLedgerState>()
+        let ledgerFile = InMemorySolarFile<SolarForecastRequestLedgerState>()
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport),
-            ledger: ForecastSolarRequestLedger(file: ledgerFile, clock: clock),
+            ledger: SolarForecastRequestLedger(file: ledgerFile, clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         let request = SolarProviderFixture.request(now: now)
         var cancelled: SolarForecastProviderResult?
@@ -181,7 +181,7 @@ extension OpenMeteoProviderTests {
         let clock = MutableSolarClock(now)
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport),
-            ledger: ForecastSolarRequestLedger(file: InMemorySolarFile(), clock: clock),
+            ledger: SolarForecastRequestLedger(file: InMemorySolarFile(), clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         let request = SolarProviderFixture.request(now: now)
         var result: SolarForecastProviderResult?
@@ -212,7 +212,7 @@ extension OpenMeteoProviderTests {
         let clock = MutableSolarClock(now)
         let provider = OpenMeteoProvider(
             client: OpenMeteoClient(transport: transport),
-            ledger: ForecastSolarRequestLedger(file: InMemorySolarFile(), clock: clock),
+            ledger: SolarForecastRequestLedger(file: InMemorySolarFile(), clock: clock),
             cache: SolarForecastAutomaticCache(file: InMemorySolarFile()), clock: clock)
         let request = SolarProviderFixture.request(now: now)
         let result = await provider.refresh(request)

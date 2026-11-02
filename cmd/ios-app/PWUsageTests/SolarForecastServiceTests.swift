@@ -9,20 +9,20 @@ struct SolarForecastServiceTests {
 
     private struct Setup {
         let service: SolarForecastService
-        let automatic: ForecastSolarHarness
+        let automatic: OpenMeteoHarness
         let history: SolarForecastHistory
         let clock: MutableSolarClock
     }
 
     private static func setup(
-        automaticID: SolarForecastProviderID = .forecastSolar,
+        automaticID: SolarForecastProviderID = .openMeteo,
         extra: [any SolarForecastProviding] = [],
         automaticStatus: Int = 200
     ) -> Setup {
         let clock = MutableSolarClock(now)
-        let automatic = ForecastSolarHarness(
+        let automatic = OpenMeteoHarness(
             clock: clock,
-            body: Fixture.forecastSolarBody(now: now),
+            body: Fixture.openMeteoBody(now: now),
             status: automaticStatus
         )
         let history = SolarForecastHistory(file: InMemorySolarFile(), clock: clock)
@@ -37,9 +37,11 @@ struct SolarForecastServiceTests {
     @Test("Without Solcast, a detected layout publishes the automatic provider")
     func automaticSelected() async throws {
         let setup = Self.setup()
-        let publication = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
-        #expect(publication.descriptor.id == .forecastSolar)
-        #expect(publication.intervals.count == 48)
+        let request = Fixture.request(now: Self.now)
+        let publication = try #require(await setup.service.publication(for: request))
+        #expect(publication.descriptor.id == .openMeteo)
+        #expect(try #require(publication.intervals.first).periodStart <= request.window.start)
+        #expect(try #require(publication.intervals.last).periodEnd >= request.window.end)
         #expect(publication.outcome == .refreshed)
     }
 
@@ -50,7 +52,7 @@ struct SolarForecastServiceTests {
         let publication = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
         #expect(publication.descriptor.attribution == "Forecast by Synthetic Weather.")
         #expect(publication.intervals.first?.periodEnd.timeIntervalSince(publication.intervals[0].periodStart) == 1800)
-        #expect(setup.automatic.transport.requests.isEmpty)
+        #expect(await setup.automatic.transport.requests.isEmpty)
         #expect(await synthetic.refreshes == 1)
     }
 
@@ -67,12 +69,12 @@ struct SolarForecastServiceTests {
         _ = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
         setup.clock.advance(by: 4 * 3600)
         let later = Fixture.request(now: setup.clock.now(), manual: true)
-        let failing = ForecastSolarHarness(
-            clock: setup.clock, transport: .responding(status: 503, body: ""),
+        let failing = OpenMeteoHarness(
+            clock: setup.clock, body: Data(), status: 503,
             ledgerFile: setup.automatic.ledgerFile, cacheFile: setup.automatic.cacheFile
         )
         let service = SolarForecastService(
-            providers: [failing.provider], policy: SolarForecastSelectionPolicy(automaticProviderID: .forecastSolar),
+            providers: [failing.provider], policy: SolarForecastSelectionPolicy(automaticProviderID: .openMeteo),
             history: setup.history, clock: setup.clock
         )
         let kept = try #require(await service.publication(for: later))
@@ -89,7 +91,7 @@ struct SolarForecastServiceTests {
         let publication = try #require(await setup.service.publication(for: request))
         _ = await setup.service.publication(for: request)
         let identity = SolarForecastHistoryIdentity(
-            accountScopeID: "account-a", siteID: "site-a", providerID: .forecastSolar,
+            accountScopeID: "account-a", siteID: "site-a", providerID: .openMeteo,
             fingerprint: publication.fingerprint
         )
         let noon = Fixture.date("2026-10-28 12:00:00")
@@ -115,7 +117,7 @@ struct SolarForecastServiceTests {
         #expect(await setup.automatic.provider.cachedForecast(for: Fixture.request(now: Self.now)) == nil)
         let refused = await setup.automatic.provider.refresh(Fixture.request(now: Self.now, manual: true))
         #expect(refused.outcome == .refreshed, "Cleanup keeps the device ledger, which still has room")
-        #expect(setup.automatic.transport.requests.count == 2)
+        #expect(await setup.automatic.transport.requests.count == 2)
     }
 
     @Test("Signing out during a refresh publishes and records nothing")
@@ -184,7 +186,7 @@ extension SolarForecastServiceTests {
         request.automaticOnly = true
         let attempt = await setup.service.publicationAttempt(for: request)
         #expect(attempt.publication == nil)
-        #expect(attempt.providerID == .forecastSolar)
+        #expect(attempt.providerID == .openMeteo)
         #expect(attempt.outcome == .failed(.transient))
         #expect(attempt.diagnostic != nil)
     }

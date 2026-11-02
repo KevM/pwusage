@@ -20,7 +20,7 @@ struct AutomaticForecastLifecycleTests {
 
         // Detection completes on runner, which fires onRecordChanged and reloads
         try await eventually {
-            harness.coordinator.solarForecastSource == .forecastSolar
+            harness.coordinator.solarForecastSource == .openMeteo
         }
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
     }
@@ -38,7 +38,7 @@ struct AutomaticForecastLifecycleTests {
                 harness.coordinator.scenePhaseChanged(isActive: false)
             }
             try await eventually {
-                harness.coordinator.solarForecastSource == .forecastSolar
+                harness.coordinator.solarForecastSource == .openMeteo
             }
             #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
         }
@@ -61,7 +61,7 @@ struct AutomaticForecastLifecycleTests {
         await harness.coordinator.loadTimingDetailAppeared()
         await harness.coordinator.loadTimingDetailAppeared()
         try await eventually {
-            harness.coordinator.solarForecastSource == .forecastSolar
+            harness.coordinator.solarForecastSource == .openMeteo
         }
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
         // A single initial sync issues exactly two fetches: the 364-day UTC discovery page,
@@ -73,7 +73,7 @@ struct AutomaticForecastLifecycleTests {
     func revoked() async throws {
         let harness = await AutomaticForecastHarness()
         await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.coordinator.solarForecastSource == .forecastSolar)
+        #expect(harness.coordinator.solarForecastSource == .openMeteo)
         // The server revokes the role and a history sync (e.g. background refresh) records it.
         harness.api.historyResponse = .disabled
         _ = try await harness.historyStore.sync(

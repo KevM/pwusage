@@ -15,12 +15,12 @@ actor OpenMeteoProvider: SolarForecastProviding {
         attributionURL: URL(string: "https://open-meteo.com/")
     )
 
-    static let requestLedger = ForecastSolarRequestLedger(
+    static let requestLedger = SolarForecastRequestLedger(
         file: ProtectedSolarForecastFile(name: "open-meteo-ledger.json", backgroundAccessible: true)
     )
 
     private let client: OpenMeteoClient
-    private let ledger: ForecastSolarRequestLedger
+    private let ledger: SolarForecastRequestLedger
     private let cache: SolarForecastAutomaticCache
     private let clock: any SolarForecastClock
     private var accountScopeID: String?
@@ -38,7 +38,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
 
     init(
         client: OpenMeteoClient = OpenMeteoClient(),
-        ledger: ForecastSolarRequestLedger = OpenMeteoProvider.requestLedger,
+        ledger: SolarForecastRequestLedger = OpenMeteoProvider.requestLedger,
         cache: SolarForecastAutomaticCache = .shared,
         clock: any SolarForecastClock = SystemSolarForecastClock()
     ) {
@@ -53,7 +53,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
               (1 ... 3).contains(layout.planes.count), layout.planes.allSatisfy(\.isValid) else {
             return SolarForecastConfiguration(readiness: .notConfigured, fingerprint: "", cacheRevision: "")
         }
-        // Use the actual geometry, not the integer angles needed by Forecast.Solar.
+        // Use the actual geometry, not rounded integer angles.
         let planes = layout.planes.map { plane in
             [plane.azimuth, plane.tilt, plane.dcKwp].map { String($0) }.joined(separator: ",")
         }.sorted()
@@ -195,7 +195,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
 
     private static let cancelled = SolarForecastProviderResult(batch: nil, outcome: .cancelled)
 
-    private static func refusal(_ reservation: ForecastSolarReservation) -> SolarForecastProviderResult? {
+    private static func refusal(_ reservation: SolarForecastRequestReservation) -> SolarForecastProviderResult? {
         switch reservation {
         case .granted: return nil
         case .deferred(let until): return SolarForecastProviderResult(batch: nil, outcome: .deferred(until: until))
