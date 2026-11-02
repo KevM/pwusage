@@ -26,6 +26,10 @@ v1 ships the read-only demo (see `cmd/ios-app/README.md#demo-mode`); these were 
 
 - [ ] **Write PWUsage's own license terms before App Store launch:** TestFlight (build 5) uses Apple's standard beta terms because the License Agreement field in TestFlight Test Information is blank, and the web app has `/privacy` but no terms or EULA page. Draft terms that say the bill, savings and Smart Shift figures are estimates, not billing or financial advice, and cover the Tesla account dependency and battery hold commands. Then put them in App Store Connect's custom EULA (and TestFlight's License Agreement field if wanted), and consider a matching `/terms` page.
 
+## iOS: App Store review prompt (2026-11-02)
+
+- [ ] **Ask for a rating at a good moment:** the app never calls StoreKit's `requestReview`, so a new listing gets few ratings. Call it once after a positive moment (a Smart Shift saving, or a few days of use with a fresh bill estimate), never after an error, a sign-in, a demo session, or the first launch. iOS caps prompts at three a year and may show nothing, so never tie UI to it; remember the last-asked version in defaults so it's asked at most once per version.
+
 ## Future iOS widgets
 
 **Note (2026-09-24, PR #110 / `codex/ios-foundation`):** Architecture only; no widget work is in progress. Keep the `MobileLoginHandoff` table as a one-time PKCE sign-in exchange. Widgets should use the resulting `site_auth` session, not redeem handoff codes or hold Tesla credentials. See [the authorization design](docs/plans/2026-09-24-ios-widget-authorization-design.md) for rationale and edge cases.
