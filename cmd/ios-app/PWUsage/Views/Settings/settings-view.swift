@@ -14,6 +14,7 @@ struct SettingsView: View {
     /// Shown for a site with the history beta outside the demo; the status may still be nil.
     var showsSiteHistory = false
     var siteHistory: SiteHistoryStatus?
+    var siteHistoryDebug: SiteHistoryDebugActions?
 
     @State private var isConfirmingSignOut = false
 
@@ -76,7 +77,7 @@ struct SettingsView: View {
             case .solarForecast:
                 SolarForecastSettingsView(coordinator: coordinator)
             case .siteHistory:
-                SiteHistoryView(status: siteHistory)
+                SiteHistoryView(status: siteHistory, debugActions: siteHistoryDebug)
             case .about:
                 AboutSheet()
             }

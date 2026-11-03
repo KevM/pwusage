@@ -3,6 +3,7 @@ import SwiftUI
 /// Site History in Settings: where loading history for Solar Forecasting stands for this site.
 struct SiteHistoryView: View {
     let status: SiteHistoryStatus?
+    var debugActions: SiteHistoryDebugActions?
     @Environment(\.reconnectTesla) private var reconnectTesla
 
     var body: some View {
@@ -40,6 +41,9 @@ struct SiteHistoryView: View {
                 Text("Newest days are checked first. A day without data is one Tesla has no record for, "
                     + "such as before your system was switched on.")
             }
+            #if DEBUG
+                if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
+            #endif
         }
     }
 

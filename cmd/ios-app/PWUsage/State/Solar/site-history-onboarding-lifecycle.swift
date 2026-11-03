@@ -108,6 +108,16 @@ final class SiteHistoryOnboardingLifecycle {
         scheduleBackground(nil)
     }
 
+    /// Forget a site's progress: its run stops and the next activation starts it from today.
+    func forget(scope: SolarForecastSiteScope) async {
+        if foreground?.scope == scope {
+            foreground?.task.cancel()
+            foreground = nil
+        }
+        try? await store.remove(scope: scope)
+        await refreshStatus()
+    }
+
     /// After the action a pause asked for (reconnecting Tesla, signing in) succeeds.
     func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) async {
         try? await store.resumePaused(accountScopeID: accountScopeID, reason: reason)

@@ -107,8 +107,17 @@ struct AppTabView: View {
                          onExitDemo: model.isDemo ? { demoMode?.exit() } : nil,
                          showsSiteHistory: model.historyOnboarding != nil
                              && coordinator.solarLayoutStatus != .disabled,
-                         siteHistory: model.siteHistoryStatus)
+                         siteHistory: model.siteHistoryStatus,
+                         siteHistoryDebug: siteHistoryDebug)
         }
+    }
+
+    private var siteHistoryDebug: SiteHistoryDebugActions? {
+        #if DEBUG
+            model.siteHistoryDebugActions
+        #else
+            nil
+        #endif
     }
 
     /// A convenience switcher only: it is hidden when the sidebar is collapsed

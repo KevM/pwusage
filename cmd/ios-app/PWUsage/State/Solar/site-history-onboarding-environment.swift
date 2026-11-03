@@ -46,6 +46,9 @@ final class LiveSiteHistoryOnboardingEnvironment: SiteHistoryOnboardingEnvironme
     }
 
     func hasUsableLayout(scope: SolarForecastSiteScope) async -> Bool {
+        #if DEBUG
+            if SiteHistoryDebugSettings.ignoresLayout(scope) { return false }
+        #endif
         guard let result = await record(scope)?.result else { return false }
         return SolarLayoutDetector.forecastLayout(result, detectedAt: .distantPast) != nil
     }

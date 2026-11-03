@@ -104,6 +104,35 @@ struct PWUsageAppModelHistoryOnboardingTests {
         #expect(model.settingsPath.isEmpty)
     }
 
+    #if DEBUG
+        @Test("The Debug reset forgets only the selected site's progress and starts again")
+        func debugReset() async throws {
+            let environment = FakeOnboardingEnvironment()
+            let lifecycle = makeLifecycle(environment, probe: ScheduleProbe())
+            let model = try makeModel(historyOnboarding: lifecycle)
+            model.scenePhaseChanged(isActive: true)
+            await model.bootstrap()
+            try await eventually { model.siteHistoryStatus?.progress != nil }
+            let actions = try #require(model.siteHistoryDebugActions)
+            #expect(actions.scope.siteID == "site-a")
+
+            await actions.reset()
+            try await eventually { environment.sites == ["site-a", "site-a"] }
+            lifecycle.stop()
+        }
+
+        @Test("Ignoring the layout is a per-site Debug setting")
+        func debugIgnoresLayout() throws {
+            let defaults = try #require(UserDefaults(suiteName: "SiteHistoryDebug.\(UUID().uuidString)"))
+            let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "s")
+            #expect(!SiteHistoryDebugSettings.ignoresLayout(scope, defaults: defaults))
+            defaults.set(true, forKey: SiteHistoryDebugSettings.ignoresLayoutKey(scope))
+            #expect(SiteHistoryDebugSettings.ignoresLayout(scope, defaults: defaults))
+            #expect(!SiteHistoryDebugSettings.ignoresLayout(
+                SolarForecastSiteScope(accountScopeID: "a", siteID: "other"), defaults: defaults))
+        }
+    #endif
+
     @Test("The demo never onboards")
     func demoHasNoOnboarding() throws {
         let lifecycle = makeLifecycle(FakeOnboardingEnvironment(), probe: ScheduleProbe())

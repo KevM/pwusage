@@ -233,6 +233,26 @@ struct SiteHistoryOnboardingLifecycleTests {
         try await staysTrue(for: .milliseconds(50)) { lifecycle.status == nil }
     }
 
+    @Test func forgettingASiteStopsItsRunAndDropsOnlyItsProgress() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.defaultAnswer = .fill(.busy)
+        let lifecycle = make(environment, probe: LifecycleProbe(now: start), sleep: Self.sleepUntilCancelled)
+        try await store.save(SiteHistoryOnboardingProgress(checkedUntil: "2026-11-01"), scope: other)
+        lifecycle.activate(scope: scope)
+        try await eventually { lifecycle.status?.progress != nil }
+        let running = lifecycle.foregroundTask
+        await lifecycle.forget(scope: scope)
+        await running?.value
+        #expect(lifecycle.foregroundTask == nil)
+        #expect(try await store.progress(scope: scope) == nil)
+        #expect(try await store.progress(scope: other) != nil)
+        #expect(lifecycle.status?.progress == nil)
+        lifecycle.activate(scope: scope)
+        try await eventually { environment.requests.count == 2 }
+        #expect(environment.requests.last?.from == "2026-10-30")
+        lifecycle.stop()
+    }
+
     @Test func theBackgroundRequestNeedsTheNetworkButNotPower() {
         let request = BackgroundSiteHistoryOnboarding.request(earliest: start)
         #expect(request.identifier == BackgroundSiteHistoryOnboarding.identifier)
