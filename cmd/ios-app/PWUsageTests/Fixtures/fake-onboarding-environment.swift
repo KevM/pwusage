@@ -38,6 +38,7 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
     var lostPasses = 0
     /// Runs when detection starts, before it answers.
     var onDetect: (() async -> Void)?
+    var onClassify: (() async -> Void)?
 
     func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse {
         requests.append((from, days))
@@ -81,6 +82,7 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
     }
 
     func classifyDays(scope _: SolarForecastSiteScope) async -> SolarDayClassification? {
+        await onClassify?()
         guard location else { return nil }
         if lostPasses > 0 {
             lostPasses -= 1

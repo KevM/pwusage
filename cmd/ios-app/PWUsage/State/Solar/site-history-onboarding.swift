@@ -376,6 +376,7 @@ final class SiteHistoryOnboarding {
     private func finish(
         _ reason: FinishReason, _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope
     ) async -> Outcome {
+        guard !Task.isCancelled else { return .stopped }
         progress.phase = .finished(reason)
         try? await store.save(progress, scope: scope)
         onProgress?(scope)
