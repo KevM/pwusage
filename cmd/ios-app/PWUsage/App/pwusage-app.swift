@@ -22,6 +22,7 @@ struct PWUsageApp: App {
 
     init() {
         BackgroundSolarLayoutDetection.register()
+        BackgroundSiteHistoryOnboarding.register()
         launchTask = Task { @MainActor in
             #if DEBUG
                 // The App Store screenshot run: demo data, no startup maintenance.
@@ -51,6 +52,8 @@ struct PWUsageApp: App {
             let api = PWUsageAPI(configuration: configuration)
             let detectionRunner = SolarLayoutDetectionRunner(history: .shared, records: .shared, api: api)
             BackgroundSolarLayoutDetection.configure(runner: detectionRunner)
+            let historyOnboarding = SiteHistoryOnboardingLifecycle.live(api: api, runner: detectionRunner)
+            BackgroundSiteHistoryOnboarding.configure(lifecycle: historyOnboarding)
             return .ready(
                 PWUsageAppModel(
                     configuration: configuration,
@@ -64,7 +67,8 @@ struct PWUsageApp: App {
                         apnsEnvironment: .fromBundle(),
                         store: .init(defaults: .standard)
                     ),
-                    solarRunner: detectionRunner
+                    solarRunner: detectionRunner,
+                    historyOnboarding: historyOnboarding
                 )
             )
         } catch let error as AppConfiguration.ValidationError {

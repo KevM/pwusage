@@ -52,6 +52,8 @@ final class PWUsageAppModel: ObservableObject {
     let solarHistory: SolarHistoryStore
     let solarRecords: SolarLayoutRecordStore
     let solarRunner: SolarLayoutDetectionRunner?
+    /// Backfills the selected site's history until a layout can be detected. Absent in the demo.
+    let historyOnboarding: SiteHistoryOnboardingLifecycle?
     var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
     let solarCloudSync: SolarLayoutCloudSync
@@ -78,6 +80,7 @@ final class PWUsageAppModel: ObservableObject {
         solarHistory: SolarHistoryStore = .shared,
         solarRecords: SolarLayoutRecordStore = .shared,
         solarRunner: SolarLayoutDetectionRunner? = nil,
+        historyOnboarding: SiteHistoryOnboardingLifecycle? = nil,
         solarCloudSync: SolarLayoutCloudSync = .shared,
         sessionCleanup: SolarSessionCleanup? = nil,
         isDemo: Bool = false
@@ -96,6 +99,7 @@ final class PWUsageAppModel: ObservableObject {
             history: solarHistory, records: solarRecords, api: api
         ) : nil)
         self.solarRunner = runner
+        self.historyOnboarding = isDemo ? nil : historyOnboarding
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
@@ -168,6 +172,7 @@ final class PWUsageAppModel: ObservableObject {
 
     func scenePhaseChanged(isActive: Bool) {
         sceneIsActive = isActive
+        defer { updateHistoryOnboarding() }
         if sessionVerified {
             coordinator?.scenePhaseChanged(isActive: isActive)
             guard isActive else { return }
@@ -239,6 +244,9 @@ final class PWUsageAppModel: ObservableObject {
         }
         guard generation == siteInstallGeneration else { return }
         coordinator?.requiresTeslaCommandReauthorization = false
+        if let accountScopeID {
+            await historyOnboarding?.resumePaused(accountScopeID: accountScopeID, reason: .reconnectTesla)
+        }
         await reloadSitesAfterSignIn()
     }
 

@@ -35,6 +35,27 @@ struct SolarLayoutSessionCleanupTests {
         #expect(!FileManager.default.fileExists(atPath: recordsFolder.path))
     }
 
+    @Test("Sign-out forgets history onboarding progress and Tesla throttles")
+    func signOutRemovesOnboardingProgress() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let records = SolarLayoutRecordStore(directory: folder.appendingPathComponent("records")) { nil }
+        let onboarding = SiteHistoryOnboardingStore(directory: folder.appendingPathComponent("onboarding"))
+        try await onboarding.save(SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02"), scope: scope)
+        try await onboarding.setThrottle(Date(timeIntervalSince1970: 200), accountScopeID: scope.accountScopeID)
+        let cleanup = SolarSessionCleanup(
+            historyStore: SolarHistoryStore(directory: folder.appendingPathComponent("history")),
+            layoutRecordStore: records, cloudSync: try cloudSync(store: records, folder: folder),
+            onboardingStore: onboarding
+        )
+
+        try await cleanup.signOut()
+
+        let reloaded = SiteHistoryOnboardingStore(directory: folder.appendingPathComponent("onboarding"))
+        #expect(try await reloaded.progress(scope: scope) == nil)
+        #expect(try await reloaded.throttle(accountScopeID: scope.accountScopeID) == nil)
+    }
+
     private nonisolated func cloudSync(store: SolarLayoutRecordStore, folder: URL) throws -> SolarLayoutCloudSync {
         let defaults = try #require(UserDefaults(suiteName: "SolarCleanup.\(UUID().uuidString)"))
         return SolarLayoutCloudSync(

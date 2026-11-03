@@ -36,6 +36,9 @@ extension PWUsageAppModel {
         guard generation == siteInstallGeneration else { return }
         await forecastService?.activateAccountScope(accountScopeID)
         guard generation == siteInstallGeneration else { return }
+        // An authorized site list is the sign-in a paused job was waiting for.
+        await historyOnboarding?.resumePaused(accountScopeID: accountScopeID, reason: .signIn)
+        guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
         startSolarCloudSync()
@@ -49,6 +52,7 @@ extension PWUsageAppModel {
             coordinator = nil
             selectedSiteID = nil
             screenState = .noSites
+            updateHistoryOnboarding()
             return
         }
 
@@ -75,6 +79,19 @@ extension PWUsageAppModel {
         }
         screenState = .signedIn
         resolveBatteryHoldNavigation()
+        updateHistoryOnboarding()
+    }
+
+    /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.
+    func updateHistoryOnboarding() {
+        guard let historyOnboarding else { return }
+        guard sceneIsActive, sessionVerified, screenState == .signedIn,
+              let accountScopeID, let selectedSiteID else {
+            Task { await historyOnboarding.deactivate() }
+            return
+        }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+        historyOnboarding.activate(scope: scope)
     }
 
     /// Waits only for local cleanup of a previous session, never for iCloud. A failed

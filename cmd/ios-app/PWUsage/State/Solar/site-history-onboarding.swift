@@ -101,18 +101,34 @@ final class SiteHistoryOnboarding {
             guard slices < maxSlices else { return .yielded }
             slices += 1
             let step = await attempt(slice, scope: scope, progress: &progress)
-            // A lost save only repeats a slice the server will skip.
-            try? await store.save(progress, scope: scope)
+            await save(after: step, progress, scope: scope)
             switch step {
             case .stop(let outcome): return outcome
             case .retryNow: continue
             case .advanced:
-                if let reason = await decideAfterSlice(&progress, scope: scope, timeZone: zone) {
-                    return await finish(reason, &progress, scope: scope)
-                }
-                try? await store.save(progress, scope: scope)
+                if let outcome = await afterAdvance(&progress, scope: scope, timeZone: zone) { return outcome }
             }
         }
+    }
+
+    /// A lost save only repeats a slice the server will skip. A cancelled attempt changed nothing,
+    /// and saving it after sign-out's cleanup would bring the file back.
+    private func save(
+        after step: Step, _ progress: SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope
+    ) async {
+        if case .stop(.stopped) = step { return }
+        try? await store.save(progress, scope: scope)
+    }
+
+    /// The checkpoint decision after a complete slice: a finish, or nil to keep going.
+    private func afterAdvance(
+        _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, timeZone: TimeZone
+    ) async -> Outcome? {
+        if let reason = await decideAfterSlice(&progress, scope: scope, timeZone: timeZone) {
+            return await finish(reason, &progress, scope: scope)
+        }
+        try? await store.save(progress, scope: scope)
+        return nil
     }
 
     /// Why the next slice cannot be asked for yet: cancellation, a pause or finish, a backoff, or

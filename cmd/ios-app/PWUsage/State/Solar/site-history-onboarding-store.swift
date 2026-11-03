@@ -75,6 +75,20 @@ actor SiteHistoryOnboardingStore {
         }
     }
 
+    /// Make the account's sites paused for `reason` active again, keeping their cursors. Other
+    /// pauses and finished sites are left alone.
+    func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) throws {
+        let prefix = "\(accountScopeID)|"
+        try update { state in
+            for (key, var progress) in state.sites where key.hasPrefix(prefix) && progress.phase == .paused(reason) {
+                progress.phase = .active
+                progress.failures = 0
+                progress.nextAttemptAt = nil
+                state.sites[key] = progress
+            }
+        }
+    }
+
     func throttle(accountScopeID: String) throws -> Date? {
         try load().throttles[accountScopeID]
     }

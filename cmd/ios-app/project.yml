@@ -36,6 +36,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - fm.rodeo.pwusage.solar-forecast-refresh
           - fm.rodeo.pwusage.solar-layout-detect
+          - fm.rodeo.pwusage.history-onboarding
         UIBackgroundModes:
           - fetch
           - processing

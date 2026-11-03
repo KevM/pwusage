@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 @MainActor
-private final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
+final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
     enum Answer {
         case fill(MobileSolarHistoryFill.Status)
         case disabled
@@ -15,6 +15,9 @@ private final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment 
     var answers: [Answer] = []
     var defaultAnswer: Answer = .fill(.complete)
     var requests: [(from: String, days: Int)] = []
+    var sites: [String] = []
+    /// Holds each fill open this long (cancellable), as a slow server import would.
+    var fillDelay: Duration?
     var stored: [[String]] = []
     var location = true
     var usableLayout = false
@@ -24,9 +27,11 @@ private final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment 
     var detectionCount = 0
     var onFill: (() -> Void)?
 
-    func fill(siteID _: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse {
+    func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse {
         requests.append((from, days))
+        sites.append(siteID)
         onFill?()
+        if let fillDelay { try await Task.sleep(for: fillDelay) }
         let answer = answers.isEmpty ? defaultAnswer : answers.removeFirst()
         switch answer {
         case .disabled: return .disabled

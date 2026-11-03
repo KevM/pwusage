@@ -15,6 +15,7 @@ extension PWUsageAppModel {
         selectedSiteID = site.id
         userDefaults.set(site.id, forKey: Self.selectedSiteDefaultsKey)
         coordinator?.selectSite(site.id)
+        updateHistoryOnboarding()
     }
 
     /// Smart Shift's jobs live beside the model's other settings, so a model on
