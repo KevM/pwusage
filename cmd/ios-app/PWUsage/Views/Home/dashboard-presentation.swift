@@ -272,9 +272,11 @@ enum DashboardPresentation {
         guard age >= 0 else { return "Source time is in the future" }
         let minutes = Int(age / 60)
         let ageText: String
-        if minutes < 1 { ageText = "updated just now" }
-        else if minutes < 60 { ageText = "updated \(minutes) min ago" }
-        else {
+        if minutes < 1 {
+            ageText = "updated just now"
+        } else if minutes < 60 {
+            ageText = "updated \(minutes) min ago"
+        } else {
             let hours = minutes / 60
             ageText = hours < 24 ? "updated \(hours) hr ago" : "updated \(hours / 24) days ago"
         }

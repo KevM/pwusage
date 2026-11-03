@@ -77,8 +77,11 @@ struct DashboardView: View {
             updateLiveCardVisibility()
         }
         .refreshable {
-            if let onRefresh { await onRefresh() }
-            else { await coordinator.refreshAll(trigger: .userGesture) }
+            if let onRefresh {
+                await onRefresh()
+            } else {
+                await coordinator.refreshAll(trigger: .userGesture)
+            }
         }
         .task {
             while !Task.isCancelled {

@@ -425,14 +425,20 @@ final class MobileAuthServiceTests {
         let service = try makeService(isAuthenticated: true)
         var cancelled = false
         let attempt = Task {
-            do { try await service.signIn() }
-            catch { cancelled = (error as? MobileAuthService.AuthError) == .cancelled }
+            do {
+                try await service.signIn()
+            } catch {
+                cancelled = (error as? MobileAuthService.AuthError) == .cancelled
+            }
         }
         defer { attempt.cancel() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
         let callback = try #require(fakeSession.takeCompletion())
-        if invalidate { try await service.invalidateAuthenticatedSession() }
-        else { try await service.logout() }
+        if invalidate {
+            try await service.invalidateAuthenticatedSession()
+        } else {
+            try await service.logout()
+        }
         #expect(await waitUpTo { cancelled })
         #expect(fakeSession.cancelCount == 1)
         #expect(!service.pendingContinuationForTesting)

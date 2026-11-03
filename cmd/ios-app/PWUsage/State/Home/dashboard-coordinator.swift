@@ -44,8 +44,11 @@ final class DashboardCoordinator: ObservableObject {
     var isBatteryHoldSheetPresented: Bool {
         get { presentedSheet == .batteryHold }
         set {
-            if newValue { presentedSheet = .batteryHold }
-            else if presentedSheet == .batteryHold { presentedSheet = nil }
+            if newValue {
+                presentedSheet = .batteryHold
+            } else if presentedSheet == .batteryHold {
+                presentedSheet = nil
+            }
         }
     }
     @Published var batteryHold = BatteryHoldState()
