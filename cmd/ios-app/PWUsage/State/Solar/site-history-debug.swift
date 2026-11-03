@@ -43,6 +43,7 @@ struct SiteHistoryDebugActions {
             guard let accountScopeID, let selectedSiteID else { return }
             let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
             try? await solarCloudSync.deleteRecord(scope: scope)
+            await historyOnboarding?.forget(scope: scope)
             coordinator?.invalidateSolarLayout()
             await historyOnboarding?.refreshStatus()
             updateHistoryOnboarding()
