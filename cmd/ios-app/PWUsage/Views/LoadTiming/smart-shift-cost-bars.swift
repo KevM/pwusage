@@ -4,6 +4,7 @@ import SwiftUI
 /// proportional to cost, with the saving labelled in the gap after the shorter bar.
 struct SmartShiftCostBars: View {
     let verdict: SmartShiftVerdict
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     static let laterColor = Color.blue
     static let barHeight: CGFloat = 16
@@ -17,27 +18,53 @@ struct SmartShiftCostBars: View {
             Text(verdict.barsCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
-                ForEach(Array(verdict.bars.enumerated()), id: \.offset) { _, bar in
-                    GridRow {
-                        Text(bar.label)
-                            .font(.subheadline)
-                            .fontWeight(bar.isRecommended ? .semibold : .regular)
-                            .foregroundStyle(bar.isRecommended ? Self.laterColor : .secondary)
-                            .lineLimit(1)
-                            .fixedSize()
-                        barTrack(bar)
-                            .frame(height: Self.barHeight)
-                        Text(bar.amount)
-                            .font(.subheadline.weight(.bold))
-                            .monospacedDigit()
-                            .gridColumnAlignment(.trailing)
-                            .fixedSize()
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(bar.label), \(bar.amount)")
-                    .accessibilityValue(bar.isRecommended ? (verdict.percentLess ?? "") : "")
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibleBars
+            } else {
+                regularBars
+            }
+        }
+    }
+
+    private var regularBars: some View {
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
+            ForEach(Array(verdict.bars.enumerated()), id: \.offset) { _, bar in
+                GridRow {
+                    Text(bar.label)
+                        .font(.subheadline)
+                        .fontWeight(bar.isRecommended ? .semibold : .regular)
+                        .foregroundStyle(bar.isRecommended ? Self.laterColor : .secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                    barTrack(bar)
+                        .frame(height: Self.barHeight)
+                    Text(bar.amount)
+                        .font(.subheadline.weight(.bold))
+                        .monospacedDigit()
+                        .gridColumnAlignment(.trailing)
+                        .fixedSize()
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(bar.label), \(bar.amount)")
+                .accessibilityValue(bar.isRecommended ? (verdict.percentLess ?? "") : "")
+            }
+        }
+    }
+
+    private var accessibleBars: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(verdict.bars.enumerated()), id: \.offset) { _, bar in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(bar.label)
+                        Spacer(minLength: 8)
+                        Text(bar.amount).bold().monospacedDigit()
+                    }
+                    barTrack(bar).frame(height: Self.barHeight)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(bar.label), \(bar.amount)")
+                .accessibilityValue(bar.isRecommended ? (verdict.percentLess ?? "") : "")
             }
         }
     }
