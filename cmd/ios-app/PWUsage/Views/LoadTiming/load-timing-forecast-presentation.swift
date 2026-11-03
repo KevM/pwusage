@@ -47,7 +47,7 @@ enum LoadTimingForecastPresentation {
         state: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
-        reason: SolarForecastEnhancementUnavailableReason?,
+        reason: SolarForecastUnavailableReason?,
         forecastFetchedAt: Date?,
         now: Date,
         usesAutomaticForecast: Bool = false,
@@ -73,7 +73,7 @@ enum LoadTimingForecastPresentation {
     }
 
     private static func automaticUnavailableNote(
-        status: MobileSolarLayoutResponse?, reason: SolarForecastEnhancementUnavailableReason?
+        status: MobileSolarLayoutResponse?, reason: SolarForecastUnavailableReason?
     ) -> String {
         if let reason { return firstSentence(enhancementDetail(reason)) }
         if case .enabled(_, let layout, let setupReason) = status, layout == nil, let setupReason {
@@ -93,7 +93,7 @@ enum LoadTimingForecastPresentation {
         return String(text[..<end.lowerBound]) + "."
     }
 
-    private static func enhancementDetail(_ reason: SolarForecastEnhancementUnavailableReason) -> String {
+    private static func enhancementDetail(_ reason: SolarForecastUnavailableReason) -> String {
         switch reason {
         case .requestFailed:
             return "This device could not reach your server for household data. "

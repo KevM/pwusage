@@ -28,9 +28,10 @@
             guard mode == .ambiguous else { return live }
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            let json = String(decoding: try encoder.encode(live), as: UTF8.self)
-                .replacingOccurrences(of: "\"stateOfCharge\":72", with: "\"stateOfCharge\":90")
-            return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
+            let encoded = try encoder.encode(live)
+            guard let json = String(bytes: encoded, encoding: .utf8) else { throw URLError(.cannotDecodeContentData) }
+            let patched = json.replacingOccurrences(of: "\"stateOfCharge\":72", with: "\"stateOfCharge\":90")
+            return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(patched.utf8))
         }
 
         func fetchBill(siteID: String) async throws -> MobileBillResponse { try await dashboard.fetchBill(siteID: siteID) }

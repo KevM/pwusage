@@ -73,7 +73,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
             unavailableCause: SolarForecastUnavailableCause?,
             connection: SolarForecastConnectionState,
             state: SolarForecastEnhancementState,
-            unavailableReason: SolarForecastEnhancementUnavailableReason?
+            unavailableReason: SolarForecastUnavailableReason?
         ) {
             self.connection = "\(connection)"
             self.state = "\(state)"
@@ -170,7 +170,10 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     /// what a debugging session would want to see.
     func json() throws -> String {
         let data = try Self.encoder().encode(self)
-        return String(decoding: data, as: UTF8.self)
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return text
     }
 
     static func encoder() -> JSONEncoder {

@@ -71,7 +71,7 @@ extension DashboardCoordinator {
               bill.response?.site.timezone == context.timeZone,
               let timeZone = TimeZone(identifier: context.timeZone) else {
             clearAutomaticPublication()
-            let failure: SolarForecastEnhancementUnavailableReason = outcome.context == nil
+            let failure: SolarForecastUnavailableReason = outcome.context == nil
                 ? .contextUnavailable : .siteMismatch
             solarForecastUnavailableReason = outcome.unavailableReason ?? (billSucceeded ? failure : .billUnavailable)
             solarForecastState = .failedWithBasic

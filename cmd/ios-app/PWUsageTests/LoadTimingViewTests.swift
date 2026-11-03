@@ -89,48 +89,48 @@ struct LoadTimingViewTests {
 
     @Test("Forecast states map to what the Smart Shift card can show")
     func forecastAvailabilityMapsStates() throws {
-        typealias P = LoadTimingForecastPresentation
+        typealias Presentation = LoadTimingForecastPresentation
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let fresh = now.addingTimeInterval(-25 * 60)
-        #expect(P.forecastAvailability(state: .basic, connection: .notConnected, cause: nil, reason: nil,
-                                       forecastFetchedAt: nil, now: now) == ForecastAvailability.none)
-        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: nil, now: now) == .loading)
+        #expect(Presentation.forecastAvailability(state: .basic, connection: .notConnected, cause: nil, reason: nil,
+                                                  forecastFetchedAt: nil, now: now) == ForecastAvailability.none)
+        #expect(Presentation.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                                  forecastFetchedAt: nil, now: now) == .loading)
         // A refresh keeps the previous batch in memory; while it is still fresh it keeps
         // pricing the card, so the verdict doesn't flip to the forecast-free answer and back.
-        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: fresh, now: now) == .ready)
-        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now) == .loading)
-        #expect(P.forecastAvailability(state: .basic, connection: .awaitingArraySelection, cause: nil, reason: nil,
-                                       forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
-        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: fresh, now: now) == .ready)
-        #expect(P.forecastAvailability(
+        #expect(Presentation.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                                  forecastFetchedAt: fresh, now: now) == .ready)
+        #expect(Presentation.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                                  forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now) == .loading)
+        #expect(Presentation.forecastAvailability(state: .basic, connection: .awaitingArraySelection, cause: nil, reason: nil,
+                                                  forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
+        #expect(Presentation.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                                  forecastFetchedAt: fresh, now: now) == .ready)
+        #expect(Presentation.forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: .rateLimited, reason: nil,
             forecastFetchedAt: fresh, now: now
         ) == .unusable("The forecast provider is limiting requests."))
-        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
-                                       forecastFetchedAt: fresh, now: now)
+        #expect(Presentation.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
+                                                  forecastFetchedAt: fresh, now: now)
                 == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))
-        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
+        #expect(Presentation.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                                  forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
                 == .unusable("The forecast was too old or incomplete to use."))
-        #expect(P.forecastUnavailableNote(.staleBalance)
+        #expect(Presentation.forecastUnavailableNote(.staleBalance)
             == "Energy observations are too old for the solar comparison, so it's paused.")
     }
 
     @Test("Forecast notes keep their reason and avoid misleading clock advice")
     func forecastNotesKeepReasonsAccurate() {
-        typealias P = LoadTimingForecastPresentation
+        typealias Presentation = LoadTimingForecastPresentation
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(P.forecastUnavailableNote(.noFittingRun) == "This load is longer than the search horizon.")
-        #expect(P.forecastUnavailableNote(.incompleteContext)
+        #expect(Presentation.forecastUnavailableNote(.noFittingRun) == "This load is longer than the search horizon.")
+        #expect(Presentation.forecastUnavailableNote(.incompleteContext)
             == "There is not enough household history yet to estimate expected usage.")
-        #expect(P.forecastUnavailableNote(.missingTariff)
+        #expect(Presentation.forecastUnavailableNote(.missingTariff)
             == "An active rate plan is needed before costs can be compared.")
 
-        let malformed = P.forecastAvailability(
+        let malformed = Presentation.forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: nil, reason: .contextMalformed,
             forecastFetchedAt: nil, now: now
         )
@@ -139,20 +139,20 @@ struct LoadTimingViewTests {
             #expect(!note.localizedCaseInsensitiveContains("date and time"))
         }
 
-        #expect(P.forecastAvailability(
+        #expect(Presentation.forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: .budgetExhausted, reason: nil,
             forecastFetchedAt: nil, now: now
         ) == .unusable("This device has used its forecast allowance for today."))
-        #expect(P.forecastAvailability(
+        #expect(Presentation.forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: nil, reason: .timestampMisaligned,
             forecastFetchedAt: nil, now: now
         ) == .unusable("Your energy readings exist, but their timestamps do not line up with this site's local time, so a household profile cannot be built."))
 
-        let future = P.forecastAvailability(
+        let future = Presentation.forecastAvailability(
             state: .enhanced, connection: .ready, cause: nil, reason: nil,
             forecastFetchedAt: now.addingTimeInterval(10 * 60), now: now
         )
-        #expect(future == .unusable(P.firstSentence(P.futureDatedForecastNote)))
+        #expect(future == .unusable(Presentation.firstSentence(Presentation.futureDatedForecastNote)))
         if case .unusable(let note) = future {
             #expect(!note.contains("too old"))
         }

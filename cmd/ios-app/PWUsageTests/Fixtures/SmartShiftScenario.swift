@@ -103,7 +103,8 @@ struct SmartShiftScenario: Codable {
     var diagnostic: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return (try? String(decoding: encoder.encode(self), as: UTF8.self)) ?? "seed=\(seed)"
+        let data = (try? encoder.encode(self)) ?? Data()
+        return String(bytes: data, encoding: .utf8) ?? "seed=\(seed)"
     }
 
     private struct Generator {

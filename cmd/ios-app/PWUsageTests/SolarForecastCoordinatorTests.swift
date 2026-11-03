@@ -216,7 +216,7 @@ struct SolarForecastCoordinatorTests {
     func contextErrorsMapDistinctly() async {
         func reason(
             error: Error? = nil, unavailable: Bool = false, reasonText: String? = nil
-        ) async -> SolarForecastEnhancementUnavailableReason? {
+        ) async -> SolarForecastUnavailableReason? {
             let api = ForecastDashboardAPISpy()
             api.contextError = error
             api.contextIsUnavailable = unavailable

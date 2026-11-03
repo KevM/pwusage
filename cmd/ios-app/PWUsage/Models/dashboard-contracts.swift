@@ -60,7 +60,7 @@ enum SolarForecastUnavailableCause: Equatable {
 /// Why the optional enhancement is not showing, when the connection itself is
 /// healthy. Without this every failure collapsed into one sentence that named the
 /// forecast, even when our own planning context was the missing piece.
-enum SolarForecastEnhancementUnavailableReason: Equatable {
+enum SolarForecastUnavailableReason: Equatable {
     case contextUnavailable
     /// The server has history, but too few of the most recent days are complete
     /// to build a household profile.

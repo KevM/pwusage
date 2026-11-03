@@ -59,7 +59,7 @@ extension DashboardCoordinator {
 
     struct PlanningContextOutcome {
         let context: LoadTimingForecastEstimator.PlanningContext?
-        let unavailableReason: SolarForecastEnhancementUnavailableReason?
+        let unavailableReason: SolarForecastUnavailableReason?
     }
 
     func planningContext(
@@ -117,7 +117,7 @@ extension DashboardCoordinator {
             // A thrown error means we never learned anything about the profile.
             // Reporting it as an unreadable profile would be a guess, and the
             // user is already frustrated by guesses.
-            let reason: SolarForecastEnhancementUnavailableReason
+            let reason: SolarForecastUnavailableReason
             if let contractError = error as? MobileLoadPlanningContextResponse.ContractError {
                 // Only skew is the device's fault, so only skew earns clock advice.
                 // Every other contract failure would keep failing with a perfect
@@ -147,7 +147,7 @@ extension DashboardCoordinator {
     /// specific about which half of the household profile is missing.
     static func enhancementReason(
         forReason reason: String?
-    ) -> SolarForecastEnhancementUnavailableReason? {
+    ) -> SolarForecastUnavailableReason? {
         switch reason {
         case "insufficient-history": return .insufficientHistory
         case "timestamp-misaligned": return .timestampMisaligned
@@ -163,7 +163,7 @@ extension DashboardCoordinator {
         forecastUsable: Bool,
         hasBatch: Bool,
         hasContext: Bool
-    ) -> SolarForecastEnhancementUnavailableReason? {
+    ) -> SolarForecastUnavailableReason? {
         if !refreshSucceeded { return nil }
         if !billSucceeded { return .billUnavailable }
         // A missing context is checked before the timezone comparison, otherwise
