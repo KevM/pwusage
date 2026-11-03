@@ -45,22 +45,29 @@ final class LiveSiteHistoryOnboardingEnvironment: SiteHistoryOnboardingEnvironme
         await record(scope)?.location != nil
     }
 
-    func hasUsableLayout(scope: SolarForecastSiteScope) async -> Bool {
+    func layoutConfidence(scope: SolarForecastSiteScope) async -> SolarLayoutConfidence? {
         #if DEBUG
-            if SiteHistoryDebugSettings.ignoresLayout(scope) { return false }
+            if SiteHistoryDebugSettings.ignoresLayout(scope) { return nil }
         #endif
-        guard let result = await record(scope)?.result else { return false }
-        return SolarLayoutDetector.forecastLayout(result, detectedAt: .distantPast) != nil
+        guard let result = await record(scope)?.result else { return nil }
+        return SolarLayoutDetector.forecastLayout(result, detectedAt: .distantPast)?.confidence
     }
 
-    func readiness(scope: SolarForecastSiteScope) async -> SolarLayoutReadiness? {
+    /// Off the main actor; cancelling the caller cancels the pass.
+    func classifyDays(scope: SolarForecastSiteScope) async -> SolarDayClassification? {
         guard let location = await record(scope)?.location,
               let zone = try? await history.timeZone(scope: scope),
               let samples = try? await history.samples(scope: scope) else { return nil }
-        return await Task.detached(priority: .utility) {
-            SolarLayoutDetector.readiness(
-                samples: samples, latitude: location.latitude, longitude: location.longitude, timeZone: zone)
-        }.value
+        let operation = Task.detached(priority: .utility) {
+            try SolarLayoutDetector.classifyDays(
+                samples: samples, latitude: location.latitude, longitude: location.longitude, timeZone: zone,
+                checkCancellation: { try Task.checkCancellation() })
+        }
+        return await withTaskCancellationHandler {
+            try? await operation.value
+        } onCancel: {
+            operation.cancel()
+        }
     }
 
     func detect(scope: SolarForecastSiteScope) async -> DetectedSolarLayout? {

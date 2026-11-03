@@ -51,6 +51,7 @@ struct SiteHistoryOnboardingLifecycleTests {
 
     @Test func theForegroundWaitsOutABackoffAndCarriesOn() async throws {
         let environment = FakeOnboardingEnvironment()
+        environment.producing = false
         environment.answers = [.fill(.busy)]
         let probe = LifecycleProbe(now: start)
         let lifecycle = make(environment, probe: probe)
@@ -63,6 +64,7 @@ struct SiteHistoryOnboardingLifecycleTests {
 
     @Test func switchingSitesCancelsTheOtherSitesRunWithoutTouchingIt() async throws {
         let environment = FakeOnboardingEnvironment()
+        environment.producing = false
         environment.answers = [.fill(.busy)]
         let probe = LifecycleProbe(now: start)
         let lifecycle = make(environment, probe: probe, sleep: Self.sleepUntilCancelled)
@@ -83,6 +85,7 @@ struct SiteHistoryOnboardingLifecycleTests {
 
     @Test func leavingTheForegroundAsksForTheSavedBackoff() async throws {
         let environment = FakeOnboardingEnvironment()
+        environment.producing = false
         environment.answers = [.fill(.busy)]
         let probe = LifecycleProbe(now: start)
         let lifecycle = make(environment, probe: probe, sleep: Self.sleepUntilCancelled)
@@ -155,6 +158,7 @@ struct SiteHistoryOnboardingLifecycleTests {
 
     @Test func stoppingCancelsAndWithdrawsTheBackgroundRequest() async throws {
         let environment = FakeOnboardingEnvironment()
+        environment.producing = false
         environment.answers = [.fill(.busy)]
         let probe = LifecycleProbe(now: start)
         let lifecycle = make(environment, probe: probe, sleep: Self.sleepUntilCancelled)
@@ -222,7 +226,7 @@ struct SiteHistoryOnboardingLifecycleTests {
     @Test func theStatusFollowsTheActiveScopeAndClearsOnStop() async throws {
         let environment = FakeOnboardingEnvironment()
         environment.defaultAnswer = .fill(.busy)
-        environment.usableLayout = true
+        environment.confidence = .medium
         let lifecycle = make(environment, probe: LifecycleProbe(now: start), sleep: Self.sleepUntilCancelled)
         lifecycle.activate(scope: scope)
         try await eventually { lifecycle.status?.progress?.waitReason == .busy }

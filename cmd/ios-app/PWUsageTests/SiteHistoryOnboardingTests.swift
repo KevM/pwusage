@@ -3,75 +3,6 @@ import Foundation
 import Testing
 
 @MainActor
-final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
-    enum Answer {
-        case fill(MobileSolarHistoryFill.Status)
-        case disabled
-        case failure(any Error)
-    }
-
-    var timeZone: TimeZone? = TimeZone(identifier: "America/Chicago")
-    var historyStart = "2020-01-01"
-    var answers: [Answer] = []
-    var defaultAnswer: Answer = .fill(.complete)
-    var requests: [(from: String, days: Int)] = []
-    var sites: [String] = []
-    /// Each returned day's readings; days before `firstDataDay` come back empty.
-    var solarWh: [Double?] = []
-    var firstDataDay = ""
-    /// Holds each fill open this long (cancellable), as a slow server import would.
-    var fillDelay: Duration?
-    var stored: [[String]] = []
-    var location = true
-    var usableLayout = false
-    var producingDays = 0
-    var readinessChecks = 0
-    var detections: [DetectedSolarLayout] = []
-    var detectionCount = 0
-    var onFill: (() -> Void)?
-
-    func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse {
-        requests.append((from, days))
-        sites.append(siteID)
-        onFill?()
-        if let fillDelay { try await Task.sleep(for: fillDelay) }
-        let answer = answers.isEmpty ? defaultAnswer : answers.removeFirst()
-        switch answer {
-        case .disabled: return .disabled
-        case .failure(let error): throw error
-        case .fill(let status):
-            let zone = timeZone ?? .gmt
-            let list = (0 ..< days).compactMap { SiteLocalDays.adding($0, to: from, timeZone: zone) }
-            return .enabled(MobileSolarHistoryFill(
-                timeZone: zone, status: status, historyStart: historyStart,
-                days: list.map { day in
-                    MobileSolarHistoryDay(
-                        day: day, dayStart: .distantPast, status: .complete, fetchedAt: nil,
-                        solarWh: day >= firstDataDay ? solarWh : [])
-                }))
-        }
-    }
-
-    func storeDays(_ fill: MobileSolarHistoryFill, scope _: SolarForecastSiteScope) async throws {
-        stored.append(fill.days.map(\.day))
-    }
-
-    func siteTimeZone(scope _: SolarForecastSiteScope) async -> TimeZone? { timeZone }
-    func hasLocation(scope _: SolarForecastSiteScope) async -> Bool { location }
-    func hasUsableLayout(scope _: SolarForecastSiteScope) async -> Bool { usableLayout }
-
-    func readiness(scope _: SolarForecastSiteScope) async -> SolarLayoutReadiness? {
-        readinessChecks += 1
-        return location ? SolarLayoutReadiness(producingDays: producingDays) : nil
-    }
-
-    func detect(scope _: SolarForecastSiteScope) async -> DetectedSolarLayout? {
-        detectionCount += 1
-        return detections.isEmpty ? nil : detections.removeFirst()
-    }
-}
-
-@MainActor
 @Suite("Site history onboarding")
 struct SiteHistoryOnboardingTests {
     private let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-1")
@@ -79,13 +10,15 @@ struct SiteHistoryOnboardingTests {
     /// 2026-11-02 12:00 in Chicago (CST).
     private let now = Date(timeIntervalSince1970: 1_793_642_400)
 
+    private var ledgers: SiteHistoryDayLedgerStore { SiteHistoryDayLedgerStore(directory: directory) }
+
     private func make(
         _ environment: FakeOnboardingEnvironment, store: SiteHistoryOnboardingStore? = nil, clock: Date? = nil
     ) -> SiteHistoryOnboarding {
         let fixed = clock ?? now
         return SiteHistoryOnboarding(
             environment: environment, store: store ?? SiteHistoryOnboardingStore(directory: directory),
-            now: { fixed })
+            ledgers: ledgers, now: { fixed })
     }
 
     private static func layout(
@@ -226,7 +159,7 @@ struct SiteHistoryOnboardingTests {
 
     @Test func stopsAtOneYear() async {
         let environment = FakeOnboardingEnvironment()
-        environment.producingDays = 10
+        environment.producingDayLimit = 10
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.reachedOneYear))
         #expect(environment.requests.last?.from == "2025-11-02")
@@ -234,67 +167,107 @@ struct SiteHistoryOnboardingTests {
         #expect(total == 365)
     }
 
-    @Test func anExistingUsableLayoutStopsAfterRecentHistory() async {
+    @Test func anExistingHighConfidenceLayoutStopsAfterRecentHistory() async {
         let environment = FakeOnboardingEnvironment()
-        environment.usableLayout = true
+        environment.confidence = .high
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.layoutAlreadyUsable))
         #expect(environment.requests.map(\.days).reduce(0, +) == 15)
         #expect(environment.detectionCount == 0)
     }
 
-    @Test func withoutALocationImportsTheInitialCheckpointOnly() async {
+    @Test func anExistingMediumLayoutKeepsGoingTowardHighConfidence() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.confidence = .medium
+        environment.clearEvery = 2
+        environment.detections = [Self.layout(.detected, "high")]
+        let outcome = await make(environment).run(scope: scope)
+        #expect(outcome == .finished(.layoutFound))
+        #expect(environment.requests.map(\.days).reduce(0, +) == 42)
+    }
+
+    @Test func withoutALocationImportsTheInitialCheckpointOnlyWithoutAPass() async throws {
         let environment = FakeOnboardingEnvironment()
         environment.location = false
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.locationNeeded))
         #expect(environment.requests.map(\.days).reduce(0, +) == 90)
+        #expect(environment.passes.isEmpty)
         #expect(environment.detectionCount == 0)
+        #expect(try await ledgers.ledger(scope: scope) == nil)
     }
 
-    @Test func detectsOnlyAtCheckpointsOnceReadyAndStopsOnAUsableLayout() async {
+    @Test func passesEverySecondSliceAndDetectsOnTargetsAndTheFallback() async throws {
         let environment = FakeOnboardingEnvironment()
-        environment.producingDays = 50
-        environment.detections = [Self.layout(.lowConfidence, "low", reasons: ["few-clear-days"]),
-                                  Self.layout(.detected, "medium")]
+        environment.clearEvery = 2
+        environment.answers = Array(repeating: .fill(.complete), count: 30) + [.disabled]
+        environment.detections = Array(repeating: Self.layout(.lowConfidence, "low", reasons: ["few-clear-days"]),
+                                       count: 3)
+        _ = await make(environment).run(scope: scope)
+        // A pass every six days; 30 complete slices.
+        #expect(environment.passes.count == 15)
+        #expect(environment.passes.first?.days.count == 6)
+        // 42 (producing gate, 15 clear already reached), 72 (30-day fallback), 84 (40 clear).
+        #expect(environment.detectionCount == 3)
+
+        let ledger = try #require(try await ledgers.ledger(scope: scope))
+        #expect(ledger.dayTypes.count == 90)
+        #expect(ledger.checkpoint?.producingDays == 90)
+        #expect(ledger.checkpoint?.clearDays == 45)
+        #expect(ledger.checkpoint?.azimuthRange90 == [175, 185])
+    }
+
+    @Test func aUsableLayoutKeepsLoadingUntilHighConfidence() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.clearEvery = 2
+        environment.detections = [Self.layout(.detected, "medium"), Self.layout(.detected, "high")]
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.layoutFound))
-        // Checkpoints at 42 and 72 checked days (slices end on multiples of three).
         #expect(environment.detectionCount == 2)
-        #expect(environment.readinessChecks == 2)
         #expect(environment.requests.map(\.days).reduce(0, +) == 72)
+    }
+
+    @Test func producing180DaysIsATarget() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.clearEvery = 10
+        environment.answers = Array(repeating: .fill(.complete), count: 60) + [.disabled]
+        environment.detections = Array(repeating: Self.layout(.detected, "medium"), count: 10)
+        _ = await make(environment).run(scope: scope)
+        // 42, 72, 102, 132 (fallback), 144 (15 clear), 174 (fallback), 180 (180 producing).
+        #expect(environment.detectionCount == 7)
     }
 
     @Test func doesNotDetectBeforeTheProducingDayGatePasses() async {
         let environment = FakeOnboardingEnvironment()
-        environment.producingDays = 30
+        environment.clearEvery = 2
+        environment.producingDayLimit = 30
         environment.answers = Array(repeating: .fill(.complete), count: 30) + [.disabled]
         _ = await make(environment).run(scope: scope)
-        // Checkpoints at 42, 72 and the initial 90.
-        #expect(environment.readinessChecks == 3)
+        #expect(environment.passes.count == 15)
         #expect(environment.detectionCount == 0)
     }
 
     @Test func aDetectorProblemOtherThanHistoryStopsTheSearch() async {
         let environment = FakeOnboardingEnvironment()
-        environment.producingDays = 50
+        environment.clearEvery = 2
         environment.detections = [Self.layout(.lowConfidence, "low", reasons: ["location-mismatch"])]
         #expect(await make(environment).run(scope: scope) == .finished(.detectorNeedsOtherAction))
     }
 
     @Test func aSiteWithoutProductionStopsAtTheInitialCheckpoint() async {
         let environment = FakeOnboardingEnvironment()
-        environment.producingDays = 0
+        environment.producing = false
         #expect(await make(environment).run(scope: scope) == .finished(.noSolarProduction))
         #expect(environment.requests.map(\.days).reduce(0, +) == 90)
+        #expect(environment.detectionCount == 0)
     }
 
     @Test func assessesOnceMoreWhenTheHistoryStartEndsTheSearch() async {
         let environment = FakeOnboardingEnvironment()
         environment.historyStart = "2026-09-10"
-        environment.producingDays = 50
+        environment.clearEvery = 2
         environment.detections = [Self.layout(.lowConfidence, "low", reasons: ["few-clear-days"]),
-                                  Self.layout(.detected, "high")]
+                                  Self.layout(.detected, "medium")]
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.layoutFound))
         #expect(environment.detectionCount == 2)

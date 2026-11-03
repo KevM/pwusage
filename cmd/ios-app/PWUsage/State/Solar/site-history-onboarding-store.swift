@@ -15,8 +15,13 @@ struct SiteHistoryOnboardingProgress: Codable, Equatable, Sendable {
     /// The server's first possible day of data, once a fill has answered.
     var historyStart: String?
     var phase: Phase = .active
-    /// Checked days at the last readiness assessment; 0 before the first.
+    /// Checked days at the last full detection; 0 before the first.
     var lastAssessedCheckedDays = 0
+    /// Targets already reached at the last full detection; nil before the first.
+    var detectedTargets: [SiteHistoryOnboarding.Target]?
+    /// Complete slices so far; the clear-day pass runs after every second one.
+    var completeSlices: Int?
+    /// Producing days at the last clear-day pass.
     var producingDays: Int?
     var lastOutlook: SolarLayoutHistoryOutlook?
     /// Checked days whose record held any solar reading (an empty, pre-provisioning day has none).
