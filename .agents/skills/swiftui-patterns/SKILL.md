@@ -10,6 +10,9 @@ description: >-
 
 This skill provides patterns for building SwiftUI views that conform to the project's architecture, design language, and SwiftLint limits in `cmd/ios-app`.
 
+Canonical project guide: [`cmd/ios-app/AGENTS.md`](../../../cmd/ios-app/AGENTS.md). Read it for the
+idiom rules, lint wrapper and verification commands; this skill goes deeper on view structure.
+
 ---
 
 ## 1. Respecting the 50-Line Function Body Budget

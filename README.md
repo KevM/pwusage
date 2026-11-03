@@ -43,6 +43,9 @@ Your solar production is mostly _On-Peak_ and a single Tesla Powerwall 2 has 11.
 
 ## Developers
 
+See [`AGENTS.md`](./AGENTS.md) for repo-wide guidance, [`cmd/next-app/AGENTS.md`](./cmd/next-app/AGENTS.md)
+for the web app, and [`cmd/ios-app/AGENTS.md`](./cmd/ios-app/AGENTS.md) for the native app.
+
 ### Running PWUsage Locally
 
 1. Clone repo

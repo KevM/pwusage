@@ -1,7 +1,13 @@
-# SwiftLint for the iOS app. Run from the repository root:
-#   swiftlint lint cmd/ios-app --strict
-# Budgets are the campaign targets. There is no baseline: every violation must
-# be fixed rather than recorded.
+# SwiftLint for the iOS app. Prefer the wrapper from the repository root:
+#   ./cmd/ios-app/lint.sh
+#
+# The raw equivalent is:
+#   swiftlint lint cmd/ios-app --strict --no-cache
+#
+# The SwiftLint baseline is intentionally gone: the burndown is complete, so
+# --strict must report zero. Fix violations; do not add baseline entries or
+# swiftlint:disable comments. Add a rule here only when it passes with zero
+# violations today.
 included:
   - cmd/ios-app
 excluded:
@@ -11,10 +17,38 @@ excluded:
   # Vendored from fastlane (`fastlane snapshot init`); keep it byte-identical for upgrades.
   - cmd/ios-app/PWUsageScreenshots/SnapshotHelper.swift
 opt_in_rules:
-  - sorted_imports
+  # Guardrails that predate the idiom pass.
   - empty_count
   - force_unwrapping
+  - sorted_imports
   - unhandled_throwing_task
+
+  # Swift idioms. Every rule below passes with zero violations today. If new
+  # code trips one, fix the code rather than removing the rule; that is how the
+  # codebase stays Swifty instead of drifting back toward the baseline.
+  - array_init
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - direct_return
+  - discarded_notification_center_observer
+  - explicit_init
+  - fatal_error_message
+  - first_where
+  - identical_operands
+  - joined_default_parameter
+  - last_where
+  - lower_acl_than_parent
+  - object_literal
+  - operator_usage_whitespace
+  - prefer_zero_over_explicit_init
+  - reduce_into
+  - redundant_type_annotation
+  - sorted_first_last
+  - toggle_bool
+  - unneeded_parentheses_in_closure_argument
+  - untyped_error_in_catch
+  - weak_delegate
+  - yoda_condition
 line_length:
   warning: 120
 file_length:

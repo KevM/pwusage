@@ -41,6 +41,7 @@
 - Generate project: `cd cmd/ios-app && xcodegen generate`
 - Build: `cd cmd/ios-app && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`
 - Tests: `cd cmd/ios-app && ./run-tests.sh` (or `./run-tests.sh <Suite>`)
-- Format: `swiftformat cmd/ios-app --config .swiftformat` or `./cmd/ios-app/format.sh`
-- Lint: `swiftlint lint cmd/ios-app --strict`
+- Format + lint: `./cmd/ios-app/lint.sh` (add `--fix` to apply SwiftFormat first)
+- Format only: `swiftformat cmd/ios-app --config .swiftformat` or `./cmd/ios-app/format.sh`
+- Lint only: `swiftlint lint cmd/ios-app --strict --no-cache`
 - Dead code scan: `cd cmd/ios-app && ./periphery.sh`
