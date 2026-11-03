@@ -2,7 +2,9 @@
 # Usage: ./run-tests.sh [--quick | --full] [test filters...]
 #   --quick    Everyday sniff test for agents: Debug build, skips the suites listed in
 #              quick-test-skips.txt (multi-minute detector parity runs).
-#   (no flag)  Every default suite, Debug build. Run before opening or updating a PR.
+#   (no flag)  Every default suite, Debug build. Run before opening or updating a PR. The detector
+#              parity suite runs only when this branch (committed or not) changes the detector or
+#              its fixtures; PWUSAGE_DETECTOR_PARITY=1 forces it, =0 skips it.
 #   --full     What CI runs: builds optimized (-O, still testable) so the numeric parity suites
 #              run in seconds, and turns on the opt-in year-fixture parity suite.
 set -euo pipefail
@@ -103,6 +105,28 @@ if [[ "$mode" == quick ]]; then
       test_filter_args+=("-skip-testing:$skipped")
     fi
   done < quick-test-skips.txt
+fi
+
+# Prints 1 when this branch, against its merge base with main, touches the detector or its fixtures.
+# Without a merge base it prints 1, so an unknown diff never skips the parity suite.
+detector_changed() {
+  local base
+  base="$(git merge-base HEAD origin/main 2> /dev/null || git merge-base HEAD main 2> /dev/null)" || {
+    echo 1
+    return
+  }
+  { git diff --name-only "$base" -- . && git ls-files --others --exclude-standard -- .; } 2> /dev/null \
+    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|mobile-solar-layout\.swift|solar-position\.swift)|PWUsageTests/(Fixtures/SolarLayout/|Fixtures/solar-layout-fixture-loader\.swift|SolarLayoutDetectorTests\.swift))' \
+    && echo 1 || echo 0
+}
+
+# Named filters pick their own suites; only an unfiltered default run gates detector parity.
+if [[ "$mode" == default && "$#" -eq 0 ]]; then
+  run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
+  if [[ "$run_parity" != 1 ]]; then
+    echo 'Skipping SolarLayoutDetectorFixtureParityTests: no detector changes on this branch (PWUSAGE_DETECTOR_PARITY=1 runs it; CI always does).'
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests")
+  fi
 fi
 
 artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/pwusage-ios-tests.XXXXXX")"
