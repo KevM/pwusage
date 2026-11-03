@@ -34,14 +34,25 @@ struct AppTabView: View {
         }
     }
 
-    private var tabs: some View {
+    @ViewBuilder private var tabs: some View {
+        let presentation = SiteHistoryPresentation(status: model.siteHistoryStatus, now: .now)
+        if #available(iOS 26.1, *) {
+            tabView.tabViewBottomAccessory(isEnabled: presentation.showsAccessory) {
+                SiteHistoryAccessory(checkedDaysText: presentation.checkedDaysText, onOpen: model.openSiteHistory)
+            }
+        } else {
+            tabView
+        }
+    }
+
+    private var tabView: some View {
         TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
             ForEach(AppTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
                     // An external launch (widget or Battery Saver control) rebuilds
                     // each tab's stack to drop old paths and modals. The id goes here, never on the
                     // TabView, so the sidebar keeps its shown/collapsed state.
-                    NavigationStack { content(for: tab) }
+                    stack(for: tab)
                         .id(model.externalNavigationID)
                 }
             }
@@ -70,6 +81,14 @@ struct AppTabView: View {
         }
     }
 
+    @ViewBuilder private func stack(for tab: AppTab) -> some View {
+        if tab == .settings {
+            NavigationStack(path: $model.settingsPath) { content(for: tab) }
+        } else {
+            NavigationStack { content(for: tab) }
+        }
+    }
+
     @ViewBuilder private func content(for tab: AppTab) -> some View {
         switch tab {
         case .home:
@@ -85,7 +104,10 @@ struct AppTabView: View {
             SettingsView(site: site, coordinator: coordinator,
                          onChooseSite: model.openSitePicker,
                          onSignOut: { Task { await model.signOut() } },
-                         onExitDemo: model.isDemo ? { demoMode?.exit() } : nil)
+                         onExitDemo: model.isDemo ? { demoMode?.exit() } : nil,
+                         showsSiteHistory: model.historyOnboarding != nil
+                             && coordinator.solarLayoutStatus != .disabled,
+                         siteHistory: model.siteHistoryStatus)
         }
     }
 

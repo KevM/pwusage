@@ -64,9 +64,13 @@ struct PWUsageAppModelHistoryOnboardingTests {
         try await eventually { environment.sites == ["site-a"] }
         #expect(lifecycle.lastScope?.accountScopeID == model.accountScopeID)
 
+        try await eventually { model.siteHistoryStatus?.scope.siteID == "site-a" }
+
         model.selectSite(OnboardingAppAPI.sites[1])
+        #expect(model.siteHistoryStatus == nil, "Site A's status must not show for site B")
         try await eventually { environment.sites == ["site-a", "site-b"] }
         #expect(lifecycle.lastScope?.siteID == "site-b")
+        try await eventually { model.siteHistoryStatus?.scope.siteID == "site-b" }
         lifecycle.stop()
     }
 
@@ -88,6 +92,16 @@ struct PWUsageAppModelHistoryOnboardingTests {
         await model.signOut()
         #expect(probe.scheduled.last == .some(nil))
         #expect(lifecycle.lastScope == nil)
+    }
+
+    @Test("The history accessory opens Site History in Settings")
+    func openSiteHistory() throws {
+        let model = try makeModel(historyOnboarding: makeLifecycle(FakeOnboardingEnvironment(), probe: ScheduleProbe()))
+        model.openSiteHistory()
+        #expect(model.selectedTab == .settings)
+        #expect(model.settingsPath == [.siteHistory])
+        model.resetNavigation()
+        #expect(model.settingsPath.isEmpty)
     }
 
     @Test("The demo never onboards")

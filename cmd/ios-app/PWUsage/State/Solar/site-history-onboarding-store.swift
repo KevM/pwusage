@@ -19,6 +19,8 @@ struct SiteHistoryOnboardingProgress: Codable, Equatable, Sendable {
     var lastAssessedCheckedDays = 0
     var producingDays: Int?
     var lastOutlook: SolarLayoutHistoryOutlook?
+    /// Checked days whose record held any solar reading (an empty, pre-provisioning day has none).
+    var daysWithData = 0
     /// Consecutive slice attempts that did not complete.
     var failures = 0
     var nextAttemptAt: Date?

@@ -63,6 +63,8 @@ final class SiteHistoryOnboarding {
     private let store: SiteHistoryOnboardingStore
     private let now: () -> Date
     private var running: [SolarForecastSiteScope: Task<Outcome, Never>] = [:]
+    /// Called after the site's progress is saved, so a status display can reread it.
+    var onProgress: ((SolarForecastSiteScope) -> Void)?
 
     init(
         environment: any SiteHistoryOnboardingEnvironment,
@@ -118,6 +120,12 @@ final class SiteHistoryOnboarding {
     ) async {
         if case .stop(.stopped) = step { return }
         try? await store.save(progress, scope: scope)
+        onProgress?(scope)
+    }
+
+    /// Whether the site already has a layout the forecast can use.
+    func hasUsableLayout(scope: SolarForecastSiteScope) async -> Bool {
+        await environment.hasUsableLayout(scope: scope)
     }
 
     /// The checkpoint decision after a complete slice: a finish, or nil to keep going.
@@ -128,6 +136,7 @@ final class SiteHistoryOnboarding {
             return await finish(reason, &progress, scope: scope)
         }
         try? await store.save(progress, scope: scope)
+        onProgress?(scope)
         return nil
     }
 
@@ -183,7 +192,11 @@ final class SiteHistoryOnboarding {
             try await environment.storeDays(fill, scope: scope)
             guard !Task.isCancelled else { return .stop(.stopped) }
             progress.historyStart = fill.historyStart
-            return record(fill.status, slice: slice, progress: &progress)
+            let step = record(fill.status, slice: slice, progress: &progress)
+            if case .advanced = step {
+                progress.daysWithData += fill.days.count { $0.solarWh.contains { $0 != nil } }
+            }
+            return step
         } catch {
             return await failed(error, scope: scope, progress: &progress)
         }
@@ -310,6 +323,7 @@ final class SiteHistoryOnboarding {
     ) async -> Outcome {
         progress.phase = .finished(reason)
         try? await store.save(progress, scope: scope)
+        onProgress?(scope)
         return .finished(reason)
     }
 }

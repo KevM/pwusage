@@ -16,6 +16,9 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
     var defaultAnswer: Answer = .fill(.complete)
     var requests: [(from: String, days: Int)] = []
     var sites: [String] = []
+    /// Each returned day's readings; days before `firstDataDay` come back empty.
+    var solarWh: [Double?] = []
+    var firstDataDay = ""
     /// Holds each fill open this long (cancellable), as a slow server import would.
     var fillDelay: Duration?
     var stored: [[String]] = []
@@ -43,7 +46,8 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
                 timeZone: zone, status: status, historyStart: historyStart,
                 days: list.map { day in
                     MobileSolarHistoryDay(
-                        day: day, dayStart: .distantPast, status: .complete, fetchedAt: nil, solarWh: [])
+                        day: day, dayStart: .distantPast, status: .complete, fetchedAt: nil,
+                        solarWh: day >= firstDataDay ? solarWh : [])
                 }))
         }
     }
@@ -104,6 +108,17 @@ struct SiteHistoryOnboardingTests {
         #expect(progress.checkedUntil == "2026-11-02")
         #expect(progress.oldestChecked == "2026-10-24")
         #expect(progress.checkedDays(timeZone: try #require(environment.timeZone)) == 9)
+    }
+
+    @Test func countsOnlyCheckedDaysThatHoldReadings() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.solarWh = [nil, 0]
+        environment.firstDataDay = "2026-10-28"
+        environment.answers = [.fill(.complete), .fill(.partial), .fill(.complete)]
+        _ = await make(environment).run(scope: scope, maxSlices: 3)
+        let progress = try #require(try await SiteHistoryOnboardingStore(directory: directory).progress(scope: scope))
+        #expect(progress.checkedDays(timeZone: .gmt) == 6)
+        #expect(progress.daysWithData == 5)
     }
 
     @Test func retriesTheSameSliceUntilItIsComplete() async {

@@ -217,6 +217,22 @@ struct SiteHistoryOnboardingLifecycleTests {
         #expect(probe.scheduled == [nil])
     }
 
+    @Test func theStatusFollowsTheActiveScopeAndClearsOnStop() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.defaultAnswer = .fill(.busy)
+        environment.usableLayout = true
+        let lifecycle = make(environment, probe: LifecycleProbe(now: start), sleep: Self.sleepUntilCancelled)
+        lifecycle.activate(scope: scope)
+        try await eventually { lifecycle.status?.progress?.waitReason == .busy }
+        #expect(lifecycle.status?.scope == scope)
+        #expect(lifecycle.status?.hasUsableLayout == true)
+        lifecycle.activate(scope: other)
+        try await eventually { lifecycle.status?.scope == other && lifecycle.status?.progress != nil }
+        lifecycle.stop()
+        #expect(lifecycle.status == nil)
+        try await staysTrue(for: .milliseconds(50)) { lifecycle.status == nil }
+    }
+
     @Test func theBackgroundRequestNeedsTheNetworkButNotPower() {
         let request = BackgroundSiteHistoryOnboarding.request(earliest: start)
         #expect(request.identifier == BackgroundSiteHistoryOnboarding.identifier)

@@ -23,6 +23,8 @@ final class PWUsageAppModel: ObservableObject {
     /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
     /// launch moves it for one visit, like the saved site.
     @Published var selectedTab: AppTab
+    /// The Settings tab's stack, so the history accessory can open Site History.
+    @Published var settingsPath: [SettingsDestination] = []
 
     /// Builds the dashboard coordinator for a site. Injected so tests can control
     /// the polling cadence and the clock.

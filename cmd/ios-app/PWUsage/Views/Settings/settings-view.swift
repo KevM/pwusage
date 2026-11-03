@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Settings tab: site, Rate Plans, Solar Forecast, About, and Sign Out
+/// The Settings tab: site, Rate Plans, Solar Forecast, Site History, About, and Sign Out
 /// (Exit Demo in the demo).
 /// It has no stack of its own; the tab's `NavigationStack` hosts the pushes.
 struct SettingsView: View {
@@ -11,6 +11,9 @@ struct SettingsView: View {
     /// Set in the demo, where it replaces Sign Out. Nothing is lost by leaving,
     /// so it asks no confirmation.
     var onExitDemo: (() -> Void)?
+    /// Shown for a site with the history beta outside the demo; the status may still be nil.
+    var showsSiteHistory = false
+    var siteHistory: SiteHistoryStatus?
 
     @State private var isConfirmingSignOut = false
 
@@ -42,6 +45,15 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.solarForecast) {
                     Label("Solar Forecast", systemImage: "sun.max")
                 }
+                if showsSiteHistory {
+                    NavigationLink(value: SettingsDestination.siteHistory) {
+                        LabeledContent {
+                            Text(SiteHistoryPresentation(status: siteHistory, now: .now).rowValue)
+                        } label: {
+                            Label("Site History", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                }
                 NavigationLink(value: SettingsDestination.about) {
                     Label("About", systemImage: "info.circle")
                 }
@@ -63,6 +75,8 @@ struct SettingsView: View {
                     .id(site.id)
             case .solarForecast:
                 SolarForecastSettingsView(coordinator: coordinator)
+            case .siteHistory:
+                SiteHistoryView(status: siteHistory)
             case .about:
                 AboutSheet()
             }
@@ -81,9 +95,10 @@ struct SettingsView: View {
     }
 }
 
-private enum SettingsDestination: Hashable {
+enum SettingsDestination: Hashable {
     case ratePlans
     case solarForecast
+    case siteHistory
     case about
 }
 

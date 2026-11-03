@@ -1,10 +1,13 @@
 import Foundation
+import Observation
 
 /// When the onboarding job runs. In the foreground it works through the selected site, waiting
 /// out backoffs and throttles in place; leaving the foreground cancels it (confirmed progress is
 /// already saved) and asks iOS for a background opportunity from the saved state. iOS may never
-/// grant one, so every foreground activation picks the job up again.
+/// grant one, so every foreground activation picks the job up again. `status` is the saved state
+/// of the last scope, for Settings and the tab accessory.
 @MainActor
+@Observable
 final class SiteHistoryOnboardingLifecycle {
     typealias Sleep = @MainActor (TimeInterval) async throws -> Void
 
@@ -24,9 +27,11 @@ final class SiteHistoryOnboardingLifecycle {
         let task: Task<Void, Never>
     }
 
-    private var foreground: ForegroundRun?
+    @ObservationIgnored private var foreground: ForegroundRun?
     /// The scope the next background opportunity is for.
     private(set) var lastScope: SolarForecastSiteScope?
+    private(set) var status: SiteHistoryStatus?
+    @ObservationIgnored private var statusGeneration = 0
 
     init(
         onboarding: SiteHistoryOnboarding,
@@ -42,6 +47,25 @@ final class SiteHistoryOnboardingLifecycle {
         self.scheduleBackground = scheduleBackground
         self.sleep = sleep
         self.now = now
+        onboarding.onProgress = { [weak self] scope in
+            guard let self, scope == lastScope else { return }
+            Task { await self.refreshStatus() }
+        }
+    }
+
+    /// Rereads the last scope's saved state. A newer read, or a change of scope while reading,
+    /// wins over this one.
+    func refreshStatus() async {
+        guard let scope = lastScope else { return }
+        statusGeneration += 1
+        let generation = statusGeneration
+        let progress = try? await store.progress(scope: scope)
+        let throttle = try? await store.throttle(accountScopeID: scope.accountScopeID)
+        let usable = await onboarding.hasUsableLayout(scope: scope)
+        guard generation == statusGeneration, scope == lastScope else { return }
+        let next = SiteHistoryStatus(
+            scope: scope, progress: progress, throttledUntil: throttle, hasUsableLayout: usable)
+        if status != next { status = next }
     }
 
     /// The foreground run in progress, for tests to await.
@@ -50,7 +74,8 @@ final class SiteHistoryOnboardingLifecycle {
     /// Run `scope` in the foreground, replacing work for any other scope. Joins a run already
     /// in progress for the same scope.
     func activate(scope: SolarForecastSiteScope) {
-        lastScope = scope
+        if lastScope != scope { lastScope = scope }
+        Task { await refreshStatus() }
         if foreground?.scope == scope { return }
         foreground?.task.cancel()
         // The task clears the slot only while it still owns it, so a newer run is never dropped.
@@ -78,12 +103,15 @@ final class SiteHistoryOnboardingLifecycle {
         foreground?.task.cancel()
         foreground = nil
         lastScope = nil
+        status = nil
+        statusGeneration += 1
         scheduleBackground(nil)
     }
 
     /// After the action a pause asked for (reconnecting Tesla, signing in) succeeds.
     func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) async {
         try? await store.resumePaused(accountScopeID: accountScopeID, reason: reason)
+        await refreshStatus()
     }
 
     /// One background opportunity: a bounded run, then when to ask for the next one.

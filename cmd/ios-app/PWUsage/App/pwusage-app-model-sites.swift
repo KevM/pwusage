@@ -82,6 +82,18 @@ extension PWUsageAppModel {
         updateHistoryOnboarding()
     }
 
+    /// The selected site's history status, never another site's or account's.
+    var siteHistoryStatus: SiteHistoryStatus? {
+        guard let status = historyOnboarding?.status, status.scope.siteID == selectedSiteID,
+              status.scope.accountScopeID == accountScopeID else { return nil }
+        return status
+    }
+
+    func openSiteHistory() {
+        selectTab(.settings)
+        settingsPath = [.siteHistory]
+    }
+
     /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.
     func updateHistoryOnboarding() {
         guard let historyOnboarding else { return }
@@ -140,6 +152,7 @@ extension PWUsageAppModel {
     /// The next session starts on Home, not on whatever tab this one ended on.
     func clearSelectedTab() {
         selectedTab = .home
+        settingsPath = []
         userDefaults.removeObject(forKey: Self.selectedTabDefaultsKey)
     }
 

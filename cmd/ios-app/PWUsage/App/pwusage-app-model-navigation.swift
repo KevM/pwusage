@@ -24,6 +24,12 @@ extension PWUsageAppModel {
         LoadProfileStore(userDefaults: userDefaults)
     }
 
+    /// Rebuilds every tab's stack for an external route, Settings' path included.
+    func resetNavigation() {
+        externalNavigationID = UUID()
+        settingsPath = []
+    }
+
     func selectTab(_ tab: AppTab) {
         selectedTab = tab
         userDefaults.set(tab.rawValue, forKey: Self.selectedTabDefaultsKey)
@@ -33,13 +39,13 @@ extension PWUsageAppModel {
         // The demo never navigates to a real site, whatever opened the app.
         // Dropping tab-level sheets ensures the root-level demo sheet can present.
         if isDemo {
-            externalNavigationID = UUID()
+            resetNavigation()
             presentDemoSheet()
             return
         }
         if url == DashboardLink.url {
             dismissCompetingPresentations()
-            externalNavigationID = UUID()
+            resetNavigation()
             selectTab(.home)
             return
         }
@@ -93,7 +99,7 @@ extension PWUsageAppModel {
         selectSite(site)
         // Rebuild only for an external route: this drops the old navigation path
         // and every dashboard/detail modal before the new host opens the sheet.
-        externalNavigationID = UUID()
+        resetNavigation()
         selectedTab = .smartShift
         coordinator?.isBatteryHoldSheetPresented = true
     }
