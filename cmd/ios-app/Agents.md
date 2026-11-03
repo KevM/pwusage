@@ -30,6 +30,7 @@
   1. `cmd/ios-app/format.sh`
   2. `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` (from repo root)
   3. The full `./run-tests.sh` locally. While iterating, `./run-tests.sh --quick` skips the slow suites in `quick-test-skips.txt`.
+     The full run already skips the multi-minute detector parity suite unless your branch changes the detector or its fixtures (CI always runs it), so don't run that suite by hand for unrelated work.
   Never push or finish code that introduces new SwiftLint or SwiftFormat violations.
 - **Testing Framework**: All native iOS tests must use Swift Testing (`SwiftTest` via `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Do not use legacy `XCTest`.
   - For async waits in tests, use `eventually` and `staysTrue` from `PWUsageTests/test-waits.swift`. Never assert after a fixed `Task.sleep`.

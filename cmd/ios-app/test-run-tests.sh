@@ -40,6 +40,16 @@ if [[ "${PWUSAGE_TEST_HANG:-0}" == 1 ]]; then
   sleep 30
 fi
 EOF
+# Reports PWUSAGE_TEST_CHANGED (newline-separated, repo-relative) as the branch diff;
+# PWUSAGE_TEST_NO_BASE=1 makes merge-base fail.
+cat > "$fixture_dir/bin/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  merge-base) [[ "${PWUSAGE_TEST_NO_BASE:-0}" == 1 ]] && exit 1; echo BASE ;;
+  diff) [[ -n "${PWUSAGE_TEST_CHANGED:-}" ]] && printf '%s\n' "$PWUSAGE_TEST_CHANGED" ;;
+esac
+exit 0
+EOF
 chmod +x "$fixture_dir/bin/"*
 
 export PATH="$fixture_dir/bin:$PATH"
@@ -118,11 +128,36 @@ while IFS= read -r skipped || [[ -n "$skipped" ]]; do
     grep -qxF -- "-skip-testing:$skipped" "$PWUSAGE_TEST_ARGS"
   fi
 done < "$script_dir/quick-test-skips.txt"
-"$script_dir/run-tests.sh"
+PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/layout-fit.swift' "$script_dir/run-tests.sh"
 if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
-  echo 'The default run skipped tests' >&2
+  echo 'The default run skipped tests on a detector change' >&2
   exit 1
 fi
+
+# The default run skips detector parity unless the branch touches the detector or its fixtures.
+parity_skip='-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests'
+expect_parity() {
+  local expected="$1" label="$2"
+  if grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS"; then local ran=0; else local ran=1; fi
+  [[ "$ran" == "$expected" ]] || { echo "Detector parity: $label (ran=$ran, want $expected)" >&2; exit 1; }
+}
+PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/dashboard.swift' "$script_dir/run-tests.sh"
+expect_parity 0 'ran without detector changes'
+for changed in PWUsage/Models/Solar/solar-position.swift PWUsage/Models/Solar/mobile-solar-layout.swift \
+  PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/solar-layout-fixture-loader.swift \
+  PWUsageTests/SolarLayoutDetectorTests.swift; do
+  PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
+  expect_parity 1 "skipped after changing $changed"
+done
+PWUSAGE_TEST_NO_BASE=1 "$script_dir/run-tests.sh"
+expect_parity 1 'skipped without a merge base'
+PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh"
+expect_parity 1 'PWUSAGE_DETECTOR_PARITY=1 did not force it'
+PWUSAGE_DETECTOR_PARITY=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsageTests/SolarLayoutDetectorTests.swift' \
+  "$script_dir/run-tests.sh"
+expect_parity 0 'PWUSAGE_DETECTOR_PARITY=0 did not skip it'
+"$script_dir/run-tests.sh" SolarLayoutDetectorFixtureParityTests
+expect_parity 1 'a named filter was gated'
 # The default run stays a Debug build without the opt-in year suite.
 if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
   echo 'The default run changed the optimization level' >&2
