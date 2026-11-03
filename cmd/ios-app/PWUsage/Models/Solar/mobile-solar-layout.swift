@@ -17,7 +17,14 @@ enum SolarLayoutConfidence: String, Codable, Sendable { case high, medium }
 
 /// Where the home location came from. Admin-seeded locations are ZIP or town centres
 /// (`estimated`); a server without the field predates that seeding, so it means `device`.
-enum SolarLocationSource: String, Codable, Sendable { case estimated, device }
+/// `searched` (an address or ZIP code the user chose) and `map` (a pin they placed) are set on
+/// the phone; an older app reading them from iCloud falls back to `device`.
+enum SolarLocationSource: String, Codable, Sendable {
+    case estimated, device, searched, map
+
+    /// Chosen by the user rather than seeded.
+    var isExact: Bool { self != .estimated }
+}
 
 struct SolarHomeLocation: Codable, Equatable, Hashable, Sendable {
     let latitude: Double

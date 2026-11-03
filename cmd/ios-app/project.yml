@@ -1,4 +1,8 @@
 name: PWUsage
+configs:
+  Debug: debug
+  DebugOptimized: debug
+  Release: release
 options:
   bundleIdPrefix: fm.rodeo
   deploymentTarget:
@@ -15,7 +19,7 @@ settings:
     DEVELOPMENT_TEAM: 6HQGHHRK87
     # The server a Debug build signs in to; Release always uses Prod. Switch to Beta
     # (https://pwusagebeta.fm.rodeo, the Dev database) when testing unmerged server changes.
-    PWUSAGE_DEBUG_API_ORIGIN: https://pwusage.fm.rodeo
+    PWUSAGE_DEBUG_API_ORIGIN: https://pwusagebeta.fm.rodeo
 targets:
   PWUsage:
     type: application
@@ -36,6 +40,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - fm.rodeo.pwusage.solar-forecast-refresh
           - fm.rodeo.pwusage.solar-layout-detect
+          - fm.rodeo.pwusage.history-onboarding
         UIBackgroundModes:
           - fetch
           - processing
@@ -85,6 +90,11 @@ targets:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
           PWUSAGE_API_ORIGIN: $(PWUSAGE_DEBUG_API_ORIGIN)
           PWUSAGE_APS_ENVIRONMENT: development
+        DebugOptimized:
+          PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
+          PWUSAGE_API_ORIGIN: $(PWUSAGE_DEBUG_API_ORIGIN)
+          PWUSAGE_APS_ENVIRONMENT: development
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
   PWUsageWidgets:
@@ -119,6 +129,10 @@ targets:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
           PWUSAGE_API_ORIGIN: $(PWUSAGE_DEBUG_API_ORIGIN)
+        DebugOptimized:
+          PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
+          PWUSAGE_API_ORIGIN: $(PWUSAGE_DEBUG_API_ORIGIN)
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
   PWUsageTests:
@@ -168,6 +182,26 @@ schemes:
     run:
       debugEnabled: false
     test:
+      environmentVariables:
+        PWUSAGE_FUZZ_STRESS: "$(PWUSAGE_FUZZ_STRESS)"
+        PWUSAGE_FUZZ_SEED: "$(PWUSAGE_FUZZ_SEED)"
+      targets:
+        - PWUsageTests
+  PWUsageDevOptimized:
+    build:
+      targets:
+        PWUsage: all
+    run:
+      config: DebugOptimized
+      debugEnabled: false
+    profile:
+      config: DebugOptimized
+    analyze:
+      config: DebugOptimized
+    archive:
+      config: DebugOptimized
+    test:
+      config: DebugOptimized
       environmentVariables:
         PWUSAGE_FUZZ_STRESS: "$(PWUSAGE_FUZZ_STRESS)"
         PWUSAGE_FUZZ_SEED: "$(PWUSAGE_FUZZ_SEED)"

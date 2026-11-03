@@ -1,6 +1,6 @@
 import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
-import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError } from '../tesla-client';
+import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError, TeslaRateLimitError } from '../tesla-client';
 import { EnergyRepo, type DailyCoverageStat } from '../energy-repo';
 import { createEnergyRepo } from '../energy-repo-factory';
 import { SiteRepo } from '../site-repo';
@@ -275,6 +275,9 @@ export class Importer {
                 allRows.push(...rows);
                 successCount++;
             } catch (error) {
+                // A throttle stops the run: further requests would be refused too,
+                // and the caller needs Tesla's deadline, not a partial result.
+                if (error instanceof TeslaRateLimitError) throw error;
                 console.error(`[Importer] Failed to import window ${window.start.toISOString()} - ${window.end.toISOString()}:`, error);
                 if (onProgress) onProgress(`Error importing ${dateStr}: ${error instanceof Error ? error.message : String(error)}`);
                 lastError = error instanceof Error ? error : new Error(String(error));
@@ -363,7 +366,7 @@ export class Importer {
                 this.client.getEnergyHistory(site.id, chunkStart, chunkEnd, period, site.timezone),
                 this.client.getSoeHistory(site.id, chunkStart, chunkEnd, period, site.timezone)
                     .catch(error => {
-                        if (options.requireSoe) throw error;
+                        if (options.requireSoe || error instanceof TeslaRateLimitError) throw error;
                         console.warn(`[Importer] SOE history fetch failed for ${site.id} (${chunkStart.toISOString()}-${chunkEnd.toISOString()})`, error);
                         return [] as SoeHistoryEntry[];
                     })

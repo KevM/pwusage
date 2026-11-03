@@ -16,11 +16,7 @@ enum MobileSolarHistoryResponse: Decodable, Equatable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .timeZone, in: values, debugDescription: "Invalid time zone")
         }
         let days = try values.decode([MobileSolarHistoryDay].self, forKey: .days)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        guard days.allSatisfy({ day in
-            calendar.dateInterval(of: .day, for: day.dayStart)?.duration == Double(day.solarWh.count) * 300
-        }) else {
+        guard MobileSolarHistoryDay.slotsMatchDays(days, timeZone: timeZone) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .days, in: values, debugDescription: "Solar slot count must match the site-local day duration")
         }
@@ -46,6 +42,15 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey { case day, dayStart, status, fetchedAt, solarWh }
+
+    /// Whether every day holds one 5-minute slot per slot of its site-local day (276/288/300 with DST).
+    static func slotsMatchDays(_ days: [MobileSolarHistoryDay], timeZone: TimeZone) -> Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return days.allSatisfy { day in
+            calendar.dateInterval(of: .day, for: day.dayStart)?.duration == Double(day.solarWh.count) * 300
+        }
+    }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)

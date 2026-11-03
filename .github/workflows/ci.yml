@@ -65,6 +65,10 @@ jobs:
         env:
           DEV_COPY_PG_BIN: /usr/lib/postgresql/17/bin
         run: npm run test:dev-copy:postgres
+      - name: Test dev history reset and restore against isolated PostgreSQL
+        env:
+          DEV_HISTORY_PG_BIN: /usr/lib/postgresql/17/bin
+        run: npm run test:dev-history:postgres
 
   build:
     name: Build App

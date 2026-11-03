@@ -35,8 +35,16 @@ extension DashboardCoordinator {
         } catch {
             return .cancelled
         }
-        guard generation == siteGeneration, confirmedSiteID == selectedSiteID, canRequestAccountData,
-              accountScopeID == self.accountScopeID else { return .cancelled }
+        guard generation == siteGeneration, accountScopeID == self.accountScopeID else { return .cancelled }
+        return await saveHomeLocation(location, confirmedSiteID: confirmedSiteID)
+    }
+
+    /// Saves a location the user chose for `confirmedSiteID` (a fix, a searched place or a map
+    /// pin), rounded by the record store, then triggers on-device detection if due. Changing
+    /// it clears a result fitted for the old location.
+    func saveHomeLocation(_ location: SolarHomeLocation, confirmedSiteID: String) async -> SolarLocationShareResult {
+        guard canRequestAccountData, let accountScopeID, confirmedSiteID == selectedSiteID else { return .cancelled }
+        let generation = siteGeneration
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: confirmedSiteID)
         do {
             try await records.setLocation(location, scope: scope, at: now())

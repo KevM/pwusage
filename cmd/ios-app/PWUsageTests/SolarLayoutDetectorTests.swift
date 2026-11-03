@@ -28,6 +28,9 @@ struct SolarLayoutDetectorTests {
         let seconds = ProcessInfo.processInfo.systemUptime - started
         checkResult(name, outcome.result, fixture.result)
         try checkStages(name, outcome.stages, fixture)
+        if outcome.stages.producingDays >= SolarLayoutDetector.minHistoryDays {
+            try checkClearDayPass(name, fixture, clearDays: outcome.stages.clearDayIds)
+        }
         return seconds
     }
 
@@ -158,6 +161,16 @@ struct SolarLayoutDetectorTests {
         fixture.input.solarWh.enumerated().map { index, energyWh in
             (timestamp: fixture.input.start.addingTimeInterval(Double(index) * 300), solarWh: Double(energyWh))
         }
+    }
+
+    /// The clear-day pass sorts the same days clear as the full run's selection.
+    static func checkClearDayPass(_ name: String, _ fixture: SolarLayoutFixture, clearDays: Set<String>) throws {
+        let timeZone = try #require(TimeZone(identifier: fixture.input.timeZone))
+        let pass = try SolarLayoutDetector.classifyDays(
+            samples: samples(fixture), latitude: fixture.input.latitude, longitude: fixture.input.longitude,
+            timeZone: timeZone, checkCancellation: {})
+        #expect(Set(pass.days.filter { $0.value == .clear }.keys) == clearDays, "\(name) clear-day pass")
+        #expect(clearDays.count == fixture.result.clearDays, "\(name) clear day ids")
     }
 
     static func detectStages(_ fixture: SolarLayoutFixture) throws -> SolarLayoutDetectorOutcome {

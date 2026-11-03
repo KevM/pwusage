@@ -23,6 +23,8 @@ final class PWUsageAppModel: ObservableObject {
     /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
     /// launch moves it for one visit, like the saved site.
     @Published var selectedTab: AppTab
+    /// The Settings tab's stack, so the history accessory can open Site History.
+    @Published var settingsPath: [SettingsDestination] = []
 
     /// Builds the dashboard coordinator for a site. Injected so tests can control
     /// the polling cadence and the clock.
@@ -52,8 +54,15 @@ final class PWUsageAppModel: ObservableObject {
     let solarHistory: SolarHistoryStore
     let solarRecords: SolarLayoutRecordStore
     let solarRunner: SolarLayoutDetectionRunner?
+    /// Backfills the selected site's history until a layout can be detected. Absent in the demo.
+    let historyOnboarding: SiteHistoryOnboardingLifecycle?
     var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
+    private var solarCloudRecordsWaitID: UUID?
+    /// While iCloud starts (at most a few seconds), a site without a home location may only be
+    /// waiting for its record: signing in again gives the phone a new account scope, and iCloud
+    /// brings that scope its layout and location a moment later.
+    @Published private(set) var awaitsSolarCloudRecords = false
     let solarCloudSync: SolarLayoutCloudSync
     let solarSessionCleanup: SolarSessionCleanup
     let coordinatorFactory: CoordinatorFactory
@@ -78,6 +87,7 @@ final class PWUsageAppModel: ObservableObject {
         solarHistory: SolarHistoryStore = .shared,
         solarRecords: SolarLayoutRecordStore = .shared,
         solarRunner: SolarLayoutDetectionRunner? = nil,
+        historyOnboarding: SiteHistoryOnboardingLifecycle? = nil,
         solarCloudSync: SolarLayoutCloudSync = .shared,
         sessionCleanup: SolarSessionCleanup? = nil,
         isDemo: Bool = false
@@ -96,6 +106,7 @@ final class PWUsageAppModel: ObservableObject {
             history: solarHistory, records: solarRecords, api: api
         ) : nil)
         self.solarRunner = runner
+        self.historyOnboarding = isDemo ? nil : historyOnboarding
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory
@@ -168,6 +179,7 @@ final class PWUsageAppModel: ObservableObject {
 
     func scenePhaseChanged(isActive: Bool) {
         sceneIsActive = isActive
+        defer { updateHistoryOnboarding() }
         if sessionVerified {
             coordinator?.scenePhaseChanged(isActive: isActive)
             guard isActive else { return }
@@ -239,6 +251,9 @@ final class PWUsageAppModel: ObservableObject {
         }
         guard generation == siteInstallGeneration else { return }
         coordinator?.requiresTeslaCommandReauthorization = false
+        if let accountScopeID {
+            await historyOnboarding?.resumePaused(accountScopeID: accountScopeID, reason: .reconnectTesla)
+        }
         await reloadSitesAfterSignIn()
     }
 
@@ -278,12 +293,32 @@ final class PWUsageAppModel: ObservableObject {
         guard solarCloudStartup == nil, let accountScopeID else { return }
         let session = adoptSolarCloudSession(accountScopeID: accountScopeID)
         let sync = solarCloudSync
+        let wait = UUID()
+        solarCloudRecordsWaitID = wait
+        awaitsSolarCloudRecords = true
         solarCloudStartup = Task { [weak self] in
             await sync.start(session: session)
+            self?.endSolarCloudRecordsWait(wait)
             guard !Task.isCancelled else { return }
             self?.solarCloudStartup = nil
         }
+        // CKSyncEngine may keep retrying a fetch, so the wait ends on its own; it never awaits
+        // the start, which may not return for a long time.
+        let delay = solarCloudRecordsWait
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            self?.endSolarCloudRecordsWait(wait)
+        }
     }
+
+    /// Only the newest start's wait clears the flag.
+    private func endSolarCloudRecordsWait(_ wait: UUID) {
+        guard solarCloudRecordsWaitID == wait else { return }
+        awaitsSolarCloudRecords = false
+    }
+
+    /// How long a missing location waits for iCloud to bring one (adjustable for tests).
+    var solarCloudRecordsWait: TimeInterval = 5
 
     private func wireCloudSyncListener(
         _ cloudSync: SolarLayoutCloudSync, runner: SolarLayoutDetectionRunner?
@@ -304,6 +339,14 @@ final class PWUsageAppModel: ObservableObject {
         let activeScope = coordinator?.solarScope
             ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
         guard scope == activeScope else { return }
+        await historyOnboarding?.resumeAfterLocationChange(scope: scope)
+        await historyOnboarding?.refreshStatus()
+        // Session or selection may have changed while the stores were read.
+        guard session.isValid, session === solarCloudSession else { return }
+        let currentScope = coordinator?.solarScope
+            ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
+        guard scope == currentScope else { return }
+        updateHistoryOnboarding()
         solarRunner?.onRecordChanged?(scope)
         _ = await solarRunner?.runIfDue(scope: scope)
     }

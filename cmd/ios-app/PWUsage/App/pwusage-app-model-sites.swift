@@ -36,6 +36,9 @@ extension PWUsageAppModel {
         guard generation == siteInstallGeneration else { return }
         await forecastService?.activateAccountScope(accountScopeID)
         guard generation == siteInstallGeneration else { return }
+        // An authorized site list is the sign-in a paused job was waiting for.
+        await historyOnboarding?.resumePaused(accountScopeID: accountScopeID, reason: .signIn)
+        guard generation == siteInstallGeneration else { return }
         cache?.storeSites(availableSites)
         sessionVerified = true
         startSolarCloudSync()
@@ -49,6 +52,7 @@ extension PWUsageAppModel {
             coordinator = nil
             selectedSiteID = nil
             screenState = .noSites
+            updateHistoryOnboarding()
             return
         }
 
@@ -75,6 +79,56 @@ extension PWUsageAppModel {
         }
         screenState = .signedIn
         resolveBatteryHoldNavigation()
+        updateHistoryOnboarding()
+    }
+
+    /// The selected site's history status, never another site's or account's.
+    var siteHistoryStatus: SiteHistoryStatus? {
+        guard let status = historyOnboarding?.status, status.scope.siteID == selectedSiteID,
+              status.scope.accountScopeID == accountScopeID else { return nil }
+        return Self.visibleHistoryStatus(status, awaitingCloudRecords: awaitsSolarCloudRecords)
+    }
+
+    /// Nothing to show yet for a site without a location while iCloud may still bring one, so
+    /// the banner never asks for a location the user already gave.
+    static func visibleHistoryStatus(
+        _ status: SiteHistoryStatus, awaitingCloudRecords: Bool
+    ) -> SiteHistoryStatus? {
+        awaitingCloudRecords && status.location == .none ? nil : status
+    }
+
+    /// From the banner; `focusingLocation` opens straight into the home location step.
+    func openSolarSystem(focusingLocation: Bool = false) {
+        selectTab(.settings)
+        settingsPath = [.solarSystem(startsAtLocation: focusingLocation)]
+    }
+
+    /// Solar System is the visible screen, where the banner would only repeat it.
+    var isShowingSolarSystem: Bool {
+        guard selectedTab == .settings, case .solarSystem? = settingsPath.last else { return false }
+        return true
+    }
+
+    /// A corrected location can unblock detection without discarding imported history.
+    func homeLocationSaved() {
+        guard sessionVerified, let historyOnboarding, let accountScopeID, let selectedSiteID else { return }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+        Task {
+            await historyOnboarding.resumeAfterLocationChange(scope: scope)
+            updateHistoryOnboarding()
+        }
+    }
+
+    /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.
+    func updateHistoryOnboarding() {
+        guard let historyOnboarding else { return }
+        guard sceneIsActive, sessionVerified, screenState == .signedIn,
+              let accountScopeID, let selectedSiteID else {
+            Task { await historyOnboarding.deactivate() }
+            return
+        }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+        historyOnboarding.activate(scope: scope)
     }
 
     /// Waits only for local cleanup of a previous session, never for iCloud. A failed
@@ -123,6 +177,7 @@ extension PWUsageAppModel {
     /// The next session starts on Home, not on whatever tab this one ended on.
     func clearSelectedTab() {
         selectedTab = .home
+        settingsPath = []
         userDefaults.removeObject(forKey: Self.selectedTabDefaultsKey)
     }
 

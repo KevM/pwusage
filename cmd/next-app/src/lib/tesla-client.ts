@@ -133,6 +133,12 @@ export interface TeslaClientConfig {
     baseUrl?: string | null;
     /** Called when Tesla points this account at another regional host (users/region or a 421). */
     onBaseUrlChange?: (baseUrl: string) => void | Promise<void>;
+    /**
+     * `retry` (default) sleeps a capped `Retry-After` and retries a 429 in process.
+     * `surface` throws `TeslaRateLimitError` on the first 429 so the caller can
+     * stop and hand Tesla's actual wait to a client that schedules the retry.
+     */
+    rateLimit?: 'retry' | 'surface';
 }
 
 const RATE_LIMIT_MAX_RETRIES = 2;
@@ -163,6 +169,42 @@ function parseRetryAfter(header: string | null): number {
     }
 
     return RATE_LIMIT_DEFAULT_DELAY_MS;
+}
+
+/** Wait assumed when Tesla's 429 names no usable `Retry-After`. */
+export const RATE_LIMIT_FALLBACK_WAIT_MS = 60_000;
+/** Longest surfaced wait: a misread header must not park a client for weeks. */
+const RATE_LIMIT_MAX_WAIT_MS = 24 * 60 * 60_000;
+// IMF-fixdate, the HTTP-date form senders must use. Date.parse alone also accepts "-5" or "1.5".
+const HTTP_DATE_PATTERN = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+
+/**
+ * Tesla's retry deadline from a 429, uncapped by the in-process retry limit.
+ * `source` says whether Tesla supplied it or the documented fallback was used.
+ */
+function parseRetryDeadline(header: string | null, now: number): { retryAt: Date; source: 'header' | 'fallback' } {
+    const value = header?.trim() ?? '';
+    let waitMs: number | null = null;
+    if (/^\d+$/.test(value)) waitMs = Number(value) * 1000;
+    else if (HTTP_DATE_PATTERN.test(value)) {
+        const dateMs = Date.parse(value);
+        if (!Number.isNaN(dateMs)) waitMs = Math.max(dateMs - now, 0);
+    }
+    if (waitMs === null) return { retryAt: new Date(now + RATE_LIMIT_FALLBACK_WAIT_MS), source: 'fallback' };
+    return { retryAt: new Date(now + Math.min(waitMs, RATE_LIMIT_MAX_WAIT_MS)), source: 'header' };
+}
+
+/** Tesla answered 429. `retryAt` is when Tesla allows the next request. */
+export class TeslaRateLimitError extends Error {
+    readonly retryAt: Date;
+    readonly retryAfterSource: 'header' | 'fallback';
+
+    constructor(retryAt: Date, retryAfterSource: 'header' | 'fallback') {
+        super(`Tesla API Error: 429 rate limited until ${retryAt.toISOString()}`);
+        this.name = 'TeslaRateLimitError';
+        this.retryAt = retryAt;
+        this.retryAfterSource = retryAfterSource;
+    }
 }
 
 export class TeslaAuthError extends Error {
@@ -371,7 +413,7 @@ export class TeslaClient {
 
             // Honor Tesla's rate limiting: back off on 429 and retry a bounded
             // number of times before surfacing the error.
-            if (response.status === 429 && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
+            if (response.status === 429 && this.config.rateLimit !== 'surface' && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
                 const delayMs = parseRetryAfter(response.headers.get('Retry-After'));
                 console.warn(`Tesla API 429, retrying in ${delayMs}ms (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`);
                 await sleep(delayMs);
@@ -420,6 +462,11 @@ export class TeslaClient {
 
         if (regionError) {
             throw regionError;
+        }
+
+        if (response.status === 429) {
+            const { retryAt, source } = parseRetryDeadline(response.headers.get('Retry-After'), Date.now());
+            throw new TeslaRateLimitError(retryAt, source);
         }
 
         if (!response.ok) {

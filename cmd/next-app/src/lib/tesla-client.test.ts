@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TeslaClient, TeslaAuthError, TeslaRegionError, isTeslaAuthError } from './tesla-client';
+import { TeslaClient, TeslaAuthError, TeslaRateLimitError, TeslaRegionError, isTeslaAuthError } from './tesla-client';
 
 function makeJsonResponse<T>(payload: T): Response {
     return {
@@ -140,6 +140,72 @@ describe('TeslaClient rate limiting (429)', () => {
 
         // 1 initial attempt + 2 retries
         expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+});
+
+describe('TeslaClient surfaced rate limits', () => {
+    const NOW = new Date('2026-11-02T12:00:00Z');
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    const surfaced = () => new TeslaClient({ accessToken: 'tok', rateLimit: 'surface' });
+
+    async function rejection(retryAfter?: string): Promise<TeslaRateLimitError> {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(make429Response(retryAfter));
+        const error = await surfaced().getProducts().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(TeslaRateLimitError);
+        return error as TeslaRateLimitError;
+    }
+
+    it('throws on the first 429 without sleeping or retrying', async () => {
+        const error = await rejection('120');
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(error.retryAt).toEqual(new Date(+NOW + 120_000));
+        expect(error.retryAfterSource).toBe('header');
+        expect(error.message).toMatch(/429/);
+    });
+
+    it('keeps a wait longer than the internal retry cap', async () => {
+        expect((await rejection('3600')).retryAt).toEqual(new Date(+NOW + 3_600_000));
+    });
+
+    it('reads an HTTP-date Retry-After', async () => {
+        const error = await rejection('Mon, 02 Nov 2026 12:10:00 GMT');
+        expect(error.retryAt).toEqual(new Date('2026-11-02T12:10:00Z'));
+        expect(error.retryAfterSource).toBe('header');
+    });
+
+    it.each([undefined, 'soon', '-5', '1.5', ''])('falls back, and says so, for Retry-After %s', async header => {
+        const error = await rejection(header);
+        expect(error.retryAfterSource).toBe('fallback');
+        expect(error.retryAt).toEqual(new Date(+NOW + 60_000));
+    });
+
+    it('treats a past HTTP-date as retry now', async () => {
+        const error = await rejection('Mon, 02 Nov 2026 11:00:00 GMT');
+        expect(error.retryAt).toEqual(NOW);
+        expect(error.retryAfterSource).toBe('header');
+    });
+
+    it('caps an absurd delay at one day', async () => {
+        expect((await rejection(String(30 * 86_400))).retryAt).toEqual(new Date(+NOW + 86_400_000));
+    });
+
+    it('also types the error once default-mode retries are exhausted', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(make429Response('0'));
+        const promise = new TeslaClient({ accessToken: 'tok' }).getProducts().catch((e: unknown) => e);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(await promise).toBeInstanceOf(TeslaRateLimitError);
     });
 });
 
