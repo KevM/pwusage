@@ -312,6 +312,10 @@ actor SolarLayoutRecordStore {
     func remove(scope: SolarForecastSiteScope) throws {
         cache.removeValue(forKey: scope)
         try removeFile(fileURL(scope))
+        var markers = loadUnsynced()
+        if markers.removeValue(forKey: scope) != nil {
+            try saveUnsynced(markers)
+        }
     }
 
     func removeAll() throws {

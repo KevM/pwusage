@@ -6,6 +6,7 @@ import Foundation
 protocol SolarCloudEngine: AnyObject, Sendable {
     func saveZoneIfNeeded(alreadySaved: Bool)
     func addPendingSaves(_ recordIDs: [CKRecord.ID])
+    func addPendingDeletions(_ recordIDs: [CKRecord.ID])
     func fetchChanges() async throws
     func sendChanges() async throws
     /// CloudKit documents cancellation as asynchronous: operations already in flight,
@@ -56,6 +57,11 @@ private final class CloudKitSolarEngine: SolarCloudEngine {
     func addPendingSaves(_ recordIDs: [CKRecord.ID]) {
         guard !recordIDs.isEmpty else { return }
         engine.state.add(pendingRecordZoneChanges: recordIDs.map { .saveRecord($0) })
+    }
+
+    func addPendingDeletions(_ recordIDs: [CKRecord.ID]) {
+        guard !recordIDs.isEmpty else { return }
+        engine.state.add(pendingRecordZoneChanges: recordIDs.map { .deleteRecord($0) })
     }
 
     func fetchChanges() async throws { try await engine.fetchChanges() }

@@ -46,7 +46,7 @@ struct SolarSystemView: View {
 
     private func content(_ presentation: SiteHistoryPresentation) -> some View {
         // The status's own layout honors the Debug "Ignore Existing Layout" setting.
-        let layout = status != nil ? status?.layout : stored?.layout
+        let layout = status?.layout ?? stored?.layout
         return List {
             if status != nil || layout != nil {
                 Section {

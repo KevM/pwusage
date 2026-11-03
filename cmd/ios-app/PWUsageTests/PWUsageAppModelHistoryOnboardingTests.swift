@@ -49,9 +49,14 @@ struct PWUsageAppModelHistoryOnboardingTests {
         let suite = "PWUsageAppModelHistoryOnboardingTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
+        let recordsDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let records = SolarLayoutRecordStore(directory: recordsDir)
+        let sync = SolarLayoutCloudSync(store: records)
         return PWUsageAppModel(
             configuration: try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true),
-            api: OnboardingAppAPI(), userDefaults: defaults, historyOnboarding: historyOnboarding, isDemo: isDemo
+            api: OnboardingAppAPI(), userDefaults: defaults,
+            solarRecords: records, historyOnboarding: historyOnboarding,
+            solarCloudSync: sync, isDemo: isDemo
         )
     }
 
@@ -200,6 +205,29 @@ struct PWUsageAppModelHistoryOnboardingTests {
 
             await actions.reset()
             try await eventually { environment.sites == ["site-a", "site-a"] }
+            lifecycle.stop()
+        }
+
+        @Test("The Debug clear cloud layout purges the site's record and refreshes status")
+        func debugClearCloudLayout() async throws {
+            let environment = FakeOnboardingEnvironment()
+            let lifecycle = makeLifecycle(environment, probe: ScheduleProbe())
+            let model = try makeModel(historyOnboarding: lifecycle)
+            model.scenePhaseChanged(isActive: true)
+            await model.bootstrap()
+            try await eventually { model.coordinator != nil }
+            let actions = try #require(model.siteHistoryDebugActions)
+            let scope = actions.scope
+            let coordinator = try #require(model.coordinator)
+            let result = await coordinator.saveHomeLocation(
+                SolarHomeLocation(latitude: 40, longitude: -75, source: .device), confirmedSiteID: "site-a")
+            #expect(result == .shared)
+            #expect(try await model.solarRecords.record(scope: scope) != nil)
+
+            await actions.clearCloudLayout()
+            #expect(try await model.solarRecords.record(scope: scope) == nil)
+            #expect(model.historyOnboarding?.status?.result == nil)
+            #expect(model.historyOnboarding?.status?.layout == nil)
             lifecycle.stop()
         }
 

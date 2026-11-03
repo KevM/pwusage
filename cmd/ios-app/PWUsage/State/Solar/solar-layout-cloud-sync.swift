@@ -38,15 +38,15 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     nonisolated let sessions = SolarCloudSessionIssuer()
-    private let store: SolarLayoutRecordStore
+    let store: SolarLayoutRecordStore
     private let transport: SolarCloudTransport?
-    private let files: SolarCloudSyncFiles
-    private var systemFields: [String: Data] = [:]
-    private var pendingScopes: Set<SolarForecastSiteScope>
+    let files: SolarCloudSyncFiles
+    var systemFields: [String: Data] = [:]
+    var pendingScopes: Set<SolarForecastSiteScope>
     private var phase: Phase = .inactive
     private var engine: Engine = .offline
     private var phaseWaiters: [CheckedContinuation<Void, Never>] = []
-    private var onRemoteRecordApplied: (@Sendable (SolarForecastSiteScope, SolarCloudSession) -> Void)?
+    var onRemoteRecordApplied: (@Sendable (SolarForecastSiteScope, SolarCloudSession) -> Void)?
 
     init(
         store: SolarLayoutRecordStore = .shared,
@@ -201,7 +201,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     /// Token-scoped, so an old attempt resuming late cannot release its replacement.
-    private func releaseEngine(_ token: SolarCloudEngineToken) {
+    func releaseEngine(_ token: SolarCloudEngineToken) {
         guard engine.token == token else { return }
         abandonEngine()
     }
@@ -219,18 +219,30 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     /// The session that owns a running attempt, or nil once the token is obsolete.
-    private func session(owning token: SolarCloudEngineToken) -> SolarCloudSession? {
+    func session(owning token: SolarCloudEngineToken) -> SolarCloudSession? {
         guard case .active(let session) = phase, session.isValid,
               case .running(let current, _, _) = engine, current == token else { return nil }
         return session
     }
 
-    private func runningEngine(_ token: SolarCloudEngineToken) -> (any SolarCloudEngine)? {
+    func runningEngine(_ token: SolarCloudEngineToken) -> (any SolarCloudEngine)? {
         guard session(owning: token) != nil, case .running(_, let cloud, _) = engine else { return nil }
         return cloud
     }
 
     // MARK: - Local changes
+
+    func deleteRecord(scope: SolarForecastSiteScope) async throws {
+        let recordID = SolarLayoutCloudRecordSerializer.recordID(for: scope)
+        pendingScopes.remove(scope)
+        try? files.savePendingScopes(pendingScopes)
+        systemFields.removeValue(forKey: recordID.recordName)
+        try? files.saveSystemFields(systemFields)
+        try await store.remove(scope: scope)
+        guard let token = engine.token, let cloud = runningEngine(token) else { return }
+        cloud.addPendingDeletions([recordID])
+        await sendChanges(token)
+    }
 
     func recordChanged(_ scope: SolarForecastSiteScope, session origin: SolarCloudSession) async {
         guard owns(origin), scope.accountScopeID == origin.accountScopeID else { return }
@@ -256,107 +268,14 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     /// Detached: CKSyncEngine traps on engine calls made from inside its delegate callbacks.
-    private func sendChanges(_ token: SolarCloudEngineToken) async {
+    func sendChanges(_ token: SolarCloudEngineToken) async {
         guard let cloud = runningEngine(token) else { return }
         await Task.detached { try? await cloud.sendChanges() }.value
     }
 
-    private func fetchChanges(_ token: SolarCloudEngineToken) async {
+    func fetchChanges(_ token: SolarCloudEngineToken) async {
         guard let cloud = runningEngine(token) else { return }
         await Task.detached { try? await cloud.fetchChanges() }.value
-    }
-
-    // MARK: - Engine events
-
-    func handle(_ event: CKSyncEngine.Event, token: SolarCloudEngineToken) async {
-        guard session(owning: token) != nil else { return }
-        switch event {
-        case .stateUpdate(let update):
-            saveState(update.stateSerialization)
-        case .accountChange(let change):
-            await handleAccountChange(change.changeType, token: token)
-        case .fetchedRecordZoneChanges(let fetched):
-            await applyFetchedRecords(fetched.modifications.map(\.record), token: token)
-        case .sentDatabaseChanges(let sent):
-            if sent.savedZones.contains(where: { $0.zoneID == SolarLayoutCloudRecordSerializer.zoneID }) {
-                files.hasSavedZone = true
-            }
-        case .sentRecordZoneChanges(let sent):
-            await handleSentRecords(sent, token: token)
-        default:
-            break
-        }
-    }
-
-    func handleAccountChange(
-        _ type: CKSyncEngine.Event.AccountChange.ChangeType, token: SolarCloudEngineToken
-    ) async {
-        switch type {
-        case .signOut, .switchAccounts:
-            // Losing iCloud is not an app sign-out: keep the session and its offline work.
-            releaseEngine(token)
-        case .signIn:
-            Task { await self.fetchChanges(token) }
-        @unknown default:
-            break
-        }
-    }
-
-    /// Remote records apply only while `token` owns a running engine; the store
-    /// revalidates the same token at its write boundary.
-    func applyFetchedRecords(_ records: [CKRecord], token: SolarCloudEngineToken) async {
-        for record in records {
-            guard session(owning: token) != nil else { return }
-            saveSystemFields(for: record)
-            guard let (scope, remote) = SolarLayoutCloudRecordSerializer.parseRecord(record),
-                  let outcome = try? await store.applyRemoteRecord(remote, scope: scope, from: self, engine: token)
-            else { continue }
-            guard let session = session(owning: token) else { return }
-            outcome.appliedScopes.forEach { onRemoteRecordApplied?($0, session) }
-        }
-    }
-
-    private func handleSentRecords(
-        _ sent: CKSyncEngine.Event.SentRecordZoneChanges, token: SolarCloudEngineToken
-    ) async {
-        for record in sent.savedRecords {
-            guard session(owning: token) != nil else { return }
-            saveSystemFields(for: record)
-            if let (scope, _) = SolarLayoutCloudRecordSerializer.parseRecord(record), pendingScopes.contains(scope) {
-                pendingScopes.remove(scope)
-                try? files.savePendingScopes(pendingScopes)
-            }
-        }
-        var shouldResend = false
-        for failure in sent.failedRecordSaves {
-            let retried = await retryFailedSave(failure, token: token)
-            shouldResend = shouldResend || retried
-        }
-        guard shouldResend, session(owning: token) != nil else { return }
-        Task { await self.sendChanges(token) }
-    }
-
-    private func retryFailedSave(
-        _ failure: CKSyncEngine.Event.SentRecordZoneChanges.FailedRecordSave, token: SolarCloudEngineToken
-    ) async -> Bool {
-        guard runningEngine(token) != nil else { return false }
-        let error = failure.error
-        if error.code == .zoneNotFound || error.code == .userDeletedZone {
-            files.hasSavedZone = false
-            runningEngine(token)?.saveZoneIfNeeded(alreadySaved: false)
-        } else if error.code == .serverRecordChanged, let serverRecord = error.serverRecord {
-            saveSystemFields(for: serverRecord)
-            if let (scope, remote) = SolarLayoutCloudRecordSerializer.parseRecord(serverRecord),
-               let outcome = try? await store.applyRemoteRecord(remote, scope: scope, from: self, engine: token),
-               let session = session(owning: token) {
-                outcome.appliedScopes.forEach { onRemoteRecordApplied?($0, session) }
-            }
-        } else {
-            return false
-        }
-        guard let cloud = runningEngine(token) else { return false }
-        cloud.addPendingSaves([failure.record.recordID])
-        return true
     }
 
     // MARK: - Outgoing records
@@ -386,7 +305,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
 
     // MARK: - Metadata
 
-    private func saveSystemFields(for record: CKRecord) {
+    func saveSystemFields(for record: CKRecord) {
         systemFields[record.recordID.recordName] = SolarLayoutCloudRecordSystemFields.encode(record)
         try? files.saveSystemFields(systemFields)
     }
@@ -394,7 +313,7 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     /// The upload queue is kept until a save is confirmed, not cleared on state updates:
     /// a serialization can predate saves added after it. Re-adding an already pending
     /// save when the next engine starts is harmless.
-    private func saveState(_ serialization: CKSyncEngine.State.Serialization) {
+    func saveState(_ serialization: CKSyncEngine.State.Serialization) {
         try? files.saveState(serialization)
     }
 }

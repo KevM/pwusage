@@ -47,7 +47,9 @@ final class FakeSolarCloudEngine: SolarCloudEngine {
         var callbackViolations = 0
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: (saves: [CKRecord.ID](), counts: Counts()))
+    private let state = OSAllocatedUnfairLock(
+        initialState: (saves: [CKRecord.ID](), deletions: [CKRecord.ID](), counts: Counts())
+    )
     private let fetchGate: LifecycleGate?
     /// Weak, as `CKSyncEngine.Configuration` holds its delegate.
     nonisolated(unsafe) private(set) weak var delegate: (any CKSyncEngineDelegate)?
@@ -58,12 +60,17 @@ final class FakeSolarCloudEngine: SolarCloudEngine {
     }
 
     var pendingSaves: [CKRecord.ID] { state.withLock { $0.saves } }
+    var pendingDeletions: [CKRecord.ID] { state.withLock { $0.deletions } }
     var counts: Counts { state.withLock { $0.counts } }
 
     func saveZoneIfNeeded(alreadySaved: Bool) {}
 
     func addPendingSaves(_ recordIDs: [CKRecord.ID]) {
         state.withLock { $0.saves.append(contentsOf: recordIDs) }
+    }
+
+    func addPendingDeletions(_ recordIDs: [CKRecord.ID]) {
+        state.withLock { $0.deletions.append(contentsOf: recordIDs) }
     }
 
     func fetchChanges() async throws {
