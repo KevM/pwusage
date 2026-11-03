@@ -44,7 +44,7 @@
    - The house rises, the roof pitches to the detected tilt, and panels drop in face by face.
    - The strip moves up toward the house. The house sways gently and can be dragged to rotate.
 3. **Below the visual:**
-   - A one-line status, with an action button only when one is needed: Add Location, Reconnect Tesla, or Use My Exact Home Location.
+   - A one-line status, with an action button only when one is needed: Add Location, Reconnect Tesla, or Use My Exact Home Location. Add Location opens the home location sheet (Task 8).
    - A system details card: total size, then each panel group's size, direction, tilt and confidence.
    - Home location: exact or estimated, with an update option.
    - In Debug builds, the Debug section from PR #285.
@@ -151,7 +151,27 @@
 2. Show it while loading or waiting, and in the needs-location state. Hide it when finished, paused for reconnect (Settings shows the action), or in the demo.
 3. Keep it cheap: animate only while the app is in the foreground and loading. Reduce Motion gets a static compass and count.
 
-### Task 8: Verification
+### Task 8: Home location sheet
+
+**Create:** `PWUsage/Views/SolarSystem/home-location-sheet.swift`, a search model wrapping `MKLocalSearchCompleter` and `MKLocalSearch`, and tests for the model and the location save.
+**Modify:** `PWUsage/Models/Solar/mobile-solar-layout.swift` (`SolarLocationSource`), `PWUsage/Views/Solar/solar-location-invitation.swift`, `SolarLayoutRecordStore.setLocation` callers, and the Solar System screen's and banner's Add Location actions.
+
+1. **One sheet, three ways to set the home location.** Use My Current Location is offered as "I'm at home now".
+   - **Current location:** keep today's one-time reading (`DeviceHomeLocationProvider`). iOS offers "Allow Once", so no lasting permission is needed.
+   - **Search:** address or ZIP code suggestions as the user types, resolved to coordinates, with no location permission.
+   - **Map:** a fixed center pin that the user drags the map under, starting from the search result or the device's region, then confirms.
+2. **Saving:**
+   - All three go through `setLocation`, rounded to hundredths (about 1 km) and stored on the device only, as now. A ZIP code's precision is plenty: detection needs only roughly the right sun position.
+   - Add `searched` and `map` to `SolarLocationSource`. Existing records decode unchanged.
+   - Changing the location still clears a result fitted for the old one.
+3. **Privacy:** state in the sheet that a search query goes to Apple. The location never leaves the device except through the existing iCloud layout sync.
+4. **Tests:**
+   - Search results map to the rounded location with the right source.
+   - Each path saves the location and doesn't touch other sites.
+   - Older records still decode.
+   - VoiceOver and Dynamic Type work in the sheet.
+
+### Task 9: Verification
 
 1. Run the unit suites for each task, the full default iOS suite, strict SwiftLint, swiftformat, and a Release build.
 2. On the simulator, check the loading, waiting, needs-location, found-and-improving and found-and-final states with seeded status, in light and dark mode, at large text, and with Reduce Motion.
