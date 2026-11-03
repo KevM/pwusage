@@ -96,6 +96,38 @@ struct PWUsageAppModelHistoryOnboardingTests {
         lifecycle.stop()
     }
 
+    @Test func remoteLocationRefreshesStatusAndRestartsBlockedOnboarding() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.location = false
+        let lifecycle = makeLifecycle(environment, probe: ScheduleProbe())
+        environment.defaultAnswer = .fill(.complete)
+        let model = try makeModel(historyOnboarding: lifecycle)
+        model.scenePhaseChanged(isActive: true)
+        await model.bootstrap()
+        defer { lifecycle.stop() }
+        try await eventually { lifecycle.status?.progress?.phase == .finished(.locationNeeded) }
+        await lifecycle.foregroundTask?.value
+        let scope = try #require(lifecycle.lastScope)
+        let session = try #require(model.solarCloudSession)
+        let requests = environment.requests.count
+        #expect(lifecycle.status?.location == SiteHistoryStatus.LocationState.none)
+        environment.location = true
+        environment.defaultAnswer = .fill(.busy)
+        environment.storedResult = DetectedSolarLayout(
+            status: .notEnoughHistory, confidence: nil, reasons: [], planes: [], acClipKw: nil,
+            historyDays: 90, clearDays: 0, firstDay: nil, lastDay: nil)
+        let other = SolarForecastSiteScope(accountScopeID: scope.accountScopeID, siteID: "site-b")
+        await model.solarLayoutRecordChanged(other, from: session)
+        await model.solarLayoutRecordChanged(scope, from: SolarCloudSession(accountScopeID: scope.accountScopeID))
+        #expect(lifecycle.status?.location == SiteHistoryStatus.LocationState.none)
+        #expect(environment.requests.count == requests)
+        await model.solarLayoutRecordChanged(scope, from: session)
+        #expect(lifecycle.status?.location == .exact)
+        #expect(lifecycle.status?.result == environment.storedResult)
+        try await eventually { environment.requests.count > requests }
+        #expect(environment.requests.last?.from != environment.requests.first?.from)
+    }
+
     @Test("A missing location waits for iCloud records; a saved one never does")
     func missingLocationWaitsForCloudRecords() {
         let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")

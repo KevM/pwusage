@@ -339,6 +339,14 @@ final class PWUsageAppModel: ObservableObject {
         let activeScope = coordinator?.solarScope
             ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
         guard scope == activeScope else { return }
+        await historyOnboarding?.resumeAfterLocationChange(scope: scope)
+        await historyOnboarding?.refreshStatus()
+        // Session or selection may have changed while the stores were read.
+        guard session.isValid, session === solarCloudSession else { return }
+        let currentScope = coordinator?.solarScope
+            ?? BackgroundSolarLayoutDetection.defaultScope(userDefaults: userDefaults)
+        guard scope == currentScope else { return }
+        updateHistoryOnboarding()
         solarRunner?.onRecordChanged?(scope)
         _ = await solarRunner?.runIfDue(scope: scope)
     }
