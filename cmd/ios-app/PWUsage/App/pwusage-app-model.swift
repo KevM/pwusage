@@ -58,6 +58,7 @@ final class PWUsageAppModel: ObservableObject {
     let historyOnboarding: SiteHistoryOnboardingLifecycle?
     var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
+    private var solarCloudRecordsWaitID: UUID?
     /// While iCloud starts (at most a few seconds), a site without a home location may only be
     /// waiting for its record: signing in again gives the phone a new account scope, and iCloud
     /// brings that scope its layout and location a moment later.
@@ -292,28 +293,32 @@ final class PWUsageAppModel: ObservableObject {
         guard solarCloudStartup == nil, let accountScopeID else { return }
         let session = adoptSolarCloudSession(accountScopeID: accountScopeID)
         let sync = solarCloudSync
+        let wait = UUID()
+        solarCloudRecordsWaitID = wait
         awaitsSolarCloudRecords = true
-        let startup = Task { [weak self] in
+        solarCloudStartup = Task { [weak self] in
             await sync.start(session: session)
+            self?.endSolarCloudRecordsWait(wait)
             guard !Task.isCancelled else { return }
             self?.solarCloudStartup = nil
         }
-        solarCloudStartup = startup
+        // CKSyncEngine may keep retrying a fetch, so the wait ends on its own; it never awaits
+        // the start, which may not return for a long time.
+        let delay = solarCloudRecordsWait
         Task { [weak self] in
-            // CKSyncEngine may keep retrying a fetch; don't hold the prompt back for long.
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await startup.value }
-                group.addTask { try? await Task.sleep(for: .seconds(Self.solarCloudRecordsWait)) }
-                await group.next()
-                group.cancelAll()
-            }
-            if self?.solarCloudStartup == nil || self?.solarCloudStartup == startup {
-                self?.awaitsSolarCloudRecords = false
-            }
+            try? await Task.sleep(for: .seconds(delay))
+            self?.endSolarCloudRecordsWait(wait)
         }
     }
 
-    nonisolated static let solarCloudRecordsWait: TimeInterval = 5
+    /// Only the newest start's wait clears the flag.
+    private func endSolarCloudRecordsWait(_ wait: UUID) {
+        guard solarCloudRecordsWaitID == wait else { return }
+        awaitsSolarCloudRecords = false
+    }
+
+    /// How long a missing location waits for iCloud to bring one (adjustable for tests).
+    var solarCloudRecordsWait: TimeInterval = 5
 
     private func wireCloudSyncListener(
         _ cloudSync: SolarLayoutCloudSync, runner: SolarLayoutDetectionRunner?
