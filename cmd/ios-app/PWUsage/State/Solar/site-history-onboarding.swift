@@ -1,24 +1,5 @@
 import Foundation
 
-/// What the onboarding job needs from the app: the server fill, the on-device history and layout.
-@MainActor
-protocol SiteHistoryOnboardingEnvironment: AnyObject {
-    func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse
-    /// Keep a fill's returned days in the on-device solar history.
-    func storeDays(_ fill: MobileSolarHistoryFill, scope: SolarForecastSiteScope) async throws
-    /// The site's time zone, nil while history is unavailable.
-    func siteTimeZone(scope: SolarForecastSiteScope) async -> TimeZone?
-    func hasLocation(scope: SolarForecastSiteScope) async -> Bool
-    /// The confidence of the stored layout when the forecast can use it.
-    func layoutConfidence(scope: SolarForecastSiteScope) async -> SolarLayoutConfidence?
-    /// The clear-day pass over the stored history; nil without a location or history.
-    func classifyDays(scope: SolarForecastSiteScope) async -> SolarDayClassification?
-    /// What the phone holds for the site's status: the stored result, home location and days.
-    func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState
-    /// Run detection now, outside the ordinary schedule, and keep its result.
-    func detect(scope: SolarForecastSiteScope) async -> DetectedSolarLayout?
-}
-
 /// Imports a site's recent history, then keeps reaching back toward a high-confidence layout.
 /// A clear-day pass sorts the stored days every second slice; full detection runs only when a
 /// target is first reached (15 or 40 clear days, 180 producing days) or 30 checked days after the
@@ -148,6 +129,17 @@ final class SiteHistoryOnboarding {
 
     func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState {
         await environment.storedState(scope: scope)
+    }
+
+    /// One pass without detection for a finished site whose days were never sorted, for its strip.
+    func sortDaysIfUnsorted(scope: SolarForecastSiteScope) async {
+        guard var progress = try? await store.progress(scope: scope), case .finished = progress.phase,
+              (try? await ledgers.ledger(scope: scope)) == nil,
+              let zone = await environment.siteTimeZone(scope: scope) else { return }
+        let checked = progress.checkedDays(timeZone: zone)
+        _ = await pass(&progress, scope: scope, checked: checked, detection: .never)
+        if !Task.isCancelled { try? await store.save(progress, scope: scope) }
+        onProgress?(scope)
     }
 
     /// The checkpoint decision after a complete slice: a finish, or nil to keep going.
@@ -292,13 +284,14 @@ final class SiteHistoryOnboarding {
     ) async -> FinishReason? {
         let checked = progress.checkedDays(timeZone: timeZone)
         if checked >= Self.recentDays, await environment.layoutConfidence(scope: scope) == .high {
+            _ = await pass(&progress, scope: scope, checked: checked, detection: .never)
             return progress.lastAssessedCheckedDays == 0 ? .layoutAlreadyUsable : .layoutFound
         }
         guard await environment.hasLocation(scope: scope) else {
             return checked >= Self.initialCheckpointDays ? .locationNeeded : nil
         }
         if (progress.completeSlices ?? 0) % Self.passEverySlices == 0,
-           let result = await pass(&progress, scope: scope, checked: checked, forceDetection: false),
+           let result = await pass(&progress, scope: scope, checked: checked, detection: .whenDue),
            let reason = Self.finishReason(result, atBound: false) {
             return reason
         }
@@ -330,11 +323,15 @@ final class SiteHistoryOnboarding {
             || checked - progress.lastAssessedCheckedDays >= reassessEveryDays
     }
 
+    /// Whether a clear-day pass runs full detection: when it is due, at the bound, or not at all.
+    enum PassDetection { case whenDue, atBound, never }
+
     /// The clear-day pass: sorts the stored days and saves them to the ledger, with full
-    /// detection when it is due (or forced, at the bound). Returns the detection's result.
+    /// detection as `detection` allows (never at a high-confidence finish, which still sorts the
+    /// days for the strip). Returns the detection's result.
     private func pass(
         _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, checked: Int,
-        forceDetection: Bool
+        detection: PassDetection
     ) async -> DetectedSolarLayout? {
         guard let days = await environment.classifyDays(scope: scope), !Task.isCancelled else { return nil }
         progress.producingDays = days.producingDays
@@ -343,9 +340,12 @@ final class SiteHistoryOnboarding {
             ranAt: now(), producingDays: days.producingDays, clearDays: days.clearDays,
             azimuthRange90: previous?.checkpoint?.azimuthRange90)
         var result: DetectedSolarLayout?
-        let due = forceDetection
-            ? days.producingDays >= SolarLayoutDetector.minHistoryDays && checked > progress.lastAssessedCheckedDays
-            : Self.detectionDue(days, progress: progress, checked: checked)
+        let due = switch detection {
+        case .whenDue: Self.detectionDue(days, progress: progress, checked: checked)
+        case .atBound:
+            days.producingDays >= SolarLayoutDetector.minHistoryDays && checked > progress.lastAssessedCheckedDays
+        case .never: false
+        }
         if due {
             progress.lastAssessedCheckedDays = checked
             progress.detectedTargets = Target.reached(producingDays: days.producingDays, clearDays: days.clearDays)
@@ -381,7 +381,7 @@ final class SiteHistoryOnboarding {
     ) async -> FinishReason {
         let checked = progress.checkedDays(timeZone: timeZone)
         if await environment.hasLocation(scope: scope),
-           let result = await pass(&progress, scope: scope, checked: checked, forceDetection: true),
+           let result = await pass(&progress, scope: scope, checked: checked, detection: .atBound),
            let reason = Self.finishReason(result, atBound: true) {
             return reason
         }

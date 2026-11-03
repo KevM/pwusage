@@ -176,6 +176,47 @@ struct SiteHistoryOnboardingTests {
         #expect(environment.detectionCount == 0)
     }
 
+    @Test func anExistingHighLayoutStillSortsTheDaysForTheStrip() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.confidence = .high
+        environment.clearEvery = 2
+        let outcome = await make(environment).run(scope: scope)
+        #expect(outcome == .finished(.layoutAlreadyUsable))
+        #expect(environment.detectionCount == 0)
+        // The last pass ran at the finish, so every stored day has its type.
+        let ledger = try #require(try await ledgers.ledger(scope: scope))
+        #expect(ledger.dayTypes.count == Set(environment.stored.flatMap(\.self)).count)
+    }
+
+    @Test func aFinishedSiteWithoutDayTypesSortsThemOnce() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.confidence = .high
+        environment.clearEvery = 2
+        environment.stored = [["2026-10-30", "2026-10-31", "2026-11-01"]]
+        var finished = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
+        finished.phase = .finished(.layoutAlreadyUsable)
+        try await SiteHistoryOnboardingStore(directory: directory).save(finished, scope: scope)
+        let onboarding = make(environment)
+        await onboarding.sortDaysIfUnsorted(scope: scope)
+        await onboarding.sortDaysIfUnsorted(scope: scope)
+        #expect(environment.passes.count == 1)
+        #expect(environment.detectionCount == 0)
+        #expect(try await ledgers.ledger(scope: scope) != nil)
+    }
+
+    @Test func anActiveOrLocationlessSiteIsNotSortedOutOfTurn() async throws {
+        let environment = FakeOnboardingEnvironment()
+        let onboarding = make(environment)
+        _ = await onboarding.run(scope: scope, maxSlices: 1)
+        await onboarding.sortDaysIfUnsorted(scope: scope)
+        #expect(environment.passes.isEmpty)
+        environment.location = false
+        environment.confidence = .high
+        _ = await onboarding.run(scope: scope)
+        await onboarding.sortDaysIfUnsorted(scope: scope)
+        #expect(environment.passes.isEmpty)
+    }
+
     @Test func anExistingMediumLayoutKeepsGoingTowardHighConfidence() async {
         let environment = FakeOnboardingEnvironment()
         environment.confidence = .medium

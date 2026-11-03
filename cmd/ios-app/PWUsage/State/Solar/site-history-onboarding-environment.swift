@@ -1,5 +1,24 @@
 import Foundation
 
+/// What the onboarding job needs from the app: the server fill, the on-device history and layout.
+@MainActor
+protocol SiteHistoryOnboardingEnvironment: AnyObject {
+    func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse
+    /// Keep a fill's returned days in the on-device solar history.
+    func storeDays(_ fill: MobileSolarHistoryFill, scope: SolarForecastSiteScope) async throws
+    /// The site's time zone, nil while history is unavailable.
+    func siteTimeZone(scope: SolarForecastSiteScope) async -> TimeZone?
+    func hasLocation(scope: SolarForecastSiteScope) async -> Bool
+    /// The confidence of the stored layout when the forecast can use it.
+    func layoutConfidence(scope: SolarForecastSiteScope) async -> SolarLayoutConfidence?
+    /// The clear-day pass over the stored history; nil without a location or history.
+    func classifyDays(scope: SolarForecastSiteScope) async -> SolarDayClassification?
+    /// What the phone holds for the site's status: the stored result, home location and days.
+    func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState
+    /// Run detection now, outside the ordinary schedule, and keep its result.
+    func detect(scope: SolarForecastSiteScope) async -> DetectedSolarLayout?
+}
+
 /// The app's onboarding environment: the server fill, the on-device history and layout records,
 /// and the layout runner for checkpoint detections.
 @MainActor
