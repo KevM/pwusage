@@ -40,49 +40,6 @@ npm run test:fleet # Integration tests against Tesla Fleet API
 npm start          # Run production build locally
 ```
 
-## Project File Structure
-
-```
-cmd/next-app/src/
-├── app/
-│   ├── api/
-│   │   ├── trmnl/          # Trmnl plugin endpoints (setup, manage, markup, webhook, uninstall)
-│   │   ├── cron/           # Vercel cron jobs
-│   │   ├── site-live-data
-│   │   └── ...
-│   ├── site/[id]/          # Main site dashboard page
-│   ├── admin/              # Admin panel
-│   ├── auth/tesla-callback # Tesla OAuth callback
-│   ├── login               # Tesla OAuth login entry
-│   ├── logout              # Session logout
-│   ├── trmnl/              # Trmnl plugin pages (install, manage)
-│   ├── profile             # User profile
-│   └── ...
-├── components/
-│   ├── site/               # Site dashboard components
-│   ├── trmnl/              # Trmnl device markup rendering
-│   ├── ui/                 # UI primitives
-│   └── ...
-├── lib/
-│   ├── auth-checks.ts      # Authorization helpers (verifySiteAccess, etc.)
-│   ├── auth-jwt.ts         # JWT token creation and validation
-│   ├── tesla-client.ts     # Tesla Fleet API wrapper
-│   ├── site-service.ts     # Site data aggregation and business logic
-│   ├── energy-repo.ts      # Energy data queries
-│   ├── trmnl-service.ts    # Trmnl integration (site linking, etc.)
-│   ├── trmnl-auth.ts       # Trmnl JWT validation
-│   ├── trmnl-renderer.ts   # Trmnl markup generation
-│   └── ...
-└── app.css                 # Global styles (Tailwind)
-
-cmd/next-app/
-├── db-migrations/          # SQL migration files (timestamp-prefixed)
-├── supabase/               # Supabase config and migrations
-├── scripts/                # Maintenance scripts (run via npx tsx)
-├── public/                 # Static assets
-└── vitest.config.mts
-```
-
 ## Key Data Models
 
 Tables (PascalCase quoted identifiers):
@@ -145,21 +102,6 @@ See [`Authentication.md`](./Authentication.md) for detailed OAuth flows and Trmn
 
 See [`Agents.md`](./Agents.md) for TRMNL + Tesla API constraints.
 
-## Testing
-
-**Test Structure:**
-- Test files co-located with code: `file.test.ts` next to `file.ts`
-- Use Vitest for unit tests
-- Fleet integration tests in `test:fleet` script
-
-**Running Tests:**
-```bash
-npm test                    # Run all tests
-npm test -- src/lib/auth   # Run specific file
-npm test -- --ui           # Open test UI
-```
-
-## Deployment
 
 **Vercel Deployment:**
 - Production: pwusage.fm.rodeo (main branch)
@@ -194,14 +136,6 @@ See `cmd/next-app/example.env` for full list.
 
 ## Common Troubleshooting
 
-**"Cannot find module" errors:**
-- Run `npm install` in `cmd/next-app`
-- Clear `.next` cache: `rm -rf .next`
-
-**Database connection fails:**
-- Check `DATABASE_URL` syntax (PostgreSQL or `file:path/to/db.sqlite`)
-- Verify database exists and is accessible
-
 **Tesla API 401 (Unauthorized):**
 - User's refresh token expired; they must re-authenticate via `/login`
 - Check `User.auth_status` for "revoked" or error details
@@ -215,11 +149,6 @@ See `cmd/next-app/example.env` for full list.
 - Next.js file lock in `.next/` prevents concurrent `npm run dev` instances
 - Workaround: use `npm run build && next start -p 5174` for agent development
 - See [`Agents.md`](./Agents.md) for agent dev environment guidance
-
-**Build or lint failures:**
-- Run `npm run lint` to check for code issues
-- Run `npm run build` to verify production build
-- Both must pass before finishing tasks
 
 ## Cross-Session Work
 
@@ -244,4 +173,4 @@ doesn't reintroduce a bug that was already paid for.
 - [`TODO.md`](./TODO.md): Cross-session deferred work
 - [Tesla Fleet API Docs](https://developer.tesla.com/docs/fleet-api)
 - [TRMNL Framework v2 Docs](https://trmnl.com/framework/docs/)
-@ASC.md
+- [`ASC.md`](./ASC.md): `asc` (App Store Connect) CLI reference — read it before App Store / TestFlight work
