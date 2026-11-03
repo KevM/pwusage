@@ -8,81 +8,147 @@ struct SiteHistoryPresentationTests {
     /// 2026-11-02 12:00 in Chicago (CST).
     private let now = Date(timeIntervalSince1970: 1_793_642_400)
     private let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
+    private let home = SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .device)
 
     private func progress(
-        _ phase: SiteHistoryOnboardingProgress.Phase = .active, oldest: String = "2026-09-21"
+        _ phase: SiteHistoryOnboardingProgress.Phase = .active, oldest: String = "2026-07-25"
     ) -> SiteHistoryOnboardingProgress {
         var progress = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
         progress.oldestChecked = oldest
         progress.phase = phase
-        progress.daysWithData = 30
         return progress
     }
 
+    private static func days(_ count: Int) -> [String] {
+        (1 ... max(count, 1)).compactMap { SiteLocalDays.adding(-$0, to: "2026-11-02", timeZone: .gmt) }
+            .prefix(count).map(\.self)
+    }
+
+    /// `clear` of the stored days are clear and the rest cloudy.
+    private static func ledger(_ days: [String], clear: Int) -> SiteHistoryDayLedger {
+        var types: [String: SolarDayType] = [:]
+        for (index, day) in days.enumerated() { types[day] = index < clear ? .clear : .cloudy }
+        return SiteHistoryDayLedger(days: types)
+    }
+
+    private static func result(_ confidence: String) -> DetectedSolarLayout {
+        DetectedSolarLayout(
+            status: confidence == "low" ? .lowConfidence : .detected, confidence: confidence, reasons: [],
+            planes: [
+                .init(azimuth: 202, tilt: 22, dcKwp: 6.2, effectiveKw: 5.3, azimuthRange90: [190, 214],
+                      tiltRange90: [20, 24]),
+                .init(azimuth: 110, tilt: 18, dcKwp: 2.6, effectiveKw: 2.2, azimuthRange90: [90, 130],
+                      tiltRange90: [15, 21])],
+            acClipKw: nil, historyDays: 120, clearDays: 30, firstDay: nil, lastDay: nil)
+    }
+
     private func present(
-        _ progress: SiteHistoryOnboardingProgress?, throttle: Date? = nil, usable: Bool = false
+        _ progress: SiteHistoryOnboardingProgress?, throttle: Date? = nil, result: DetectedSolarLayout? = nil,
+        location: SolarHomeLocation? = nil, stored: Int = 96, clear: Int = 21, passed: Bool = true
     ) -> SiteHistoryPresentation {
-        SiteHistoryPresentation(
+        let days = Self.days(stored)
+        return SiteHistoryPresentation(
             status: SiteHistoryStatus(
-                scope: scope, progress: progress, throttledUntil: throttle, hasUsableLayout: usable),
+                scope: scope, progress: progress, throttledUntil: throttle, result: result,
+                homeLocation: location ?? home, storedDays: days,
+                ledger: passed ? Self.ledger(days, clear: clear) : nil),
             now: now, timeZone: chicago)
     }
 
-    @Test func loadingShowsTheAccessoryWithCheckedAndAvailableDaysApart() {
+    @Test func loadingCountsTheStoredDaysNotTheOnboardingPosition() {
+        // The cursor says 100 days were checked; the phone holds 96.
         let loading = present(progress())
+        #expect(loading.phase == .loading)
+        #expect(loading.downloadedDays == 96)
+        #expect(loading.clearDays == 21)
+        #expect(loading.producingDays == 96)
+        #expect(loading.statusLine == "96 days downloaded, 21 clear")
         #expect(loading.rowValue == "Loading")
-        #expect(loading.showsAccessory)
-        #expect(loading.checkedDays == 42)
-        #expect(loading.daysWithData == 30)
-        #expect(loading.checkedDaysText == "42 days checked")
-        #expect(!loading.checkedDaysText.contains("of"))
-        #expect(loading.checkedRange?.contains(" to ") == true)
+        #expect(loading.showsBanner)
+        #expect(loading.action == nil)
+        #expect(loading.accessibilitySummary == "Finding your solar system. 96 days downloaded, 21 clear.")
+        #expect(!loading.statusLine.contains("checked"))
     }
 
-    @Test func aSiteWithAUsableLayoutLoadsRecentDaysQuietly() {
-        let recent = present(progress(), usable: true)
-        #expect(!recent.showsAccessory)
-        #expect(recent.headline == "Loading recent history")
+    @Test func daysNotYetSortedAreDownloadedOnly() {
+        let early = present(progress(), stored: 6, passed: false)
+        #expect(early.statusLine == "6 days downloaded")
+        #expect(early.clearDays == 0)
     }
 
-    @Test func aTeslaLimitWaitsWithATimeAndKeepsTheAccessory() {
+    @Test func aTeslaLimitWaitsWithATime() {
         let waiting = present(progress(), throttle: now.addingTimeInterval(1800))
-        #expect(waiting.rowValue == "Waiting")
-        #expect(waiting.detail.hasPrefix("Tesla is limiting requests."))
-        #expect(waiting.action == nil)
-        #expect(waiting.showsAccessory)
-        #expect(present(progress(), throttle: now.addingTimeInterval(-1)).rowValue == "Loading")
+        #expect(waiting.phase == .waiting)
+        #expect(waiting.statusLine.hasPrefix("Tesla is limiting requests. Continues after"))
+        #expect(waiting.showsBanner)
+        #expect(present(progress(), throttle: now.addingTimeInterval(-1)).phase == .loading)
     }
 
-    @Test func aReconnectPauseAsksForTheActionAndHidesTheAccessory() {
+    @Test func withoutALocationItAsksForOne() {
+        let missing = SiteHistoryPresentation(
+            status: SiteHistoryStatus(scope: scope, progress: progress(.finished(.locationNeeded)),
+                                      throttledUntil: nil, storedDays: Self.days(90)),
+            now: now)
+        #expect(missing.phase == .needsLocation)
+        #expect(missing.action == .addLocation)
+        #expect(missing.statusLine == "Add your location to find your solar system")
+        #expect(missing.showsBanner)
+    }
+
+    @Test func aReconnectPauseAsksForTheActionAndHidesTheBanner() {
         let paused = present(progress(.paused(.reconnectTesla)))
-        #expect(paused.rowValue == "Paused")
+        #expect(paused.phase == .needsReconnect)
         #expect(paused.action == .reconnectTesla)
-        #expect(!paused.showsAccessory)
+        #expect(!paused.showsBanner)
         #expect(present(progress(.paused(.signIn))).action == nil)
     }
 
-    @Test func finishesSayWhatIsKnownAndWhatHappensNext() {
-        #expect(present(progress(.finished(.layoutFound))).headline == "Solar layout found")
-        let location = present(progress(.finished(.locationNeeded)))
-        #expect(location.action == .setLocation)
-        #expect(!location.showsAccessory)
-        let year = present(progress(.finished(.reachedOneYear)))
-        #expect(year.detail.contains("a year of history"))
-        #expect(year.detail.contains("checked again as new days arrive"))
-        var stuck = progress(.finished(.reachedHistoryStart))
-        stuck.lastOutlook = .needsOtherAction
-        #expect(present(stuck).action == .openSolarForecast)
-        #expect(present(progress(.finished(.historyUnavailable))).rowValue == "Unavailable")
+    @Test func aUsableLayoutStillLoadingIsImproving() {
+        let improving = present(progress(), result: Self.result("medium"))
+        #expect(improving.phase == .foundImproving)
+        #expect(improving.statusLine == "Usable, still improving")
+        #expect(!improving.showsBanner)
+        #expect(improving.accessibilitySummary
+            == "Finding your solar system. 96 days downloaded, 21 clear. Usable, still improving.")
     }
 
-    @Test func nothingCheckedYetHasNoRange() {
+    @Test func highConfidenceOrAFinishedSearchIsFinal() {
+        let high = present(progress(), result: Self.result("high"))
+        #expect(high.phase == .foundFinal)
+        #expect(high.statusLine == "Found with high confidence")
+        let finished = present(progress(.finished(.reachedOneYear)), result: Self.result("medium"))
+        #expect(finished.phase == .foundFinal)
+        #expect(finished.accessibilitySummary == "Solar system: 8.8 kilowatts, two panel groups, "
+            + "main group facing south-southwest, tilted 22 degrees, medium confidence.")
+    }
+
+    @Test func anEstimatedLocationOffersTheExactOneOnceFound() {
+        let estimated = SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .estimated)
+        #expect(present(progress(), result: Self.result("high"), location: estimated).action == .useExactLocation)
+        #expect(present(progress(), location: estimated).action == nil)
+    }
+
+    @Test func finishesWithoutALayoutAreUnavailable() {
+        let none = present(progress(.finished(.noSolarProduction)), clear: 0)
+        #expect(none.phase == .unavailable)
+        #expect(none.statusLine == "No solar production found")
+        #expect(!none.showsBanner)
+        #expect(present(progress(.finished(.historyUnavailable))).rowValue == "Unavailable")
+        #expect(present(progress(.finished(.reachedHistoryStart))).statusLine
+            == "Not enough clear days to find a layout yet")
+    }
+
+    @Test func nothingYet() {
         let none = SiteHistoryPresentation(status: nil, now: now)
-        #expect(none.rowValue == "Not Started")
-        #expect(none.checkedRange == nil)
-        #expect(!none.showsAccessory)
-        #expect(present(progress(oldest: "2026-11-02")).checkedRange == nil)
-        #expect(present(progress(oldest: "2026-11-01")).checkedRange?.contains(" to ") == false)
-        #expect(present(progress(oldest: "2026-11-01")).checkedDaysText == "1 day checked")
+        #expect(none.phase == .loading)
+        #expect(!none.showsBanner)
+        #expect(none.countsText.isEmpty)
+    }
+
+    @Test func compassNames() {
+        #expect(SolarSystemCompass.abbreviation(202) == "SSW")
+        #expect(SolarSystemCompass.name(202) == "south-southwest")
+        #expect(SolarSystemCompass.abbreviation(355) == "N")
+        #expect(SolarSystemCompass.abbreviation(-90) == "W")
     }
 }

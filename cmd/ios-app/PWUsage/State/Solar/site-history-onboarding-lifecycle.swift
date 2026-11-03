@@ -68,10 +68,12 @@ final class SiteHistoryOnboardingLifecycle {
         let generation = statusGeneration
         let progress = try? await store.progress(scope: scope)
         let throttle = try? await store.throttle(accountScopeID: scope.accountScopeID)
-        let usable = await onboarding.hasUsableLayout(scope: scope)
+        let stored = await onboarding.storedState(scope: scope)
+        let ledger = try? await ledgers.ledger(scope: scope)
         guard generation == statusGeneration, scope == lastScope else { return }
         let next = SiteHistoryStatus(
-            scope: scope, progress: progress, throttledUntil: throttle, hasUsableLayout: usable)
+            scope: scope, progress: progress, throttledUntil: throttle, result: stored.result,
+            homeLocation: stored.location, storedDays: stored.days, ledger: ledger)
         if status != next { status = next }
     }
 

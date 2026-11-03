@@ -223,15 +223,40 @@ struct SiteHistoryOnboardingLifecycleTests {
         #expect(probe.scheduled == [nil])
     }
 
+    @Test func theStatusCountsStoredDaysAndOnlyThisSitesLedger() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.defaultAnswer = .failure(URLError(.timedOut))
+        environment.stored = [["2026-10-30", "2026-10-31"]]
+        try await ledgers.save(SiteHistoryDayLedger(days: ["2026-10-30": .clear, "2026-10-31": .cloudy]), scope: scope)
+        try await ledgers.save(SiteHistoryDayLedger(days: ["2026-10-30": .clear, "2026-10-31": .clear]), scope: other)
+        // The cursor claims five months were checked.
+        var progress = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
+        progress.oldestChecked = "2026-06-01"
+        try await store.save(progress, scope: scope)
+        let lifecycle = make(environment, probe: LifecycleProbe(now: start), sleep: Self.sleepUntilCancelled)
+        lifecycle.activate(scope: scope)
+        try await eventually { lifecycle.status?.progress?.waitReason == .retrying }
+        #expect(lifecycle.status?.downloadedDays == 2)
+        #expect(lifecycle.status?.producingDays == 2)
+        #expect(lifecycle.status?.clearDays == 1)
+        #expect(lifecycle.status?.days.map(\.type) == [.clear, .cloudy])
+        lifecycle.stop()
+    }
+
     @Test func theStatusFollowsTheActiveScopeAndClearsOnStop() async throws {
         let environment = FakeOnboardingEnvironment()
         environment.defaultAnswer = .fill(.busy)
-        environment.confidence = .medium
+        environment.storedResult = DetectedSolarLayout(
+            status: .detected, confidence: "medium", reasons: [],
+            planes: [.init(azimuth: 180, tilt: 20, dcKwp: 5, effectiveKw: 4, azimuthRange90: [170, 190],
+                           tiltRange90: [18, 22])],
+            acClipKw: nil, historyDays: 60, clearDays: 20, firstDay: nil, lastDay: nil)
         let lifecycle = make(environment, probe: LifecycleProbe(now: start), sleep: Self.sleepUntilCancelled)
         lifecycle.activate(scope: scope)
         try await eventually { lifecycle.status?.progress?.waitReason == .busy }
         #expect(lifecycle.status?.scope == scope)
         #expect(lifecycle.status?.hasUsableLayout == true)
+        #expect(lifecycle.status?.wedge == .fitted(azimuthRange90: [170, 190]))
         lifecycle.activate(scope: other)
         try await eventually { lifecycle.status?.scope == other && lifecycle.status?.progress != nil }
         lifecycle.stop()

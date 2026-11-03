@@ -18,28 +18,9 @@ struct SiteHistoryView: View {
     private func content(_ presentation: SiteHistoryPresentation) -> some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(presentation.headline).font(.body.weight(.semibold))
-                    Text(presentation.detail).font(.subheadline).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 2)
-                .accessibilityElement(children: .combine)
+                Text(presentation.statusLine)
+                    .accessibilityLabel(presentation.accessibilitySummary)
                 if let action = presentation.action { actionButton(action) }
-            }
-            Section {
-                LabeledContent("Days checked", value: presentation.checkedDays.formatted())
-                LabeledContent("Days with data", value: presentation.daysWithData.formatted())
-                if let producingDays = presentation.producingDays {
-                    LabeledContent("Days with solar production", value: producingDays.formatted())
-                }
-                if let range = presentation.checkedRange {
-                    LabeledContent("Checked", value: range)
-                }
-            } header: {
-                Text("History")
-            } footer: {
-                Text("Newest days are checked first. A day without data is one Tesla has no record for, "
-                    + "such as before your system was switched on.")
             }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
@@ -53,10 +34,10 @@ struct SiteHistoryView: View {
             if let reconnectTesla {
                 Button("Reconnect Tesla") { Task { await reconnectTesla.perform() } }
             }
-        case .setLocation:
-            NavigationLink("Set Home Location", value: SettingsDestination.solarForecast)
-        case .openSolarForecast:
-            NavigationLink("Open Solar Forecast", value: SettingsDestination.solarForecast)
+        case .addLocation:
+            NavigationLink("Add Location", value: SettingsDestination.solarForecast)
+        case .useExactLocation:
+            NavigationLink("Use My Exact Home Location", value: SettingsDestination.solarForecast)
         }
     }
 }
@@ -76,7 +57,7 @@ struct SiteHistoryAccessory: View {
                     Text("Loading history · \(checkedDaysText)").font(.subheadline).lineLimit(1)
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(SiteHistoryPresentation.accessoryTitle).font(.subheadline.weight(.semibold))
+                        Text(SiteHistoryPresentation.title).font(.subheadline.weight(.semibold))
                         Text(checkedDaysText).font(.caption).foregroundStyle(.secondary)
                     }
                     .lineLimit(1)
@@ -88,7 +69,7 @@ struct SiteHistoryAccessory: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(SiteHistoryPresentation.accessoryTitle), \(checkedDaysText)")
+        .accessibilityLabel("\(SiteHistoryPresentation.title), \(checkedDaysText)")
         .accessibilityHint("Opens Site History in Settings")
         .accessibilityAddTraits(.isButton)
     }
@@ -98,13 +79,11 @@ struct SiteHistoryAccessory: View {
     #Preview("Site History · loading") {
         var progress = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
         progress.oldestChecked = "2026-09-21"
-        progress.daysWithData = 40
-        progress.producingDays = 38
         return NavigationStack {
             SiteHistoryView(
                 status: SiteHistoryStatus(
                     scope: SolarForecastSiteScope(accountScopeID: "preview", siteID: "preview-home"),
-                    progress: progress, throttledUntil: nil, hasUsableLayout: false)
+                    progress: progress, throttledUntil: nil)
             )
         }
     }

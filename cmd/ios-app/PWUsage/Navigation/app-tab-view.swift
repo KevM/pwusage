@@ -37,8 +37,8 @@ struct AppTabView: View {
     @ViewBuilder private var tabs: some View {
         let presentation = SiteHistoryPresentation(status: model.siteHistoryStatus, now: .now)
         if #available(iOS 26.1, *) {
-            tabView.tabViewBottomAccessory(isEnabled: presentation.showsAccessory) {
-                SiteHistoryAccessory(checkedDaysText: presentation.checkedDaysText, onOpen: model.openSiteHistory)
+            tabView.tabViewBottomAccessory(isEnabled: presentation.showsBanner) {
+                SiteHistoryAccessory(checkedDaysText: presentation.countsText, onOpen: model.openSiteHistory)
             }
         } else {
             tabView

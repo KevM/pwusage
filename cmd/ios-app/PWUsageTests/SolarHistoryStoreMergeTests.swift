@@ -37,6 +37,18 @@ struct SolarHistoryStoreMergeTests {
         try await history.removeAll()
     }
 
+    @Test("Stored days are the site-local days holding a reading")
+    func storedDaysHoldReadings() async throws {
+        let history = store()
+        let empty = MobileSolarHistoryDay(
+            day: "2026-01-03", dayStart: ISO8601DateFormatter().date(from: "2026-01-03T00:00:00Z") ?? .distantPast,
+            status: .complete, fetchedAt: now, solarWh: Array(repeating: nil, count: 288))
+        try await history.merge(fill([day("2026-01-02", solarWh: 0), day("2026-01-01", solarWh: 4), empty]),
+                                scope: scope)
+        #expect(try await history.storedDays(scope: scope) == ["2026-01-01", "2026-01-02"])
+        try await history.removeAll()
+    }
+
     @Test("Days merged while a sync is in flight survive that sync's save")
     func mergeDuringSync() async throws {
         let history = store()

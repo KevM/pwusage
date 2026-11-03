@@ -13,6 +13,8 @@ protocol SiteHistoryOnboardingEnvironment: AnyObject {
     func layoutConfidence(scope: SolarForecastSiteScope) async -> SolarLayoutConfidence?
     /// The clear-day pass over the stored history; nil without a location or history.
     func classifyDays(scope: SolarForecastSiteScope) async -> SolarDayClassification?
+    /// What the phone holds for the site's status: the stored result, home location and days.
+    func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState
     /// Run detection now, outside the ordinary schedule, and keep its result.
     func detect(scope: SolarForecastSiteScope) async -> DetectedSolarLayout?
 }
@@ -138,6 +140,10 @@ final class SiteHistoryOnboarding {
     /// Whether the site already has a layout the forecast can use.
     func hasUsableLayout(scope: SolarForecastSiteScope) async -> Bool {
         await environment.layoutConfidence(scope: scope) != nil
+    }
+
+    func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState {
+        await environment.storedState(scope: scope)
     }
 
     /// The checkpoint decision after a complete slice: a finish, or nil to keep going.

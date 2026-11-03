@@ -1,137 +1,163 @@
 import Foundation
 
-/// What Settings and the tab accessory say about a site's history loading. The checked count
-/// never has a denominator: the search can extend, so "of N" would move.
+/// What the Solar System screen, its Settings row and the banner say about finding a site's
+/// solar system. Counts are the phone's stored days and the latest clear-day pass; there is no
+/// checked-days count and no denominator, since the search can extend.
 struct SiteHistoryPresentation: Equatable {
-    enum Action: Equatable { case reconnectTesla, setLocation, openSolarForecast }
+    enum Phase: Equatable {
+        case loading, waiting, needsLocation, needsReconnect, foundImproving, foundFinal, unavailable
+    }
 
-    static let accessoryTitle = "Loading history for Solar Forecasting"
+    enum Action: Equatable { case addLocation, reconnectTesla, useExactLocation }
 
+    static let title = "Finding your solar system"
+
+    let phase: Phase
     /// The short value on the Settings row.
     let rowValue: String
-    let headline: String
-    let detail: String
+    /// The one line under the visual.
+    let statusLine: String
     let action: Action?
-    let checkedDays: Int
-    let daysWithData: Int
-    /// The checked days, oldest first, or nil before any are checked.
-    let checkedRange: String?
-    /// Days with solar production at the last check, or nil before one.
-    let producingDays: Int?
-    let showsAccessory: Bool
-
-    var checkedDaysText: String { Self.days(checkedDays) + " checked" }
+    let accessibilitySummary: String
+    let showsBanner: Bool
+    let downloadedDays: Int
+    let producingDays: Int
+    let clearDays: Int
+    /// "96 days downloaded, 21 clear", just the downloaded days before the first pass, or empty.
+    let countsText: String
 
     init(status: SiteHistoryStatus?, now: Date, timeZone: TimeZone = .current) {
-        let progress = status?.progress
-        checkedDays = progress?.checkedDays(timeZone: .gmt) ?? 0
-        daysWithData = progress?.daysWithData ?? 0
-        producingDays = progress?.producingDays
-        checkedRange = progress.flatMap(Self.range)
-        showsAccessory = status?.isLoadingForForecasting ?? false
-        let text = Self.text(status: status, now: now, timeZone: timeZone)
-        rowValue = text.row
-        headline = text.headline
-        detail = text.detail
-        action = text.action
+        downloadedDays = status?.downloadedDays ?? 0
+        producingDays = status?.producingDays ?? 0
+        clearDays = status?.clearDays ?? 0
+        countsText = Self.counts(status)
+        let phase = Self.phase(status, now: now)
+        self.phase = phase
+        let wording = Self.wording(phase, status: status, now: now, timeZone: timeZone)
+        rowValue = wording.row
+        statusLine = wording.line
+        action = Self.action(phase, status: status)
+        let isActive = status?.progress?.phase == .active
+        showsBanner = switch phase {
+        case .loading, .waiting: isActive
+        case .needsLocation: status?.progress != nil
+        case .needsReconnect, .foundImproving, .foundFinal, .unavailable: false
+        }
+        accessibilitySummary = Self.summary(phase, line: wording.line, status: status)
     }
 
-    private struct Wording {
-        let row: String
-        let headline: String
-        let detail: String
-        var action: Action?
+    // MARK: - Phase
 
-        init(_ row: String, _ headline: String, _ detail: String, _ action: Action? = nil) {
-            self.row = row
-            self.headline = headline
-            self.detail = detail
-            self.action = action
+    private static func phase(_ status: SiteHistoryStatus?, now: Date) -> Phase {
+        guard let status else { return .loading }
+        let progressPhase = status.progress?.phase
+        if case .paused? = progressPhase { return .needsReconnect }
+        if let layout = status.layout {
+            let stillLoading = progressPhase == .active
+            return layout.confidence == .high || !stillLoading ? .foundFinal : .foundImproving
+        }
+        if case .finished(.historyUnavailable)? = progressPhase { return .unavailable }
+        if status.location == .none { return .needsLocation }
+        switch progressPhase {
+        case nil, .active?, .finished(.locationNeeded)?:
+            let waitingUntil = [status.throttledUntil, status.progress?.nextAttemptAt].compactMap(\.self).max()
+            return (waitingUntil ?? .distantPast) > now ? .waiting : .loading
+        case .finished?, .paused?:
+            return .unavailable
         }
     }
 
-    private static func text(status: SiteHistoryStatus?, now: Date, timeZone: TimeZone) -> Wording {
-        guard let status, let progress = status.progress else {
-            return Wording("Not Started", "Not started",
-                           "History for Solar Forecasting loads while pwusage is open, newest days first.", nil)
-        }
-        switch progress.phase {
-        case .active: return active(status, progress: progress, now: now, timeZone: timeZone)
-        case .paused(.reconnectTesla):
-            return Wording("Paused", "Paused", "Reconnect Tesla to keep loading history.", .reconnectTesla)
-        case .paused(.signIn):
-            return Wording("Paused", "Paused", "Sign in again to keep loading history.", nil)
-        case .finished(let reason): return finished(reason, progress: progress)
+    private static func action(_ phase: Phase, status: SiteHistoryStatus?) -> Action? {
+        switch phase {
+        case .needsLocation: return .addLocation
+        case .needsReconnect:
+            return status?.progress?.phase == .paused(.reconnectTesla) ? .reconnectTesla : nil
+        case .foundImproving, .foundFinal, .unavailable:
+            return status?.location == .estimated ? .useExactLocation : nil
+        case .loading, .waiting: return nil
         }
     }
 
-    private static func active(
-        _ status: SiteHistoryStatus, progress: SiteHistoryOnboardingProgress, now: Date, timeZone: TimeZone
-    ) -> Wording {
-        let headline = status.hasUsableLayout ? "Loading recent history" : "Loading history"
-        if let until = status.throttledUntil, until > now {
-            return Wording("Waiting", headline,
-                           "Tesla is limiting requests. Loading continues after \(time(until, now: now, timeZone)).")
+    // MARK: - Wording
+
+    private static func wording(
+        _ phase: Phase, status: SiteHistoryStatus?, now: Date, timeZone: TimeZone
+    ) -> (row: String, line: String) {
+        let counts = Self.counts(status)
+        switch phase {
+        case .loading:
+            return ("Loading", status?.progress == nil && counts.isEmpty ? "Starts while pwusage is open" : counts)
+        case .waiting:
+            let until = [status?.throttledUntil, status?.progress?.nextAttemptAt].compactMap(\.self).max() ?? now
+            let isTesla = (status?.throttledUntil ?? .distantPast) > now
+            let prefix = isTesla ? "Tesla is limiting requests. " : ""
+            return ("Waiting", prefix + "Continues after \(time(until, now: now, timeZone)).")
+        case .needsLocation:
+            return ("Needs Location", "Add your location to find your solar system")
+        case .needsReconnect:
+            let signIn = status?.progress?.phase == .paused(.signIn)
+            let line = signIn ? "Sign in again to keep loading history" : "Reconnect Tesla to keep loading history"
+            return ("Paused", line)
+        case .foundImproving:
+            return ("Improving", "Usable, still improving")
+        case .foundFinal:
+            let confidence = status?.layout?.confidence == .high ? "high" : "medium"
+            return ("Found", "Found with \(confidence) confidence")
+        case .unavailable:
+            return unavailable(status?.progress?.phase)
         }
-        if let until = progress.nextAttemptAt, until > now {
-            return Wording("Waiting", headline, "Loading continues after \(time(until, now: now, timeZone)).", nil)
-        }
-        let detail = status.hasUsableLayout
-            ? "Your solar layout is already set up. pwusage is loading your recent days."
-            : "pwusage looks back up to a year and stops once Solar Forecasting has what it needs."
-        return Wording("Loading", headline, detail, nil)
     }
 
-    private static func finished(_ reason: SiteHistoryOnboarding.FinishReason, progress: SiteHistoryOnboardingProgress)
-        -> Wording {
-        switch reason {
-        case .layoutFound:
-            return Wording("Done", "Solar layout found", "Solar Forecasting has the history it needs.", nil)
-        case .layoutAlreadyUsable:
-            return Wording("Done", "Recent history loaded", "Your solar layout was already set up.", nil)
-        case .locationNeeded:
-            return Wording("Needs Location", "Home location needed",
-                           "Set your home location so pwusage can find your solar layout.", .setLocation)
-        case .noSolarProduction:
-            return Wording("Done", "No solar production found",
-                           "The checked days show no solar production. Solar Forecasting needs a solar system.")
-        case .detectorNeedsOtherAction:
-            return Wording("Done", "More history won’t help",
-                           "pwusage could not find a solar layout from this history. "
-                               + "Solar Forecast shows what it found.",
-                           .openSolarForecast)
-        case .historyUnavailable:
-            return Wording("Unavailable", "History unavailable", "Site history is not available for this site yet.")
-        case .reachedHistoryStart, .reachedOneYear:
-            let limit = reason == .reachedOneYear
-                ? "pwusage checked a year of history."
-                : "pwusage checked all the history this site has."
-            let next = progress.lastOutlook == .needsOtherAction
-                ? " Solar Forecast shows what it found."
-                : " Your solar layout is checked again as new days arrive."
-            return Wording("Done", "History checked", limit + next,
-                           progress.lastOutlook == .needsOtherAction ? .openSolarForecast : nil)
+    private static func unavailable(_ phase: SiteHistoryOnboardingProgress.Phase?) -> (row: String, line: String) {
+        switch phase {
+        case .finished(.historyUnavailable)?: ("Unavailable", "History isn’t available for this site yet")
+        case .finished(.noSolarProduction)?: ("Not Found", "No solar production found")
+        case .finished(.detectorNeedsOtherAction)?: ("Not Found", "Couldn’t find a layout from this history")
+        default: ("Not Found", "Not enough clear days to find a layout yet")
         }
+    }
+
+    private static func counts(_ status: SiteHistoryStatus?) -> String {
+        guard let status, status.downloadedDays > 0 else { return "" }
+        let downloaded = days(status.downloadedDays) + " downloaded"
+        return status.producingDays > 0 ? "\(downloaded), \(status.clearDays.formatted()) clear" : downloaded
+    }
+
+    private static func summary(_ phase: Phase, line: String, status: SiteHistoryStatus?) -> String {
+        if phase == .foundFinal, let layout = status?.layout {
+            return describe(layout)
+        }
+        let counts = counts(status)
+        let parts = [title, counts, line == counts ? "" : line].filter { !$0.isEmpty }
+        return parts.joined(separator: ". ") + "."
+    }
+
+    /// "Solar system: 8.8 kilowatts, two panel groups, main group facing south-southwest, tilted
+    /// 22 degrees, medium confidence."
+    static func describe(_ layout: SolarLayout) -> String {
+        let total = layout.planes.reduce(0) { $0 + $1.dcKwp }
+        let size = total.formatted(.number.precision(.fractionLength(1)))
+        var parts = ["Solar system: \(size) kilowatts"]
+        if layout.planes.count > 1 {
+            parts.append("\(spelled(layout.planes.count)) panel groups")
+        }
+        if let main = layout.planes.max(by: { $0.dcKwp < $1.dcKwp }) {
+            let group = layout.planes.count > 1 ? "main group facing" : "facing"
+            parts.append("\(group) \(SolarSystemCompass.name(main.azimuth))")
+            parts.append("tilted \(Int(main.tilt.rounded())) degrees")
+        }
+        parts.append("\(layout.confidence.rawValue) confidence")
+        return parts.joined(separator: ", ") + "."
+    }
+
+    private static func spelled(_ number: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .spellOut
+        return formatter.string(from: NSNumber(value: number)) ?? number.formatted()
     }
 
     static func days(_ count: Int) -> String {
         count == 1 ? "1 day" : "\(count.formatted()) days"
-    }
-
-    /// `oldestChecked` through the day before `checkedUntil`, as calendar days.
-    private static func range(_ progress: SiteHistoryOnboardingProgress) -> String? {
-        guard progress.oldestChecked < progress.checkedUntil,
-              let last = SiteLocalDays.adding(-1, to: progress.checkedUntil, timeZone: .gmt),
-              let first = date(progress.oldestChecked), let final = date(last) else { return nil }
-        var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
-        style.timeZone = .gmt
-        return first == final ? first.formatted(style) : "\(first.formatted(style)) to \(final.formatted(style))"
-    }
-
-    private static func date(_ day: String) -> Date? {
-        var strategy = Date.ISO8601FormatStyle().year().month().day()
-        strategy.timeZone = .gmt
-        return try? Date(day, strategy: strategy)
     }
 
     /// A time today, or a date and time further out.
@@ -144,4 +170,24 @@ struct SiteHistoryPresentation: Equatable {
         style.timeZone = timeZone
         return date.formatted(style)
     }
+}
+
+/// Compass names for a direction in degrees.
+enum SolarSystemCompass {
+    private static let abbreviations = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    private static let names = [
+        "north", "north-northeast", "northeast", "east-northeast", "east", "east-southeast", "southeast",
+        "south-southeast", "south", "south-southwest", "southwest", "west-southwest", "west", "west-northwest",
+        "northwest", "north-northwest"]
+
+    private static func index(_ azimuth: Double) -> Int {
+        let normalized = (azimuth.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+        return Int((normalized / 22.5).rounded()) % 16
+    }
+
+    /// "SSW".
+    static func abbreviation(_ azimuth: Double) -> String { abbreviations[index(azimuth)] }
+    /// "south-southwest", for VoiceOver.
+    static func name(_ azimuth: Double) -> String { names[index(azimuth)] }
 }

@@ -53,6 +53,16 @@ final class LiveSiteHistoryOnboardingEnvironment: SiteHistoryOnboardingEnvironme
         return SolarLayoutDetector.forecastLayout(result, detectedAt: .distantPast)?.confidence
     }
 
+    func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState {
+        let record = await record(scope)
+        var result = record?.result
+        #if DEBUG
+            if SiteHistoryDebugSettings.ignoresLayout(scope) { result = nil }
+        #endif
+        let days = (try? await history.storedDays(scope: scope)) ?? []
+        return SiteHistoryStoredState(result: result, location: record?.location, days: days)
+    }
+
     /// Off the main actor; cancelling the caller cancels the pass.
     func classifyDays(scope: SolarForecastSiteScope) async -> SolarDayClassification? {
         guard let location = await record(scope)?.location,

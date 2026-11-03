@@ -185,6 +185,16 @@ actor SolarHistoryStore {
         }
     }
 
+    /// Site-local days holding any reading, oldest first.
+    func storedDays(scope: SolarForecastSiteScope) throws -> [String] {
+        let state = try load(scope)
+        guard let zone = state.timeZone.flatMap(TimeZone.init(identifier:)) else { return [] }
+        return state.days
+            .filter { $0.slots.contains { $0.map { $0.isFinite && $0 >= 0 } ?? false } }
+            .map { Self.dayString($0.dayStart, timeZone: zone) }
+            .sorted()
+    }
+
     func lastDay(scope: SolarForecastSiteScope) throws -> String? {
         let state = try load(scope)
         guard let dayStart = state.days.map(\.dayStart).max(),
