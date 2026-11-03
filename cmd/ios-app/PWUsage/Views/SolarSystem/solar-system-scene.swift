@@ -58,8 +58,13 @@ struct SolarSystemVisual: View {
             VStack(spacing: 0) {
                 SolarSystemSceneCanvas(input: input, clocks: motion, frame: frame, now: now)
                     .frame(height: Self.sceneHeight)
-                    .contentShape(Rectangle())
-                    .gesture(drag)
+                    .overlay {
+                        // Only the square around the model turns it, so the gutters still scroll.
+                        Color.clear
+                            .frame(width: min(width, Self.sceneHeight), height: Self.sceneHeight)
+                            .contentShape(Rectangle())
+                            .gesture(drag)
+                    }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(summary)
                     .accessibilityAddTraits(.isImage)
@@ -106,8 +111,11 @@ struct SolarSystemVisual: View {
                 guard input.isFound else { return }
                 let start = dragStart ?? camera
                 dragStart = start
+                // Like a turntable: the half under the finger follows it, so the near side turns the
+                // other way from the far side.
+                let side: Double = value.startLocation.y > Self.sceneHeight / 2 ? 1 : -1
                 camera = start.dragged(
-                    yawBy: -Double(value.translation.width) * 0.4,
+                    yawBy: side * Double(value.translation.width) * 0.4,
                     elevationBy: Double(value.translation.height) * 0.25)
             }
             .onEnded { _ in dragStart = nil }
