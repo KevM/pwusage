@@ -311,6 +311,21 @@ struct SiteHistoryOnboardingTests {
         #expect(progress.oldestChecked == "2026-10-30")
     }
 
+    @Test func aCallerArrivingWhileACancelledRunUnwindsStartsAFreshOne() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.fillDelay = .seconds(3600)
+        let onboarding = make(environment)
+        let first = Task { await onboarding.run(scope: scope) }
+        try? await eventually { environment.requests.count == 1 }
+        environment.fillDelay = nil
+        first.cancel()
+        // Called before the cancelled run has unwound, as a quick return to the foreground is.
+        let second = await onboarding.run(scope: scope, maxSlices: 1)
+        #expect(await first.value == .stopped)
+        #expect(second == .yielded)
+        #expect(environment.requests.map(\.from) == ["2026-10-30", "2026-10-30"])
+    }
+
     @Test func overlappingRunsForOneSiteShareOneJob() async {
         let environment = FakeOnboardingEnvironment()
         let onboarding = make(environment)

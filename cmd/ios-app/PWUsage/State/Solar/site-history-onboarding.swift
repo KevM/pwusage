@@ -77,9 +77,15 @@ final class SiteHistoryOnboarding {
     }
 
     /// Work through slices until the job stops, waits, or has asked for `maxSlices` slices.
-    /// A second call for a site already running joins that run.
+    /// A second call for a site already running joins that run. A run that was cancelled is
+    /// waited out instead, and a caller that is still wanted starts a fresh one.
     func run(scope: SolarForecastSiteScope, maxSlices: Int = .max) async -> Outcome {
-        if let existing = running[scope] { return await existing.value }
+        while let existing = running[scope] {
+            let outcome = await existing.value
+            if running[scope] == existing { running[scope] = nil }
+            guard existing.isCancelled, !Task.isCancelled else { return outcome }
+        }
+        if Task.isCancelled { return .stopped }
         let task = Task { await self.perform(scope: scope, maxSlices: maxSlices) }
         running[scope] = task
         let outcome = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }

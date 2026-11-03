@@ -253,6 +253,20 @@ struct SiteHistoryOnboardingLifecycleTests {
         lifecycle.stop()
     }
 
+    @Test func stoppingCancelsABackgroundRunAndItAsksForNoMoreTime() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.fillDelay = .seconds(3600)
+        let probe = LifecycleProbe(now: start)
+        let lifecycle = make(environment, probe: probe)
+        let background = Task { await lifecycle.runInBackground(scope: scope) }
+        try await eventually { environment.requests.count == 1 }
+        lifecycle.stop()
+        #expect(await background.value == nil)
+        #expect(environment.stored.isEmpty)
+        #expect(try await store.progress(scope: scope) == nil)
+        #expect(probe.scheduled == [nil])
+    }
+
     @Test func theBackgroundRequestNeedsTheNetworkButNotPower() {
         let request = BackgroundSiteHistoryOnboarding.request(earliest: start)
         #expect(request.identifier == BackgroundSiteHistoryOnboarding.identifier)

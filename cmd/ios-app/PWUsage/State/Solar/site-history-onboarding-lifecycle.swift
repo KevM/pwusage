@@ -28,6 +28,10 @@ final class SiteHistoryOnboardingLifecycle {
     }
 
     @ObservationIgnored private var foreground: ForegroundRun?
+    /// A background opportunity's run, so sign-out can stop it too.
+    @ObservationIgnored private var background: Task<SiteHistoryOnboarding.Outcome, Never>?
+    /// Moved by `stop()`, so work that started in an earlier session asks for no more time.
+    @ObservationIgnored private var session = 0
     /// The scope the next background opportunity is for.
     private(set) var lastScope: SolarForecastSiteScope?
     private(set) var status: SiteHistoryStatus?
@@ -102,6 +106,9 @@ final class SiteHistoryOnboardingLifecycle {
     func stop() {
         foreground?.task.cancel()
         foreground = nil
+        background?.cancel()
+        background = nil
+        session += 1
         lastScope = nil
         status = nil
         statusGeneration += 1
@@ -127,8 +134,13 @@ final class SiteHistoryOnboardingLifecycle {
     /// One background opportunity: a bounded run, then when to ask for the next one.
     func runInBackground(scope: SolarForecastSiteScope, maxSlices: Int = backgroundSlices) async -> Date? {
         lastScope = scope
-        guard await prepare(scope) else { return nil }
-        _ = await onboarding.run(scope: scope, maxSlices: maxSlices)
+        let session = session
+        guard await prepare(scope), session == self.session else { return nil }
+        let run = Task { await onboarding.run(scope: scope, maxSlices: maxSlices) }
+        background = run
+        _ = await withTaskCancellationHandler { await run.value } onCancel: { run.cancel() }
+        if background == run { background = nil }
+        guard session == self.session else { return nil }
         return await nextOpportunity(scope: scope)
     }
 
