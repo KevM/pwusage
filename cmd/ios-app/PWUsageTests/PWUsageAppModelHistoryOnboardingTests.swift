@@ -94,12 +94,14 @@ struct PWUsageAppModelHistoryOnboardingTests {
         #expect(lifecycle.lastScope == nil)
     }
 
-    @Test("The history accessory opens Site History in Settings")
-    func openSiteHistory() throws {
+    @Test("The banner opens Solar System in Settings, at the location step when asked")
+    func openSolarSystem() throws {
         let model = try makeModel(historyOnboarding: makeLifecycle(FakeOnboardingEnvironment(), probe: ScheduleProbe()))
-        model.openSiteHistory()
+        model.openSolarSystem()
         #expect(model.selectedTab == .settings)
         #expect(model.settingsPath == [.solarSystem()])
+        model.openSolarSystem(focusingLocation: true)
+        #expect(model.settingsPath == [.solarSystem(startsAtLocation: true)])
         model.resetNavigation()
         #expect(model.settingsPath.isEmpty)
     }

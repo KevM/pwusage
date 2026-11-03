@@ -89,9 +89,10 @@ extension PWUsageAppModel {
         return status
     }
 
-    func openSiteHistory() {
+    /// From the banner; `focusingLocation` opens straight into the home location step.
+    func openSolarSystem(focusingLocation: Bool = false) {
         selectTab(.settings)
-        settingsPath = [.solarSystem()]
+        settingsPath = [.solarSystem(startsAtLocation: focusingLocation)]
     }
 
     /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.

@@ -35,10 +35,14 @@ struct AppTabView: View {
     }
 
     @ViewBuilder private var tabs: some View {
-        let presentation = SiteHistoryPresentation(status: model.siteHistoryStatus, now: .now)
+        let status = model.siteHistoryStatus
+        let presentation = SiteHistoryPresentation(status: status, now: .now)
         if #available(iOS 26.1, *) {
-            tabView.tabViewBottomAccessory(isEnabled: presentation.showsBanner) {
-                SiteHistoryAccessory(checkedDaysText: presentation.countsText, onOpen: model.openSiteHistory)
+            let banner = SolarSystemBannerModel(presentation: presentation, status: status)
+            tabView.tabViewBottomAccessory(isEnabled: presentation.showsBanner && !model.isDemo) {
+                SolarSystemBanner(model: banner) {
+                    model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
+                }
             }
         } else {
             tabView

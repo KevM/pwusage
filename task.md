@@ -23,6 +23,6 @@ Plan: docs/plans/2026-11-02-solar-system-experience.md
 - [x] Status model and presentation phases; counts from the phone's history, not the onboarding position.
 - [x] Pure geometry: strip layout, wedge, hip roof, projection.
 - [x] Solar System screen (merges Site History and Solar Forecast; credit moves to About).
-- [ ] Banner: compass, day dots, needs-location state.
+- [x] Banner: compass, day dots, needs-location state.
 - [ ] Home location sheet: current location (one-time), address or ZIP search, map pin.
 - [ ] Verification: suites, lint, Release build, simulator states, device run on Beta.
