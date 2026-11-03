@@ -119,6 +119,19 @@ struct PWUsageAppModelHistoryOnboardingTests {
         #expect(model.settingsPath.isEmpty)
     }
 
+    @Test("The banner hides while Solar System is on screen")
+    func bannerHidesOnSolarSystem() throws {
+        let model = try makeModel(historyOnboarding: makeLifecycle(FakeOnboardingEnvironment(), probe: ScheduleProbe()))
+        #expect(!model.isShowingSolarSystem)
+        model.openSolarSystem()
+        #expect(model.isShowingSolarSystem)
+        model.selectTab(.home)
+        #expect(!model.isShowingSolarSystem)
+        model.selectTab(.settings)
+        model.settingsPath = [.ratePlans]
+        #expect(!model.isShowingSolarSystem)
+    }
+
     #if DEBUG
         @Test("The Debug reset forgets only the selected site's progress and starts again")
         func debugReset() async throws {

@@ -41,7 +41,8 @@ struct AppTabView: View {
         let presentation = SiteHistoryPresentation(status: status, now: .now)
         if #available(iOS 26.1, *) {
             let banner = SolarSystemBannerModel(presentation: presentation, status: status)
-            tabView.tabViewBottomAccessory(isEnabled: presentation.showsBanner && !model.isDemo) {
+            let showsBanner = presentation.showsBanner && !model.isDemo && !model.isShowingSolarSystem
+            tabView.tabViewBottomAccessory(isEnabled: showsBanner) {
                 SolarSystemBanner(model: banner, clocks: bannerClocks) {
                     model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
                 }

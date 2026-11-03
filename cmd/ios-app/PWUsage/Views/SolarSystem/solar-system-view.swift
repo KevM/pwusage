@@ -57,6 +57,8 @@ struct SolarSystemView: View {
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
                     if status != nil { statusRow(presentation) }
+                } header: {
+                    Text("Find Your Solar System")
                 }
             } else if coordinator.solarLayoutStatus == nil {
                 Section { Text("Checking solar forecast availability…") }

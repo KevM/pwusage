@@ -103,6 +103,12 @@ extension PWUsageAppModel {
         settingsPath = [.solarSystem(startsAtLocation: focusingLocation)]
     }
 
+    /// Solar System is the visible screen, where the banner would only repeat it.
+    var isShowingSolarSystem: Bool {
+        guard selectedTab == .settings, case .solarSystem? = settingsPath.last else { return false }
+        return true
+    }
+
     /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.
     func updateHistoryOnboarding() {
         guard let historyOnboarding else { return }
