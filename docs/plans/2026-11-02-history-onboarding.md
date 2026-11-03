@@ -56,7 +56,7 @@
 ### Task 6: End-to-end and required checks
 
 1. Exercise a new site with controlled 90-day history, a case needing more than 90 days, insufficient/empty data, auth loss/recovery, app restart, and concurrent gap healing. Verify request counts, coverage and detector outcomes. Confirm no unsupported promise of background completion.
-2. After Swift edits run `cmd/ios-app/format.sh`, then `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` from repo root. Run `cmd/ios-app/run-tests.sh` once for all default suites; use `--full` if reproducing CI-only behavior.
+2. After Swift edits run `cmd/ios-app/format.sh`, then `swiftlint lint cmd/ios-app --strict` from repo root. Run `cmd/ios-app/run-tests.sh` once for all default suites; use `--full` if reproducing CI-only behavior.
 3. From `cmd/next-app`, run `npm run lint`, `npm run test`, and `npm run build`. Address failures and report any environment blockers with evidence.
 4. Review the final diff, preserve unrelated changes, and commit verified work with a conventional message. Use the migration generator and RLS requirements if a migration proves necessary.
 

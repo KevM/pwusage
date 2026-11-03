@@ -27,8 +27,9 @@ struct AutomaticForecastPresentationTests {
             .enabled(location: SolarProviderFixture.location, layout: nil, reason: .notEnoughHistory)]
         for status in statuses {
             let availability = LoadTimingForecastPresentation.forecastAvailability(
-                state: .basic, connection: .notConnected, cause: nil, reason: nil,
-                forecastFetchedAt: nil, now: .now, usesAutomaticForecast: true, automaticStatus: status
+                .init(state: .basic, connection: .notConnected, cause: nil, reason: nil,
+                      forecastFetchedAt: nil, now: .now),
+                usesAutomaticForecast: true, automaticStatus: status
             )
             guard case .automaticUnavailable(let message) = availability else {
                 Issue.record("Beta setup must not be represented as a missing Solcast connection")

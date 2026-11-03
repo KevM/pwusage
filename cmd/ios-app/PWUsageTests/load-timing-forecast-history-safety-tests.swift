@@ -181,12 +181,14 @@ extension LoadTimingForecastEstimatorTests {
         let weekday = { (day: Int) in !calendar.isDateInWeekend(dayZero.addingTimeInterval(Double(day) * 86_400)) }
         let car = LoadProfile(id: "car", name: "Charge the car", kind: .appliance, energyKwh: 52.7,
                               durationHours: 52.7 / 9, carSettings: nil)
-        let result = Estimator.evaluate(profile: car, now: now,
-                                        timing: timing(dailyTariffs(days: monday + 25, onPeakDay: weekday),
-                                                       balances: ["ON_PEAK": 4.615, "OFF_PEAK": -66]),
-                                        projection: .forecast(intervals: intervals, context: context),
-                                        balanceSourceTime: now, billingCycleEnd: now.addingTimeInterval(23 * 86_400),
-                                        currencyCode: "USD")
+        let plan = Estimator.plan(.init(
+            now: now,
+            timing: timing(dailyTariffs(days: monday + 25, onPeakDay: weekday),
+                           balances: ["ON_PEAK": 4.615, "OFF_PEAK": -66]),
+            projection: .forecast(intervals: intervals, context: context),
+            balanceSourceTime: now, billingCycleEnd: now.addingTimeInterval(23 * 86_400),
+            currencyCode: "USD"))
+        let result = Estimator.evaluate(profile: car, plan: plan)
 
         let comparison = try #require(result.comparison)
         #expect(comparison.recommendedStart == mondayStart.addingTimeInterval(8 * 3600))
@@ -200,12 +202,14 @@ extension LoadTimingForecastEstimatorTests {
         // forecast's 3 kW of solar against a 1 kW home runs to the end of the tariff.
         let source = start.addingTimeInterval(20 * 60), now = start.addingTimeInterval(40 * 60)
         let intervals = (1 ..< 4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
-        let result = Estimator.evaluate(profile: profile(0.5, hours: 0.5), now: now,
-                                        timing: timing([tariff(0, 7200)], balances: ["p": 2]),
-                                        projection: .forecast(intervals: intervals,
-                                                              context: historyContext(home: 1, grid: { _ in 6 })),
-                                        balanceSourceTime: source, billingCycleEnd: start.addingTimeInterval(86_400),
-                                        currencyCode: "USD")
+        let plan = Estimator.plan(.init(
+            now: now,
+            timing: timing([tariff(0, 7200)], balances: ["p": 2]),
+            projection: .forecast(intervals: intervals,
+                                  context: historyContext(home: 1, grid: { _ in 6 })),
+            balanceSourceTime: source, billingCycleEnd: start.addingTimeInterval(86_400),
+            currencyCode: "USD"))
+        let result = Estimator.evaluate(profile: profile(0.5, hours: 0.5), plan: plan)
 
         let comparison = try #require(result.comparison, "\(String(describing: result.unavailableReason))")
         #expect(comparison.assumptions.contains { $0.hasPrefix("Solar follows your solar forecast") })
@@ -220,12 +224,14 @@ extension LoadTimingForecastEstimatorTests {
         // fills 00:05–00:30, then the forecast's 3 kW of solar against a 1 kW home.
         let intervals = (1 ..< 4).map { forecast(3, from: TimeInterval($0) * 1800, to: TimeInterval($0 + 1) * 1800) }
         func run(ageMinutes: Double) -> Estimator.Result {
-            Estimator.evaluate(profile: profile(0.5, hours: 0.5), now: start.addingTimeInterval(ageMinutes * 60),
-                               timing: timing([tariff(0, 7200)], balances: ["p": 2]),
-                               projection: .forecast(intervals: intervals,
-                                                     context: historyContext(home: 1, grid: { _ in 6 })),
-                               balanceSourceTime: start, billingCycleEnd: start.addingTimeInterval(86_400),
-                               currencyCode: "USD")
+            let plan = Estimator.plan(.init(
+                now: start.addingTimeInterval(ageMinutes * 60),
+                timing: timing([tariff(0, 7200)], balances: ["p": 2]),
+                projection: .forecast(intervals: intervals,
+                                      context: historyContext(home: 1, grid: { _ in 6 })),
+                balanceSourceTime: start, billingCycleEnd: start.addingTimeInterval(86_400),
+                currencyCode: "USD"))
+            return Estimator.evaluate(profile: profile(0.5, hours: 0.5), plan: plan)
         }
 
         let comparison = try #require(run(ageMinutes: 33).comparison,

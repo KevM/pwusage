@@ -147,9 +147,10 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     /// Re-runs the recorded projection on the recorded inputs; `nil` when they can't rebuild it.
     func replay() -> Estimator.Result? {
         guard let balanceSourceTime, let projection = rebuiltProjection() else { return nil }
-        return Estimator.evaluate(profile: job, now: now, timing: loadTiming, projection: projection,
-                                  balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-                                  currencyCode: currencyCode)
+        let plan = Estimator.plan(.init(now: now, timing: loadTiming, projection: projection,
+                                        balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+                                        currencyCode: currencyCode))
+        return Estimator.evaluate(profile: job, plan: plan)
     }
 
     private func rebuiltProjection() -> Estimator.Projection? {

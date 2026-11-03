@@ -103,10 +103,10 @@ struct SmartShiftScenario: Codable {
                                 pricingPeriods: periods,
                                 tariffTimeline: segments ?? (reversed ? tariffs.reversed() : tariffs),
                                 nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        return LoadTimingForecastEstimator.evaluate(profile: profile, now: now, timing: timing,
-                                                    projection: override ?? projection,
-                                                    balanceSourceTime: source, billingCycleEnd: billEnd,
-                                                    currencyCode: "USD")
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: now, timing: timing, projection: override ?? projection,
+            balanceSourceTime: source, billingCycleEnd: billEnd, currencyCode: "USD"))
+        return LoadTimingForecastEstimator.evaluate(profile: profile, plan: plan)
     }
     var diagnostic: String {
         let encoder = JSONEncoder()

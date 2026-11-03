@@ -31,15 +31,6 @@ extension SmartShiftPresentation {
         }
     }
 
-    /// Compatibility overload for callers that pass the run's inputs one by one;
-    /// omitting `lanes` means no lane describes the banks.
-    static func draws(from start: Date, to end: Date, profile: LoadProfile, timing: LoadTiming,
-                      laneEnd: @escaping (LoadTimingForecastEstimator.BalanceLane) -> Double?,
-                      lanes: [LoadTimingForecastEstimator.BalanceLane] = []) -> [Draw] {
-        draws(from: start, to: end, inputs: DrawInputs(profile: profile, timing: timing,
-                                                       laneEnd: laneEnd, lanes: lanes))
-    }
-
     /// Hours a run spends in each rate period, in the order it reaches them.
     static func hoursByPeriod(from start: Date, to end: Date, timing: LoadTiming) -> [(key: String, hours: Double)] {
         var result: [(key: String, hours: Double)] = []

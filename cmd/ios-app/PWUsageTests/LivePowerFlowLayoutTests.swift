@@ -7,8 +7,8 @@ import Testing
 struct LivePowerFlowLayoutTests {
     private func flow(solar: Double, home: Double, grid: Double, battery: Double) -> DashboardPresentation.PowerFlow {
         DashboardPresentation.powerFlow(
-            solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
-            sourceTime: .now, isUnavailable: false
+            .init(solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
+                  sourceTime: .now, isUnavailable: false)
         )
     }
 

@@ -160,42 +160,6 @@ extension LoadTimingForecastEstimator {
         return LoadedStep(balance: loadedBalance, contribution: contribution, drawBeforeSafetyEnd: drawBeforeSafetyEnd)
     }
 
-    /// Compatibility overload for callers that price a Job from a forecast array.
-    /// A missing forecast or context makes the comparison unavailable.
-    static func evaluate(
-        profile: LoadProfile,
-        now: Date,
-        timing: LoadTiming,
-        forecast: [SolarForecastInterval]? = nil,
-        context: PlanningContext? = nil,
-        balanceSourceTime: Date,
-        billingCycleEnd: Date,
-        currencyCode: String = "USD"
-    ) -> Result {
-        guard let forecast, let context else { return unavailable(.invalidInput) }
-        return evaluate(profile: profile, now: now, timing: timing,
-                        projection: .forecast(intervals: forecast, context: context),
-                        balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-                        currencyCode: currencyCode)
-    }
-
-    /// Compatibility overload for callers that price a Job against a projection.
-    /// A missing projection makes the comparison unavailable.
-    static func evaluate(
-        profile: LoadProfile,
-        now: Date,
-        timing: LoadTiming,
-        projection: Projection? = nil,
-        balanceSourceTime: Date,
-        billingCycleEnd: Date,
-        currencyCode: String = "USD"
-    ) -> Result {
-        guard let projection else { return unavailable(.invalidInput) }
-        return evaluate(profile: profile, plan: plan(PlanRequest(
-            now: now, timing: timing, projection: projection, balanceSourceTime: balanceSourceTime,
-            billingCycleEnd: billingCycleEnd, currencyCode: currencyCode)))
-    }
-
     /// Everything about an evaluation that doesn't depend on the Job: the
     /// projection, its coverage, and the typical and cautious baselines. Build
     /// it once per pass and price every Job against it.

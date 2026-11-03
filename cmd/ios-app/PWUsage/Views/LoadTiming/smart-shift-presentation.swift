@@ -42,26 +42,6 @@ enum SmartShiftPresentation {
         evaluator(inputs)(profile)
     }
 
-    /// Compatibility overload for callers that pass the pass inputs one by one;
-    /// omitted parts describe a pass with no usable forecast.
-    static func evaluate(
-        profile: LoadProfile,
-        now: Date,
-        timing: LoadTiming,
-        forecast: ForecastAvailability = .none,
-        intervals: [SolarForecastInterval]? = nil,
-        context: LoadTimingForecastEstimator.PlanningContext? = nil,
-        balanceSourceTime: Date? = nil,
-        billingCycleEnd: Date,
-        currencyCode: String = "USD",
-        timeZone: String
-    ) -> SmartShiftEvaluation {
-        evaluate(profile: profile, inputs: EvaluationInputs(
-            now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
-            balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-            currencyCode: currencyCode, timeZone: timeZone))
-    }
-
     /// Prices Jobs for one pass, as `evaluate` does. The projection work that
     /// doesn't depend on the Job is planned once per projection and shared, so
     /// pricing every saved Job for the hint stays within the per-pass budget.
@@ -102,24 +82,6 @@ enum SmartShiftPresentation {
                     profile: profile, plan: plans.plan(for: .flat(timeZone: inputs.timeZone))),
                 forecast: availability, projection: .flat)
         }
-    }
-
-    /// Compatibility overload for callers that pass the pass inputs one by one;
-    /// omitted parts describe a pass with no usable forecast.
-    static func evaluator(
-        now: Date,
-        timing: LoadTiming,
-        forecast: ForecastAvailability = .none,
-        intervals: [SolarForecastInterval]? = nil,
-        context: LoadTimingForecastEstimator.PlanningContext? = nil,
-        balanceSourceTime: Date?,
-        billingCycleEnd: Date,
-        currencyCode: String = "USD",
-        timeZone: String
-    ) -> (LoadProfile) -> SmartShiftEvaluation {
-        evaluator(EvaluationInputs(now: now, timing: timing, forecast: forecast, intervals: intervals,
-                                   context: context, balanceSourceTime: balanceSourceTime,
-                                   billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone))
     }
 
     /// Each projection's plan for one pass, built the first time a Job needs it.
@@ -187,23 +149,5 @@ enum SmartShiftPresentation {
                               billingCycleEnd: inputs.billingCycleEnd, currencyCode: inputs.currencyCode,
                               timeZone: inputs.timeZone)
         return SmartShiftScreen(content: .verdict(context.verdict(forecast: forecast)))
-    }
-
-    /// Compatibility overload for callers that pass the card inputs one by one;
-    /// omitted parts describe no Job and no forecast.
-    static func make(
-        profile: LoadProfile? = nil,
-        result: LoadTimingForecastEstimator.Result,
-        forecast: ForecastAvailability = .none,
-        refreshUnavailable: Bool = false,
-        timing: LoadTiming,
-        now: Date,
-        billingCycleEnd: Date,
-        currencyCode: String = "USD",
-        timeZone: String
-    ) -> SmartShiftScreen {
-        make(profile: profile, result: result, forecast: forecast, refreshUnavailable: refreshUnavailable,
-             inputs: ScreenInputs(timing: timing, now: now, billingCycleEnd: billingCycleEnd,
-                                  currencyCode: currencyCode, timeZone: timeZone))
     }
 }

@@ -59,13 +59,14 @@ struct LoadTimingForecastEstimatorTests {
         cycleEnd: TimeInterval = 172_800,
         currencyCode: String = "USD"
     ) -> LoadTimingForecastEstimator.Result {
-        LoadTimingForecastEstimator.evaluate(
-            profile: profile ?? self.profile(), now: start.addingTimeInterval(now),
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: start.addingTimeInterval(now),
             timing: timing(tariffs, balances: balances, pricingBalances: pricingBalances, hasCycleData: hasCycleData),
-            forecast: forecast, context: context ?? self.context(),
+            projection: .forecast(intervals: forecast, context: context ?? self.context()),
             balanceSourceTime: start.addingTimeInterval(balanceSource),
             billingCycleEnd: start.addingTimeInterval(cycleEnd), currencyCode: currencyCode
-        )
+        ))
+        return LoadTimingForecastEstimator.evaluate(profile: profile ?? self.profile(), plan: plan)
     }
 
     // MARK: - Flat (forecast-free) projection
@@ -97,12 +98,13 @@ struct LoadTimingForecastEstimatorTests {
         cycleEnd: Date? = nil,
         timeZone: String = "UTC"
     ) -> LoadTimingForecastEstimator.Result {
-        LoadTimingForecastEstimator.evaluate(
-            profile: profile, now: now,
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: now,
             timing: timing(tariffs, balances: balances, pricingBalances: pricingBalances),
             projection: .flat(timeZone: timeZone), balanceSourceTime: balanceSource ?? now,
             billingCycleEnd: cycleEnd ?? now.addingTimeInterval(7 * 86_400), currencyCode: "USD"
-        )
+        ))
+        return LoadTimingForecastEstimator.evaluate(profile: profile, plan: plan)
     }
 
     // MARK: - Balance lanes
@@ -138,9 +140,10 @@ struct LoadTimingForecastEstimatorTests {
         balances: [String: Double],
         cycleEnd: Date
     ) -> Estimator.Result {
-        Estimator.evaluate(profile: profile ?? self.profile(), now: now, timing: timing(tariffs, balances: balances),
-                           projection: projection, balanceSourceTime: now, billingCycleEnd: cycleEnd,
-                           currencyCode: "USD")
+        let plan = Estimator.plan(.init(now: now, timing: timing(tariffs, balances: balances),
+                                        projection: projection, balanceSourceTime: now,
+                                        billingCycleEnd: cycleEnd, currencyCode: "USD"))
+        return Estimator.evaluate(profile: profile ?? self.profile(), plan: plan)
     }
 
     /// Daily UTC segments from 00:00 on `start`'s day: On-Peak 08:00–20:00 on
@@ -184,14 +187,15 @@ struct LoadTimingForecastEstimatorTests {
         profile: LoadProfile,
         home: Double = 0
     ) -> LoadTimingForecastEstimator.Result {
-        LoadTimingForecastEstimator.evaluate(profile: profile, now: start, timing: timing(tariffs, balances: balances),
-                                             // Zero grid history: the rule applies only when history is served.
-                                             projection: .forecast(intervals: forecast,
-                                                                   context: historyContext(home: home,
-                                                                                           grid: { _ in 0 })),
-                                             balanceSourceTime: start,
-                                             billingCycleEnd: start.addingTimeInterval(20 * 86_400),
-                                             currencyCode: "USD")
+        let projection = LoadTimingForecastEstimator.Projection.forecast(
+            intervals: forecast, context: historyContext(home: home, grid: { _ in 0 }))
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: start, timing: timing(tariffs, balances: balances),
+            // Zero grid history: the rule applies only when history is served.
+            projection: projection, balanceSourceTime: start,
+            billingCycleEnd: start.addingTimeInterval(20 * 86_400), currencyCode: "USD"
+        ))
+        return LoadTimingForecastEstimator.evaluate(profile: profile, plan: plan)
     }
 
     func load(_ kwh: Double, hours: Double) -> LoadProfile {

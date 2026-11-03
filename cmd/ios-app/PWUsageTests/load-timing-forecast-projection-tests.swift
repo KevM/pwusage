@@ -242,13 +242,14 @@ extension LoadTimingForecastEstimatorTests {
         let slots = stride(from: 0, to: 1440, by: 30).map {
             LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0, batteryNetChargeKw: 0)
         }
-        let forecast = LoadTimingForecastEstimator.evaluate(
-            profile: profile(14, hours: 5.9), now: now,
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: now,
             timing: timing(peakOffPeakTariffs(), balances: ["Peak": -6, "Off-Peak": 18]),
             projection: .forecast(intervals: [SolarForecastInterval(periodStart: hours(0), periodEnd: hours(48),
                                                                     powerKw: 0)],
                                   context: .init(timeZone: "UTC", slots: slots, asOf: now)),
-            balanceSourceTime: source, billingCycleEnd: now.addingTimeInterval(7 * 86_400), currencyCode: "USD")
+            balanceSourceTime: source, billingCycleEnd: now.addingTimeInterval(7 * 86_400), currencyCode: "USD"))
+        let forecast = LoadTimingForecastEstimator.evaluate(profile: profile(14, hours: 5.9), plan: plan)
         #expect(forecast.unavailableReason == .staleBalance)
     }
 
@@ -357,11 +358,12 @@ extension LoadTimingForecastEstimatorTests {
             return SolarForecastInterval(periodStart: begin, periodEnd: end, powerKw: inPeak ? 3 : 0)
         }
         let now = hours(8.5)
-        let result = LoadTimingForecastEstimator.evaluate(
-            profile: profile(14, hours: 5.9), now: now,
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: now,
             timing: timing(tariffs, balances: ["Peak": -6, "Off-Peak": 18]),
             projection: .forecast(intervals: solar, context: context()),
-            balanceSourceTime: now, billingCycleEnd: now.addingTimeInterval(7 * 86_400), currencyCode: "USD")
+            balanceSourceTime: now, billingCycleEnd: now.addingTimeInterval(7 * 86_400), currencyCode: "USD"))
+        let result = LoadTimingForecastEstimator.evaluate(profile: profile(14, hours: 5.9), plan: plan)
         let comparison = try #require(result.comparison)
         #expect(comparison.recommendedStart >= hours(16.5))
         let peak = try lane("Peak", in: comparison)

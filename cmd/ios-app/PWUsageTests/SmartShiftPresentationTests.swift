@@ -68,8 +68,16 @@ struct SmartShiftPresentationTests {
         billingCycleEnd: Date = at(24 * 20)
     ) -> SmartShiftScreen {
         SmartShiftPresentation.make(profile: profile, result: result, forecast: forecast,
-                                    refreshUnavailable: refreshUnavailable, timing: timing, now: now,
-                                    billingCycleEnd: billingCycleEnd, currencyCode: "USD", timeZone: "UTC")
+                                    refreshUnavailable: refreshUnavailable,
+                                    inputs: .init(timing: timing, now: now, billingCycleEnd: billingCycleEnd,
+                                                  currencyCode: "USD", timeZone: "UTC"))
+    }
+
+    @Test func gerundPreservesTheVerbCase() {
+        #expect(SmartShiftPresentation.gerund("Run") == "Running")
+        #expect(SmartShiftPresentation.gerund("RUN") == "RUNNING")
+        #expect(SmartShiftPresentation.gerund("Charge") == "Charging")
+        #expect(SmartShiftPresentation.gerund("CHARGE") == "CHARGING")
     }
 
     static func verdict(_ screen: SmartShiftScreen) throws -> SmartShiftVerdict {

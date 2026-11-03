@@ -205,13 +205,15 @@ extension LoadTimingForecastEstimatorTests {
         }
         let dstContext = LoadTimingForecastEstimator.PlanningContext(timeZone: "America/Los_Angeles", slots: slots,
                                                                      asOf: dstStart)
-        let result = try #require(LoadTimingForecastEstimator.evaluate(
-            profile: profile(), now: dstStart, timing: dstTiming,
-            forecast: [SolarForecastInterval(periodStart: dstStart, periodEnd: end, powerKw: 0)],
-            context: dstContext,
+        let plan = LoadTimingForecastEstimator.plan(.init(
+            now: dstStart, timing: dstTiming,
+            projection: .forecast(intervals: [SolarForecastInterval(periodStart: dstStart, periodEnd: end,
+                                                                    powerKw: 0)],
+                                  context: dstContext),
             balanceSourceTime: dstStart, billingCycleEnd: dstStart.addingTimeInterval(7200),
             currencyCode: "USD"
-        ).comparison)
+        ))
+        let result = try #require(LoadTimingForecastEstimator.evaluate(profile: profile(), plan: plan).comparison)
         #expect(result.evaluatedStarts.contains(dstStart.addingTimeInterval(1800))) // 01:30 local.
         // 03:00 local after the skipped hour.
         #expect(result.evaluatedStarts.contains(dstStart.addingTimeInterval(3600)))

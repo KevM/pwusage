@@ -176,8 +176,9 @@ extension SmartShiftPresentationTests {
             periodSwitches: [Self.at(32), Self.at(44)])
         let screen = SmartShiftPresentation.make(
             profile: Self.car, result: .init(comparison: comparison, unavailableReason: nil),
-            forecast: .ready, refreshUnavailable: false, timing: timing, now: now,
-            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+            forecast: .ready, refreshUnavailable: false,
+            inputs: .init(timing: timing, now: now, billingCycleEnd: Self.at(480),
+                          currencyCode: "USD", timeZone: "UTC"))
         let why = Self.normalized(try Self.verdict(screen).why)
         #expect(!why.contains("Off-Peak bank"))
         #expect(why
@@ -238,8 +239,9 @@ extension SmartShiftPresentationTests {
                 periodSwitches: [])
             let screen = SmartShiftPresentation.make(
                 profile: Self.car, result: .init(comparison: comparison, unavailableReason: nil),
-                forecast: .none, refreshUnavailable: false, timing: Self.timing(), now: Self.at(18),
-                billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+                forecast: .none, refreshUnavailable: false,
+                inputs: .init(timing: Self.timing(), now: Self.at(18), billingCycleEnd: Self.at(480),
+                              currencyCode: "USD", timeZone: "UTC"))
             return try Self.verdict(screen).why
         }
         #expect(try why(covered) == "It's Off-Peak, and your Off-Peak bank covers all of this run.")
@@ -261,8 +263,9 @@ extension SmartShiftPresentationTests {
             periodSwitches: [Self.at(7)])
         let screen = SmartShiftPresentation.make(
             profile: pump, result: .init(comparison: comparison, unavailableReason: nil),
-            forecast: .none, refreshUnavailable: false, timing: Self.timing(), now: start,
-            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+            forecast: .none, refreshUnavailable: false,
+            inputs: .init(timing: Self.timing(), now: start, billingCycleEnd: Self.at(480),
+                          currencyCode: "USD", timeZone: "UTC"))
         #expect(Self.normalized(try Self.verdict(screen).why)
             == "Starting now runs into Peak, where you have no bank, so it's bought at \(Self.rate(0.38)). "
             + "At 4:30 PM it uses your Off-Peak bank, giving up \(Self.rate(0.26)) in credit.")

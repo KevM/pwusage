@@ -51,16 +51,6 @@ extension SmartShiftPresentation {
                 timeZone: inputs.timeZone).costBreakdowns
     }
 
-    /// Compatibility overload for callers that pass the inputs one by one.
-    static func costBreakdowns(
-        comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-        now: Date, billingCycleEnd: Date? = nil, currencyCode: String = "USD",
-        timeZone: String) -> [CostBreakdown] {
-        costBreakdowns(CostBreakdownInputs(comparison: comparison, profile: profile, timing: timing, now: now,
-                                           billingCycleEnd: billingCycleEnd, currencyCode: currencyCode,
-                                           timeZone: timeZone))
-    }
-
     /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
     /// safety rule turned down a cheaper start; otherwise `nil`.
     static func ruledOutNote(
@@ -89,20 +79,26 @@ extension SmartShiftPresentation {
     }
 
     /// "Charge" → "Charging", "Wash" → "Washing", "Start" → "Starting", "Bake" → "Baking".
+    /// The input's case is preserved: "RUN" → "RUNNING".
     static func gerund(_ verb: String) -> String {
         let lower = verb.lowercased()
         if lower.hasSuffix("e"), !lower.hasSuffix("ee"), !lower.hasSuffix("ye"), !lower.hasSuffix("oe"),
            lower.count > 2 {
-            return String(verb.dropLast()) + "ing"
+            return addingIng(to: String(verb.dropLast()))
         }
         // A short consonant-vowel-consonant verb doubles its last letter: "Run" → "Running".
         let vowels = Set("aeiou")
         let letters = Array(lower)
         if letters.count == 3, !vowels.contains(letters[0]), vowels.contains(letters[1]),
            !vowels.contains(letters[2]), !"wxy".contains(letters[2]) {
-            return verb + String(letters[2]) + "ing"
+            return addingIng(to: verb + String(verb.suffix(1)))
         }
-        return verb + "ing"
+        return addingIng(to: verb)
+    }
+
+    /// "ing" for a lower-case stem, "ING" when the stem ends in a capital.
+    private static func addingIng(to stem: String) -> String {
+        stem + (stem.last?.isUppercase == true ? "ING" : "ing")
     }
 
     // MARK: - Blocked states

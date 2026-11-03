@@ -51,6 +51,15 @@ struct MobileLiveResponse: Codable, Equatable {
             batteryPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .batteryPower))
             gridPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .gridPower))
         }
+
+        /// Encoding uses the same keys as decoding, so the two cannot drift apart.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: LiveCodingKeys.self)
+            try container.encode(solarPower, forKey: .solarPower)
+            try container.encode(loadPower, forKey: .loadPower)
+            try container.encode(batteryPower, forKey: .batteryPower)
+            try container.encode(gridPower, forKey: .gridPower)
+        }
     }
 
     struct Today: Codable, Equatable {

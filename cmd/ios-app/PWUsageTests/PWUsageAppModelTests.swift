@@ -194,7 +194,9 @@ struct PWUsageAppModelTests {
 
     func makeDefaults() -> UserDefaults {
         let suite = "PWUsageAppModelTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            preconditionFailure("Test defaults suite '\(suite)' could not be created")
+        }
         defaults.removePersistentDomain(forName: suite)
         return defaults
     }

@@ -39,8 +39,8 @@ enum DashboardPresentation {
         let loadPower: Double
         let batteryPower: Double
         let gridPower: Double
-        var sourceTime: Date?
-        var isUnavailable = false
+        let sourceTime: Date?
+        let isUnavailable: Bool
     }
 
     static func powerFlow(_ readings: PowerReadings, now: Date = .now) -> PowerFlow {
@@ -95,18 +95,6 @@ enum DashboardPresentation {
             }
         }
         return result
-    }
-
-    /// Keeps the labelled form for callers written before `PowerReadings`; new code
-    /// should build the struct so the four readings travel together.
-    static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
-                          sourceTime: Date? = nil, isUnavailable: Bool = false,
-                          now: Date = .now) -> PowerFlow {
-        powerFlow(
-            PowerReadings(solarPower: solarPower, loadPower: loadPower, batteryPower: batteryPower,
-                          gridPower: gridPower, sourceTime: sourceTime, isUnavailable: isUnavailable),
-            now: now
-        )
     }
 
     struct LoadTimingSummary: Equatable {

@@ -33,8 +33,10 @@ struct SmartShiftDiagnosticsTests {
         let car = harrison.car
         let source = balanceSourceTime ?? now
         let evaluation = SmartShiftPresentation.evaluate(
-            profile: car, now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
-            balanceSourceTime: source, billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: car,
+            inputs: .init(now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                          balanceSourceTime: source, billingCycleEnd: Fixtures.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         let diagnostics = SmartShiftDiagnostics(
             siteId: "site-42", app: .init(version: "1.2", build: "34"), job: car, now: now, balanceSourceTime: source,
             billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC", timing: timing,
@@ -140,8 +142,10 @@ struct SmartShiftDiagnosticsTests {
                             pricingPeriods: timing.pricingPeriods, tariffTimeline: timing.tariffTimeline,
                             nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
         let evaluation = SmartShiftPresentation.evaluate(
-            profile: car, now: now, timing: timing, forecast: .none, intervals: nil, context: nil,
-            balanceSourceTime: now, billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: car,
+            inputs: .init(now: now, timing: timing, forecast: .none, intervals: nil, context: nil,
+                          balanceSourceTime: now, billingCycleEnd: Fixtures.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         let diagnostics = SmartShiftDiagnostics(
             siteId: "site-42", app: nil, job: car, now: now, balanceSourceTime: now, billingCycleEnd: Fixtures.at(48),
             currencyCode: "USD", timeZone: "UTC", timing: timing, evaluation: evaluation, intervals: nil, context: nil,

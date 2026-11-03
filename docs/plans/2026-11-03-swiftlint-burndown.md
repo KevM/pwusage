@@ -1,8 +1,8 @@
 # SwiftLint baseline burndown
 
-Goal: `.swiftlint-baseline.json` reaches zero entries without loosening
-`.swiftlint.yml`. Work happens on `chore/swiftlint-burndown`, based on `main`,
-in `.worktrees/swiftlint-burndown`.
+Goal: the SwiftLint baseline reached zero entries without loosening
+`.swiftlint.yml`, then the empty baseline was removed. Work happens on
+`chore/swiftlint-burndown`, based on `main`, in `.worktrees/swiftlint-burndown`.
 
 ## Verification
 
@@ -10,7 +10,7 @@ Every batch must pass all three, in order:
 
 ```bash
 ./cmd/ios-app/format.sh
-swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json
+swiftlint lint cmd/ios-app --strict
 cd cmd/ios-app && ./run-tests.sh --quick
 ```
 
@@ -23,19 +23,13 @@ Two environment notes:
   server fails under the workspace sandbox with
   `PreviewsMacros.Common could not be found`.
 
-## Re-stamping the baseline
+## Baseline removed
 
-Baseline entries match on file plus the offending line's text, not on line
-number. Any edit that changes such a line (even by one character) makes its
-entry stale and the violation reappears. After a batch, re-stamp so the file
-records exactly what is left:
+Once the count reached zero, `.swiftlint-baseline.json` was deleted and CI
+stopped passing `--baseline`. Lint now fails on any violation; there is no
+checked-in debt and no re-stamping step.
 
-```bash
-swiftlint lint cmd/ios-app --write-baseline .swiftlint-baseline.json --quiet
-```
-
-Only do this when the raw count went down; the file is the record of debt, not
-a place to hide new violations.
+Do not recreate a baseline to hide new violations; fix them.
 
 ## Progress
 
@@ -166,23 +160,25 @@ Inline suppressions left: 2 — `load-timing-view` (`redundant_discardable_let`,
 needs the refresh scheduling reworked first) and the `file_length` header in
 `LoadTimingForecastEstimatorTests` (goes away with the suite split).
 
-Verification used after every batch: `format.sh`, the strict baseline lint,
+Verification used after every batch: `format.sh`, the strict lint,
 and `./run-tests.sh --quick` (966 tests).
 
 ## Complete
 
-As of `1c290c53` the burndown is finished:
+The burndown is finished:
 
-- `.swiftlint-baseline.json` holds **0 entries** (from 1091).
-- `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` is clean over 341 files.
+- `.swiftlint-baseline.json` was deleted after reaching **0 entries** (from 1091), and CI no longer passes `--baseline`.
+- `swiftlint lint cmd/ios-app --strict` is clean over 342 files.
 - There are **zero** `swiftlint:disable` comments in the iOS sources.
 - `cmd/ios-app/format.sh` is clean.
-- `./run-tests.sh` (full) passes: 968 tests in 98 suites.
+- The scratch `.sl-test.yml` was removed, and `.swiftformat` uses `--trailing-commas never`.
+- `./run-tests.sh` (full) passes: 970 tests in 98 suites.
 
 The seven oversized test suites were split into extensions in new files; shared fixtures
 became internal. The last suppression, a SwiftUI dependency read in `load-timing-view`, is
 now `.onChange(of: staleRefreshes)`, which reads the same state without the discardable let.
 
-Remaining follow-up (not part of the burndown): the compatibility overloads added while
-clearing `function_parameter_count` can be removed once their out-of-scope call sites move
-to the new grouped APIs.
+The compatibility overloads and optional defaults added while clearing
+`function_parameter_count` were removed in review. Production and tests now pass the
+grouped inputs directly, so omitting a forecast, context, lanes or currency cannot
+silently change the result.

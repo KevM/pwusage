@@ -76,4 +76,14 @@ extension MobileContractsTests {
         #expect(response.live.gridPower == 0)
         #expect(response.live.batteryPower == -300)
     }
+
+    @Test("Live power encodes with the same keys it decodes")
+    func livePowerUsesOneKeySet() throws {
+        let payload = #"{"solarPower":1200,"loadPower":900,"batteryPower":-300,"gridPower":0}"#
+        let live = try MobileContractDecoder.make().decode(
+            MobileLiveResponse.Live.self, from: Data(payload.utf8))
+        let encoded = try JSONEncoder().encode(live)
+        let object = try JSONDecoder().decode([String: Double].self, from: encoded)
+        #expect(object == ["solarPower": 1200, "loadPower": 900, "batteryPower": -300, "gridPower": 0])
+    }
 }

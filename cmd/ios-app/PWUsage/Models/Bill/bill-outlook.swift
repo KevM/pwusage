@@ -101,10 +101,10 @@ enum BillOutlook {
             guard tariff.start < tariff.end, tariff.buyRate.isFinite, tariff.sellRate.isFinite,
                   index == 0 || tariff.start >= tariffs[index - 1].end else { return .empty }
         }
-        let intervals = EnergyFlowProjection.intervals(
-            from: history.observedThrough, to: cycleEnd, now: now,
+        let intervals = EnergyFlowProjection.intervals(.init(
+            start: history.observedThrough, end: cycleEnd, now: now,
             context: context, forecast: forecast, tariffs: tariffs.map(\.segment)
-        )
+        ))
         var buckets = observed.buckets
         var points = [observed]
         var calendar = Calendar(identifier: .gregorian)

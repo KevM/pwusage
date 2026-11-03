@@ -20,8 +20,8 @@ struct DashboardPresentationTests {
     private func flow(solar: Double, home: Double, grid: Double, battery: Double,
                       age: TimeInterval = 0, unavailable: Bool = false) -> DashboardPresentation.PowerFlow {
         DashboardPresentation.powerFlow(
-            solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
-            sourceTime: flowNow.addingTimeInterval(-age), isUnavailable: unavailable, now: flowNow
+            .init(solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
+                  sourceTime: flowNow.addingTimeInterval(-age), isUnavailable: unavailable), now: flowNow
         )
     }
 
@@ -94,8 +94,8 @@ struct DashboardPresentationTests {
         let unavailable = flow(solar: 1000, home: 1000, grid: 0, battery: 0, unavailable: true)
         #expect((unavailable.supplying + unavailable.receiving).allSatisfy { $0.role == .unknown })
         let missing = DashboardPresentation.powerFlow(
-            solarPower: 0, loadPower: 0, batteryPower: 0, gridPower: 0,
-            sourceTime: nil, isUnavailable: false, now: flowNow
+            .init(solarPower: 0, loadPower: 0, batteryPower: 0, gridPower: 0,
+                  sourceTime: nil, isUnavailable: false), now: flowNow
         )
         #expect((missing.supplying + missing.receiving).allSatisfy { $0.role == .unknown })
         let invalid = flow(solar: .nan, home: -.infinity, grid: 100, battery: 0)
@@ -112,8 +112,8 @@ struct DashboardPresentationTests {
         #expect(expiry.timeIntervalSince(flowNow) < 2)
         func cards(at now: Date) -> [DashboardPresentation.PowerCard] {
             let result = DashboardPresentation.powerFlow(
-                solarPower: 754, loadPower: 1064, batteryPower: 310, gridPower: 0,
-                sourceTime: sourceTime, isUnavailable: false, now: now
+                .init(solarPower: 754, loadPower: 1064, batteryPower: 310, gridPower: 0,
+                      sourceTime: sourceTime, isUnavailable: false), now: now
             )
             return result.supplying + result.receiving
         }

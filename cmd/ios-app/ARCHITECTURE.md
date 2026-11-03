@@ -42,5 +42,5 @@
 - Build: `cd cmd/ios-app && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`
 - Tests: `cd cmd/ios-app && ./run-tests.sh` (or `./run-tests.sh <Suite>`)
 - Format: `swiftformat cmd/ios-app --config .swiftformat` or `./cmd/ios-app/format.sh`
-- Lint: `swiftlint lint --strict --baseline .swiftlint-baseline.json` (remove `--baseline` once zero)
+- Lint: `swiftlint lint cmd/ios-app --strict`
 - Dead code scan: `cd cmd/ios-app && ./periphery.sh`

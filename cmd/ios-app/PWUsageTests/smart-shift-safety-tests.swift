@@ -68,8 +68,9 @@ extension SmartShiftPresentationTests {
                              profile: LoadProfile = harrisonSunday().car) throws -> SmartShiftVerdict {
         try verdict(SmartShiftPresentation.make(
             profile: profile, result: .init(comparison: comparison, unavailableReason: nil),
-            forecast: forecast, refreshUnavailable: false, timing: harrisonSunday().timing,
-            now: now, billingCycleEnd: cycleEnd, currencyCode: "USD", timeZone: "UTC"))
+            forecast: forecast, refreshUnavailable: false,
+            inputs: .init(timing: harrisonSunday().timing, now: now, billingCycleEnd: cycleEnd,
+                          currencyCode: "USD", timeZone: "UTC")))
     }
 
     @Test func headlineWhenTheSafeStartCostsMoreThanNow() throws {
@@ -130,9 +131,9 @@ extension SmartShiftPresentationTests {
     @Test func bankNoteGivesTheBillDateProjectionBeforeAndAfterTheCharge() throws {
         let (comparison, now) = Self.morningDip()
         let harrison = Self.harrisonSunday()
-        let breakdowns = SmartShiftPresentation.costBreakdowns(
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
             comparison: comparison, profile: harrison.car, timing: harrison.timing, now: now,
-            billingCycleEnd: Self.cycleEnd, currencyCode: "USD", timeZone: "UTC")
+            billingCycleEnd: Self.cycleEnd, currencyCode: "USD", timeZone: "UTC"))
         let later = try #require(breakdowns.first)
         // Draws use the bill-date bank, not the chart edge (where On-Peak ends at -19.7).
         #expect(later.lines == [
@@ -147,9 +148,9 @@ extension SmartShiftPresentationTests {
     @Test func bankNoteSaysWhenRatesChange() throws {
         let (comparison, now) = Self.morningDip(endsAtRateChange: true)
         let harrison = Self.harrisonSunday()
-        let breakdowns = SmartShiftPresentation.costBreakdowns(
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
             comparison: comparison, profile: harrison.car, timing: harrison.timing, now: now,
-            billingCycleEnd: Self.at(24 * 30), currencyCode: "USD", timeZone: "UTC")
+            billingCycleEnd: Self.at(24 * 30), currencyCode: "USD", timeZone: "UTC"))
         #expect(try #require(breakdowns.first).notes
             == ["On-Peak bank is +5 now, projecting +60 by \(Self.shortDate(Self.cycleEnd)), "
                 + "when rates change, +7 after this charge."])

@@ -192,8 +192,7 @@
             let now = Date.now
             _coordinator = StateObject(wrappedValue: makePreviewCoordinator(mode: mode, now: now))
             let suiteName = "pwusage.preview.solar.\(mode.rawValue)"
-            let defaults = UserDefaults(suiteName: suiteName) ?? .standard
-            defaults.removePersistentDomain(forName: suiteName)
+            let defaults = PreviewDefaults.suite(suiteName)
             let store = LoadProfileStore(userDefaults: defaults)
             if mode == .longCharge {
                 _ = try? store.editProfile(
@@ -341,13 +340,16 @@
             let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0,
                                   carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 60,
                                                                targetStateOfCharge: 80, chargingLevel: .level2))
-            let result = LoadTimingForecastEstimator.evaluate(
-                profile: car, now: Self.now, timing: timing, projection: projection, balanceSourceTime: Self.now,
-                billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD")
+            let plan = LoadTimingForecastEstimator.plan(.init(
+                now: Self.now, timing: timing, projection: projection, balanceSourceTime: Self.now,
+                billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD"))
+            let result = LoadTimingForecastEstimator.evaluate(profile: car, plan: plan)
             return SmartShiftPresentation.make(
                 profile: car, result: result, forecast: self == .laterWithForecast ? .ready : .none,
-                refreshUnavailable: false, timing: timing, now: Self.now,
-                billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD", timeZone: Self.timeZone)
+                refreshUnavailable: false,
+                inputs: .init(timing: timing, now: Self.now,
+                              billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD",
+                              timeZone: Self.timeZone))
         }
     }
 
@@ -380,11 +382,9 @@
     #Preview("Smart Shift · Later start with forecast") {
         SmartShiftVerdictPreview(fixture: .laterWithForecast)
     }
-
     #Preview("Smart Shift · Later start without forecast") {
         SmartShiftVerdictPreview(fixture: .laterWithoutForecast)
     }
-
     #Preview("Smart Shift · Now is cheapest") {
         SmartShiftVerdictPreview(fixture: .nowIsCheapest)
     }

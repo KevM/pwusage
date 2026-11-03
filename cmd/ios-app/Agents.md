@@ -24,11 +24,11 @@
   - Functions, properties, variables, and enum cases: `lowerCamelCase` (`batteryState`, `.discharging`, `fetchDailyUsage()`).
 
 ## Development & Code Quality
-- **Strict Linting & Formatting**: All Swift code must comply with SwiftLint (`swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json`) and SwiftFormat (`cmd/ios-app/format.sh`). Better yet adhere to linting rules when generating code!
+- **Strict Linting & Formatting**: All Swift code must comply with SwiftLint (`swiftlint lint cmd/ios-app --strict`) and SwiftFormat (`cmd/ios-app/format.sh`). Better yet adhere to linting rules when generating code!
 - **No Force Unwrapping**: Strict prohibition of `!` (force-unwrap or force-try `try!`). Always handle optionals safely (`guard let`, `if let`, nil-coalescing `??`, or throw).
 - **Pre-commit Checks**: Before finalizing any task or pushing changes, always run:
   1. `cmd/ios-app/format.sh`
-  2. `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` (from repo root)
+  2. `swiftlint lint cmd/ios-app --strict` (from repo root)
   3. The full `./run-tests.sh` locally. While iterating, `./run-tests.sh --quick` skips the slow suites in `quick-test-skips.txt`.
      The full run already skips the multi-minute detector parity suite unless your branch changes the detector or its fixtures (CI always runs it), so don't run that suite by hand for unrelated work.
   Never push or finish code that introduces new SwiftLint or SwiftFormat violations.

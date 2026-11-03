@@ -42,9 +42,11 @@ extension SmartShiftPresentationTests {
     @Test func evaluateUsesHistoryWithoutSolcast() throws {
         let harrison = Self.harrisonSunday()
         let evaluation = SmartShiftPresentation.evaluate(
-            profile: harrison.car, now: harrison.now, timing: harrison.timing, forecast: .none, intervals: nil,
-            context: Self.historyContext(asOf: harrison.now), balanceSourceTime: harrison.now,
-            billingCycleEnd: Self.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: harrison.car,
+            inputs: .init(now: harrison.now, timing: harrison.timing, forecast: .none, intervals: nil,
+                          context: Self.historyContext(asOf: harrison.now),
+                          balanceSourceTime: harrison.now, billingCycleEnd: Self.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         let comparison = try #require(evaluation.result.comparison)
         #expect(comparison.usesHistory)
         #expect(comparison.assumptions.contains("Banks follow your last four weeks of grid use through the bill date."))
@@ -57,9 +59,11 @@ extension SmartShiftPresentationTests {
             Estimator.PlanningSlot(localMinute: $0, homeKw: 0.5, batteryNetChargeKw: 0)
         }
         let flat = SmartShiftPresentation.evaluate(
-            profile: harrison.car, now: harrison.now, timing: harrison.timing, forecast: .none, intervals: nil,
-            context: .init(timeZone: "UTC", slots: slots, asOf: harrison.now),
-            balanceSourceTime: harrison.now, billingCycleEnd: Self.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: harrison.car,
+            inputs: .init(now: harrison.now, timing: harrison.timing, forecast: .none, intervals: nil,
+                          context: .init(timeZone: "UTC", slots: slots, asOf: harrison.now),
+                          balanceSourceTime: harrison.now, billingCycleEnd: Self.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         #expect(flat.result.comparison?.usesHistory == false)
         #expect(flat.result.comparison?.assumptions.contains { $0.contains("held at today's observed values") } == true)
     }
@@ -71,9 +75,11 @@ extension SmartShiftPresentationTests {
                                   periodEnd: Self.at(Double(index + 1) / 2), powerKw: 1)
         }
         let evaluation = SmartShiftPresentation.evaluate(
-            profile: harrison.car, now: harrison.now, timing: harrison.timing, forecast: .ready,
-            intervals: intervals, context: Self.historyContext(asOf: harrison.now),
-            balanceSourceTime: harrison.now, billingCycleEnd: Self.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: harrison.car,
+            inputs: .init(now: harrison.now, timing: harrison.timing, forecast: .ready,
+                          intervals: intervals, context: Self.historyContext(asOf: harrison.now),
+                          balanceSourceTime: harrison.now, billingCycleEnd: Self.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         let assumptions = try #require(evaluation.result.comparison).assumptions
         let expectedAssumption = "Solar follows your solar forecast for the next 7 days, "
             + "then your last four weeks through the bill date."
@@ -95,7 +101,8 @@ extension SmartShiftPresentationTests {
 
     @Test func anUnresolvedSolcastSetupIsStillLoading() {
         #expect(LoadTimingForecastPresentation.forecastAvailability(
-            state: .basic, connection: .checking, cause: nil, reason: nil, forecastFetchedAt: nil,
-            now: Self.now) == .loading)
+            .init(state: .basic, connection: .checking, cause: nil, reason: nil,
+                  forecastFetchedAt: nil, now: Self.now),
+            usesAutomaticForecast: false, automaticStatus: nil) == .loading)
     }
 }

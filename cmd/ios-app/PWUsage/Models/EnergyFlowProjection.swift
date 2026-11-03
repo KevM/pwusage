@@ -47,15 +47,6 @@ struct EnergyFlowProjection {
         return result
     }
 
-    /// Compatibility overload for callers that still pass the inputs one by one.
-    /// Omitting `forecast` describes a site with no solar forecast.
-    static func intervals(from start: Date, to end: Date, now: Date,
-                          context: LoadTimingForecastEstimator.PlanningContext,
-                          forecast: [SolarForecastInterval] = [],
-                          tariffs: [LoadTimingTariffSegment]) -> [Interval] {
-        intervals(Inputs(start: start, end: end, now: now, context: context, forecast: forecast, tariffs: tariffs))
-    }
-
     /// A contiguous block of forecast intervals whose edges never overlap or go backwards.
     private static func isContiguous(_ sorted: [SolarForecastInterval]) -> Bool {
         var last: Date?

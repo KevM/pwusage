@@ -60,8 +60,8 @@ enum LoadTimingForecastPresentation {
     /// What the forecast layer can add to the Smart Shift card.
     static func forecastAvailability(
         _ inputs: Inputs,
-        usesAutomaticForecast: Bool = false,
-        automaticStatus: MobileSolarLayoutResponse? = nil
+        usesAutomaticForecast: Bool,
+        automaticStatus: MobileSolarLayoutResponse?
     ) -> ForecastAvailability {
         switch inputs.connection {
         case .checking: return .loading
@@ -82,23 +82,6 @@ enum LoadTimingForecastPresentation {
         if let reason = inputs.reason { return .unusable(firstSentence(enhancementDetail(reason))) }
         return .unusable(firstSentence(causeDetail(inputs.cause,
                                                    forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
-    }
-
-    /// Compatibility overload for callers that pass the inputs one by one;
-    /// omitting `forecastFetchedAt` means no batch has been fetched yet.
-    static func forecastAvailability(
-        state: SolarForecastEnhancementState,
-        connection: SolarForecastConnectionState,
-        cause: SolarForecastUnavailableCause?,
-        reason: SolarForecastUnavailableReason?,
-        forecastFetchedAt: Date? = nil,
-        now: Date,
-        usesAutomaticForecast: Bool = false,
-        automaticStatus: MobileSolarLayoutResponse? = nil
-    ) -> ForecastAvailability {
-        forecastAvailability(Inputs(state: state, connection: connection, cause: cause, reason: reason,
-                                    forecastFetchedAt: forecastFetchedAt, now: now),
-                             usesAutomaticForecast: usesAutomaticForecast, automaticStatus: automaticStatus)
     }
 
     private static func automaticUnavailableNote(

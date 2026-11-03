@@ -41,8 +41,9 @@ extension SmartShiftPresentationTests {
                      Self.lane("OFF_PEAK", start: 18, later: 4, startNow: 18)]
         let screen = SmartShiftPresentation.make(
             profile: Self.pump, result: .init(comparison: Self.comparison(lanes: lanes), unavailableReason: nil),
-            forecast: .ready, refreshUnavailable: false, timing: Self.rawKeyTiming(), now: Self.now,
-            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+            forecast: .ready, refreshUnavailable: false,
+            inputs: .init(timing: Self.rawKeyTiming(), now: Self.now, billingCycleEnd: Self.at(480),
+                          currencyCode: "USD", timeZone: "UTC"))
         let verdict = try Self.verdict(screen)
         #expect(verdict.lanes.map(\.title) == ["On-Peak bank (kWh)", "Off-Peak bank (kWh)"])
         #expect(verdict.why.hasPrefix("Starting now runs during On-Peak,"))
@@ -88,9 +89,9 @@ extension SmartShiftPresentationTests {
 
     @Test func costBreakdownShowsTheArithmeticForBothStarts() throws {
         let harrison = Self.harrisonSunday()
-        let breakdowns = SmartShiftPresentation.costBreakdowns(
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
             comparison: harrison.comparison, profile: harrison.car, timing: harrison.timing, now: harrison.now,
-            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC"))
         #expect(breakdowns.count == 2)
         let later = try #require(breakdowns.first)
         #expect(Self.normalized(later.title) == "Charge tomorrow at 4:30 PM")
@@ -117,10 +118,10 @@ extension SmartShiftPresentationTests {
         // Off-Peak ends at -2 after the 14 kWh run: 12 kWh came from the bank, 2 were bought.
         let partLanes = [Self.lane("Peak", start: -6, later: -6, startNow: -20),
                          Self.lane("Off-Peak", start: 12, later: -2, startNow: 12)]
-        let breakdowns = SmartShiftPresentation.costBreakdowns(
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
             comparison: Self.comparison(lanes: partLanes), profile: Self.pump,
             timing: Self.timing(), now: Self.now, billingCycleEnd: Self.at(480),
-            currencyCode: "USD", timeZone: "UTC")
+            currencyCode: "USD", timeZone: "UTC"))
         #expect(try #require(breakdowns.first).lines == [
             CostLine(period: "Off-Peak", detail: "12.0 kWh from your bank × \(Self.rate(0.26)) credit",
                      amount: Self.money(3.12)),
@@ -132,10 +133,10 @@ extension SmartShiftPresentationTests {
         let nowLanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
         let comparison = Self.comparison(costNow: 5.32, recommendedCost: 5.32,
                                          savings: 0, recommendedStart: Self.now, lanes: nowLanes)
-        let breakdowns = SmartShiftPresentation.costBreakdowns(
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
             comparison: comparison, profile: Self.pump, timing: Self.timing(),
             now: Self.now, billingCycleEnd: Self.at(480),
-            currencyCode: "USD", timeZone: "UTC")
+            currencyCode: "USD", timeZone: "UTC"))
         #expect(breakdowns.map(\.title) == ["Start now"])
     }
 
@@ -177,8 +178,9 @@ extension SmartShiftPresentationTests {
             periodSwitches: [])
         let screen = SmartShiftPresentation.make(
             profile: Self.car, result: .init(comparison: comparison, unavailableReason: nil),
-            forecast: .ready, refreshUnavailable: false, timing: Self.timing(), now: Self.at(18),
-            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
+            forecast: .ready, refreshUnavailable: false,
+            inputs: .init(timing: Self.timing(), now: Self.at(18), billingCycleEnd: Self.at(480),
+                          currencyCode: "USD", timeZone: "UTC"))
         #expect(try Self.verdict(screen).why == "It's Off-Peak, and your Off-Peak bank covers all of this run.")
     }
 }

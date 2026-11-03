@@ -195,14 +195,16 @@ extension SmartShiftPresentation {
         /// Starting now's draws, against each bank at the projection end.
         var nowDraws: [Draw] {
             let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
-            return draws(from: now, to: now.addingTimeInterval(duration), profile: profile, timing: timing,
-                         laneEnd: { $0.projectedAfterStartNowKwh }, lanes: comparison.lanes)
+            return draws(from: now, to: now.addingTimeInterval(duration), inputs: .init(
+                profile: profile, timing: timing, laneEnd: { $0.projectedAfterStartNowKwh },
+                lanes: comparison.lanes))
         }
 
         /// The recommended start's draws, against each bank at the projection end.
         var laterDraws: [Draw] {
-            draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile, timing: timing,
-                  laneEnd: { $0.projectedAfterRecommendedKwh }, lanes: comparison.lanes)
+            draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, inputs: .init(
+                profile: profile, timing: timing, laneEnd: { $0.projectedAfterRecommendedKwh },
+                lanes: comparison.lanes))
         }
 
         var costBreakdowns: [CostBreakdown] {
