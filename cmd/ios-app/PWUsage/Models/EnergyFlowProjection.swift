@@ -18,9 +18,10 @@ struct EnergyFlowProjection {
         let sorted = forecast.sorted { $0.periodStart < $1.periodStart }
         var last: Date?
         guard sorted.allSatisfy({ interval in
+            let previousEnd = last
             defer { last = interval.periodEnd }
             return interval.periodStart < interval.periodEnd && interval.powerKw.isFinite && interval.powerKw >= 0
-                && (last == nil || interval.periodStart >= last!)
+                && (previousEnd.map { interval.periodStart >= $0 } ?? true)
         }) else { return [] }
         // Only a contiguous block containing now is presented as a solar forecast.
         var forecastStart = start, forecastEnd = start

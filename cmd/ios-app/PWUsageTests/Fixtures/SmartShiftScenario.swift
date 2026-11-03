@@ -27,8 +27,9 @@ struct SmartShiftScenario: Codable {
         self.seed = seed
         var random = Generator(state: seed)
         mode = Int(seed % 4)
-        let dates = ["2026-03-08T06:00:00Z", "2026-11-01T05:00:00Z", "2028-02-29T23:00:00Z", "2026-10-31T23:45:00Z"]
-        now = ISO8601DateFormatter().date(from: random.pick(dates))!
+        // 2026-03-08 06:00, 2026-11-01 05:00, 2028-02-29 23:00, 2026-10-31 23:45, all UTC.
+        let epochs: [TimeInterval] = [1_772_949_600, 1_793_509_200, 1_835_478_000, 1_793_490_300]
+        now = Date(timeIntervalSince1970: random.pick(epochs))
         zone = random.pick(["UTC", "America/Chicago", "Australia/Lord_Howe", "Asia/Kathmandu"])
         age = random.pick([0, 299, 300, 301, 900, 1800])
         duration = random.pick([0.25, 0.5, 1, 1.75, 3, 12])
@@ -54,8 +55,9 @@ struct SmartShiftScenario: Codable {
     var billEnd: Date { now.addingTimeInterval(billHours * 3600) }
     var tomorrowEnd: Date {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: zone)!
-        return calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: now))!
+        calendar.timeZone = TimeZone(identifier: zone) ?? .gmt
+        let startOfDay = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: 2, to: startOfDay) ?? startOfDay
     }
     var expectedEnd: Date {
         mode == 3 ? min(billEnd, tomorrowEnd, now.addingTimeInterval(forecastHours * 3600)) : billEnd

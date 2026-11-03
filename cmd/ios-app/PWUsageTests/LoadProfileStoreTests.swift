@@ -232,7 +232,7 @@ private struct Fixture {
 
     init() {
         let suiteName = "LoadProfileStoreTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)!
+        defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
         store = LoadProfileStore(userDefaults: defaults)
     }
@@ -240,7 +240,7 @@ private struct Fixture {
     /// A fixture whose defaults hold nothing yet, so a test can seed saved data before the store reads it.
     static func emptyDefaults() -> UserDefaults {
         let suiteName = "LoadProfileStoreTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }

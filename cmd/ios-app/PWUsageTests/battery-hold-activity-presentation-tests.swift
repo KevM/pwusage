@@ -6,7 +6,7 @@ import Testing
 struct BatteryHoldActivityPresentationTests {
     typealias P = BatteryHoldActivityPresentation
     private let start = Date(timeIntervalSinceReferenceDate: 813751200) // 2026-10-15T10:00Z
-    private let utc = TimeZone(identifier: "UTC")!
+    private let utc = TimeZone(identifier: "UTC") ?? .gmt
 
     private func state(mode: BatteryHoldMode = .auto, phase: P.State.Phase? = nil, hours: Double = 8,
                        status: P.State.Status = .active) -> P.State {

@@ -257,11 +257,11 @@
 
         static let timeZone = SITE_PREVIEW_TIME_ZONE
         /// 08:30 local, during Peak (or Mid for the three-period plan).
-        static let now = ISO8601DateFormatter().date(from: "2026-10-19T13:30:00Z")!
+        static let now = Date(timeIntervalSince1970: 1_792_416_600) // 2026-10-19T13:30:00Z
 
         private static var calendar: Calendar {
             var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = TimeZone(identifier: timeZone)!
+            calendar.timeZone = TimeZone(identifier: timeZone) ?? .gmt
             return calendar
         }
 

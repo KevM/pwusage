@@ -87,7 +87,7 @@ final class MobileAuthServiceTests {
         #expect(fakeSession.callbackScheme == "pwusage")
         #expect(!fakeSession.prefersEphemeralWebBrowserSession)
 
-        let callback = URL(string: "pwusage://auth/callback?code=opaque-code&attempt=\(Self.attemptID)&state=\(state)")!
+        let callback = try Self.callbackURL(code: "opaque-code", state: state)
         fakeSession.complete(url: callback)
         try await Self.boundedValue(of: task)
 
@@ -122,7 +122,7 @@ final class MobileAuthServiceTests {
         let firstSignIn = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
         let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "opaque", state: state))
 
         // Gate on the exchange counter rather than a published continuation: a wait on a
         // continuation that may never be resumed is exactly the unbounded wait this suite
@@ -165,7 +165,7 @@ final class MobileAuthServiceTests {
         let second = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 2 })
         let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "opaque", state: state))
         try #require(await waitUpTo { service.isAuthenticated })
         #expect(!service.pendingContinuationForTesting)
         try await Self.boundedValue(of: second)
@@ -209,7 +209,7 @@ final class MobileAuthServiceTests {
         #expect(fakeSession.cancelCount == 1)
 
         // B can still finish.
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
         try #require(await waitUpTo { service.isAuthenticated })
         #expect(!service.pendingContinuationForTesting)
         try await Self.boundedValue(of: second)
@@ -238,7 +238,7 @@ final class MobileAuthServiceTests {
         let task = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
         let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "opaque", state: state))
         try #require(await waitUpTo { api.exchangeStartedCount == 1 })
 
         task.cancel()
@@ -293,7 +293,7 @@ final class MobileAuthServiceTests {
         let first = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
         let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=first&attempt=\(Self.attemptID)&state=\(firstState)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "first", state: firstState))
         try #require(await waitUpTo { api.exchangeStartedCount == 1 })
 
         // A is cancelled, which resumes A's continuation and frees the slot.
@@ -320,7 +320,7 @@ final class MobileAuthServiceTests {
         // B can still finish.
         api.holdExchange = false
         api.exchangeError = nil
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=second&attempt=\(Self.attemptID)&state=\(secondState)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
         try #require(await waitUpTo { service.isAuthenticated })
         #expect(!service.pendingContinuationForTesting)
         _ = try? await Self.boundedValue(of: second)
@@ -465,7 +465,7 @@ final class MobileAuthServiceTests {
         defer { attempt.cancel() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
         let state = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)")!)
+        fakeSession.complete(url: try Self.callbackURL(code: "opaque", state: state))
         try #require(await waitUpTo { fakeAPI.exchangeStartedCount == 1 })
 
         if invalidate {

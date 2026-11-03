@@ -328,7 +328,7 @@ struct LoadTimingForecastEstimatorTests {
 
     @Test func futureContextGapTruncatesHorizonAndKeepsEarlierRun() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let midpoint = start.addingTimeInterval(4500)
         let localMinute = calendar.component(.hour, from: midpoint) * 60 + calendar.component(.minute, from: midpoint)
         let missingMinute = (localMinute / 30) * 30
@@ -344,7 +344,7 @@ struct LoadTimingForecastEstimatorTests {
     @Test func contextGapAtBalanceSourceRejectsProjection() {
         let full = context()
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let currentMinute = calendar.component(.hour, from: start) * 60 + calendar.component(.minute, from: start)
         let missingMinute = (currentMinute / 30) * 30
         let gap = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC",
@@ -585,10 +585,11 @@ struct LoadTimingForecastEstimatorTests {
         ]
         let spans: [(Double, Double, String)] = [(0, 6, "Super Off-Peak"), (6, 10, "Off-Peak"), (10, 14, "Mid"),
                                                  (14, 20, "Peak"), (20, 24, "Off-Peak")]
-        let segments = [0.0, 24].flatMap { day in
-            spans.map { from, to, key in
-                LoadTimingTariffSegment(start: hours(day + from), end: hours(day + to), periodKey: key, name: key,
-                                        buyRate: rates[key]!.buy, sellRate: rates[key]!.sell)
+        let segments = try [0.0, 24].flatMap { day in
+            try spans.map { from, to, key in
+                let rate = try #require(rates[key])
+                return LoadTimingTariffSegment(start: hours(day + from), end: hours(day + to), periodKey: key, name: key,
+                                               buyRate: rate.buy, sellRate: rate.sell)
             }
         }
         let comparison = try #require(evaluateFlat(profile: profile(2, hours: 1), now: hours(8), tariffs: segments,
@@ -747,7 +748,7 @@ extension LoadTimingForecastEstimatorTests {
     func overdrawnBankRecoversByBillDate() throws {
         // Sunday 10:00 UTC. Weekdays have On-Peak 08:00–20:00; weekends are all Off-Peak.
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let dayZero = start.addingTimeInterval(-8 * 3600)
         let weekday = { (day: Int) -> Bool in
             !calendar.isDateInWeekend(dayZero.addingTimeInterval(Double(day) * 86_400))
@@ -1027,7 +1028,7 @@ extension LoadTimingForecastEstimatorTests {
         // midnight; a cloudy Monday (pv_estimate10) adds nothing. Without history the projection ends at
         // midnight tomorrow, so before the bill-date projection the answer was 4:30 PM tomorrow ($3.38).
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let dayZero = start.addingTimeInterval(-8 * 3600)
         // swiftlint:disable:next line_length
         let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
@@ -1061,7 +1062,7 @@ extension LoadTimingForecastEstimatorTests {
         // Sunday 17:39 UTC; Monday On-Peak 08:00–20:00 banks plenty, Off-Peak is owed.
         // The car (73 kWh, 15→80%) costs 52.7 kWh × 4¢ at any start that fits in On-Peak.
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let dayZero = start.addingTimeInterval(-8 * 3600)
         // swiftlint:disable:next line_length
         let sunday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 1 })
@@ -1157,7 +1158,7 @@ extension LoadTimingForecastEstimatorTests {
         // a 52.7 kWh charge, 4 kW of median solar 09–17 each day, home 1.2 kW, and
         // pv_estimate10 falling from 80% of the median on Monday to 12% by Sunday.
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let dayZero = start.addingTimeInterval(-8 * 3600)
         // swiftlint:disable:next line_length
         let monday = try #require((0 ..< 7).first { calendar.component(.weekday, from: dayZero.addingTimeInterval(Double($0) * 86_400)) == 2 })

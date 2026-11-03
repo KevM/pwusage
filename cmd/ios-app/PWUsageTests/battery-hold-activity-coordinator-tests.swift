@@ -7,7 +7,7 @@ import Testing
 struct BatteryHoldActivityCoordinatorTests {
     private let host = FakeActivityHost()
     private let api = FakeActivityAPI()
-    private let defaults = UserDefaults(suiteName: "activity-tests-\(UUID().uuidString)")!
+    private let defaults = UserDefaults(suiteName: "activity-tests-\(UUID().uuidString)") ?? .standard
     private let start = Date(timeIntervalSinceReferenceDate: 813751200)
 
     private func makeCoordinator(environment: ApnsEnvironment? = .sandbox,

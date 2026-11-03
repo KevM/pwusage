@@ -160,7 +160,7 @@ extension LoadTimingForecastEstimator {
             // at risk in a cloudy week; an overdraw is already priced at the buy rate.
             let covered = min(candidate.drawsBySafetyEnd[key] ?? 0, typical)
             let remaining = cautious - covered
-            if worst == nil || remaining < worst!.kwh { worst = (key, remaining) }
+            if worst.map({ remaining < $0.kwh }) ?? true { worst = (key, remaining) }
         }
         return Assessment(candidate: candidate, worst: worst)
     }

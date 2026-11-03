@@ -32,7 +32,12 @@ enum BatteryHoldLink {
         parts.scheme = "pwusage"
         parts.host = "battery-hold"
         parts.queryItems = [URLQueryItem(name: "site", value: siteID)]
-        return parts.url!
+        // The scheme and host are literals and URLComponents encodes the query
+        // value, so these components always form a URL.
+        guard let url = parts.url else {
+            preconditionFailure("Battery hold link components must form a URL")
+        }
+        return url
     }
 
     static func siteID(from url: URL) -> String? {

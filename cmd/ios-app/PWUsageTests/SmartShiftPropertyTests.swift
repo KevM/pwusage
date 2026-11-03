@@ -46,12 +46,12 @@ struct SmartShiftPropertyTests {
     }
 
     @Test(arguments: [1, 2, 3])
-    func missingCurrentContextIsUnavailable(mode: Int) {
+    func missingCurrentContextIsUnavailable(mode: Int) throws {
         let scenario = SmartShiftScenario(seed: UInt64(mode))
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: scenario.zone)!
+        calendar.timeZone = TimeZone(identifier: scenario.zone) ?? .gmt
         let minute = calendar.component(.hour, from: scenario.now) * 60 + calendar.component(.minute, from: scenario.now) / 30 * 30
-        let slots = scenario.projection.context!.slots.filter { $0.localMinute != minute }
+        let slots = try #require(scenario.projection.context).slots.filter { $0.localMinute != minute }
         let context = LoadTimingForecastEstimator.PlanningContext(timeZone: scenario.zone, slots: slots, asOf: scenario.now)
         let projection: LoadTimingForecastEstimator.Projection = mode == 1 ? .history(context: context) : .forecast(intervals: scenario.forecast, context: context)
         #expect(scenario.evaluate(projection: projection).comparison == nil)
@@ -64,7 +64,8 @@ struct SmartShiftPropertyTests {
         scenario.duration = 0.5
         let later = SolarForecastInterval(periodStart: scenario.now.addingTimeInterval(7200),
                                           periodEnd: scenario.now.addingTimeInterval(10800), powerKw: 100)
-        let projection = LoadTimingForecastEstimator.Projection.forecast(intervals: scenario.forecast + [later], context: scenario.projection.context!)
+        let projection = LoadTimingForecastEstimator.Projection.forecast(
+            intervals: scenario.forecast + [later], context: try #require(scenario.projection.context))
         let expected = try #require(scenario.evaluate().comparison)
         let actual = try #require(scenario.evaluate(projection: projection).comparison)
         #expect(actual == expected)

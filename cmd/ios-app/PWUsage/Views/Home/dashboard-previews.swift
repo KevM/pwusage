@@ -182,7 +182,7 @@
         /// seeded cache, so it never bootstraps or reaches the network.
         static func preview(api: MultiSitePreviewAPI = MultiSitePreviewAPI(), tab: AppTab = .home) -> PWUsageAppModel {
             let suiteName = "pwusage.preview.multi-site.\(tab.rawValue)"
-            let defaults = UserDefaults(suiteName: suiteName)!
+            let defaults = UserDefaults(suiteName: suiteName) ?? .standard
             defaults.removePersistentDomain(forName: suiteName)
             defaults.set(tab.rawValue, forKey: selectedTabDefaultsKey)
             let cache = DashboardCache(fileURL: FileManager.default.temporaryDirectory
@@ -251,7 +251,7 @@
             let api = DashboardPreviewAPI(mode: mode)
             _coordinator = StateObject(wrappedValue: DashboardCoordinator(siteID: "preview-home", api: api, timerInterval: nil))
             let suiteName = "pwusage.preview.load-timing.\(mode.rawValue)"
-            let defaults = UserDefaults(suiteName: suiteName)!
+            let defaults = UserDefaults(suiteName: suiteName) ?? .standard
             defaults.removePersistentDomain(forName: suiteName)
             let store = LoadProfileStore(userDefaults: defaults)
             if mode == .longLevel1 {

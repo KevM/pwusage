@@ -75,7 +75,7 @@ extension SmartShiftPresentation {
         let letters = Array(lower)
         if letters.count == 3, !vowels.contains(letters[0]), vowels.contains(letters[1]),
            !vowels.contains(letters[2]), !"wxy".contains(letters[2]) {
-            return verb + String(verb.last!) + "ing"
+            return verb + String(letters[2]) + "ing"
         }
         return verb + "ing"
     }

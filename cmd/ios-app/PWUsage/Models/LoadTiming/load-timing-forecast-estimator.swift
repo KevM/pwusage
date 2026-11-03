@@ -202,14 +202,13 @@ struct LoadTimingForecastEstimator {
     static func contiguousTariffEnd(_ tariffs: [LoadTimingTariffSegment], startingAt source: Date) -> Date {
         var end: Date?
         for tariff in tariffs where tariff.end > source {
-            if end == nil {
+            guard let current = end else {
                 guard tariff.start <= source else { return source }
                 end = tariff.end
-            } else if tariff.start == end {
-                end = tariff.end
-            } else if tariff.start > end! {
-                break
+                continue
             }
+            guard tariff.start <= current else { break }
+            if tariff.start == current { end = tariff.end }
         }
         return end ?? source
     }

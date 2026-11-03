@@ -1009,7 +1009,7 @@ struct PWUsageAppModelTests {
 
     private func makeDefaults() -> UserDefaults {
         let suite = "PWUsageAppModelTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
         defaults.removePersistentDomain(forName: suite)
         return defaults
     }

@@ -18,7 +18,9 @@ extension LoadTimingForecastEstimator {
                 : $0.candidate.cost < $1.candidate.cost }
         }
         // `evaluate` only calls this with a scored "now".
-        let nowAssessment = assessed.first { $0.candidate.start == now }!
+        guard let nowAssessment = assessed.first(where: { $0.candidate.start == now }) else {
+            preconditionFailure("select requires a scored assessment for now")
+        }
         let passing = assessed.filter(\.passes)
         let recommended: Assessment
         let safety: Safety
