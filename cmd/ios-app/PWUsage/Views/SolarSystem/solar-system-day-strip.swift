@@ -19,30 +19,29 @@ struct SolarSystemDayStrip: View {
         let types = types
         Canvas { context, _ in
             for label in layout.labels {
-                let origin = layout.labelOrigin(label)
                 let text = Text(label.text)
-                    .font(.caption2.weight(label.kind == .year ? .semibold : .regular))
-                    .foregroundStyle(.secondary)
-                context.draw(text, at: CGPoint(x: origin.x, y: origin.y + layout.labelHeight / 2), anchor: .leading)
+                    .font(.system(size: 11))
+                    .foregroundStyle(label.kind == .year ? .tertiary : .secondary)
+                context.draw(text, at: layout.labelOrigin(label), anchor: label.trailing ? .trailing : .leading)
             }
             for cell in layout.cells {
                 let type = types[cell.day] ?? nil
                 let growth = clocks.growth(cell.day, at: now)
                 guard growth > 0 else { continue }
                 let frame = layout.frame(cell)
-                let side = frame.width * (0.4 + 0.6 * growth)
-                let rect = CGRect(x: frame.midX - side / 2, y: frame.midY - side / 2, width: side, height: side)
-                let shape = Path(roundedRect: rect, cornerRadius: side * 0.25)
+                // A new day grows from a speck (1.2 of 3.6) to its full dot.
+                let radius = frame.width / 2 * (1.2 + 2.4 * growth) / 3.6
+                let dot = Path(ellipseIn: CGRect(
+                    x: frame.midX - radius, y: frame.midY - radius, width: 2 * radius, height: 2 * radius))
                 if type == .noProduction {
-                    context.stroke(
-                        shape.strokedPath(StrokeStyle(lineWidth: 1, dash: [1.5, 1.5])),
-                        with: .color(SolarSystemColors.noProduction))
+                    context.stroke(dot, with: .color(SolarSystemColors.noProduction),
+                                   style: StrokeStyle(lineWidth: 1, dash: [1.5, 1.5]))
                 } else {
-                    context.fill(shape, with: .color(SolarSystemColors.color(type)))
+                    context.fill(dot, with: .color(SolarSystemColors.color(type)))
                 }
                 if cell.day == selected {
-                    context.stroke(Path(roundedRect: frame.insetBy(dx: -1.5, dy: -1.5), cornerRadius: 3),
-                                   with: .color(.primary), lineWidth: 1.5)
+                    context.stroke(Path(ellipseIn: frame.insetBy(dx: -2, dy: -2)), with: .color(.primary),
+                                   lineWidth: 1.5)
                 }
             }
         }

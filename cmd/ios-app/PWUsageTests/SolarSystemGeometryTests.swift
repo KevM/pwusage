@@ -61,25 +61,42 @@ struct SolarSystemGeometryTests {
         }
     }
 
-    @Test func monthLabelsAppearOnlyOnceTheFirstArrivesAndYearsWinCollisions() {
+    @Test func monthsAndYearsSitOnTheirOwnLinesWithoutOverlapping() throws {
         let partial = SolarSystemStripLayout(days: Self.days(from: "2026-10-05", count: 20), width: 400)
         #expect(!partial.labels.contains { $0.kind == .month })
 
         let span = SolarSystemStripLayout(days: Self.days(from: "2025-11-15", count: 120), width: 900)
-        let texts = span.labels.map(\.text)
-        #expect(texts.contains("2026"))
-        #expect(span.labels.contains { $0.kind == .month })
-        // No two labels in a band overlap.
+        // January gets its month and, on the line above, its year.
+        let january = try #require(span.cells.first { $0.day == "2026-01-01" })
+        #expect(span.labels.contains { $0.kind == .month && $0.column == january.column })
+        #expect(span.labels.contains { $0.kind == .year && $0.text == "2026" && $0.column == january.column })
+        let month = try #require(span.labels.first { $0.kind == .month })
+        let year = try #require(span.labels.first { $0.kind == .year })
+        #expect(span.labelOrigin(year).y < span.labelOrigin(month).y)
         for (index, label) in span.labels.enumerated() {
-            for other in span.labels[(index + 1)...] where other.band == label.band {
-                let width = label.kind == .year ? SolarSystemStripLayout.yearLabelColumns
-                    : SolarSystemStripLayout.monthLabelColumns
-                #expect(other.column >= label.column + width || other.column < label.column)
+            for other in span.labels[(index + 1)...] where other.band == label.band && other.kind == label.kind {
+                #expect(!Self.span(label).overlaps(Self.span(other)), "\(label.text) overlaps \(other.text)")
             }
         }
-        // The newest end is labeled with its year when no January label covers it.
+        // The newest end carries its year, ending at the newest column.
         let recent = SolarSystemStripLayout(days: Self.days(from: "2026-09-20", count: 40), width: 400)
-        #expect(recent.labels.contains { $0.kind == .year && $0.text == "2026" })
+        let newest = try #require(recent.labels.first { $0.trailing })
+        #expect(newest.text == "2026")
+        #expect(newest.column == recent.columns - 1)
+    }
+
+    private static func span(_ label: SolarSystemStripLayout.Label) -> Range<Int> {
+        let width = label.kind == .year ? SolarSystemStripLayout.yearLabelColumns
+            : SolarSystemStripLayout.monthLabelColumns
+        return label.trailing ? label.column - width + 1 ..< label.column + 1 : label.column ..< label.column + width
+    }
+
+    @Test func aWideningStripKeepsTheNewestWeekAnchoredAroundTheCenter() throws {
+        let layout = SolarSystemStripLayout(days: Self.days(from: "2026-10-18", count: 21), width: 300)
+        let newest = try #require(layout.cells.last)
+        let settled = layout.frame(newest).midX
+        let halfway = layout.widening(to: Double(layout.columns) - 0.5).frame(newest).midX
+        #expect(abs((settled - halfway) - layout.pitch / 4) < 0.001)
     }
 
     @Test func aTapFindsItsDay() throws {
@@ -94,9 +111,12 @@ struct SolarSystemGeometryTests {
 
     @Test func theStylizedWedgeNarrowsWithClearDaysThenUsesTheFit() {
         let widths = [0, 5, 15, 40, 120].map { SolarSystemWedge.width(clearDays: $0, fittedRange: nil) }
-        #expect(widths[0] == 180)
-        #expect(zip(widths, widths.dropFirst()).allSatisfy { $0 >= $1 })
-        #expect(widths.allSatisfy { $0 >= SolarSystemWedge.stylizedFloor })
+        #expect(widths[0] == 164)
+        #expect(zip(widths, widths.dropFirst()).allSatisfy { $0 > $1 })
+        #expect(widths.allSatisfy { $0 > 4 })
+        #expect(SolarSystemWedge.bannerWidth(clearDays: 0, fittedRange: nil) == 156)
+        #expect(SolarSystemWedge.bannerWidth(clearDays: 20, fittedRange: nil)
+            < SolarSystemWedge.width(clearDays: 20, fittedRange: nil))
         #expect(SolarSystemWedge.width(clearDays: 3, fittedRange: [170, 200]) == 30)
         #expect(SolarSystemWedge.width(clearDays: 3, fittedRange: [350, 10]) == 20)
         #expect(SolarSystemWedge.width(clearDays: 3, fittedRange: [180, 180]) == SolarSystemWedge.minimumWidth)
@@ -130,8 +150,9 @@ struct SolarSystemGeometryTests {
         let large = SolarSystemHouse(groups: [.init(azimuth: 180, tilt: 20, kilowatts: 12)])
         let huge = SolarSystemHouse(groups: [.init(azimuth: 180, tilt: 20, kilowatts: 60)])
         #expect(small.length < large.length)
-        #expect(huge.length == 24)
-        #expect(small.length >= 10)
+        #expect(abs(huge.length - 12 * 1.3) < 1e-9)
+        #expect(abs(small.length - 12 * 0.72) < 1e-9)
+        #expect(abs(SolarSystemHouse(groups: [.init(azimuth: 180, tilt: 20, kilowatts: 9)]).depth - 8) < 1e-9)
     }
 
     @Test func theFrontFaceLooksTowardTheLargestGroupAndPitchIsItsTilt() throws {
@@ -168,7 +189,7 @@ struct SolarSystemGeometryTests {
     private static func liesOn(_ point: SIMD3<Double>, face: SolarSystemHouse.Face) -> Bool {
         let offset = point - face.corners[0]
         let height = (offset * face.normal).sum()
-        guard height > -1e-6, height < 0.05 else { return false }
+        guard height > -1e-6, height < 0.1 else { return false }
         let count = face.corners.count
         return (0 ..< count).allSatisfy { index in
             let start = face.corners[index]

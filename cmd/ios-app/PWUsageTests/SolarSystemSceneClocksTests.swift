@@ -12,36 +12,58 @@ struct SolarSystemSceneClocksTests {
 
     @Test func theFirstLookShowsTheCurrentStateWithoutReplaying() {
         var clocks = SolarSystemSceneClocks()
-        clocks.observe(days: days(["2026-11-01": .clear, "2026-10-31": .cloudy]), hasLayout: true, now: now)
+        clocks.observe(days: days(["2026-11-01": .clear, "2026-10-31": .cloudy]), columns: 2, hasLayout: true,
+                       now: now)
         #expect(!clocks.isAnimating(at: now))
         #expect(clocks.growth("2026-11-01", at: now) == 1)
-        #expect(clocks.flight("2026-11-01", at: now) == (1, 1))
-        #expect(clocks.found(at: now) == 1)
+        #expect(clocks.flight("2026-11-01", at: now) == 1)
+        #expect(clocks.build(at: now) == 1)
+        #expect(clocks.houseTime(at: now) > 100)
+        #expect(clocks.widenedColumns(at: now) == nil)
     }
 
-    @Test func newDaysGrowInAndNewlyClearDaysFly() {
+    @Test func newDaysGrowInAndNewlyClearDaysFlyForOnePointOneSeconds() {
         var clocks = SolarSystemSceneClocks()
-        clocks.observe(days: days(["2026-11-01": nil]), hasLayout: false, now: now)
-        clocks.observe(days: days(["2026-11-01": .clear, "2026-10-31": nil]), hasLayout: false, now: now)
+        clocks.observe(days: days(["2026-11-01": nil]), columns: 1, hasLayout: false, now: now)
+        clocks.observe(days: days(["2026-11-01": .clear, "2026-10-31": nil]), columns: 1, hasLayout: false,
+                       now: now)
         #expect(clocks.growth("2026-10-31", at: now) == 0)
         #expect(clocks.growth("2026-10-31", at: now.addingTimeInterval(1)) == 1)
         #expect(clocks.growth("2026-11-01", at: now) == 1)
-        let early = clocks.flight("2026-11-01", at: now.addingTimeInterval(0.2))
-        #expect(early.travel == 0)
-        let landed = clocks.flight("2026-11-01", at: now.addingTimeInterval(2))
-        #expect(landed.travel == 1)
-        #expect(landed.ray == 1)
+        #expect(clocks.flight("2026-11-01", at: now) == 0)
+        #expect(!clocks.hasLanded("2026-11-01", at: now.addingTimeInterval(1)))
+        #expect(clocks.hasLanded("2026-11-01", at: now.addingTimeInterval(1.5)))
         #expect(clocks.isAnimating(at: now.addingTimeInterval(0.5)))
         #expect(!clocks.isAnimating(at: now.addingTimeInterval(5)))
     }
 
-    @Test func aLayoutArrivingStartsTheFoundSequenceOnce() {
+    @Test func theStripWidensSmoothlyWhenAWeekArrives() throws {
         var clocks = SolarSystemSceneClocks()
-        clocks.observe(days: [], hasLayout: false, now: now)
-        clocks.observe(days: [], hasLayout: true, now: now)
-        #expect(clocks.found(at: now) == 0)
-        #expect(clocks.found(at: now.addingTimeInterval(SolarSystemSceneClocks.foundDuration + 0.01)) == 1)
-        clocks.observe(days: [], hasLayout: true, now: now.addingTimeInterval(1))
-        #expect(clocks.found(at: now.addingTimeInterval(1)) < 1)
+        clocks.observe(days: [], columns: 3, hasLayout: false, now: now)
+        clocks.observe(days: [], columns: 4, hasLayout: false, now: now)
+        let middle = try #require(clocks.widenedColumns(at: now.addingTimeInterval(0.25)))
+        #expect(middle > 3 && middle < 4)
+        #expect(clocks.widenedColumns(at: now.addingTimeInterval(1)) == nil)
+    }
+
+    @Test func theBuildWaitsForTheLastFlightThenRunsOnce() {
+        var clocks = SolarSystemSceneClocks()
+        clocks.observe(days: days(["2026-11-01": nil]), columns: 1, hasLayout: false, now: now)
+        clocks.observe(days: days(["2026-11-01": .clear]), columns: 1, hasLayout: true, now: now)
+        let landed = clocks.flights.values.map { $0.addingTimeInterval(SolarSystemSceneClocks.flightDuration) }
+            .max() ?? now
+        let start = landed.addingTimeInterval(SolarSystemSceneClocks.buildDelay)
+        #expect(clocks.build(at: start) == 0)
+        #expect(clocks.build(at: start.addingTimeInterval(SolarSystemSceneClocks.buildDuration + 0.01)) == 1)
+        #expect(abs(clocks.houseTime(at: start) + SolarSystemSceneClocks.houseStart) < 1e-6)
+        clocks.observe(days: days(["2026-11-01": .clear]), columns: 1, hasLayout: true, now: start)
+        #expect(clocks.build(at: start) == 0)
+    }
+
+    @Test func easingIsCubicInAndOut() {
+        #expect(SolarSystemSceneClocks.ease(0) == 0)
+        #expect(SolarSystemSceneClocks.ease(0.5) == 0.5)
+        #expect(SolarSystemSceneClocks.ease(1) == 1)
+        #expect(abs(SolarSystemSceneClocks.ease(0.25) - 0.0625) < 1e-12)
     }
 }

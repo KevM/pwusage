@@ -26,19 +26,22 @@ struct SolarSystemSceneInput: Equatable {
     var isFound: Bool { !groups.isEmpty }
 }
 
-/// The compass, the house and the calendar strip, with clear days flying between them. One clock
-/// drives every layer; it stops when nothing moves (and always under Reduce Motion).
+/// The compass, the house and the calendar strip, with clear days flying between them, on the
+/// reveal prototype's timeline. One clock drives every layer; it stops when nothing moves (and
+/// always under Reduce Motion, where every state shows in place).
 struct SolarSystemVisual: View {
     let input: SolarSystemSceneInput
     let summary: String
 
-    static let sceneHeight: CGFloat = 250
-    static let stripInset: CGFloat = 16
+    nonisolated static let sceneHeight: CGFloat = 300
+    nonisolated static let stripInset: CGFloat = 16
+    /// How far the strip moves up toward the built house.
+    nonisolated static let stripLift: CGFloat = 34
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var width: CGFloat = 0
     @State private var clocks = SolarSystemSceneClocks()
-    @State private var camera = SolarSystemCamera(yaw: 180, elevation: 30)
+    @State private var camera = SolarSystemCamera.found
     @State private var dragStart: SolarSystemCamera?
 
     private var strip: SolarSystemStripLayout {
@@ -46,13 +49,14 @@ struct SolarSystemVisual: View {
     }
 
     var body: some View {
-        let strip = strip
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isMoving)) { context in
+        let settled = strip
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !isMoving)) { context in
             let now = context.date
             let motion = reduceMotion ? SolarSystemSceneClocks() : clocks
+            let frame = SceneFrame(input: input, clocks: motion, camera: swayed(camera, at: now), now: now)
+            let strip = settled.widening(to: motion.widenedColumns(at: now))
             VStack(spacing: 0) {
-                SolarSystemSceneCanvas(
-                    input: input, clocks: motion, camera: swayed(camera, at: now), now: now)
+                SolarSystemSceneCanvas(input: input, clocks: motion, frame: frame, now: now)
                     .frame(height: Self.sceneHeight)
                     .contentShape(Rectangle())
                     .gesture(drag)
@@ -61,10 +65,11 @@ struct SolarSystemVisual: View {
                     .accessibilityAddTraits(.isImage)
                 SolarSystemDayStrip(layout: strip, days: input.days, clocks: motion, now: now)
                     .padding(.horizontal, Self.stripInset)
-                    .offset(y: input.isFound ? -12 * motion.found(at: now) : 0)
+                    .offset(y: -frame.stripLift)
+                    .padding(.bottom, -frame.stripLift)
             }
             .overlay(alignment: .topLeading) {
-                SolarSystemFlightCanvas(input: input, strip: strip, clocks: motion, now: now)
+                SolarSystemFlightCanvas(input: input, strip: strip, clocks: motion, frame: frame, now: now)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
@@ -75,6 +80,7 @@ struct SolarSystemVisual: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear { observe() }
         .onChange(of: input) { observe() }
+        .onChange(of: width) { observe() }
     }
 
     private var isMoving: Bool {
@@ -83,14 +89,14 @@ struct SolarSystemVisual: View {
     }
 
     private func observe() {
-        clocks.observe(days: input.days, hasLayout: input.isFound, now: .now)
+        clocks.observe(days: input.days, columns: strip.columns, hasLayout: input.isFound, now: .now)
     }
 
-    /// A gentle sway while the found house is idle.
+    /// A gentle sway once the house stands.
     private func swayed(_ camera: SolarSystemCamera, at now: Date) -> SolarSystemCamera {
         guard input.isFound, !reduceMotion, dragStart == nil else { return camera }
         var swayed = camera
-        swayed.yaw += sin(now.timeIntervalSinceReferenceDate * 0.6) * 5
+        swayed.yaw += sin(now.timeIntervalSinceReferenceDate * 0.6) * 4
         return swayed
     }
 
@@ -108,167 +114,169 @@ struct SolarSystemVisual: View {
     }
 }
 
+/// One moment of the scene, shared by its layers: the camera, the wedge and the strip's lift.
+struct SceneFrame {
+    /// The compass ring's radius in world units; the house is in meters on the same scale.
+    static let ringRadius = 9.0
+    static let rim = 8.2
+    static let letterRadius = 10.1
+
+    let camera: SolarSystemCamera
+    /// 0...1 through the tilt; 0 while still loading.
+    let build: Double
+    let wedgeCenter: Double
+    let wedgeWidth: Double
+    /// The wedge and rays fade out as the house replaces them.
+    let wedgeOpacity: Double
+    let landedClear: Int
+    let stripLift: CGFloat
+
+    init(
+        input: SolarSystemSceneInput, clocks: SolarSystemSceneClocks, camera target: SolarSystemCamera, now: Date
+    ) {
+        let ease = SolarSystemSceneClocks.ease
+        build = input.isFound ? clocks.build(at: now) : 0
+        camera = input.isFound ? .tilting(to: target, progress: ease(build)) : .overhead
+        landedClear = input.days.count { $0.type == .clear && clocks.hasLanded($0.day, at: now) }
+        if input.isFound, let main = input.groups.max(by: { $0.kilowatts < $1.kilowatts }) {
+            wedgeCenter = main.azimuth
+        } else {
+            wedgeCenter = SolarSystemWedge.center(fittedRange: input.fittedRange, latitude: input.latitude)
+        }
+        var width = SolarSystemWedge.width(clearDays: max(landedClear, 1), fittedRange: input.fittedRange)
+        if input.isFound {
+            // On a find the wedge closes to one direction over 0.8 s.
+            let closing = ease(min(build * SolarSystemSceneClocks.buildDuration / 0.8, 1))
+            width = width * (1 - closing) + 1
+        }
+        wedgeWidth = width
+        wedgeOpacity = 1 - min(max((build - 0.35) / 0.3, 0), 1)
+        stripLift = SolarSystemVisual.stripLift * ease((build - 0.3) / 0.7)
+    }
+
+    /// The canvas point for a world point, with the compass centered in the scene.
+    static func projection(camera: SolarSystemCamera, size: CGSize) -> SceneProjection {
+        // The letters sit outside the ring; keep them well clear of the strip below.
+        let radius = min(size.width * 0.3, SolarSystemVisual.sceneHeight * 0.36)
+        let center = CGPoint(x: size.width / 2, y: SolarSystemVisual.sceneHeight * 0.5)
+        return SceneProjection(camera: camera, center: center, scale: radius / ringRadius)
+    }
+
+    /// Where a clear day's ray sits within the wedge.
+    func rayAzimuth(_ day: String) -> Double {
+        wedgeCenter + (SolarSystemSceneClocks.spread(day) - 0.5) * wedgeWidth * 0.9
+    }
+}
+
 /// The compass seen from above while loading; on a find, the camera tilts down and the house
 /// builds on it.
 struct SolarSystemSceneCanvas: View {
     let input: SolarSystemSceneInput
     let clocks: SolarSystemSceneClocks
-    let camera: SolarSystemCamera
+    let frame: SceneFrame
     let now: Date
 
     var body: some View {
         Canvas { context, size in
-            let found = input.isFound ? clocks.found(at: now) : 0
-            let tilt = input.isFound ? Self.ease(Self.phase(found, from: 0, to: 0.35)) : 0
-            let view = SolarSystemCamera(
-                yaw: input.isFound ? camera.yaw : 180,
-                elevation: 90 - (90 - camera.elevation) * tilt)
-            let radius = min(size.width * 0.3, size.height * 0.38)
-            let center = CGPoint(x: size.width / 2, y: size.height * (input.isFound ? 0.58 : 0.5))
-            let ground = SceneProjection(camera: view, center: center, radius: radius)
-            drawCompass(context, ground, found: tilt)
-            if input.isFound {
-                drawHouse(context, ground, progress: found)
+            let ground = SceneFrame.projection(camera: frame.camera, size: size)
+            drawCompass(context, ground)
+            if input.isFound, clocks.houseTime(at: now) >= 0 {
+                SolarSystemHouseDrawing(groups: input.groups, time: clocks.houseTime(at: now))
+                    .draw(context, ground)
             }
         }
     }
 
-    // MARK: - Compass
-
-    private func drawCompass(_ context: GraphicsContext, _ ground: SceneProjection, found: Double) {
+    private func drawCompass(_ context: GraphicsContext, _ ground: SceneProjection) {
         var context = context
         context.opacity = input.isWaiting ? 0.45 : 1
         var ring = Path()
-        ring.addLines((0 ... 72).map { ground.point(azimuth: Double($0) * 5, distance: 1) })
-        context.stroke(ring, with: .color(SolarSystemColors.ring), lineWidth: 2)
-
+        ring.addLines((0 ... 72).map { ground.point(azimuth: Double($0) * 5, distance: SceneFrame.ringRadius) })
+        ring.closeSubpath()
+        context.fill(ring, with: .color(SolarSystemColors.disk))
+        context.stroke(ring, with: .color(SolarSystemColors.ring), lineWidth: 1)
         for (azimuth, letter) in [(0.0, "N"), (90, "E"), (180, "S"), (270, "W")] {
-            let text = Text(letter).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            context.draw(text, at: ground.point(azimuth: azimuth, distance: 1.16))
+            let text = Text(letter).font(.system(size: 12)).foregroundStyle(.secondary)
+            context.draw(text, at: ground.point(azimuth: azimuth, distance: SceneFrame.letterRadius))
         }
-
-        let center = SolarSystemWedge.center(fittedRange: input.fittedRange, latitude: input.latitude)
-        let open = SolarSystemWedge.width(clearDays: input.clearDays, fittedRange: input.fittedRange)
-        let width = open + (SolarSystemWedge.minimumWidth - open) * found
+        guard frame.wedgeOpacity > 0, frame.landedClear > 0 else { return }
         var wedge = Path()
         wedge.move(to: ground.point(azimuth: 0, distance: 0))
         for step in 0 ... 24 {
-            let azimuth = center - width / 2 + width * Double(step) / 24
-            wedge.addLine(to: ground.point(azimuth: azimuth, distance: 0.94))
+            let azimuth = frame.wedgeCenter - frame.wedgeWidth / 2 + frame.wedgeWidth * Double(step) / 24
+            wedge.addLine(to: ground.point(azimuth: azimuth, distance: SceneFrame.rim))
         }
         wedge.closeSubpath()
-        context.fill(wedge, with: .color(SolarSystemColors.wedge.opacity(0.25)))
-
-        for day in input.days.suffix(80) where day.type == .clear {
-            let flight = clocks.flight(day.day, at: now)
-            guard flight.travel >= 1 else { continue }
-            let azimuth = center + Self.jitter(day.day) * width * 0.9
-            let inner = 1 - 0.38 * flight.ray
+        let fill = 0.42 * frame.wedgeOpacity * min(Double(frame.landedClear) / 3, 1)
+        context.fill(wedge, with: .color(SolarSystemColors.wedge.opacity(fill)))
+        let center = ground.point(azimuth: 0, distance: 0)
+        for day in input.days.suffix(240) where day.type == .clear && clocks.hasLanded(day.day, at: now) {
             var ray = Path()
-            ray.move(to: ground.point(azimuth: azimuth, distance: 1))
-            ray.addLine(to: ground.point(azimuth: azimuth, distance: inner))
-            context.stroke(ray, with: .color(SolarSystemColors.clear.opacity(0.65)), lineWidth: 1.5)
+            ray.move(to: center)
+            ray.addLine(to: ground.point(azimuth: frame.rayAzimuth(day.day), distance: SceneFrame.rim))
+            context.stroke(ray, with: .color(SolarSystemColors.ray.opacity(0.5 * frame.wedgeOpacity)), lineWidth: 1)
         }
-    }
-
-    // MARK: - House
-
-    private func drawHouse(_ context: GraphicsContext, _ ground: SceneProjection, progress: Double) {
-        let house = SolarSystemHouse(groups: input.groups)
-        let scale = 0.82 / (max(house.length, house.depth) / 2)
-        let rise = Self.ease(Self.phase(progress, from: 0.25, to: 0.5))
-        let pitch = Self.ease(Self.phase(progress, from: 0.45, to: 0.65))
-        guard rise > 0 else { return }
-        func place(_ point: SIMD3<Double>) -> CGPoint {
-            let roofLift = max(point.z - house.wallHeight, 0) * pitch
-            let height = (min(point.z, house.wallHeight) + roofLift) * rise
-            return ground.project([point.x * scale, point.y * scale, height * scale])
-        }
-        let light = SIMD3<Double>(0.4, -0.5, 0.77)
-        for face in house.walls + house.roof where ground.camera.sees(face.normal) {
-            var path = Path()
-            path.addLines(face.corners.map(place))
-            path.closeSubpath()
-            let isRoof = face.normal.z > 0.01
-            let base = isRoof ? Color(.systemGray) : Color(.systemGray5)
-            context.fill(path, with: .color(base))
-            let shade = 1 - max((face.normal * light).sum(), 0)
-            context.fill(path, with: .color(.black.opacity(shade * 0.35)))
-            context.stroke(path, with: .color(.black.opacity(0.18)), lineWidth: 0.5)
-        }
-        for (index, face) in house.roof.enumerated() where ground.camera.sees(face.normal) {
-            let start = 0.65 + Double(index) * 0.08
-            let drop = Self.ease(Self.phase(progress, from: start, to: start + 0.15))
-            guard drop > 0 else { continue }
-            for panel in face.panels {
-                var path = Path()
-                path.addLines(panel.map(place))
-                path.closeSubpath()
-                context.fill(path, with: .color(SolarSystemColors.panel.opacity(drop)))
-                context.stroke(path, with: .color(.white.opacity(0.35 * drop)), lineWidth: 0.4)
-            }
-        }
-    }
-
-    // MARK: - Helpers
-
-    static func phase(_ value: Double, from start: Double, to end: Double) -> Double {
-        min(max((value - start) / (end - start), 0), 1)
-    }
-
-    static func ease(_ value: Double) -> Double { value * value * (3 - 2 * value) }
-
-    /// A stable spread within the wedge, -0.5...0.5, from the day.
-    static func jitter(_ day: String) -> Double {
-        let hash = day.unicodeScalars.reduce(UInt32(2_166_136_261)) { ($0 ^ $1.value) &* 16_777_619 }
-        return Double(hash % 1000) / 1000 - 0.5
     }
 }
 
-/// Ground and house points to the canvas: the compass rim is one unit.
+/// World points to the canvas.
 struct SceneProjection {
     let camera: SolarSystemCamera
     let center: CGPoint
-    let radius: CGFloat
+    /// Points per world unit.
+    let scale: CGFloat
 
     func project(_ point: SIMD3<Double>) -> CGPoint {
         let flat = camera.project(point)
-        return CGPoint(x: center.x + flat.x * radius, y: center.y - flat.y * radius)
+        return CGPoint(x: center.x + flat.x * scale, y: center.y - flat.y * scale)
     }
 
-    func point(azimuth: Double, distance: Double) -> CGPoint {
+    func point(azimuth: Double, distance: Double, height: Double = 0.02) -> CGPoint {
         let radians = azimuth * .pi / 180
-        return project([sin(radians) * distance, cos(radians) * distance, 0])
+        return project([sin(radians) * distance, cos(radians) * distance, height])
     }
 }
 
-/// Newly clear days flying from their strip cell to the compass rim.
+/// Newly clear days flying from their strip dot to the rim, then melting into a ray toward the
+/// center over the flight's last 38%.
 struct SolarSystemFlightCanvas: View {
     let input: SolarSystemSceneInput
     let strip: SolarSystemStripLayout
     let clocks: SolarSystemSceneClocks
+    let frame: SceneFrame
     let now: Date
 
     var body: some View {
         Canvas { context, size in
-            let radius = min(size.width * 0.3, SolarSystemVisual.sceneHeight * 0.38)
-            let center = CGPoint(x: size.width / 2, y: SolarSystemVisual.sceneHeight * 0.5)
-            let ground = SceneProjection(camera: SolarSystemCamera(yaw: 180, elevation: 90), center: center,
-                                         radius: radius)
-            let wedgeCenter = SolarSystemWedge.center(fittedRange: input.fittedRange, latitude: input.latitude)
-            let width = SolarSystemWedge.width(clearDays: input.clearDays, fittedRange: input.fittedRange)
+            let ground = SceneFrame.projection(camera: frame.camera, size: size)
+            let center = ground.point(azimuth: 0, distance: 0, height: 0.03)
+            let melt = SolarSystemSceneClocks.melt
             for cell in strip.cells {
-                let flight = clocks.flight(cell.day, at: now)
-                guard flight.travel > 0, flight.travel < 1 else { continue }
-                let frame = strip.frame(cell)
-                let start = CGPoint(
-                    x: frame.midX + SolarSystemVisual.stripInset, y: frame.midY + SolarSystemVisual.sceneHeight)
-                let azimuth = wedgeCenter + SolarSystemSceneCanvas.jitter(cell.day) * width * 0.9
-                let end = ground.point(azimuth: azimuth, distance: 1)
-                let control = CGPoint(x: (start.x + end.x) / 2, y: min(start.y, end.y) - 40)
-                let point = Self.bezier(start, control, end, SolarSystemSceneCanvas.ease(flight.travel))
-                let dot = Path(ellipseIn: CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7))
-                context.fill(dot, with: .color(SolarSystemColors.clear))
+                let progress = clocks.flight(cell.day, at: now)
+                guard progress > 0, progress < 1 else { continue }
+                let rim = ground.point(azimuth: frame.rayAzimuth(cell.day), distance: SceneFrame.rim, height: 0.03)
+                if progress < 1 - melt {
+                    let travel = progress / (1 - melt)
+                    let dot = strip.frame(cell)
+                    let start = CGPoint(x: dot.midX + SolarSystemVisual.stripInset,
+                                        y: dot.midY + SolarSystemVisual.sceneHeight - frame.stripLift)
+                    let control = CGPoint(x: (start.x + rim.x) / 2 + (rim.x - center.x) * 0.4,
+                                          y: min(start.y, rim.y) - 60)
+                    let point = Self.bezier(start, control, rim, SolarSystemSceneClocks.ease(travel))
+                    let radius = 3.6 + 1.4 * sin(travel * .pi)
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius,
+                                               width: 2 * radius, height: 2 * radius)),
+                        with: .color(SolarSystemColors.clear))
+                } else {
+                    let melted = SolarSystemSceneClocks.ease((progress - (1 - melt)) / melt)
+                    var ray = Path()
+                    ray.move(to: rim)
+                    ray.addLine(to: CGPoint(x: rim.x + (center.x - rim.x) * melted,
+                                            y: rim.y + (center.y - rim.y) * melted))
+                    context.stroke(ray, with: .color(SolarSystemColors.clear.opacity(1 - 0.5 * melted)),
+                                   style: StrokeStyle(lineWidth: 3.6 - 2.6 * melted, lineCap: .round))
+                }
             }
         }
         .frame(height: SolarSystemVisual.sceneHeight + strip.height)

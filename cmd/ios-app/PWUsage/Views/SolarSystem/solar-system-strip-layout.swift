@@ -15,12 +15,15 @@ struct SolarSystemStripLayout: Equatable {
     struct Label: Equatable {
         let text: String
         let kind: SolarSystemStripLabelKind
+        /// Set for the newest end's year, which ends at its column instead of starting there.
+        var trailing = false
         let column: Int
         let band: Int
     }
 
-    static let maxCell: CGFloat = 12
-    static let gapRatio: CGFloat = 0.25
+    /// A dot 7.2 points across on an 11.25-point pitch, as in the reveal prototype.
+    static let maxCell: CGFloat = 7.2
+    static let gapRatio: CGFloat = 0.5625
     /// A label's width in columns, for collision skipping.
     static let monthLabelColumns = 3
     static let yearLabelColumns = 4
@@ -35,6 +38,9 @@ struct SolarSystemStripLayout: Equatable {
     let cellSize: CGFloat
     let pitch: CGFloat
     let width: CGFloat
+    /// While a new week arrives the strip widens from its center: the columns it spans so far
+    /// (eased by the caller), or nil for all of them. Single band only.
+    var easedColumns: Double?
 
     init(days: [String], width: CGFloat) {
         self.width = width
@@ -69,26 +75,41 @@ struct SolarSystemStripLayout: Equatable {
         labels = Self.labels(cells: cells, newest: indexed.first { $0.1 == newest }?.0)
     }
 
-    /// The strip's total size: bands of seven rows, each with a label line above.
-    var height: CGFloat { CGFloat(bands) * (7 * pitch + labelHeight) }
-    var labelHeight: CGFloat { max(pitch * 1.4, 14) }
-
-    /// A cell's rectangle; bands are centered horizontally.
-    func frame(_ cell: Cell) -> CGRect {
-        let used = CGFloat(columnsPerBand) * pitch
-        let left = (width - used) / 2
-        let top = CGFloat(cell.band) * (7 * pitch + labelHeight) + labelHeight
-        return CGRect(
-            x: left + CGFloat(cell.column) * pitch, y: top + CGFloat(cell.row) * pitch,
-            width: cellSize, height: cellSize)
+    /// This layout part way through widening to its full width.
+    func widening(to columns: Double?) -> SolarSystemStripLayout {
+        var layout = self
+        layout.easedColumns = columns
+        return layout
     }
 
+    /// The strip's total size: bands of seven rows, each under a year line and a month line.
+    var height: CGFloat { CGFloat(bands) * (7 * pitch + labelHeight) }
+    static let labelLine: CGFloat = 14
+    var labelHeight: CGFloat { 2 * Self.labelLine }
+
+    /// Left edge of `column`, measured back from the newest column so the newest week stays put
+    /// while the strip widens around the center.
+    private func left(_ column: Int) -> CGFloat {
+        guard bands == 1 else {
+            return (width - CGFloat(columnsPerBand) * pitch) / 2 + CGFloat(column) * pitch
+        }
+        let shown = CGFloat(easedColumns ?? Double(columns))
+        let newest = width / 2 + (shown - 2) / 2 * pitch
+        return newest - CGFloat(columns - 1 - column) * pitch
+    }
+
+    /// A cell's square; bands are centered horizontally.
+    func frame(_ cell: Cell) -> CGRect {
+        let top = CGFloat(cell.band) * (7 * pitch + labelHeight) + labelHeight
+        return CGRect(x: left(cell.column), y: top + CGFloat(cell.row) * pitch, width: cellSize, height: cellSize)
+    }
+
+    /// Where a label's text starts (or, for a trailing one, ends), at its line's middle.
     func labelOrigin(_ label: Label) -> CGPoint {
-        let used = CGFloat(columnsPerBand) * pitch
-        let left = (width - used) / 2
-        return CGPoint(
-            x: left + CGFloat(label.column) * pitch,
-            y: CGFloat(label.band) * (7 * pitch + labelHeight))
+        let top = CGFloat(label.band) * (7 * pitch + labelHeight)
+        let line = label.kind == .year ? Self.labelLine / 2 : Self.labelLine * 1.5
+        let edge = label.trailing ? left(label.column) + cellSize : left(label.column)
+        return CGPoint(x: edge, y: top + line)
     }
 
     /// The cell under `point`, if any.
@@ -98,31 +119,28 @@ struct SolarSystemStripLayout: Equatable {
 
     // MARK: - Labels
 
-    /// A month label where a month's first day is stored, and the year at January and at the
-    /// newest end. Years win collisions; a label overlapping one already placed is skipped.
+    /// A month label where a month's first day is stored, the year above January's, and the
+    /// newest end's year. Each line skips a label overlapping one already placed; the newest end
+    /// gives way to a January label of the same year.
     private static func labels(cells: [Cell], newest: String?) -> [Label] {
         var candidates: [Label] = []
         for cell in cells where cell.day.hasSuffix("-01") {
             let month = Int(cell.day.dropFirst(5).prefix(2)) ?? 1
+            candidates.append(Label(text: monthName(month), kind: .month, column: cell.column, band: cell.band))
             if month == 1 {
                 candidates.append(Label(text: String(cell.day.prefix(4)), kind: .year, column: cell.column,
                                         band: cell.band))
-            } else {
-                candidates.append(Label(text: monthName(month), kind: .month, column: cell.column, band: cell.band))
             }
         }
         if let newest, let last = cells.last(where: { $0.day == newest }) {
-            let year = String(newest.prefix(4))
-            if !candidates.contains(where: { $0.kind == .year && $0.text == year && $0.band == last.band }) {
-                let column = max(last.column - yearLabelColumns + 1, 0)
-                candidates.append(Label(text: year, kind: .year, column: column, band: last.band))
-            }
+            candidates.append(Label(
+                text: String(newest.prefix(4)), kind: .year, trailing: true, column: last.column, band: last.band))
         }
         var placed: [Label] = []
-        for label in candidates.sorted(by: { ($0.kind == .year ? 0 : 1) < ($1.kind == .year ? 0 : 1) }) {
+        for label in candidates {
             let span = columns(label)
             let overlaps = placed.contains { other in
-                other.band == label.band && span.overlaps(columns(other))
+                other.band == label.band && other.kind == label.kind && span.overlaps(columns(other))
             }
             if !overlaps { placed.append(label) }
         }
@@ -130,7 +148,8 @@ struct SolarSystemStripLayout: Equatable {
     }
 
     private static func columns(_ label: Label) -> Range<Int> {
-        label.column ..< label.column + (label.kind == .year ? yearLabelColumns : monthLabelColumns)
+        let width = label.kind == .year ? yearLabelColumns : monthLabelColumns
+        return label.trailing ? label.column - width + 1 ..< label.column + 1 : label.column ..< label.column + width
     }
 
     private static func monthName(_ month: Int) -> String {

@@ -29,15 +29,15 @@ struct SolarSystemBannerTests {
         return (SolarSystemBannerModel(presentation: presentation, status: status), presentation)
     }
 
-    @Test func loadingShowsTheNewestDaysAsDotsWithTheirColors() {
+    @Test func loadingCarriesTheStoredDaysWithTheirColors() {
         let (model, presentation) = banner(status(location: home, days: 30))
         #expect(presentation.showsBanner)
         #expect(model.mode == .loading)
         #expect(model.countText == "30 days")
-        #expect(model.dots.count == SolarSystemBannerModel.dotCount)
-        #expect(model.dots.last?.day == "2026-11-01")
+        #expect(model.days.count == 30)
+        #expect(model.days.last?.day == "2026-11-01")
         // The three newest days are downloaded but not yet sorted.
-        #expect(model.dots.suffix(3).allSatisfy { $0.type == nil })
+        #expect(model.days.suffix(3).allSatisfy { $0.type == nil })
         #expect(!model.isPaused)
     }
 
@@ -58,5 +58,39 @@ struct SolarSystemBannerTests {
         #expect(!banner(status(location: home, days: 9, phase: .paused(.reconnectTesla))).1.showsBanner)
         #expect(!banner(status(location: home, days: 9, phase: .finished(.reachedOneYear))).1.showsBanner)
         #expect(!SiteHistoryPresentation(status: nil, now: now).showsBanner)
+    }
+
+    // MARK: - Motion
+
+    private func days(_ types: [String: SolarDayType?]) -> [SiteHistoryStatus.Day] {
+        types.keys.sorted().map { SiteHistoryStatus.Day(day: $0, type: types[$0] ?? nil) }
+    }
+
+    @Test func newDaysGlideInThreesAndTheFirstLookReplaysNothing() {
+        var clocks = SolarSystemBannerClocks()
+        clocks.observe(days: days(["2026-10-01": .clear]), now: now)
+        #expect(!clocks.isAnimating(at: now))
+        #expect(clocks.landed(days(["2026-10-01": .clear]), at: now) == 1)
+
+        let four = days(["2026-10-01": .clear, "2026-10-02": nil, "2026-10-03": nil, "2026-10-04": nil,
+                         "2026-10-05": nil])
+        clocks.observe(days: four, now: now)
+        #expect(clocks.glide("2026-10-05", at: now) == 0)
+        #expect(clocks.glide("2026-10-04", at: now) == nil)
+        #expect(clocks.glide("2026-10-04", at: now.addingTimeInterval(SolarSystemBannerClocks.stagger)) == 0)
+        // The fourth new day waits for the next group of three.
+        #expect(clocks.glide("2026-10-02", at: now.addingTimeInterval(0.5)) == nil)
+        #expect(clocks.glide("2026-10-02", at: now.addingTimeInterval(SolarSystemBannerClocks.groupSpacing)) == 0)
+        #expect(!clocks.isAnimating(at: now.addingTimeInterval(3)))
+    }
+
+    @Test func clearDaysArcIntoTheCompassAtThePass() {
+        var clocks = SolarSystemBannerClocks()
+        clocks.observe(days: days(["2026-10-01": nil]), now: now)
+        let sorted = days(["2026-10-01": .clear])
+        clocks.observe(days: sorted, now: now)
+        #expect(clocks.arc("2026-10-01", at: now) == 0)
+        #expect(clocks.landed(sorted, at: now) == 0)
+        #expect(clocks.landed(sorted, at: now.addingTimeInterval(SolarSystemBannerClocks.arcDuration)) == 1)
     }
 }

@@ -8,6 +8,8 @@ struct AppTabView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     @Environment(\.demoMode) private var demoMode
+    /// The banner's motion outlives its content, which the tab bar recreates as it updates.
+    @State private var bannerClocks = SolarSystemBannerClocks()
 
     var body: some View {
         Group {
@@ -40,10 +42,11 @@ struct AppTabView: View {
         if #available(iOS 26.1, *) {
             let banner = SolarSystemBannerModel(presentation: presentation, status: status)
             tabView.tabViewBottomAccessory(isEnabled: presentation.showsBanner && !model.isDemo) {
-                SolarSystemBanner(model: banner) {
+                SolarSystemBanner(model: banner, clocks: bannerClocks) {
                     model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
                 }
             }
+            .onChange(of: banner.days, initial: true) { bannerClocks.observe(days: banner.days, now: .now) }
         } else {
             tabView
         }

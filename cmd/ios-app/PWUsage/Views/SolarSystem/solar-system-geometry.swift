@@ -1,17 +1,22 @@
 import Foundation
 
 /// The compass wedge: where the panels may face. Before a fit its width only reflects how many
-/// clear days are in; after one it is the largest plane's 90% azimuth range.
+/// clear days are in (the prototypes' curves); after one it is the largest plane's 90% azimuth range.
 enum SolarSystemWedge {
     static let minimumWidth = 4.0
-    static let stylizedFloor = 24.0
 
     /// Width in degrees.
     static func width(clearDays: Int, fittedRange: [Double]?) -> Double {
         if let fittedRange, fittedRange.count == 2 {
             return min(max(SolarLayoutDetector.rangeWidth(fittedRange), minimumWidth), 360)
         }
-        return max(stylizedFloor, 180 / (1 + Double(max(clearDays, 0)) / 8))
+        return 4 + 160 * pow(8 / (Double(max(clearDays, 0)) + 8), 1.25)
+    }
+
+    /// The banner's smaller compass narrows on its own, steeper curve.
+    static func bannerWidth(clearDays: Int, fittedRange: [Double]?) -> Double {
+        if fittedRange != nil { return width(clearDays: clearDays, fittedRange: fittedRange) }
+        return 6 + 150 * pow(6 / (Double(max(clearDays, 0)) + 6), 1.3)
     }
 
     /// Center azimuth in degrees: the fitted range's middle, or the equator-facing direction.
@@ -45,7 +50,9 @@ struct SolarSystemHouse: Equatable {
     }
 
     static let panelKw = 0.4
-    static let panelSize = (width: 1.0, length: 1.7)
+    static let panelSize = (width: 1.02, length: 1.7)
+    /// The roof's overhang past the walls, meters.
+    static let overhang = 0.3
 
     let length: Double
     let depth: Double
@@ -58,9 +65,11 @@ struct SolarSystemHouse: Equatable {
     init(groups: [Group]) {
         let totalKw = groups.reduce(0) { $0 + max($1.kilowatts, 0) }
         let largest = groups.max { $0.kilowatts < $1.kilowatts }
-        length = min(max(9 + totalKw, 10), 24)
-        depth = min(max(length * 0.55, 7), 12)
-        wallHeight = 2.8
+        // Scaled with the square root of the size: 9 kW is the 12 × 8 m reference house.
+        let scale = min(max((totalKw / 9).squareRoot(), 0.72), 1.3)
+        length = 12 * scale
+        depth = 8 * scale
+        wallHeight = 2.6 * scale
         pitchDegrees = min(max(largest?.tilt ?? 25, 8), 50)
         frontAzimuth = largest?.azimuth ?? 180
         let frame = HouseFrame(
@@ -115,7 +124,9 @@ private struct HouseFrame {
     let pitch: Double
     let azimuth: Double
 
-    private var ridgeHeight: Double { depth / 2 * tan(pitch * .pi / 180) }
+    /// Horizontal run from the eave (past the overhang) to the ridge; every face pitches at `pitch`.
+    private var run: Double { depth / 2 + SolarSystemHouse.overhang }
+    private var ridgeHeight: Double { run * tan(pitch * .pi / 180) }
 
     /// Local to world: the front (`+y`) looks toward the compass `azimuth`.
     private func world(_ along: Double, _ across: Double, _ height: Double) -> SIMD3<Double> {
@@ -128,8 +139,9 @@ private struct HouseFrame {
 
     /// Eave start, eave end and the top corner(s), local coordinates, per side.
     private func roofCorners(_ side: SolarSystemRoofSide) -> [SIMD3<Double>] {
-        let (halfL, halfD, top, base) = (length / 2, depth / 2, wallHeight + ridgeHeight, wallHeight)
-        let ridge = halfL - halfD
+        let ridge = (length - depth) / 2
+        let (halfL, halfD) = (length / 2 + SolarSystemHouse.overhang, run)
+        let (top, base) = (wallHeight + ridgeHeight, wallHeight)
         switch side {
         case .front: return [[-halfL, halfD, base], [halfL, halfD, base], [ridge, 0, top], [-ridge, 0, top]]
         case .right: return [[halfL, halfD, base], [halfL, -halfD, base], [ridge, 0, top]]
@@ -179,11 +191,11 @@ private struct HouseFrame {
         let eave = local[1] - local[0]
         let eaveLength = (eave * eave).sum().squareRoot()
         let eaveDirection = eave / eaveLength
-        let slopeLength = (depth / 2) / cos(pitch * .pi / 180)
+        let slopeLength = run / cos(pitch * .pi / 180)
         let inward = cross(eaveDirection, [0, 0, 1])
-        let slopeDirection = (inward * (depth / 2) + SIMD3(0, 0, ridgeHeight)) / slopeLength
-        // Flattened, every face's top edge is inset by half the depth at each end.
-        let shape = FaceShape(width: eaveLength, slope: slopeLength, inset: depth / 2)
+        let slopeDirection = (inward * run + SIMD3(0, 0, ridgeHeight)) / slopeLength
+        // Flattened, every face's top edge is inset by the run at each end.
+        let shape = FaceShape(width: eaveLength, slope: slopeLength, inset: run)
         for scale in stride(from: 1.0, to: 0.05, by: -0.05) {
             let rects = shape.grid(panelWidth: SolarSystemHouse.panelSize.width * scale,
                                    panelLength: SolarSystemHouse.panelSize.length * scale, count: count)
@@ -192,7 +204,7 @@ private struct HouseFrame {
                 [(rect.minX, rect.minY), (rect.maxX, rect.minY), (rect.maxX, rect.maxY), (rect.minX, rect.maxY)]
                     .map { along, upSlope in
                         toWorld(local[0] + eaveDirection * Double(along) + slopeDirection * Double(upSlope)
-                            + [0, 0, 0.02])
+                            + [0, 0, 0.06])
                     }
             }
         }
@@ -243,6 +255,17 @@ struct SolarSystemCamera: Equatable {
     var elevation: Double
 
     static let elevationRange = 8.0 ... 75.0
+    /// Looking straight down at the compass, north up.
+    static let overhead = SolarSystemCamera(yaw: 180, elevation: 90)
+    /// Where the tilt ends: 32° up, turned 26° (the reveal prototype's camera).
+    static let found = SolarSystemCamera(yaw: 154, elevation: 32)
+
+    /// Between the overhead view and `target` as the tilt runs (`progress` 0...1, eased by the caller).
+    static func tilting(to target: SolarSystemCamera, progress: Double) -> SolarSystemCamera {
+        SolarSystemCamera(
+            yaw: overhead.yaw + (target.yaw - overhead.yaw) * progress,
+            elevation: overhead.elevation + (target.elevation - overhead.elevation) * progress)
+    }
 
     private var right: SIMD3<Double> {
         let radians = yaw * .pi / 180
