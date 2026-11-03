@@ -9,13 +9,13 @@ struct SmartShiftDetailsSnapshot: Identifiable {
     let rows: [PeriodRow]
     let breakdowns: [CostBreakdown]
     /// Why a cheaper start isn't suggested, when the safety rule turned one down.
-    var ruledOutNote: String? = nil
+    var ruledOutNote: String?
     /// Present only when the solar forecast priced this comparison.
     let forecastFetchedAt: Date?
     let contextAsOf: Date?
     let capturedAt: Date
     /// The pass's inputs and result, for "Copy diagnostics"; `nil` without a Job.
-    var diagnostics: SmartShiftDiagnostics? = nil
+    var diagnostics: SmartShiftDiagnostics?
 }
 
 /// Rate periods, what the run draws from each bank, freshness and assumptions.

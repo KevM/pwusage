@@ -12,7 +12,7 @@ struct MobileBillResponse: Codable, Equatable {
     let currentBill: Bill
     let loadTiming: LoadTiming?
     let sources: Sources
-    var outlook: BillOutlookHistory? = nil
+    var outlook: BillOutlookHistory?
 
     struct Site: Codable, Equatable {
         let id: String
@@ -118,11 +118,11 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
         let coverage: Double
         /// Grid history over the last 28 days (export positive). Absent from
         /// older servers, which leaves the projection bounded by the forecast.
-        var gridNetExportKw: Double? = nil
+        var gridNetExportKw: Double?
         /// The 1-in-4 "dull day" grid net export for the cautious projection.
-        var cautiousGridNetExportKw: Double? = nil
+        var cautiousGridNetExportKw: Double?
         /// Median solar; not used by the projection yet.
-        var solarKw: Double? = nil
+        var solarKw: Double?
     }
 
     enum ContractError: Error, Equatable {

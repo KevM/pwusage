@@ -15,5 +15,5 @@ struct TeslaReconnectAction: Equatable {
 
 extension EnvironmentValues {
     /// Reuses the app's authenticated Tesla login flow without giving sheets token access.
-    @Entry var reconnectTesla: TeslaReconnectAction? = nil
+    @Entry var reconnectTesla: TeslaReconnectAction?
 }

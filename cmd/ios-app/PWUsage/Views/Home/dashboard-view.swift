@@ -7,7 +7,7 @@ struct DashboardView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     let onOpenTab: (AppTab) -> Void
-    var onRefresh: (() async -> Void)? = nil
+    var onRefresh: (() async -> Void)?
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) var reduceMotion

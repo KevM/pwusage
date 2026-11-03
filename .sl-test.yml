@@ -1,0 +1,11 @@
+included:
+  - cmd/ios-app
+excluded:
+  - cmd/ios-app/build
+  - cmd/ios-app/PWUsage.xcodeproj
+  - cmd/ios-app/.build
+  - cmd/ios-app/PWUsageScreenshots/SnapshotHelper.swift
+only_rules:
+  - trailing_comma
+trailing_comma:
+  mandatory_comma: true

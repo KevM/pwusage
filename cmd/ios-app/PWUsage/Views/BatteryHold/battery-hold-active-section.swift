@@ -6,7 +6,7 @@ struct BatteryHoldActiveSection: View {
     let now: Date
     let canRestore: Bool
     let onRestore: () -> Void
-    var liveActivity: BatteryHoldLiveActivityOffer? = nil
+    var liveActivity: BatteryHoldLiveActivityOffer?
     var canShowLiveActivity = false
     var onShowLiveActivity: () -> Void = {}
     @State private var isConfirmingRestore = false

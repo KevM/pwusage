@@ -4,7 +4,7 @@ struct BillView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     var isSelected = true
-    var onOpenSmartShift: (() -> Void)? = nil
+    var onOpenSmartShift: (() -> Void)?
     @Environment(\.scenePhase) private var scenePhase
 
     private var state: DashboardEndpointState<MobileBillResponse> { coordinator.bill }

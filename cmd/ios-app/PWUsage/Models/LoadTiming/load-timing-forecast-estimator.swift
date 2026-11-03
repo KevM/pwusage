@@ -56,9 +56,9 @@ struct LoadTimingForecastEstimator {
         let homeKw: Double?
         let batteryNetChargeKw: Double?
         /// Typical grid net export from the site's history (export positive).
-        var gridNetExportKw: Double? = nil
+        var gridNetExportKw: Double?
         /// The cautious ("dull day") grid net export from the site's history.
-        var cautiousGridNetExportKw: Double? = nil
+        var cautiousGridNetExportKw: Double?
     }
 
     struct PlanningContext: Codable, Equatable {

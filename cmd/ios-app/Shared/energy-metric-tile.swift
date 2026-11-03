@@ -3,17 +3,17 @@ import SwiftUI
 struct MetricTile: View {
     let title: String
     let value: String
-    var detail: String? = nil
+    var detail: String?
     let symbol: String
     let tint: Color
     var compact = false
     var prominentValue = false
     var reducedPadding = false
     var showsDetail = true
-    var symbolPrefix: String? = nil
+    var symbolPrefix: String?
     var isMuted = false
-    var numericValue: Double? = nil
-    var spokenRole: String? = nil
+    var numericValue: Double?
+    var spokenRole: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {

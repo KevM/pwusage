@@ -7,7 +7,7 @@ struct SolarForecastInterval: Codable, Equatable, Sendable {
     /// Summed `pv_estimate10` across the selected arrays, for the cautious
     /// projection. `nil` when any array lacks it, and in batches stored by
     /// builds that did not keep it.
-    var cautiousPowerKw: Double? = nil
+    var cautiousPowerKw: Double?
     func energyKwh() throws -> Double {
         let duration = periodEnd.timeIntervalSince(periodStart)
         let energy = powerKw * (duration / 3600)

@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct CardContainer<Content: View>: View {
-    var title: String? = nil
-    var symbol: String? = nil
-    var theme: SectionTheme? = nil
+    var title: String?
+    var symbol: String?
+    var theme: SectionTheme?
     var padding: CGFloat = 17
     var cornerRadius: CGFloat = 20
     var spacing: CGFloat = 13
