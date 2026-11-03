@@ -21,7 +21,7 @@ Plan: docs/plans/2026-11-02-solar-system-experience.md
 - [x] Day ledger and checkpoint record per site (cleared on sign-out and Debug reset).
 - [x] Onboarding cadence and stop rules: pass every second slice, full detection on 15/40 clear or 180 producing, continue to high confidence.
 - [ ] Status model and presentation phases; counts from the phone's history, not the onboarding position.
-- [ ] Pure geometry: strip layout, wedge, hip roof, projection.
+- [x] Pure geometry: strip layout, wedge, hip roof, projection.
 - [ ] Solar System screen (merges Site History and Solar Forecast; credit moves to About).
 - [ ] Banner: compass, day dots, needs-location state.
 - [ ] Home location sheet: current location (one-time), address or ZIP search, map pin.
