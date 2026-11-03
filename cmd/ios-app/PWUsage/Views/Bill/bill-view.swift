@@ -162,42 +162,49 @@ struct BillView: View {
                 let multipleTariffs = Set(response.currentBill.periods.map(\.tariffName)).count > 1
                 VStack(spacing: 0) {
                     ForEach(Array(response.currentBill.periods.enumerated()), id: \.offset) { index, period in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(DashboardPresentation.tariffPeriodTitle(period.periodName))
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer(minLength: 8)
-                                Text(DashboardPresentation.currency(period.cost, code: response.currentBill.currency))
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .multilineTextAlignment(.trailing)
-                            }
-                            Text(BillOutlookPresentation.balance(period.netGridKwh))
-                                .font(.system(.title2, design: .rounded, weight: .bold))
-                                .monospacedDigit()
-                                .foregroundStyle(balanceColor(period.netGridKwh))
-                            if multipleTariffs {
-                                Text(period.tariffName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 11)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(
-                            "\(DashboardPresentation.tariffPeriodTitle(period.periodName)), "
-                                + "\(multipleTariffs ? "\(period.tariffName), " : "")"
-                                + "\(BillOutlookPresentation.balance(period.netGridKwh)), "
-                                + "estimated cost "
-                                + "\(DashboardPresentation.currency(period.cost, code: response.currentBill.currency))"
-                        )
+                        periodRow(period, multipleTariffs: multipleTariffs,
+                                  currency: response.currentBill.currency)
                         if index < response.currentBill.periods.count - 1 { Divider() }
                     }
                 }
             }
         }
+    }
+
+    private func periodRow(_ period: Period, multipleTariffs: Bool, currency: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(DashboardPresentation.tariffPeriodTitle(period.periodName))
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Text(DashboardPresentation.currency(period.cost, code: currency))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+            }
+            Text(BillOutlookPresentation.balance(period.netGridKwh))
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(balanceColor(period.netGridKwh))
+            if multipleTariffs {
+                Text(period.tariffName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 11)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(periodLabel(period, multipleTariffs: multipleTariffs, currency: currency))
+    }
+
+    private func periodLabel(_ period: Period, multipleTariffs: Bool, currency: String) -> String {
+        let title = DashboardPresentation.tariffPeriodTitle(period.periodName)
+        let tariff = multipleTariffs ? "\(period.tariffName), " : ""
+        let balance = BillOutlookPresentation.balance(period.netGridKwh)
+        let cost = DashboardPresentation.currency(period.cost, code: currency)
+        return "\(title), \(tariff)\(balance), estimated cost \(cost)"
     }
 
     private func billMetadata(_ response: MobileBillResponse) -> some View {
