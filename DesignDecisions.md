@@ -2,7 +2,7 @@
 
 Read this before "simplifying" anything it describes. Each item below looks like
 it could be shortened, generalized, or deleted — and each one is load-bearing.
-`CLAUDE.md` and `Agents.md` tell you *how* to work in this repo; this doc records
+`AGENTS.md` (root, plus each app's own) tells you *how* to work in this repo; this doc records
 *why* a handful of non-obvious decisions were made, so a well-meaning refactor
 doesn't quietly reintroduce a bug that was already paid for.
 
