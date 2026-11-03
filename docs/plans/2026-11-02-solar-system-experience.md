@@ -8,7 +8,7 @@
 
 **Builds on:** `docs/plans/2026-11-02-history-onboarding-design.md` (the onboarding job, lifecycle and Settings work in PR #285).
 
-**Reference prototypes:** these were HTML widgets in the design conversation. Their behavior is summarized under "Experience" below.
+**Reference prototypes:** `docs/plans/prototypes/solar-system-reveal.html` (strip, flights melting into rays, wedge, house build) and `docs/plans/prototypes/solar-system-banner.html` (the banner). Open them in a browser and match their timing, easing, flight curves, colors and layout in SwiftUI. Where the plan and a prototype differ, the plan wins (for example, the banner's dot colors and the needs-location state).
 
 ## Decisions
 
