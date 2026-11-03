@@ -23,7 +23,13 @@ dev_history_project_ref() {
 # Snapshots hold real energy history: refuse a path git would track.
 dev_history_refuse_tracked_path() {
   local path="$1" dir
+  [[ "$path" == /* ]] || path="$PWD/$path"
   dir="$(dirname "$path")"
+  # The reset has not created the snapshot's parents yet. Find a directory git
+  # can enter rather than interpreting a failed lookup as being outside git.
+  while [[ ! -d "$dir" ]]; do
+    dir="$(dirname "$dir")"
+  done
   if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
      && ! git -C "$dir" check-ignore -q "$path"; then
     echo "Refusing: $path is inside a git work tree and not ignored. Keep snapshots out of git." >&2
