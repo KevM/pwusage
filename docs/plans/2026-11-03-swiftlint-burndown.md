@@ -139,3 +139,32 @@ of the campaign. Progress:
   restart the task immediately and spin. If the suppression is to go, the
   refresh scheduling has to be reworked first; that is a behaviour change and
   should not ride along with a lint cleanup.
+
+## Round 2 status
+
+Line length is done: all 802 `line_length` violations and the six inline
+`line_length` suppressions are gone. Wrapping grew some files, so four
+file/type-body counts were re-recorded higher (dashboard-previews 409,
+today-energy-widget-tests, MobileContractsTests); the structural batch owns
+those.
+
+Baseline: 874 -> 65 entries.
+
+Remaining by rule:
+
+| Rule | Count | Notes |
+| --- | --- | --- |
+| `function_parameter_count` | 16 | group inputs into structs; `DisplayOptions` for the Smart Shift messages is designed but not started |
+| `cyclomatic_complexity` | 11 | extract helpers; `load-timing-forecast-plan` is complexity 44 |
+| `large_tuple` | 10 | 8 in `SmartShiftPresentationTests`, 2 in `LoadTimingForecastEstimatorTests` |
+| `file_length` | 9 | test suites need splitting into extensions in separate files (make shared helpers internal first) |
+| `type_body_length` | 9 | same splits |
+| `function_body_length` | 8 | extract helpers |
+| `nesting` | 2 | `load-timing-forecast-projection`, `mobile-live-contract` |
+
+Inline suppressions left: 2 — `load-timing-view` (`redundant_discardable_let`,
+needs the refresh scheduling reworked first) and the `file_length` header in
+`LoadTimingForecastEstimatorTests` (goes away with the suite split).
+
+Verification used after every batch: `format.sh`, the strict baseline lint,
+and `./run-tests.sh --quick` (966 tests).
