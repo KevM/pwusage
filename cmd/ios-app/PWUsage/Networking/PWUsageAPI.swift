@@ -220,7 +220,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(exchange)
         let data = try await perform(request)
-        guard (try? JSONDecoder().decode(SessionResponse.self, from: data).ok) == true else {
+        guard (try? JSONDecoder().decode(SessionResponse.self, from: data).succeeded) == true else {
             throw PWUsageAPIError.invalidResponse
         }
     }
@@ -284,10 +284,16 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         return url
     }
 
-    private struct SessionResponse: Decodable { let ok: Bool }
     private struct FillRequest: Encodable { let siteId: String; let from: String; let days: Int }
     private struct FillFailure: Decodable { let code: String?; let retryAt: Date?; let retryAfterSource: String? }
     private struct ErrorResponse: Decodable { let error: String?; let code: String? }
+}
+
+/// The session health check answers `{"ok": bool}`. The property is spelled out
+/// and mapped so decoding keeps the server's key.
+private struct SessionResponse: Decodable {
+    let succeeded: Bool
+    private enum CodingKeys: String, CodingKey { case succeeded = "ok" }
 }
 
 // Every retroactive conformance this type has, in one place. Each protocol is

@@ -7,18 +7,18 @@ struct LoadTimingEstimatorTests {
     @Test("Car charging level changes wall energy and duration while preserving battery energy")
     func carLevelAssumptionsApply() throws {
         let settings = CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level1)
-        let l1 = try #require(LoadTimingEstimator.carChargeEstimate(settings: settings))
-        let l2 = try #require(LoadTimingEstimator.carChargeEstimate(
+        let level1Estimate = try #require(LoadTimingEstimator.carChargeEstimate(settings: settings))
+        let level2Estimate = try #require(LoadTimingEstimator.carChargeEstimate(
             settings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level2)
         ))
 
-        #expect(l1.batteryKwh == 6)
-        #expect(abs(l1.wallKwh - 7.058_823_529) < 0.000_001)
-        #expect(abs(l1.durationHours - 4.705_882_352) < 0.000_001)
-        #expect(abs(l2.wallKwh - 6.666_666_667) < 0.000_001)
-        #expect(abs(l2.durationHours - 0.740_740_741) < 0.000_001)
-        #expect(l1.wallKwh > l2.wallKwh)
-        #expect(l1.durationHours > l2.durationHours)
+        #expect(level1Estimate.batteryKwh == 6)
+        #expect(abs(level1Estimate.wallKwh - 7.058_823_529) < 0.000_001)
+        #expect(abs(level1Estimate.durationHours - 4.705_882_352) < 0.000_001)
+        #expect(abs(level2Estimate.wallKwh - 6.666_666_667) < 0.000_001)
+        #expect(abs(level2Estimate.durationHours - 0.740_740_741) < 0.000_001)
+        #expect(level1Estimate.wallKwh > level2Estimate.wallKwh)
+        #expect(level1Estimate.durationHours > level2Estimate.durationHours)
     }
 
     @Test("Zero car charge is distinct from invalid input")

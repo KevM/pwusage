@@ -10,8 +10,8 @@ struct LoadTimingForecastEstimatorTests {
         LoadProfile(id: "load", name: "Load", kind: .appliance, energyKwh: kwh, durationHours: hours, carSettings: nil)
     }
 
-    private func tariff(_ from: TimeInterval, _ to: TimeInterval, key: String = "p", buy: Double = 0.30, sell: Double = 0.05) -> LoadTimingTariffSegment {
-        LoadTimingTariffSegment(start: start.addingTimeInterval(from), end: start.addingTimeInterval(to), periodKey: key, name: key, buyRate: buy, sellRate: sell)
+    private func tariff(_ from: TimeInterval, _ through: TimeInterval, key: String = "p", buy: Double = 0.30, sell: Double = 0.05) -> LoadTimingTariffSegment {
+        LoadTimingTariffSegment(start: start.addingTimeInterval(from), end: start.addingTimeInterval(through), periodKey: key, name: key, buyRate: buy, sellRate: sell)
     }
 
     private func timing(_ segments: [LoadTimingTariffSegment], balances: [String: Double] = ["p": 2],
@@ -30,8 +30,8 @@ struct LoadTimingForecastEstimatorTests {
                           pricingPeriods: pricing, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
     }
 
-    private func forecast(_ power: Double, from: TimeInterval, to: TimeInterval) -> SolarForecastInterval {
-        SolarForecastInterval(periodStart: start.addingTimeInterval(from), periodEnd: start.addingTimeInterval(to), powerKw: power)
+    private func forecast(_ power: Double, from: TimeInterval, to end: TimeInterval) -> SolarForecastInterval {
+        SolarForecastInterval(periodStart: start.addingTimeInterval(from), periodEnd: start.addingTimeInterval(end), powerKw: power)
     }
 
     private func context(home: Double = 0, battery: Double = 0) -> LoadTimingForecastEstimator.PlanningContext {
@@ -165,10 +165,10 @@ struct LoadTimingForecastEstimatorTests {
     @Test func candidateOrderDoesNotChangeChosenRecommendation() throws {
         let ordered = [forecast(0, from: 0, to: 3600), forecast(0, from: 3600, to: 7200)]
         let reversed = ordered.reversed()
-        let a = try #require(evaluate(tariffs: [tariff(0, 7200, buy: 0.3, sell: 0.05)], balances: ["p": 0], forecast: ordered).comparison)
-        let b = try #require(evaluate(tariffs: [tariff(0, 7200, buy: 0.3, sell: 0.05)], balances: ["p": 0], forecast: Array(reversed)).comparison)
-        #expect(a.recommendedStart == b.recommendedStart)
-        #expect(a.recommendedCost == b.recommendedCost)
+        let fromOrdered = try #require(evaluate(tariffs: [tariff(0, 7200, buy: 0.3, sell: 0.05)], balances: ["p": 0], forecast: ordered).comparison)
+        let fromReversed = try #require(evaluate(tariffs: [tariff(0, 7200, buy: 0.3, sell: 0.05)], balances: ["p": 0], forecast: Array(reversed)).comparison)
+        #expect(fromOrdered.recommendedStart == fromReversed.recommendedStart)
+        #expect(fromOrdered.recommendedCost == fromReversed.recommendedCost)
     }
 
     @Test func everyCandidateUsesSameHorizon() throws {
@@ -457,9 +457,9 @@ struct LoadTimingForecastEstimatorTests {
         let peak = (buy: 0.38, sell: 0.10), offPeak = (buy: 0.20, sell: 0.26)
         let spans: [(Double, Double, String)] = [(0, 7, "Off-Peak"), (7, 16.5, "Peak"), (16.5, 31, "Off-Peak"),
                                                  (31, 40.5, "Peak"), (40.5, 48, "Off-Peak")]
-        return spans.map { from, to, key in
+        return spans.map { begin, end, key in
             let rate = key == "Peak" ? peak : offPeak
-            return LoadTimingTariffSegment(start: hours(from), end: hours(to), periodKey: key, name: key,
+            return LoadTimingTariffSegment(start: hours(begin), end: hours(end), periodKey: key, name: key,
                                            buyRate: rate.buy, sellRate: rate.sell)
         }
     }
@@ -586,9 +586,9 @@ struct LoadTimingForecastEstimatorTests {
         let spans: [(Double, Double, String)] = [(0, 6, "Super Off-Peak"), (6, 10, "Off-Peak"), (10, 14, "Mid"),
                                                  (14, 20, "Peak"), (20, 24, "Off-Peak")]
         let segments = try [0.0, 24].flatMap { day in
-            try spans.map { from, to, key in
+            try spans.map { begin, end, key in
                 let rate = try #require(rates[key])
-                return LoadTimingTariffSegment(start: hours(day + from), end: hours(day + to), periodKey: key, name: key,
+                return LoadTimingTariffSegment(start: hours(day + begin), end: hours(day + end), periodKey: key, name: key,
                                                buyRate: rate.buy, sellRate: rate.sell)
             }
         }
@@ -611,9 +611,9 @@ struct LoadTimingForecastEstimatorTests {
                                     buyRate: segment.buyRate, sellRate: segment.periodKey == "Peak" ? 0.40 : segment.sellRate)
         }
         let solar = (0 ..< 96).map { index -> SolarForecastInterval in
-            let from = hours(Double(index) / 2), to = hours(Double(index + 1) / 2)
-            let inPeak = tariffs.contains { $0.periodKey == "Peak" && $0.start <= from && from < $0.end }
-            return SolarForecastInterval(periodStart: from, periodEnd: to, powerKw: inPeak ? 3 : 0)
+            let begin = hours(Double(index) / 2), end = hours(Double(index + 1) / 2)
+            let inPeak = tariffs.contains { $0.periodKey == "Peak" && $0.start <= begin && begin < $0.end }
+            return SolarForecastInterval(periodStart: begin, periodEnd: end, powerKw: inPeak ? 3 : 0)
         }
         let now = hours(8.5)
         let result = LoadTimingForecastEstimator.evaluate(
@@ -680,12 +680,12 @@ extension LoadTimingForecastEstimatorTests {
     private func dailyTariffs(days: Int, onBuy: Double = 0.31, onSell: Double = 0.04, offBuy: Double = 0.10,
                               offSell: Double = 0.03, onPeakDay: (Int) -> Bool = { _ in true }) -> [LoadTimingTariffSegment] {
         let dayZero = start.addingTimeInterval(-8 * 3600)
-        func segment(_ day: Int, _ from: Double, _ to: Double, _ key: String) -> LoadTimingTariffSegment {
+        func segment(_ day: Int, _ begin: Double, _ end: Double, _ key: String) -> LoadTimingTariffSegment {
             let base = dayZero.addingTimeInterval(Double(day) * 86_400)
-            let on = key == "ON_PEAK"
-            return LoadTimingTariffSegment(start: base.addingTimeInterval(from * 3600), end: base.addingTimeInterval(to * 3600),
-                                           periodKey: key, name: on ? "On-Peak" : "Off-Peak",
-                                           buyRate: on ? onBuy : offBuy, sellRate: on ? onSell : offSell)
+            let isOnPeak = key == "ON_PEAK"
+            return LoadTimingTariffSegment(start: base.addingTimeInterval(begin * 3600), end: base.addingTimeInterval(end * 3600),
+                                           periodKey: key, name: isOnPeak ? "On-Peak" : "Off-Peak",
+                                           buyRate: isOnPeak ? onBuy : offBuy, sellRate: isOnPeak ? onSell : offSell)
         }
         return (0 ..< days).flatMap { day in
             onPeakDay(day)

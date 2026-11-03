@@ -49,11 +49,11 @@
                     cancelledObservedReserve: nil
                 )
                 response = .init(hold: hold, notice: response.notice)
-                return .init(status: .ok, hold: hold, current: nil)
+                return .init(status: .succeeded, hold: hold, current: nil)
             case .restore: response = .init(hold: nil, notice: response.notice)
             case .dismiss: response = .init(hold: response.hold, notice: nil)
             }
-            return .init(status: .ok, hold: nil, current: nil)
+            return .init(status: .succeeded, hold: nil, current: nil)
         }
     }
 #endif

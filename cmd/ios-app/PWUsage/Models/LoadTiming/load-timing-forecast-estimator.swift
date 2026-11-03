@@ -251,11 +251,11 @@ struct LoadTimingForecastEstimator {
         guard powerKw.isFinite, powerKw > 0 else { return .invalidInput }
         while index < steps.periods.count, steps.edges[index] < end {
             defer { index += 1 }
-            let a = max(steps.edges[index], start), b = min(steps.edges[index + 1], end)
+            let lower = max(steps.edges[index], start), upper = min(steps.edges[index + 1], end)
             let flow = steps.typical[index]
             let periodKey = steps.periods[index]
             guard let balance = withLoad[periodKey] else { return .incompleteCoverage }
-            let seconds = b.timeIntervalSince(a)
+            let seconds = upper.timeIntervalSince(lower)
             let hours = seconds / 3600
             let energy = powerKw * hours
             let loadedBalance = balance - energy
@@ -268,8 +268,10 @@ struct LoadTimingForecastEstimator {
                   contribution.isFinite, updatedSolarContribution.isFinite else { return .invalidInput }
             withLoad[periodKey] = loadedBalance
             // A step straddling the cutoff counts only its part before it.
-            if a < safetyEnd {
-                drawsBySafetyEnd[periodKey, default: 0] += b <= safetyEnd ? energy : powerKw * safetyEnd.timeIntervalSince(a) / 3600
+            if lower < safetyEnd {
+                drawsBySafetyEnd[periodKey, default: 0] += upper <= safetyEnd
+                    ? energy
+                    : powerKw * safetyEnd.timeIntervalSince(lower) / 3600
             }
             solarContribution = updatedSolarContribution
         }

@@ -232,9 +232,9 @@ extension LoadTimingForecastEstimator {
             typical.reserveCapacity(points.count)
             cautious.reserveCapacity(points.count)
             for index in 0 ..< (points.count - 1) {
-                let a = points[index], b = points[index + 1]
-                guard b > a else { return nil }
-                let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
+                let lower = points[index], upper = points[index + 1]
+                guard upper > lower else { return nil }
+                let mid = lower.addingTimeInterval(upper.timeIntervalSince(lower) / 2)
                 guard model.hasForecast(at: mid),
                       let tariff = LoadTimingForecastEstimator.segment(at: mid, in: tariffs),
                       let flow = model.flow(at: mid), let dull = cautiousModel.flow(at: mid) else { return nil }
@@ -261,9 +261,9 @@ extension LoadTimingForecastEstimator {
                 return .incompleteCoverage
             }
             while index < periods.count, edges[index] < end {
-                let a = max(edges[index], start), b = min(edges[index + 1], end)
+                let lower = max(edges[index], start), upper = min(edges[index + 1], end)
                 guard let old = result[periods[index]] else { return .incompleteCoverage }
-                let seconds = b.timeIntervalSince(a)
+                let seconds = upper.timeIntervalSince(lower)
                 let hours = seconds / 3600
                 let netPower = useCautious ? cautious[index].netExportKw : typical[index].netExportKw
                 let netExport = netPower * hours

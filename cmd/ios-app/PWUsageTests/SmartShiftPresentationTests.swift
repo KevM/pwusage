@@ -18,8 +18,8 @@ struct SmartShiftPresentationTests {
     static func timing(hasTariff: Bool = true) -> LoadTiming {
         let spans: [(Double, Double, String)] = [(0, 7, "Off-Peak"), (7, 16.5, "Peak"), (16.5, 31, "Off-Peak"),
                                                  (31, 40.5, "Peak"), (40.5, 48, "Off-Peak")]
-        let segments = spans.map { from, to, key in
-            LoadTimingTariffSegment(start: at(from), end: at(to), periodKey: key, name: key,
+        let segments = spans.map { start, end, key in
+            LoadTimingTariffSegment(start: at(start), end: at(end), periodKey: key, name: key,
                                     buyRate: key == "Peak" ? 0.38 : 0.20, sellRate: key == "Peak" ? 0.10 : 0.26)
         }
         let periods = [("Peak", -6.0, 0.38, 0.10), ("Off-Peak", 18.0, 0.20, 0.26)].map { name, balance, buy, sell in
@@ -470,12 +470,13 @@ extension SmartShiftPresentationTests {
         endsAtRateChange: Bool = false,
         usesHistory: Bool = false
     ) -> Estimator.Comparison {
-        func lane(_ key: String, _ v: (start: Double, later: Double, startNow: Double, projected: Double, afterLater: Double, afterNow: Double)) -> Estimator.BalanceLane {
-            Estimator.BalanceLane(periodKey: key, startKwh: v.start,
-                                  recommended: [.init(date: now, kwh: v.start), .init(date: horizonEnd, kwh: v.later)],
-                                  startNow: [.init(date: now, kwh: v.start), .init(date: horizonEnd, kwh: v.startNow)],
-                                  projectedKwh: v.projected, projectedAfterRecommendedKwh: v.afterLater,
-                                  projectedAfterStartNowKwh: v.afterNow)
+        func lane(_ key: String, _ values: (start: Double, later: Double, startNow: Double, projected: Double,
+                                            afterLater: Double, afterNow: Double)) -> Estimator.BalanceLane {
+            Estimator.BalanceLane(periodKey: key, startKwh: values.start,
+                                  recommended: [.init(date: now, kwh: values.start), .init(date: horizonEnd, kwh: values.later)],
+                                  startNow: [.init(date: now, kwh: values.start), .init(date: horizonEnd, kwh: values.startNow)],
+                                  projectedKwh: values.projected, projectedAfterRecommendedKwh: values.afterLater,
+                                  projectedAfterStartNowKwh: values.afterNow)
         }
         return Estimator.Comparison(
             costNow: costNow, recommendedStart: recommendedStart, recommendedEnd: recommendedStart.addingTimeInterval(52.7 / 9 * 3600),

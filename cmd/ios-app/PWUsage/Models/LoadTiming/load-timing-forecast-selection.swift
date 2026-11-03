@@ -100,22 +100,22 @@ extension LoadTimingForecastEstimator {
         }
         var current = balances
         var series = current.mapValues { [BalancePoint(date: start, kwh: $0)] }
-        func advance(_ a: Date, _ b: Date, flow: Flow, periodKey: String) -> Bool {
+        func advance(_ lower: Date, _ upper: Date, flow: Flow, periodKey: String) -> Bool {
             guard let old = current[periodKey] else { return false }
-            let hours = b.timeIntervalSince(a) / 3600
-            let draw = a >= run.start && b <= run.end ? powerKw * hours : 0
+            let hours = upper.timeIntervalSince(lower) / 3600
+            let draw = lower >= run.start && upper <= run.end ? powerKw * hours : 0
             let updated = old + flow.netExportKw * hours - draw
             guard updated.isFinite else { return false }
             current[periodKey] = updated
-            for (key, kwh) in current { series[key, default: []].append(BalancePoint(date: b, kwh: kwh)) }
+            for (key, kwh) in current { series[key, default: []].append(BalancePoint(date: upper, kwh: kwh)) }
             return true
         }
         while index < steps.periods.count, steps.edges[index] < end {
-            let a = max(steps.edges[index], start), b = min(steps.edges[index + 1], end)
+            let lower = max(steps.edges[index], start), upper = min(steps.edges[index + 1], end)
             // The run's own edges split a step so its draw starts and stops on time.
-            var cuts = [a]
-            for edge in [run.start, run.end] where edge > a && edge < b { cuts.append(edge) }
-            cuts.append(b)
+            var cuts = [lower]
+            for edge in [run.start, run.end] where edge > lower && edge < upper { cuts.append(edge) }
+            cuts.append(upper)
             cuts.sort()
             for cut in 0 ..< (cuts.count - 1) {
                 guard advance(cuts[cut], cuts[cut + 1], flow: steps.typical[index], periodKey: steps.periods[index]) else {

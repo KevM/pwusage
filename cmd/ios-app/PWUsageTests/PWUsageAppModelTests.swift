@@ -1049,7 +1049,7 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse { batteryHoldResponse }
     func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
         holdCommands.append(command)
-        return .init(status: .ok, hold: nil, current: nil)
+        return .init(status: .succeeded, hold: nil, current: nil)
     }
     var sites: [MobileSite]
     /// Consumed one entry per `fetchSites` before `sites` is used, so a test can

@@ -76,13 +76,13 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             )
             nextHoldID += 1
             hold = started
-            return BatteryHoldCommandResult(status: .ok, hold: started, current: nil)
+            return BatteryHoldCommandResult(status: .succeeded, hold: started, current: nil)
         case .restore:
             hold = nil
         case .dismiss:
             break
         }
-        return BatteryHoldCommandResult(status: .ok, hold: nil, current: nil)
+        return BatteryHoldCommandResult(status: .succeeded, hold: nil, current: nil)
     }
 
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {}

@@ -43,11 +43,11 @@ struct EnergyFlowProjection {
                                                           forecastStart: forecastStart, forecastEnd: forecastEnd, tariffs: tariffs)
         let edges = model.boundaries(from: start, to: end)
         var result: [Interval] = []
-        for (a, b) in zip(edges, edges.dropFirst()) {
-            let mid = a.addingTimeInterval(b.timeIntervalSince(a) / 2)
-            guard let index = tariffs.firstIndex(where: { $0.start <= a && $0.end >= b }),
+        for (lower, upper) in zip(edges, edges.dropFirst()) {
+            let mid = lower.addingTimeInterval(upper.timeIntervalSince(lower) / 2)
+            guard let index = tariffs.firstIndex(where: { $0.start <= lower && $0.end >= upper }),
                   let flow = model.flow(at: mid), flow.netExportKw.isFinite else { break }
-            result.append(.init(start: a, end: b, netExportKwh: flow.netExportKw * b.timeIntervalSince(a) / 3600,
+            result.append(.init(start: lower, end: upper, netExportKwh: flow.netExportKw * upper.timeIntervalSince(lower) / 3600,
                                 tariffIndex: index, usesSolar: mid >= forecastStart && mid < forecastEnd))
         }
         return result

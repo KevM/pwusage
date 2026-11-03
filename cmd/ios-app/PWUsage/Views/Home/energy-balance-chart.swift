@@ -3,14 +3,14 @@ import SwiftUI
 
 /// Shared zero line and export-cushion/import-gap bands for Billing and Smart Shift.
 struct EnergyBalanceBackdrop: ChartContent {
-    let x: ClosedRange<Date>
-    let y: ClosedRange<Double>
+    let timeRange: ClosedRange<Date>
+    let balanceRange: ClosedRange<Double>
     var body: some ChartContent {
-        RectangleMark(xStart: .value("Start", x.lowerBound), xEnd: .value("End", x.upperBound),
-                      yStart: .value("Zero", 0), yEnd: .value("Top", y.upperBound))
+        RectangleMark(xStart: .value("Start", timeRange.lowerBound), xEnd: .value("End", timeRange.upperBound),
+                      yStart: .value("Zero", 0), yEnd: .value("Top", balanceRange.upperBound))
             .foregroundStyle(EnergyWeatherChart.bankedColor.opacity(0.12))
-        RectangleMark(xStart: .value("Start", x.lowerBound), xEnd: .value("End", x.upperBound),
-                      yStart: .value("Bottom", y.lowerBound), yEnd: .value("Zero", 0))
+        RectangleMark(xStart: .value("Start", timeRange.lowerBound), xEnd: .value("End", timeRange.upperBound),
+                      yStart: .value("Bottom", balanceRange.lowerBound), yEnd: .value("Zero", 0))
             .foregroundStyle(EnergyWeatherChart.owedColor.opacity(0.14))
         RuleMark(y: .value("Zero", 0))
             .foregroundStyle(EnergyWeatherChart.ruleColor)
@@ -125,12 +125,8 @@ struct BillOutlookChart: View {
         let values = all.map { energy($0, key: period.key) } + [0]
         let low = values.min() ?? 0, high = values.max() ?? 0
         let pad = max(2, (high - low) * 0.25)
-        // swiftlint:disable:next identifier_name
-        // swiftlint:disable:next identifier_name
-        let y = (low - pad) ... (high + pad)
-        // swiftlint:disable:next identifier_name
-        // swiftlint:disable:next identifier_name
-        let x = cycleStart ... max(cycleEnd, cycleStart.addingTimeInterval(3600))
+        let balanceRange = (low - pad) ... (high + pad)
+        let timeRange = cycleStart ... max(cycleEnd, cycleStart.addingTimeInterval(3600))
         return VStack(alignment: .leading, spacing: 5) {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 3) { laneTitle(period); laneBalance(period) }
@@ -141,7 +137,7 @@ struct BillOutlookChart: View {
                 Text(period.tariffName).font(.caption2).foregroundStyle(.secondary)
             }
             Chart {
-                EnergyBalanceBackdrop(x: x, y: y)
+                EnergyBalanceBackdrop(timeRange: timeRange, balanceRange: balanceRange)
                 ForEach(Array(recorded.enumerated()), id: \.offset) { _, point in
                     LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
                              series: .value("Source", "Recorded"))
@@ -168,7 +164,7 @@ struct BillOutlookChart: View {
                         .foregroundStyle(.indigo)
                 }
             }
-            .chartXScale(domain: x).chartYScale(domain: y)
+            .chartXScale(domain: timeRange).chartYScale(domain: balanceRange)
             .chartYAxis(.hidden)
             .chartXAxis(.hidden)
             .chartLegend(.hidden)

@@ -65,14 +65,14 @@ private struct PowerFlowLayout: Layout {
         let cardWidth = useStack ? width : (width - spacing) / 2
         let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: cardWidth, height: nil)) }
         var result = Array(repeating: CGRect.zero, count: subviews.count)
-        var y: CGFloat = 0
+        var yPosition: CGFloat = 0
         if useStack {
             for column in 0 ... 1 {
                 let indices = subviews.indices.filter { subviews[$0][FlowColumn.self] == column }
                     .sorted { subviews[$0][FlowRow.self] < subviews[$1][FlowRow.self] }
                 for index in indices {
-                    result[index] = CGRect(x: 0, y: y, width: cardWidth, height: sizes[index].height)
-                    y += sizes[index].height + spacing
+                    result[index] = CGRect(x: 0, y: yPosition, width: cardWidth, height: sizes[index].height)
+                    yPosition += sizes[index].height + spacing
                 }
             }
         } else {
@@ -82,9 +82,9 @@ private struct PowerFlowLayout: Layout {
                 let height = indices.map { sizes[$0].height }.max() ?? 0
                 for index in indices {
                     result[index] = CGRect(x: CGFloat(subviews[index][FlowColumn.self]) * (cardWidth + spacing),
-                                           y: y, width: cardWidth, height: height)
+                                           y: yPosition, width: cardWidth, height: height)
                 }
-                y += height + spacing
+                yPosition += height + spacing
             }
         }
         return result
