@@ -168,20 +168,27 @@ struct LoadTimingForecastEstimator {
         return true
     }
 
-    static func supportedRates(in tariffs: [LoadTimingTariffSegment], from source: Date, before horizonEnd: Date)
-        -> (rates: [String: PeriodRate], incompatibleBoundary: Date?, invalid: Bool) {
+    /// What the tariffs support over a projection, and why they may not.
+    struct SupportedRates {
+        let rates: [String: PeriodRate]
+        let incompatibleBoundary: Date?
+        let invalid: Bool
+    }
+
+    static func supportedRates(in tariffs: [LoadTimingTariffSegment], from source: Date,
+                               before horizonEnd: Date) -> SupportedRates {
         var values: [String: PeriodRate] = [:]
         for tariff in tariffs where tariff.end > source && tariff.start < horizonEnd {
             guard !tariff.periodKey.isEmpty, tariff.buyRate.isFinite, tariff.sellRate.isFinite else {
-                return (values, nil, true)
+                return SupportedRates(rates: values, incompatibleBoundary: nil, invalid: true)
             }
             let rate = PeriodRate(buy: tariff.buyRate, sell: tariff.sellRate)
             if let old = values[tariff.periodKey], old != rate {
-                return (values, tariff.start, false)
+                return SupportedRates(rates: values, incompatibleBoundary: tariff.start, invalid: false)
             }
             values[tariff.periodKey] = rate
         }
-        return (values, nil, false)
+        return SupportedRates(rates: values, incompatibleBoundary: nil, invalid: false)
     }
 
     static func contiguousEnd(of forecast: [SolarForecastInterval], startingAt source: Date) -> Date {

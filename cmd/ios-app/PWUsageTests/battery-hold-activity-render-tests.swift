@@ -22,27 +22,38 @@ struct BatteryHoldActivityRenderTests {
               peakLoadW: peak, batteryPercent: charge)
     }
 
-    private var states: [(String, State, Bool)] {
+    struct RenderState {
+        let name: String
+        let state: State
+        let isStale: Bool
+    }
+
+    private var states: [RenderState] {
         var restored = active(charge: 71)
         restored.status = .restored
         restored.restoreReason = .loadEnded
         restored.endedAt = .now
         return [
-            ("above-hold", active(charge: 95, hold: 80, home: 1800, peak: 1810), false),
-            ("full-hold", active(charge: 100, hold: 100, home: 1800, peak: 1810), false),
-            ("load-running", active(phase: .loadRunning, charge: 74, home: 7000), false),
-            ("no-data", active(phase: .waitingForData, charge: nil), false),
-            ("stale", active(charge: 82), true),
-            ("timer", active(mode: .timer, phase: .timer, charge: 76, hold: 80, peak: nil), false),
-            ("restored", restored, false)
+            RenderState(name: "above-hold",
+                        state: active(charge: 95, hold: 80, home: 1800, peak: 1810), isStale: false),
+            RenderState(name: "full-hold",
+                        state: active(charge: 100, hold: 100, home: 1800, peak: 1810), isStale: false),
+            RenderState(name: "load-running", state: active(phase: .loadRunning, charge: 74, home: 7000),
+                        isStale: false),
+            RenderState(name: "no-data", state: active(phase: .waitingForData, charge: nil), isStale: false),
+            RenderState(name: "stale", state: active(charge: 82), isStale: true),
+            RenderState(name: "timer",
+                        state: active(mode: .timer, phase: .timer, charge: 76, hold: 80, peak: nil),
+                        isStale: false),
+            RenderState(name: "restored", state: restored, isStale: false)
         ]
     }
 
     @Test("Renders the Lock Screen card and expanded Dynamic Island", arguments: [ColorScheme.light, .dark])
     func render(_ scheme: ColorScheme) throws {
         let sheet = VStack(alignment: .leading, spacing: 14) {
-            ForEach(states, id: \.0) { _, state, stale in
-                BatteryHoldLockScreenView(attributes: attributes, state: state, isStale: stale)
+            ForEach(states, id: \.name) { item in
+                BatteryHoldLockScreenView(attributes: attributes, state: item.state, isStale: item.isStale)
                     .background(Color(uiColor: .secondarySystemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
@@ -50,13 +61,13 @@ struct BatteryHoldActivityRenderTests {
                 HStack {
                     HStack(spacing: 6) {
                         BatteryHoldGlyph(size: 20)
-                        Text(BatteryHoldActivityPresentation.headline(states[1].1)).font(.headline)
+                        Text(BatteryHoldActivityPresentation.headline(states[1].state)).font(.headline)
                     }
                     .foregroundStyle(Color.accentColor)
                     Spacer()
                     Text("Harrison").font(.subheadline).foregroundStyle(.secondary)
                 }
-                BatteryHoldExpandedBottom(attributes: attributes, state: states[1].1, isStale: false)
+                BatteryHoldExpandedBottom(attributes: attributes, state: states[1].state, isStale: false)
             }
             .padding(EdgeInsets(top: 16, leading: 20, bottom: 16, trailing: 20))
             .background(Color.black)

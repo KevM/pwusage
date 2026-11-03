@@ -8,15 +8,27 @@ struct BatteryHoldTests {
         #""target_reserve":80,"created_at":"2026-10-02T12:00:00.000Z","# +
         #""safety_expires_at":"2026-10-02T20:00:00.000Z","cancelled_observed_reserve":null}"#
 
+    struct ReserveBandCase {
+        let charge: Double
+        let target: Int
+        let requiresChoice: Bool
+    }
+
     @Test("Reserve planning matches every website boundary", arguments: [
-        (0.0, 0, false), (79.9, 79, false), (80.0, 80, false),
-        (80.1, 80, false), (85.0, 80, false), (85.1, 100, true),
-        (94.9, 100, true), (95.0, 100, false), (100.0, 100, false)
+        ReserveBandCase(charge: 0.0, target: 0, requiresChoice: false),
+        ReserveBandCase(charge: 79.9, target: 79, requiresChoice: false),
+        ReserveBandCase(charge: 80.0, target: 80, requiresChoice: false),
+        ReserveBandCase(charge: 80.1, target: 80, requiresChoice: false),
+        ReserveBandCase(charge: 85.0, target: 80, requiresChoice: false),
+        ReserveBandCase(charge: 85.1, target: 100, requiresChoice: true),
+        ReserveBandCase(charge: 94.9, target: 100, requiresChoice: true),
+        ReserveBandCase(charge: 95.0, target: 100, requiresChoice: false),
+        ReserveBandCase(charge: 100.0, target: 100, requiresChoice: false)
     ])
-    func reserveBands(_ sample: (Double, Int, Bool)) throws {
-        let plan = try #require(BatteryHoldReservePlan.make(stateOfCharge: sample.0))
-        #expect(plan.target == sample.1)
-        #expect(plan.requiresChoice == sample.2)
+    func reserveBands(_ sample: ReserveBandCase) throws {
+        let plan = try #require(BatteryHoldReservePlan.make(stateOfCharge: sample.charge))
+        #expect(plan.target == sample.target)
+        #expect(plan.requiresChoice == sample.requiresChoice)
     }
 
     @Test("Invalid charge cannot enable a hold", arguments: [-1.0, 101.0, Double.nan, Double.infinity])

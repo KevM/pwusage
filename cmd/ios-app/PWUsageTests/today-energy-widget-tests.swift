@@ -325,23 +325,33 @@ struct TodayEnergyWidgetTests {
         #expect(TodayEnergySnapshot.timelineDates(for: nil, at: now) == [now])
     }
 
+    struct WidgetSelection {
+        let name: String
+        let metric: TodayEnergyMetric
+        let snapshot: TodayEnergySnapshot?
+    }
+
     @MainActor
     @Test func renderSmallWidgetSelections() throws {
-        let extras: [(String, TodayEnergyMetric, TodayEnergySnapshot?)] = [
-            ("stale-grid", .grid, TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
-            ("full-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100)),
-            ("unknown-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
-            ("large-number", .grid, TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
-            ("missing", .solar, nil)
+        let extras: [WidgetSelection] = [
+            WidgetSelection(name: "stale-grid", metric: .grid,
+                            snapshot: TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
+            WidgetSelection(name: "full-soc", metric: .battery,
+                            snapshot: TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100)),
+            WidgetSelection(name: "unknown-soc", metric: .battery,
+                            snapshot: TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
+            WidgetSelection(name: "large-number", metric: .grid,
+                            snapshot: TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
+            WidgetSelection(name: "missing", metric: .solar, snapshot: nil)
         ]
         let cases = TodayEnergyMetric.allCases.map {
-            ($0.rawValue, $0, Optional(TodayEnergyPreviewFixtures.snapshot()))
+            WidgetSelection(name: $0.rawValue, metric: $0, snapshot: TodayEnergyPreviewFixtures.snapshot())
         } + extras
-        for (name, metric, value) in cases {
+        for selection in cases {
             for dark in [false, true] {
-                let view = TodayEnergySingleMetricContent(snapshot: value,
+                let view = TodayEnergySingleMetricContent(snapshot: selection.snapshot,
                                                           date: TodayEnergyPreviewFixtures.date,
-                                                          metric: metric)
+                                                          metric: selection.metric)
                     .padding(10).frame(width: 141, height: 141)
                     .background(Color(uiColor: .secondarySystemGroupedBackground))
                     .environment(\.colorScheme, dark ? .dark : .light)
@@ -351,7 +361,7 @@ struct TodayEnergyWidgetTests {
                 let png = try #require(renderer.uiImage?.pngData())
                 let output = URL(fileURLWithPath: NSTemporaryDirectory())
                     .appendingPathComponent(
-                        "today-widget-small-\(name)-\(dark ? "dark" : "light").png"
+                        "today-widget-small-\(selection.name)-\(dark ? "dark" : "light").png"
                     )
                 try png.write(to: output)
                 print("Today widget render: \(output.path)")
