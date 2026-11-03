@@ -4,7 +4,7 @@ import SwiftUI
 struct SolarSystemBannerModel: Equatable {
     enum Mode: Equatable { case loading, needsLocation }
 
-    static let dotCount = 12
+    static let dotCount = 9
 
     let mode: Mode
     let countText: String
@@ -55,6 +55,7 @@ struct SolarSystemBanner: View {
                     if placement != .inline {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(SiteHistoryPresentation.title).font(.subheadline.weight(.semibold))
+                                .minimumScaleFactor(0.8)
                             Text(model.countText).font(.caption).foregroundStyle(.secondary)
                         }
                         .lineLimit(1)
@@ -120,7 +121,9 @@ struct SolarSystemMiniCompass: View {
             let middle = SolarSystemWedge.center(fittedRange: model.fittedRange, latitude: model.latitude)
             var wedge = Path()
             wedge.move(to: center)
-            wedge.addLines((0 ... 12).map { point(middle - width / 2 + width * Double($0) / 12, 0.95) })
+            for step in 0 ... 12 {
+                wedge.addLine(to: point(middle - width / 2 + width * Double(step) / 12, 0.95))
+            }
             wedge.closeSubpath()
             context.fill(wedge, with: .color(SolarSystemColors.wedge.opacity(0.45)))
             context.stroke(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,

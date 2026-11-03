@@ -45,7 +45,8 @@ struct SolarSystemView: View {
     }
 
     private func content(_ presentation: SiteHistoryPresentation) -> some View {
-        let layout = status?.layout ?? stored?.layout
+        // The status's own layout honors the Debug "Ignore Existing Layout" setting.
+        let layout = status != nil ? status?.layout : stored?.layout
         return List {
             if status != nil || layout != nil {
                 Section {
@@ -114,20 +115,26 @@ struct SolarSystemView: View {
         }
     }
 
+    /// The coordinator's record when it has one, else the status's (read from the same record).
+    private var locationState: SiteHistoryStatus.LocationState {
+        if let source = location?.source { return source.isExact ? .exact : .estimated }
+        return status?.location ?? .none
+    }
+
     private var locationValue: String {
-        switch location?.source {
-        case nil: "Not set"
-        case .estimated?: "Estimated"
-        default: "Exact"
+        switch locationState {
+        case .none: "Not set"
+        case .estimated: "Estimated"
+        case .exact: "Exact"
         }
     }
 
     /// A location action is always available, so a declined or failed attempt can be retried.
     private var locationButtonTitle: String {
-        switch location?.source {
-        case nil: "Add Location"
-        case .estimated?: "Use My Exact Home Location"
-        default: "Update Home Location"
+        switch locationState {
+        case .none: "Add Location"
+        case .estimated: "Use My Exact Home Location"
+        case .exact: "Update Home Location"
         }
     }
 }

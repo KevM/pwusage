@@ -52,6 +52,7 @@ struct HomeLocationSheet: View {
                                 }
                             }
                         }
+                        .buttonStyle(.plain)
                         .disabled(isWorking)
                     }
                 } header: {

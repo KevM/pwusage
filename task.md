@@ -25,4 +25,6 @@ Plan: docs/plans/2026-11-02-solar-system-experience.md
 - [x] Solar System screen (merges Site History and Solar Forecast; credit moves to About).
 - [x] Banner: compass, day dots, needs-location state.
 - [x] Home location sheet: current location (one-time), address or ZIP search, map pin.
-- [ ] Verification: suites, lint, Release build, simulator states, device run on Beta.
+- [x] Verification: suites, lint, Release build, simulator states (loading, waiting, needs location, improving, final; light/dark, AX text, Reduce Motion, location sheet search and map).
+
+Current state: Tasks 1–9 are implemented and verified on the simulator. Remaining for the user: the real-device run on Beta (`cmd/next-app/scripts/dev-history-reset.md`), including the clear-day pass's Debug timing on an iPhone 18 Pro and the oldest phone available; the cadence stays every second slice until those numbers say otherwise.

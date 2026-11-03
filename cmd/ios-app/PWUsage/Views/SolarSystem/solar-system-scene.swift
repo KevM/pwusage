@@ -70,6 +70,8 @@ struct SolarSystemVisual: View {
             }
         }
         .frame(maxWidth: .infinity)
+        // A fixed-size picture: its labels stop growing, and VoiceOver reads the summary instead.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear { observe() }
         .onChange(of: input) { observe() }

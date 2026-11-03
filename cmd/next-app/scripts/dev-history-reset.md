@@ -59,10 +59,10 @@ A future PR's Prod → Dev copy also refreshes Dev, but don't rely on it to rest
 1. Deploy this branch's server to Beta. Then point a Debug build at Beta by setting `PWUSAGE_DEBUG_API_ORIGIN` in `cmd/ios-app/project.yml` to `https://pwusagebeta.fm.rodeo` and running `./generate.sh`. Debug builds default to Prod.
 2. Confirm the site ID and name in the Beta admin view, then run the reset for that site only.
 3. Confirm the site's coverage is empty. Gap healing may refill recent days quickly for a live site.
-4. In the app (Debug build), open Settings › Site History:
+4. In the app (Debug build), open Settings › Solar System:
    - **Ignore Existing Layout:** turn on to make a site that already has a layout run the full search.
    - **Reset History on This Device:** forgets the phone's loading progress and stored history for the selected site. The server's history and the solar layout record are left alone, so nothing synced through iCloud changes.
-5. Watch the import. Background the app and return to see it resume, and relaunch to see the saved position kept.
+5. Watch the import. Background the app and return to see it resume, and relaunch to see the saved position kept. In Console (subsystem `fm.rodeo.pwusage`, category `solar-layout`), each "Clear-day pass" line gives the pass's duration; it runs every second slice (six days).
 6. Run the restore, with `--preview` first, then `--replace` or `--keep-newer`. Check the reported counts.
 
 The tests run both scripts against a disposable local PostgreSQL (`npm run test:dev-history:postgres`, also in CI). They cover refusal on a database without the marker, the wrong site, a held lock, an existing snapshot, missing or changed files, another project and a changed schema. They also cover conflicts, and a restore that fails partway and leaves the database as it was.
