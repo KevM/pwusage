@@ -33,18 +33,26 @@ enum DashboardPresentation {
         var receiving: [PowerCard]
     }
 
-    static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
-                          sourceTime: Date?, isUnavailable: Bool,
-                          now: Date = .now) -> PowerFlow {
-        let isCurrent = !isUnavailable && sourceTime.map {
+    /// The four readings one card row shows, with the source state they share.
+    struct PowerReadings: Equatable {
+        let solarPower: Double
+        let loadPower: Double
+        let batteryPower: Double
+        let gridPower: Double
+        var sourceTime: Date?
+        var isUnavailable = false
+    }
+
+    static func powerFlow(_ readings: PowerReadings, now: Date = .now) -> PowerFlow {
+        let isCurrent = !readings.isUnavailable && readings.sourceTime.map {
             let age = now.timeIntervalSince($0)
             return age >= 0 && age <= 15 * 60
         } == true
-        let readings: [(PowerSource, Double)] = [
-            (.solar, solarPower), (.home, loadPower),
-            (.grid, gridPower), (.battery, batteryPower)
+        let sources: [(PowerSource, Double)] = [
+            (.solar, readings.solarPower), (.home, readings.loadPower),
+            (.grid, readings.gridPower), (.battery, readings.batteryPower)
         ]
-        let cards = readings.map { source, watts -> PowerCard in
+        let cards = sources.map { source, watts -> PowerCard in
             guard isCurrent, watts.isFinite else {
                 return PowerCard(id: source, watts: watts.isFinite ? abs(watts) : nil,
                                  role: .unknown, detail: "Flow unknown")
@@ -87,6 +95,18 @@ enum DashboardPresentation {
             }
         }
         return result
+    }
+
+    /// Keeps the labelled form for callers written before `PowerReadings`; new code
+    /// should build the struct so the four readings travel together.
+    static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
+                          sourceTime: Date? = nil, isUnavailable: Bool = false,
+                          now: Date = .now) -> PowerFlow {
+        powerFlow(
+            PowerReadings(solarPower: solarPower, loadPower: loadPower, batteryPower: batteryPower,
+                          gridPower: gridPower, sourceTime: sourceTime, isUnavailable: isUnavailable),
+            now: now
+        )
     }
 
     struct LoadTimingSummary: Equatable {

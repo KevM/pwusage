@@ -146,36 +146,38 @@ final class PWUsageAppModel: ObservableObject {
     /// the older one cannot publish.
     func bootstrap() async {
         hasBootstrapAttempted = true
-        switch screenState {
-        case .signedIn: if sessionVerified { return }
-        case .signedOut, .unavailable: return
-        case .bootstrapping, .noSites: break
-        }
+        guard canBootstrap else { return }
         siteRequestCount += 1
         defer { siteRequestCount -= 1 }
         let generation = claimSiteInstall()
         do {
             let availableSites = try await api.fetchSites()
             await installAuthorizedSites(availableSites, generation: generation)
-        } catch let error as PWUsageAPIError {
-            guard generation == siteInstallGeneration else { return }
-            if error == .signInRequired {
-                let message = pendingBatteryHoldSiteID != nil ? "Your session expired. Sign in to continue." : nil
-                await invalidateSession(message: message)
-            } else {
-                if coordinator == nil { screenState = .unavailable }
-                if pendingBatteryHoldSiteID != nil {
-                    batteryHoldNavigationMessage =
-                        "Could not verify this control’s site. Check your connection and try again."
-                }
-            }
         } catch {
-            guard generation == siteInstallGeneration else { return }
-            if coordinator == nil { screenState = .unavailable }
-            if pendingBatteryHoldSiteID != nil {
-                batteryHoldNavigationMessage =
-                    "Could not verify this control’s site. Check your connection and try again."
-            }
+            await handleBootstrapError(error, generation: generation)
+        }
+    }
+
+    /// A verified signed-in session is already loaded; only the transient states retry.
+    private var canBootstrap: Bool {
+        switch screenState {
+        case .signedIn: !sessionVerified
+        case .signedOut, .unavailable: false
+        case .bootstrapping, .noSites: true
+        }
+    }
+
+    private func handleBootstrapError(_ error: any Error, generation: Int) async {
+        guard generation == siteInstallGeneration else { return }
+        if let apiError = error as? PWUsageAPIError, apiError == .signInRequired {
+            let message = pendingBatteryHoldSiteID != nil ? "Your session expired. Sign in to continue." : nil
+            await invalidateSession(message: message)
+            return
+        }
+        if coordinator == nil { screenState = .unavailable }
+        if pendingBatteryHoldSiteID != nil {
+            batteryHoldNavigationMessage =
+                "Could not verify this control’s site. Check your connection and try again."
         }
     }
 

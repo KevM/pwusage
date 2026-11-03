@@ -27,7 +27,10 @@ struct SmartShiftDiagnosticsTests {
     static func diagnostics(forecast: ForecastAvailability = .ready, intervals: [SolarForecastInterval]? = intervals,
                             context: Estimator.PlanningContext?,
                             balanceSourceTime: Date? = nil) -> (SmartShiftDiagnostics, SmartShiftEvaluation) {
-        let (timing, _, now, car) = Fixtures.harrisonSunday()
+        let harrison = Fixtures.harrisonSunday()
+        let timing = harrison.timing
+        let now = harrison.now
+        let car = harrison.car
         let source = balanceSourceTime ?? now
         let evaluation = SmartShiftPresentation.evaluate(
             profile: car, now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
@@ -116,7 +119,7 @@ struct SmartShiftDiagnosticsTests {
 
     @Test func recordsTheHistoryFallbackAndWhyTheForecastWasSkipped() throws {
         // A forecast that doesn't reach the present rules itself out; grid history still prices the run.
-        let (_, _, now, _) = Fixtures.harrisonSunday()
+        let now = Fixtures.harrisonSunday().now
         let (diagnostics, evaluation) = Self.diagnostics(
             intervals: Self.intervals.filter { $0.periodStart > now.addingTimeInterval(3600) },
             context: Fixtures.historyContext(asOf: now))
@@ -129,7 +132,10 @@ struct SmartShiftDiagnosticsTests {
     }
 
     @Test func recordsAnUnavailableFlatPass() throws {
-        var (timing, _, now, car) = Fixtures.harrisonSunday()
+        let harrison = Fixtures.harrisonSunday()
+        var timing = harrison.timing
+        let now = harrison.now
+        let car = harrison.car
         timing = LoadTiming(hasTariff: false, hasCycleData: true, activeIsCheapest: false, periods: timing.periods,
                             pricingPeriods: timing.pricingPeriods, tariffTimeline: timing.tariffTimeline,
                             nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])

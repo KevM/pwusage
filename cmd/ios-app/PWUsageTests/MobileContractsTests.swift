@@ -157,80 +157,6 @@ struct MobileContractsTests {
         #expect(legacyResponse.loadTiming?.tariffTimeline == [])
     }
 
-    @Test("Suppresses a battery charge reading older than the two-hour rule")
-    func suppressesStaleStateOfCharge() throws {
-        let response = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .stamped(LiveFixture.timestamp(-3 * 3600)))
-        )
-        #expect(response.stateOfCharge == nil)
-    }
-
-    @Test("Suppresses an undated battery charge reading")
-    func suppressesUndatedStateOfCharge() throws {
-        let absent = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .absent)
-        )
-        #expect(absent.stateOfCharge == nil)
-
-        let nulled = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: nil)
-        )
-        #expect(nulled.stateOfCharge == nil)
-    }
-
-    @Test("Suppresses a battery charge reading stamped in the future")
-    func suppressesFutureStateOfCharge() throws {
-        let response = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .stamped(LiveFixture.timestamp(60)))
-        )
-        #expect(response.stateOfCharge == nil)
-    }
-
-    @Test("Keeps a battery charge reading taken ten minutes ago")
-    func keepsRecentStateOfCharge() throws {
-        let response = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .stamped(LiveFixture.timestamp(-10 * 60)))
-        )
-        #expect(response.stateOfCharge == 72)
-    }
-
-    @Test("Suppresses an out-of-range battery charge reading")
-    func suppressesOutOfRangeStateOfCharge() throws {
-        let high = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "150", stateOfChargeAt: .stamped(LiveFixture.timestamp(-10 * 60)))
-        )
-        #expect(high.stateOfCharge == nil)
-
-        let negative = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "-1", stateOfChargeAt: .stamped(LiveFixture.timestamp(-10 * 60)))
-        )
-        #expect(negative.stateOfCharge == nil)
-    }
-
-    @Test("Keeps a battery charge reading at exactly the two-hour edge and suppresses one second past it")
-    func appliesInclusiveStateOfChargeAgeLimit() throws {
-        let atTheEdge = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .stamped(LiveFixture.timestamp(-2 * 3600)))
-        )
-        #expect(atTheEdge.stateOfCharge == 72)
-
-        let oneSecondPast = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .stamped(LiveFixture.timestamp(-2 * 3600 - 1)))
-        )
-        #expect(oneSecondPast.stateOfCharge == nil)
-    }
-
-    @Test("Decodes the live power values a payload carries, including negative ones")
-    func decodesLivePowerValues() throws {
-        let response = try LiveFixture.decode(
-            LiveFixture.payload(stateOfCharge: "72", stateOfChargeAt: .stamped(LiveFixture.timestamp(-10 * 60)))
-        )
-        #expect(response.live.solarPower == 1200)
-        #expect(response.live.loadPower == 900)
-        #expect(response.live.gridPower == 0)
-        #expect(response.live.batteryPower == -300)
-    }
-
     @Test("Rejects unsupported live version")
     func rejectsUnsupportedLiveVersion() throws {
         let fixture = Data(#"{"version":2}"#.utf8)
@@ -284,18 +210,18 @@ struct MobileContractsTests {
 
     /// JSON cannot carry NaN or infinity, so a decoder that reads them from strings
     /// stands in for any non-conforming source the validation exists to catch.
-    private static func nonConformingDecoder() -> JSONDecoder {
+    static func nonConformingDecoder() -> JSONDecoder {
         let decoder = MobileContractDecoder.make()
         decoder.nonConformingFloatDecodingStrategy = .convertFromString(positiveInfinity: "inf",
                                                                         negativeInfinity: "-inf", nan: "nan")
         return decoder
     }
 
-    private static let billBase = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"# +
+    static let billBase = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"# +
         #""sources":{"calculatedAt":"2026-09-23T12:34:56Z","energyDataThrough":null},"# +
         #""currentBill":{"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","#
 
-    private static let nonFiniteBillFixtures: [String] = [
+    static let nonFiniteBillFixtures: [String] = [
         billBase
             + #""estimatedCost":"nan","periods":[]}}"#,
         billBase
@@ -322,30 +248,7 @@ struct MobileContractsTests {
             + #""marginalCost":"nan","phrase":"soon"}}}"#
     ]
 
-    @Test("A bill with a non-finite cost or rate is rejected", arguments: nonFiniteBillFixtures)
-    func rejectsNonFiniteBillAmounts(fixture: String) throws {
-        let response = try Self.nonConformingDecoder().decode(MobileBillResponse.self, from: Data(fixture.utf8))
-        #expect(throws: MobileBillResponse.ContractError.invalidAmount) { try response.validating(siteID: "site-1") }
-    }
-
-    @Test("Negative rates and costs are valid: the server prices negative buy and sell rates")
-    func acceptsNegativeRatesAndCosts() throws {
-        let bill = Self.billBase
-            + #""estimatedCost":-4.5,"periods":[{"tariffName":"R","periodName":"Export","netGridKwh":-3,"#
-            + #""cost":-0.3}]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":true,"#
-            + #""periods":[{"name":"Export","marginalCost":-0.1,"basis":"sell","cycleNetExportKwh":3,"#
-            + #""isActive":true,"nextStartPhrase":null,"buyRate":-0.1,"sellRate":-0.04}],"pricingPeriods":[]}}"#
-        let response = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(bill.utf8))
-        #expect(try response.validating(siteID: "site-1") == response)
-        let tariffFixture = TariffSheetTests.fixture.replacingOccurrences(of: #""buyRate":0.3"#,
-                                                                          with: #""buyRate":-0.3"#)
-        let tariffs = try MobileContractDecoder.make().decode(
-            MobileTariffsResponse.self, from: Data(tariffFixture.utf8)
-        )
-        #expect(try tariffs.validating(siteID: "a") == tariffs)
-    }
-
-    private static let nonFiniteLiveFixtures: [String] = [
+    static let nonFiniteLiveFixtures: [String] = [
         #""currentBill":{"estimatedCost":"inf","currency":"USD","# +
             #""cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]}"#,
         #""currentBill":{"estimatedCost":1,"currency":"USD","# +
@@ -357,111 +260,7 @@ struct MobileContractsTests {
             #""marginalCost":"-inf","basis":"buy","balanceKwh":null,"energyDataThrough":null}"#
     ]
 
-    @Test("A live response with a non-finite bill amount or rate is rejected", arguments: nonFiniteLiveFixtures)
-    func rejectsNonFiniteLiveAmounts(field: String) throws {
-        let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC","#
-            + #""localDate":"2026-09-23"},"live":{"solarPower":0,"loadPower":0,"batteryPower":0,"#
-            + #""gridPower":0},"today":{"homeKwh":1,"solarKwh":1,"gridNetKwh":0,"batteryNetKwh":0},"#
-            + #""todayComplete":false,"sources":{"energyDataThrough":null},"# + field + "}"
-        let response = try Self.nonConformingDecoder().decode(MobileLiveResponse.self, from: Data(fixture.utf8))
-        #expect(throws: MobileLiveResponse.ContractError.invalidAmount) { try response.validating(siteID: "site-1") }
-    }
-
-    @Test("A tariff period with a non-finite rate is rejected")
-    func rejectsNonFiniteTariffRate() throws {
-        let fixture = TariffSheetTests.fixture.replacingOccurrences(of: #""sellRate":0.1"#, with: #""sellRate":"nan""#)
-        let response = try Self.nonConformingDecoder().decode(MobileTariffsResponse.self, from: Data(fixture.utf8))
-        #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "a") }
-    }
-
-    @Test("A planning context stamped ahead of a slow device clock still validates")
-    func planningContextToleratesClockBehindServer() throws {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        // Thirty minutes ahead of this device. `asOf` is the server's stamp, so an
-        // `asOf` in the device's future means the *device* is behind -- a fast clock
-        // would make `asOf` look older, which the positive bound already accepted.
-        let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(30 * 60))
-        #expect(throws: Never.self) { try response.validating(siteID: "site-a", now: now) }
-    }
-
-    @Test("A planning context stamped absurdly ahead is still rejected")
-    func planningContextRejectsAbsurdFutureAsOf() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let response = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(365 * 24 * 60 * 60))
-        #expect(throws: MobileLoadPlanningContextResponse.ContractError.timestampSkew) {
-            try response.validating(siteID: "site-a", now: now)
-        }
-    }
-
-    /// Skew and a malformed payload used to share `invalidSource`, so the UI could
-    /// not tell "fix your clock" from "this will never parse". Only the first is
-    /// something the person holding the phone can act on, so they must not share
-    /// an error that becomes advice.
-    @Test("A stale timestamp is clock skew, not a malformed payload")
-    func planningContextSeparatesStalenessFromMalformedPayload() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let stale = Self.makePlanningContext(siteID: "site-a", asOf: now.addingTimeInterval(-48 * 60 * 60))
-        #expect(throws: MobileLoadPlanningContextResponse.ContractError.timestampSkew) {
-            try stale.validating(siteID: "site-a", now: now)
-        }
-
-        let badUnits = Self.makePlanningContext(
-            siteID: "site-a",
-            asOf: now.addingTimeInterval(-60),
-            power: "W"
-        )
-        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
-            try badUnits.validating(siteID: "site-a", now: now)
-        }
-
-        let badZone = Self.makePlanningContext(
-            siteID: "site-a",
-            asOf: now.addingTimeInterval(-60),
-            timeZone: "Not/AZone"
-        )
-        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
-            try badZone.validating(siteID: "site-a", now: now)
-        }
-    }
-
-    /// `coverage` is the share of usable days that voted for a slot, not the 90%
-    /// interval rule (which the server applies before a day/slot may vote). A real
-    /// site with 13 usable days and 10 late-evening votes (0.77) was rejected
-    /// wholesale as malformed, so the forecast never appeared.
-    @Test("A slot with five or more day votes validates whatever share of days voted")
-    func planningContextAcceptsSlotVotedByFewerThanAllUsableDays() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let response = Self.makePlanningContext(
-            siteID: "site-a",
-            asOf: now.addingTimeInterval(-60),
-            usableDayCount: 13,
-            slot: { index in
-                index >= 45
-                    ? .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0,
-                            sampleCount: 10, coverage: 10.0 / 13.0)
-                    : .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: 13, coverage: 1)
-            }
-        )
-        #expect(throws: Never.self) { try response.validating(siteID: "site-a", now: now) }
-    }
-
-    @Test("A slot carrying a value from fewer than five day votes is still rejected")
-    func planningContextRejectsValuedSlotWithTooFewVotes() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let response = Self.makePlanningContext(
-            siteID: "site-a",
-            asOf: now.addingTimeInterval(-60),
-            slot: { index in
-                .init(localMinute: index * 30, homeKw: 1, batteryNetChargeKw: 0,
-                      sampleCount: index == 0 ? 4 : 14, coverage: 1)
-            }
-        )
-        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
-            try response.validating(siteID: "site-a", now: now)
-        }
-    }
-
-    private static func planningContextJSON(slot: (Int) -> String) -> Data {
+    static func planningContextJSON(slot: (Int) -> String) -> Data {
         let slots = (0 ..< 48).map(slot).joined(separator: ",")
         return Data(#"""
         {"version":1,
@@ -473,65 +272,9 @@ struct MobileContractsTests {
         """#.utf8)
     }
 
-    @Test("planningContextDecodesGridHistory")
-    func planningContextDecodesGridHistory() throws {
-        let data = Self.planningContextJSON { index in
-            #"{"localMinute":\#(index * 30),"homeKw":1,"batteryNetChargeKw":0,"sampleCount":14,"#
-                + #""coverage":1,"gridNetExportKw":2.5,"cautiousGridNetExportKw":1.25,"solarKw":3}"#
-        }
-        let response = try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
-        let validated = try response.validating(
-            siteID: "site-a",
-            now: try #require(ISO8601DateFormatter.parse("2026-10-18T15:01:00Z"))
-        )
-
-        #expect(validated.slots[0].gridNetExportKw == 2.5)
-        #expect(validated.slots[0].cautiousGridNetExportKw == 1.25)
-        #expect(validated.slots[0].solarKw == 3)
-        let context = try #require(validated.estimatorContext)
-        #expect(context.hasGridHistory)
-        #expect(context.slots[0].gridNetExportKw == 2.5)
-        #expect(context.slots[0].cautiousGridNetExportKw == 1.25)
-    }
-
-    @Test("planningContextWithoutGridHistoryStillDecodes")
-    func planningContextWithoutGridHistoryStillDecodes() throws {
-        let data = Self.planningContextJSON { index in
-            #"{"localMinute":\#(index * 30),"homeKw":1,"batteryNetChargeKw":0,"sampleCount":14,"coverage":1}"#
-        }
-        let response = try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
-        let validated = try response.validating(
-            siteID: "site-a",
-            now: try #require(ISO8601DateFormatter.parse("2026-10-18T15:01:00Z"))
-        )
-
-        #expect(validated.slots[0].gridNetExportKw == nil)
-        let context = try #require(validated.estimatorContext)
-        #expect(!context.hasGridHistory)
-    }
-
-    @Test("A non-finite grid history value is rejected")
-    func planningContextRejectsNonFiniteGridHistory() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let response = Self.makePlanningContext(
-            siteID: "site-a",
-            asOf: now.addingTimeInterval(-60),
-            slot: { index in
-                var slot = MobileLoadPlanningContextResponse.Slot(localMinute: index * 30, homeKw: 1,
-                                                                  batteryNetChargeKw: 0, sampleCount: 14,
-                                                                  coverage: 1)
-                slot.cautiousGridNetExportKw = index == 3 ? .infinity : 1
-                return slot
-            }
-        )
-        #expect(throws: MobileLoadPlanningContextResponse.ContractError.invalidSource) {
-            try response.validating(siteID: "site-a", now: now)
-        }
-    }
-
     /// Satisfies every clause of `validating`, so a test can vary `asOf` alone.
     /// `DashboardCoordinatorTests` needs the same fixture but keeps its own copy.
-    private static func makePlanningContext(
+    static func makePlanningContext(
         siteID: String,
         asOf: Date,
         power: String = "kW",
@@ -556,7 +299,7 @@ struct MobileContractsTests {
     }
 }
 
-private enum LiveFixture {
+enum LiveFixture {
     static let now = Date(timeIntervalSince1970: 1_000_000)
 
     /// A `stateOfChargeAt` fixture value: an ISO-8601 stamp, `nil` for an explicit JSON `null`,
@@ -597,7 +340,7 @@ private enum LiveFixture {
     }
 }
 
-private extension ISO8601DateFormatter {
+extension ISO8601DateFormatter {
     static func parse(_ value: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = value.contains(".")

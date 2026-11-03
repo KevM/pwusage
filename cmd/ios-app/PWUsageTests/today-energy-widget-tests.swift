@@ -68,73 +68,13 @@ struct TodayEnergyWidgetTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
-        var clock = now
-        var reloads: [String] = []
+        let clock = WidgetTrackingClock(now: now)
         let cache = DashboardCache(fileURL: directory.appendingPathComponent("app.json"), widgetStore: store,
-                                   now: { clock }, reloadTimelines: { reloads.append($0) })
+                                   now: { clock.now }, reloadTimelines: { clock.reloads.append($0) })
         cache.storeSites([MobileSite(id: "home", name: "Home", utility: "Utility")])
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let key = CodingUserInfoKey.pwusageCurrentDate { decoder.userInfo[key] = now }
-        let json = """
-        {"version":1,"site":{"id":"home","name":"Home","timezone":"America/Chicago","localDate":"2026-10-14"},
-         "live":{"solarPower":1000,"loadPower":2000,"batteryPower":500,"gridPower":500},
-         "today":{"homeKwh":12,"solarKwh":18,"gridNetKwh":-6,"batteryNetKwh":-2},"todayComplete":true,
-         "activeTariff":"Off peak","stateOfCharge":78,
-         "todayCost":{"netCost":2.47,"importCharges":3.12,"exportCredits":0.65,"currency":"EUR"},
-         "sources":{"liveStatusAt":"2026-10-14T19:55:00Z","energyDataThrough":"2026-10-14T19:55:00Z",
-         "stateOfChargeAt":"2026-10-14T19:55:00Z"}}
-        """
-        let live = try decoder.decode(MobileLiveResponse.self, from: Data(json.utf8))
-        cache.storeLive(live, at: now)
-        #expect(store.load() == nil)
-        cache.selectWidgetSite("home")
-        #expect(reloads == [TodayEnergySnapshot.widgetKind, TodayEnergySnapshot.metricWidgetKind])
-        cache.storeLive(live, at: now)
-        #expect(reloads.count == 2, "An equal snapshot must not reload either kind.")
-        clock = now.addingTimeInterval(899)
-        cache.storeLive(live, at: clock)
-        #expect(store.load()?.fetchedAt == clock, "Throttling reloads must not throttle writes.")
-        #expect(reloads.count == 2)
-        clock = now.addingTimeInterval(900)
-        cache.storeLive(live, at: clock)
-        #expect(reloads.count == 4, "Changed snapshots may reload at the fifteen-minute floor.")
-        #expect(store.load()?.siteID == "home")
-        #expect(store.load()?.energy.homeKwh == 12)
-        #expect(store.load()?.energy.solarKwh == 18)
-        #expect(store.load()?.energy.gridNetKwh == -6)
-        #expect(store.load()?.energy.batteryNetKwh == -2)
-        #expect(store.load()?.stateOfCharge(at: now) == 78)
-        let encoded = try JSONEncoder().encode(#require(store.load()))
-        let payload = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        let cost = try #require(payload["todayCost"] as? [String: Any])
-        #expect(cost["netCost"] as? Double == 2.47)
-        #expect(cost["currency"] as? String == "EUR")
-        clock = now.addingTimeInterval(901)
-        cache.selectWidgetSite("other")
-        #expect(store.load() == nil)
-        #expect(reloads.count == 6, "Removing a selection bypasses the reload floor.")
-        cache.selectWidgetSite("home")
-        #expect(store.load() != nil)
-        #expect(reloads.count == 8, "The first replacement reloads immediately.")
-        cache.storeSites([])
-        #expect(store.load() == nil)
-        #expect(reloads.count == 10, "Revocation immediately invalidates both timelines.")
-        cache.storeLive(live, at: now)
-        #expect(store.load() == nil)
-        cache.storeSites([MobileSite(id: "home", name: "Home", utility: "Utility")])
-        cache.storeLive(live, at: clock)
-        cache.selectWidgetSite("home")
-        #expect(store.load() != nil)
-        #expect(reloads.count == 12, "Restored access reloads the replacement immediately.")
-        clock = clock.addingTimeInterval(1)
-        cache.storeLive(live, at: clock)
-        #expect(reloads.count == 12, "Later routine updates remain throttled.")
-        cache.clear()
-        #expect(store.load() == nil)
-        #expect(reloads.count == 14, "Logout or session expiry immediately invalidates both timelines.")
-        cache.clear()
-        #expect(reloads.count == 14, "An already empty store needs no further reload.")
+        let live = try liveFixture(at: now)
+        try assertWidgetSelectionAndThrottling(cache: cache, store: store, live: live, clock: clock)
+        assertWidgetClearsTimelines(cache: cache, store: store, clock: clock)
     }
 
     @Test func optionalCostSurvivesLegacySnapshotsAndRejectsInvalidAmounts() throws {
@@ -211,70 +151,6 @@ struct TodayEnergyWidgetTests {
             .symbolPrefix == nil)
     }
 
-    @MainActor
-    @Test func renderActualWidgetContentForVisualInspection() throws {
-        let fixtures: [(String, TodayEnergySnapshot?)] = [
-            ("current", TodayEnergyPreviewFixtures.snapshot()),
-            ("stale", TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
-            ("unknown-charge", TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
-            ("partial", TodayEnergyPreviewFixtures.snapshot(complete: false)),
-            ("long-name", TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
-                                                              batteryNetKwh: -209.8,
-                                                              siteName: "Our family's home with a long site name")),
-            ("no-cost", TodayEnergyPreviewFixtures.snapshot(todayCost: nil)),
-            ("net-credit", TodayEnergyPreviewFixtures.snapshot(
-                todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0,
-                                           exportCredits: 2.5, currency: "EUR"))),
-            ("missing", nil)
-        ]
-        let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                                                 date: TodayEnergyPreviewFixtures.date, compact: true)
-            .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 292, height: 141)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
-            .environment(\.colorScheme, .light)
-        let smallRenderer = ImageRenderer(content: smallView)
-        smallRenderer.scale = 2
-        let smallPNG = try #require(smallRenderer.uiImage?.pngData())
-        let smallOutput = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("today-widget-small-medium.png")
-        try smallPNG.write(to: smallOutput)
-        print("Today widget render: \(smallOutput.path)")
-        let largerTextView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                                                      date: TodayEnergyPreviewFixtures.date, compact: true)
-            .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 338, height: 158)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
-            .environment(\.colorScheme, .light).environment(\.dynamicTypeSize, .xxxLarge)
-        let largerTextRenderer = ImageRenderer(content: largerTextView)
-        largerTextRenderer.scale = 2
-        let largerTextPNG = try #require(largerTextRenderer.uiImage?.pngData())
-        let largerTextOutput = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("today-widget-medium-larger-text.png")
-        try largerTextPNG.write(to: largerTextOutput)
-        print("Today widget render: \(largerTextOutput.path)")
-        for compact in [true, false] {
-            for dark in [false, true] {
-                for (name, snapshot) in fixtures {
-                    let view = TodayEnergyWidgetContent(snapshot: snapshot,
-                                                        date: TodayEnergyPreviewFixtures.date,
-                                                        compact: compact)
-                        .padding(compact ? TodayEnergyWidgetLayout.mediumInsets : TodayEnergyWidgetLayout.largeInsets)
-                        .frame(width: 338, height: compact ? 158 : 354)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground))
-                        .environment(\.colorScheme, dark ? .dark : .light)
-                    let renderer = ImageRenderer(content: view)
-                    renderer.scale = 2
-                    let png = try #require(renderer.uiImage?.pngData())
-                    let output = URL(fileURLWithPath: NSTemporaryDirectory())
-                        .appendingPathComponent(
-                            "today-widget-\(compact ? "medium" : "large")-\(dark ? "dark" : "light")-\(name).png"
-                        )
-                    try png.write(to: output)
-                    print("Today widget render: \(output.path)")
-                }
-            }
-        }
-    }
-
     @Test func batteryGlyphChargeBandsMatchApp() {
         for charge in [0.0, 12, 13, 37, 38, 62, 63, 87, 88, 100] {
             #expect(TodayEnergyPresentation.batterySymbol(charge)
@@ -325,74 +201,11 @@ struct TodayEnergyWidgetTests {
         #expect(TodayEnergySnapshot.timelineDates(for: nil, at: now) == [now])
     }
 
-    struct WidgetSelection {
-        let name: String
-        let metric: TodayEnergyMetric
-        let snapshot: TodayEnergySnapshot?
-    }
-
-    @MainActor
-    @Test func renderSmallWidgetSelections() throws {
-        let extras: [WidgetSelection] = [
-            WidgetSelection(name: "stale-grid", metric: .grid,
-                            snapshot: TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)),
-            WidgetSelection(name: "full-soc", metric: .battery,
-                            snapshot: TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100)),
-            WidgetSelection(name: "unknown-soc", metric: .battery,
-                            snapshot: TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
-            WidgetSelection(name: "large-number", metric: .grid,
-                            snapshot: TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
-            WidgetSelection(name: "missing", metric: .solar, snapshot: nil)
-        ]
-        let cases = TodayEnergyMetric.allCases.map {
-            WidgetSelection(name: $0.rawValue, metric: $0, snapshot: TodayEnergyPreviewFixtures.snapshot())
-        } + extras
-        for selection in cases {
-            for dark in [false, true] {
-                let view = TodayEnergySingleMetricContent(snapshot: selection.snapshot,
-                                                          date: TodayEnergyPreviewFixtures.date,
-                                                          metric: selection.metric)
-                    .padding(10).frame(width: 141, height: 141)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground))
-                    .environment(\.colorScheme, dark ? .dark : .light)
-                    .environment(\.dynamicTypeSize, .xxxLarge)
-                let renderer = ImageRenderer(content: view)
-                renderer.scale = 2
-                let png = try #require(renderer.uiImage?.pngData())
-                let output = URL(fileURLWithPath: NSTemporaryDirectory())
-                    .appendingPathComponent(
-                        "today-widget-small-\(selection.name)-\(dark ? "dark" : "light").png"
-                    )
-                try png.write(to: output)
-                print("Today widget render: \(output.path)")
-            }
-        }
-    }
-
     @Test func canvasSmallFamilyUsesSingleMetricInsteadOfFourMetricLayout() {
         #expect(TodayEnergyWidgetLayout(family: .systemSmall) == .singleMetric(.home))
         #expect(TodayEnergyWidgetLayout(family: .systemSmall, metric: .battery) == .singleMetric(.battery))
         #expect(TodayEnergyWidgetLayout(family: .systemMedium) == .medium)
         #expect(TodayEnergyWidgetLayout(family: .systemLarge) == .large)
-    }
-
-    @MainActor
-    @Test func renderActualFamilyRoutingForCanvasOverride() throws {
-        for metric in [TodayEnergyMetric.home, .battery] {
-            let view = TodayEnergyWidgetFamilyContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                                                      date: TodayEnergyPreviewFixtures.date,
-                                                      family: .systemSmall, metric: metric)
-                .frame(width: 141, height: 141)
-                .background(Color(uiColor: .secondarySystemGroupedBackground))
-                .environment(\.colorScheme, .light)
-            let renderer = ImageRenderer(content: view)
-            renderer.scale = 2
-            let png = try #require(renderer.uiImage?.pngData())
-            let output = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("today-widget-canvas-small-\(metric.rawValue).png")
-            try png.write(to: output)
-            print("Today widget render: \(output.path)")
-        }
     }
 
     @MainActor
@@ -413,5 +226,93 @@ struct TodayEnergyWidgetTests {
         cache.storeSites([])
         #expect(store.load() == nil)
         #expect(TodayEnergySnapshotStore(fileURL: store.fileURL).load() == nil)
+    }
+
+    /// Decodes the live payload the widget cache stores for the tracking test.
+    private func liveFixture(at now: Date) throws -> MobileLiveResponse {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let key = CodingUserInfoKey.pwusageCurrentDate { decoder.userInfo[key] = now }
+        let json = """
+        {"version":1,"site":{"id":"home","name":"Home","timezone":"America/Chicago","localDate":"2026-10-14"},
+         "live":{"solarPower":1000,"loadPower":2000,"batteryPower":500,"gridPower":500},
+         "today":{"homeKwh":12,"solarKwh":18,"gridNetKwh":-6,"batteryNetKwh":-2},"todayComplete":true,
+         "activeTariff":"Off peak","stateOfCharge":78,
+         "todayCost":{"netCost":2.47,"importCharges":3.12,"exportCredits":0.65,"currency":"EUR"},
+         "sources":{"liveStatusAt":"2026-10-14T19:55:00Z","energyDataThrough":"2026-10-14T19:55:00Z",
+         "stateOfChargeAt":"2026-10-14T19:55:00Z"}}
+        """
+        return try decoder.decode(MobileLiveResponse.self, from: Data(json.utf8))
+    }
+
+    /// Writes readings and follows the widget selection through throttling, cost encoding and revocation.
+    @MainActor
+    private func assertWidgetSelectionAndThrottling(
+        cache: DashboardCache, store: TodayEnergySnapshotStore, live: MobileLiveResponse, clock: WidgetTrackingClock
+    ) throws {
+        cache.storeLive(live, at: clock.now)
+        #expect(store.load() == nil)
+        cache.selectWidgetSite("home")
+        #expect(clock.reloads == [TodayEnergySnapshot.widgetKind, TodayEnergySnapshot.metricWidgetKind])
+        cache.storeLive(live, at: clock.now)
+        #expect(clock.reloads.count == 2, "An equal snapshot must not reload either kind.")
+        clock.now = now.addingTimeInterval(899)
+        cache.storeLive(live, at: clock.now)
+        #expect(store.load()?.fetchedAt == clock.now, "Throttling reloads must not throttle writes.")
+        #expect(clock.reloads.count == 2)
+        clock.now = now.addingTimeInterval(900)
+        cache.storeLive(live, at: clock.now)
+        #expect(clock.reloads.count == 4, "Changed snapshots may reload at the fifteen-minute floor.")
+        #expect(store.load()?.siteID == "home")
+        #expect(store.load()?.energy.homeKwh == 12)
+        #expect(store.load()?.energy.solarKwh == 18)
+        #expect(store.load()?.energy.gridNetKwh == -6)
+        #expect(store.load()?.energy.batteryNetKwh == -2)
+        #expect(store.load()?.stateOfCharge(at: now) == 78)
+        let encoded = try JSONEncoder().encode(#require(store.load()))
+        let payload = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let cost = try #require(payload["todayCost"] as? [String: Any])
+        #expect(cost["netCost"] as? Double == 2.47)
+        #expect(cost["currency"] as? String == "EUR")
+        clock.now = now.addingTimeInterval(901)
+        cache.selectWidgetSite("other")
+        #expect(store.load() == nil)
+        #expect(clock.reloads.count == 6, "Removing a selection bypasses the reload floor.")
+        cache.selectWidgetSite("home")
+        #expect(store.load() != nil)
+        #expect(clock.reloads.count == 8, "The first replacement reloads immediately.")
+        cache.storeSites([])
+        #expect(store.load() == nil)
+        #expect(clock.reloads.count == 10, "Revocation immediately invalidates both timelines.")
+        cache.storeLive(live, at: clock.now)
+        #expect(store.load() == nil)
+        cache.storeSites([MobileSite(id: "home", name: "Home", utility: "Utility")])
+        cache.storeLive(live, at: clock.now)
+        cache.selectWidgetSite("home")
+        #expect(store.load() != nil)
+        #expect(clock.reloads.count == 12, "Restored access reloads the replacement immediately.")
+        clock.now = clock.now.addingTimeInterval(1)
+        cache.storeLive(live, at: clock.now)
+        #expect(clock.reloads.count == 12, "Later routine updates remain throttled.")
+    }
+
+    @MainActor
+    private func assertWidgetClearsTimelines(cache: DashboardCache, store: TodayEnergySnapshotStore,
+                                             clock: WidgetTrackingClock) {
+        cache.clear()
+        #expect(store.load() == nil)
+        #expect(clock.reloads.count == 14, "Logout or session expiry immediately invalidates both timelines.")
+        cache.clear()
+        #expect(clock.reloads.count == 14, "An already empty store needs no further reload.")
+    }
+}
+
+/// A mutable clock and reload log shared by the widget-tracking test and its helpers.
+private final class WidgetTrackingClock {
+    var now: Date
+    var reloads: [String] = []
+
+    init(now: Date) {
+        self.now = now
     }
 }

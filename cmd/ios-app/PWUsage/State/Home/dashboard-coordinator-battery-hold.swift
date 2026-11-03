@@ -49,15 +49,7 @@ extension DashboardCoordinator {
             // Once a command succeeds, the old snapshot is no longer authoritative.
             // Reconcile from the DB while keeping duplicate commands disabled.
             batteryHold.isCurrent = false
-            if case .park = command {
-                batteryHold.response = .init(hold: result.hold, notice: batteryHold.response?.notice)
-                if let hold = result.hold { reportBatteryHold(.started(hold), siteID: siteID) }
-            } else if case .restore = command {
-                batteryHold.response = .init(hold: nil, notice: batteryHold.response?.notice)
-                if result.status == .succeeded, let previousHoldID {
-                    reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID)
-                }
-            }
+            applyCommandResult(result, command: command, siteID: siteID, previousHoldID: previousHoldID)
             let response = try await holdAPI.fetchBatteryHold(siteID: siteID).validating(siteID: siteID)
             guard generation == siteGeneration, canRequestAccountData else { return }
             batteryHold.response = response
@@ -67,6 +59,23 @@ extension DashboardCoordinator {
         } catch {
             guard generation == siteGeneration else { return }
             handleBatteryHoldError(error)
+        }
+    }
+
+    private func applyCommandResult(
+        _ result: BatteryHoldCommandResult,
+        command: BatteryHoldCommand,
+        siteID: String,
+        previousHoldID: Int?
+    ) {
+        if case .park = command {
+            batteryHold.response = .init(hold: result.hold, notice: batteryHold.response?.notice)
+            if let hold = result.hold { reportBatteryHold(.started(hold), siteID: siteID) }
+        } else if case .restore = command {
+            batteryHold.response = .init(hold: nil, notice: batteryHold.response?.notice)
+            if result.status == .succeeded, let previousHoldID {
+                reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID)
+            }
         }
     }
 

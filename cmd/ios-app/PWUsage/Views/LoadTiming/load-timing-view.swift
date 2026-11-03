@@ -134,12 +134,10 @@ struct LoadTimingView: View {
                         nextCheaperPhrase: nil,
                         nextStartPhraseByKey: [:]
                     )
-                    // Read so a scheduled refresh re-runs this pass. The `let` form is
-                    // required: `_ =` makes this ViewBuilder fail to type-check.
-                    // swiftlint:disable:next redundant_discardable_let
-                    let _ = staleRefreshes
                     let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
                     jobCard(state)
+                        // Reading the counter re-runs this pass after a scheduled refresh so the task re-arms.
+                        .onChange(of: staleRefreshes) { _, _ in }
                         .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison,
                                                                      now: state.now)) {
                             guard let refresh = SmartShiftPresentation.nextRefresh(

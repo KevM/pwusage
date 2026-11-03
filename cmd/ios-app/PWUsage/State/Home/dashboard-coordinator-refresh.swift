@@ -18,22 +18,40 @@ extension DashboardCoordinator {
         await refreshPower(force: trigger == .userGesture)
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
         let requestTime = now()
-        let interval = usesLivePowerEndpoint ? Self.summaryInterval : Self.liveInterval
 
-        if liveTask == nil {
-            if trigger == .userGesture
-                || isDue(lastAttempt: live.lastAttempt, interval: interval, at: requestTime) {
-                live.lastAttempt = requestTime
-                let siteID = selectedSiteID
-                liveTask = Task { await performLive(siteID: siteID, generation: generation) }
-            }
-        }
+        startLiveTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
         // The live endpoint may first import stale energy history. Wait for it
         // before asking the bill endpoint to calculate from that history.
         let billAttemptsBeforeWait = billAttempts
         await liveTask?.value
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
 
+        let waitsForBill = await reconcileBillAfterLive(
+            trigger: trigger, requestTime: requestTime,
+            billAttemptsBeforeWait: billAttemptsBeforeWait, generation: generation
+        )
+        guard waitsForBill else { return }
+        await billTask?.value
+    }
+
+    private func startLiveTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {
+        guard liveTask == nil else { return }
+        let interval = usesLivePowerEndpoint ? Self.summaryInterval : Self.liveInterval
+        guard trigger == .userGesture
+            || isDue(lastAttempt: live.lastAttempt, interval: interval, at: requestTime) else { return }
+        live.lastAttempt = requestTime
+        let siteID = selectedSiteID
+        liveTask = Task { await performLive(siteID: siteID, generation: generation) }
+    }
+
+    /// Reconciles the bill request against the live import that just ran. Returns false
+    /// when the caller must stop without waiting on the bill task.
+    private func reconcileBillAfterLive(
+        trigger: RefreshTrigger,
+        requestTime: Date,
+        billAttemptsBeforeWait: Int,
+        generation: Int
+    ) async -> Bool {
         if billAttempts == billAttemptsBeforeWait {
             launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime,
                                    generation: generation, followsLive: true)
@@ -42,7 +60,7 @@ extension DashboardCoordinator {
             // history, so that bill is stale. Let it finish, then recalculate
             // once, whichever waiting refresh gets here first.
             await billTask?.value
-            guard canStillRefresh(trigger: trigger, generation: generation) else { return }
+            guard canStillRefresh(trigger: trigger, generation: generation) else { return false }
             if !latestBillAttemptFollowedLive {
                 launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(),
                                        generation: generation, followsLive: true)
@@ -51,8 +69,7 @@ extension DashboardCoordinator {
         // Otherwise a bill already followed this live request. Comparing its
         // newer attempt with the pre-wait time would read as a backwards clock
         // and send a duplicate request.
-
-        await billTask?.value
+        return true
     }
 
     func canStillRefresh(trigger: RefreshTrigger, generation: Int) -> Bool {
