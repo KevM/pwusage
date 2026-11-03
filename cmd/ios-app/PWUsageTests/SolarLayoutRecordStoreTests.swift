@@ -65,6 +65,27 @@ struct SolarLayoutRecordStoreTests {
         try await store.removeAll()
     }
 
+    @Test("Remove clears cache, deletes file, and removes unsynced markers")
+    func removeClearsRecordAndUnsyncedMarkers() async throws {
+        let folder = temporaryFolder()
+        let store = SolarLayoutRecordStore(directory: folder)
+        let issuer = SolarCloudSessionIssuer()
+        let session = issuer.issue(accountScopeID: scope.accountScopeID)
+        final class DummySync: SolarLayoutSyncing {
+            func recordChanged(_ scope: SolarForecastSiteScope, session: SolarCloudSession) async {}
+        }
+        let sync = DummySync()
+        await store.bind(session, to: sync)
+        try await store.setLocation(location, scope: scope)
+        #expect(await store.unsyncedScopes(for: session).contains(scope))
+        #expect(try await store.record(scope: scope) != nil)
+
+        try await store.remove(scope: scope)
+        #expect(try await store.record(scope: scope) == nil)
+        #expect(await !store.unsyncedScopes(for: session).contains(scope))
+        try await store.removeAll()
+    }
+
     @Test("Rejects stale results after the location moves")
     func rejectsStaleSave() async throws {
         let folder = temporaryFolder()
