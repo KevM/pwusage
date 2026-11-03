@@ -142,6 +142,10 @@ final class SiteHistoryOnboarding {
         await environment.layoutConfidence(scope: scope) != nil
     }
 
+    func hasLocation(scope: SolarForecastSiteScope) async -> Bool {
+        await environment.hasLocation(scope: scope)
+    }
+
     func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState {
         await environment.storedState(scope: scope)
     }

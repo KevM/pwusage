@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The one-time Smart Shift invitation to share (or refine) the home location, for beta
-/// sites. It never asks for permission itself: the button opens the same
-/// "Are you at …?" confirmation the settings sheet uses.
+/// sites. It never asks for permission itself: the button opens the home location sheet, where
+/// the user chooses the current location, a search or a map pin.
 enum SolarLocationInvitation {
     enum Kind: Equatable {
         case missing
@@ -70,9 +70,11 @@ struct SolarLocationInvitationCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
             .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
-            .solarLocationConfirmation(isPresented: $isConfirming, coordinator: coordinator) { result in
-                outcome = result
-                if result == .shared { dismiss(scope) }
+            .sheet(isPresented: $isConfirming) {
+                HomeLocationSheet(coordinator: coordinator) { result in
+                    outcome = result
+                    dismiss(scope)
+                }
             }
         }
     }
@@ -105,31 +107,6 @@ struct SolarLocationOutcomeView: View {
             Text("Your location could not be saved. Try again later.").foregroundStyle(.secondary)
         case .cancelled:
             EmptyView()
-        }
-    }
-}
-
-extension View {
-    /// Asks "Are you at <site> now?" before any permission prompt, then shares one fix.
-    func solarLocationConfirmation(
-        isPresented: Binding<Bool>,
-        coordinator: DashboardCoordinator,
-        completion: @escaping @MainActor (SolarLocationShareResult) -> Void
-    ) -> some View {
-        let siteID = coordinator.selectedSiteID
-        let siteName = coordinator.bill.response?.site.name ?? coordinator.live.response?.site.name ?? "this home"
-        return confirmationDialog("Are you at \(siteName) now?", isPresented: isPresented, titleVisibility: .visible) {
-            Button("Yes, Use This Location") {
-                Task {
-                    let result = await coordinator.shareHomeLocation(
-                        confirmedSiteID: siteID, provider: DeviceHomeLocationProvider()
-                    )
-                    completion(result)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("pwusage uses your home's approximate location once to work out which way your solar panels face.")
         }
     }
 }

@@ -169,11 +169,17 @@ final class SiteHistoryOnboardingLifecycle {
     }
 
     /// Only sites with the history beta run. One that finished because history was unavailable is
-    /// reopened once history is enabled again.
+    /// reopened once history is enabled again, and one that stopped for want of a location once
+    /// it has one.
     private func prepare(_ scope: SolarForecastSiteScope) async -> Bool {
         guard await isHistoryEnabled(scope), !Task.isCancelled else { return false }
-        if case .finished(.historyUnavailable)? = (try? await store.progress(scope: scope))?.phase {
+        switch (try? await store.progress(scope: scope))?.phase {
+        case .finished(.historyUnavailable)?:
             try? await store.resume(scope: scope)
+        case .finished(.locationNeeded)? where await onboarding.hasLocation(scope: scope):
+            try? await store.resume(scope: scope)
+        default:
+            break
         }
         return !Task.isCancelled
     }

@@ -140,6 +140,27 @@ struct SiteHistoryOnboardingLifecycleTests {
         #expect(try await store.progress(scope: scope)?.phase == .active)
     }
 
+    @Test func aSiteThatStoppedForALocationReopensOnceItHasOne() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.location = false
+        let lifecycle = make(environment, probe: LifecycleProbe(now: start))
+        lifecycle.activate(scope: scope)
+        await lifecycle.foregroundTask?.value
+        #expect(try await store.progress(scope: scope)?.phase == .finished(.locationNeeded))
+        let requests = environment.requests.count
+
+        lifecycle.activate(scope: scope)
+        await lifecycle.foregroundTask?.value
+        #expect(environment.requests.count == requests)
+
+        environment.location = true
+        environment.producing = false
+        lifecycle.activate(scope: scope)
+        await lifecycle.foregroundTask?.value
+        #expect(environment.requests.count > requests)
+        lifecycle.stop()
+    }
+
     @Test func resumingAPauseOnlyWakesThatReasonInThatAccount() async throws {
         let saved = store
         let elsewhere = SolarForecastSiteScope(accountScopeID: "account-b", siteID: "site-1")

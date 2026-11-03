@@ -9,6 +9,8 @@ struct SolarSystemView: View {
     var debugActions: SiteHistoryDebugActions?
     /// Opened from the banner's location prompt: go straight to the location step.
     var startsAtLocation = false
+    /// After a new home location is saved, so a search that stopped for want of one resumes.
+    var onLocationSaved: () -> Void = {}
 
     @Environment(\.reconnectTesla) private var reconnectTesla
     @State private var isConfirmingLocation = false
@@ -27,7 +29,12 @@ struct SolarSystemView: View {
         }
         .navigationTitle("Solar System")
         .inlineNavigationTitle()
-        .solarLocationConfirmation(isPresented: $isConfirmingLocation, coordinator: coordinator) { outcome = $0 }
+        .sheet(isPresented: $isConfirmingLocation) {
+            HomeLocationSheet(coordinator: coordinator) { result in
+                outcome = result
+                onLocationSaved()
+            }
+        }
         .onAppear {
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true

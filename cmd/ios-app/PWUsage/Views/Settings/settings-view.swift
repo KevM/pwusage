@@ -14,6 +14,7 @@ struct SettingsView: View {
     /// The history beta's status for the site, outside the demo; nil otherwise.
     var siteHistory: SiteHistoryStatus?
     var siteHistoryDebug: SiteHistoryDebugActions?
+    var onLocationSaved: () -> Void = {}
 
     @State private var isConfirmingSignOut = false
 
@@ -73,7 +74,7 @@ struct SettingsView: View {
             case .solarSystem(let startsAtLocation):
                 SolarSystemView(
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
-                    startsAtLocation: startsAtLocation)
+                    startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved)
             case .about:
                 AboutSheet()
             }
