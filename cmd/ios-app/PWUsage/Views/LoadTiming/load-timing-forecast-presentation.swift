@@ -47,34 +47,58 @@ enum LoadTimingForecastPresentation {
         "Choose your solar arrays to add a forecast. "
             + "Your estimate below already works without it."
 
+    /// The device state the forecast layer is read from.
+    struct Inputs {
+        let state: SolarForecastEnhancementState
+        let connection: SolarForecastConnectionState
+        let cause: SolarForecastUnavailableCause?
+        let reason: SolarForecastUnavailableReason?
+        let forecastFetchedAt: Date?
+        let now: Date
+    }
+
     /// What the forecast layer can add to the Smart Shift card.
+    static func forecastAvailability(
+        _ inputs: Inputs,
+        usesAutomaticForecast: Bool = false,
+        automaticStatus: MobileSolarLayoutResponse? = nil
+    ) -> ForecastAvailability {
+        switch inputs.connection {
+        case .checking: return .loading
+        case .notConnected:
+            return usesAutomaticForecast
+                ? .automaticUnavailable(automaticUnavailableNote(status: automaticStatus, reason: inputs.reason))
+                : .none
+        case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
+        case .ready: break
+        }
+        let age = inputs.forecastFetchedAt.map { inputs.now.timeIntervalSince($0) }
+        let isFresh = age.map { $0 >= 0 && $0 <= maximumForecastAge } ?? false
+        // A refresh keeps the previous batch in memory until it is replaced. While
+        // that batch is still fresh it keeps pricing the card, so the verdict
+        // doesn't flip to the forecast-free answer and back on every pull.
+        if inputs.state == .loadingWithBasic { return isFresh ? .ready : .loading }
+        if inputs.state == .enhanced, isFresh { return .ready }
+        if let reason = inputs.reason { return .unusable(firstSentence(enhancementDetail(reason))) }
+        return .unusable(firstSentence(causeDetail(inputs.cause,
+                                                   forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
+    }
+
+    /// Compatibility overload for callers that pass the inputs one by one;
+    /// omitting `forecastFetchedAt` means no batch has been fetched yet.
     static func forecastAvailability(
         state: SolarForecastEnhancementState,
         connection: SolarForecastConnectionState,
         cause: SolarForecastUnavailableCause?,
         reason: SolarForecastUnavailableReason?,
-        forecastFetchedAt: Date?,
+        forecastFetchedAt: Date? = nil,
         now: Date,
         usesAutomaticForecast: Bool = false,
         automaticStatus: MobileSolarLayoutResponse? = nil
     ) -> ForecastAvailability {
-        switch connection {
-        case .checking: return .loading
-        case .notConnected:
-            return usesAutomaticForecast
-                ? .automaticUnavailable(automaticUnavailableNote(status: automaticStatus, reason: reason)) : .none
-        case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
-        case .ready: break
-        }
-        let age = forecastFetchedAt.map { now.timeIntervalSince($0) }
-        let isFresh = age.map { $0 >= 0 && $0 <= maximumForecastAge } ?? false
-        // A refresh keeps the previous batch in memory until it is replaced. While
-        // that batch is still fresh it keeps pricing the card, so the verdict
-        // doesn't flip to the forecast-free answer and back on every pull.
-        if state == .loadingWithBasic { return isFresh ? .ready : .loading }
-        if state == .enhanced, isFresh { return .ready }
-        if let reason { return .unusable(firstSentence(enhancementDetail(reason))) }
-        return .unusable(firstSentence(causeDetail(cause, forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
+        forecastAvailability(Inputs(state: state, connection: connection, cause: cause, reason: reason,
+                                    forecastFetchedAt: forecastFetchedAt, now: now),
+                             usesAutomaticForecast: usesAutomaticForecast, automaticStatus: automaticStatus)
     }
 
     private static func automaticUnavailableNote(

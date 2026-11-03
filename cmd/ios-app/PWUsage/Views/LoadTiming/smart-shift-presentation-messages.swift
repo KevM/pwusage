@@ -29,15 +29,36 @@ extension SmartShiftPresentation {
         }
     }
 
+    /// Everything `costBreakdowns` reads.
+    struct CostBreakdownInputs {
+        let comparison: LoadTimingForecastEstimator.Comparison
+        let profile: LoadProfile
+        let timing: LoadTiming
+        let now: Date
+        /// `nil` where no bill date is shown.
+        let billingCycleEnd: Date?
+        let currencyCode: String
+        let timeZone: String
+    }
+
     /// For each period the recommended run draws on: the part its bank covers and the part bought.
     /// Banks are read where the bill is, at the projection end: the lane's bank after
     /// the run plus the run's draw gives the bank it drew from.
     /// The recommended start's arithmetic, then starting now's (just now's when they're the same).
+    static func costBreakdowns(_ inputs: CostBreakdownInputs) -> [CostBreakdown] {
+        Context(profile: inputs.profile, comparison: inputs.comparison, timing: inputs.timing, now: inputs.now,
+                billingCycleEnd: inputs.billingCycleEnd, currencyCode: inputs.currencyCode,
+                timeZone: inputs.timeZone).costBreakdowns
+    }
+
+    /// Compatibility overload for callers that pass the inputs one by one.
     static func costBreakdowns(
         comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-        now: Date, billingCycleEnd: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
-        Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: billingCycleEnd,
-                currencyCode: currencyCode, timeZone: timeZone).costBreakdowns
+        now: Date, billingCycleEnd: Date? = nil, currencyCode: String = "USD",
+        timeZone: String) -> [CostBreakdown] {
+        costBreakdowns(CostBreakdownInputs(comparison: comparison, profile: profile, timing: timing, now: now,
+                                           billingCycleEnd: billingCycleEnd, currencyCode: currencyCode,
+                                           timeZone: timeZone))
     }
 
     /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
@@ -86,12 +107,10 @@ extension SmartShiftPresentation {
 
     // MARK: - Blocked states
 
-    static func blockedMessage(profile: LoadProfile, result: LoadTimingForecastEstimator.Result,
-                               refreshUnavailable: Bool, timing: LoadTiming, now: Date,
-                               billingCycleEnd: Date) -> String? {
-        if refreshUnavailable { return refreshFailedMessage }
-        if !timing.hasTariff { return missingRatePlanMessage }
-        switch result.unavailableReason {
+    static func blockedMessage(_ inputs: BlockerInputs) -> String? {
+        if inputs.refreshUnavailable { return refreshFailedMessage }
+        if !inputs.timing.hasTariff { return missingRatePlanMessage }
+        switch inputs.result.unavailableReason {
         case .none:
             return nil
         case .staleBalance:
@@ -101,7 +120,8 @@ extension SmartShiftPresentation {
         case .incompleteBalance:
             return incompleteBalanceMessage
         case .noFittingRun:
-            if let hours = durationHours(of: profile), now.addingTimeInterval(hours * 3600) > billingCycleEnd {
+            if let hours = durationHours(of: inputs.profile),
+               inputs.now.addingTimeInterval(hours * 3600) > inputs.billingCycleEnd {
                 return billingCycleMessage
             }
             return tooLongMessage

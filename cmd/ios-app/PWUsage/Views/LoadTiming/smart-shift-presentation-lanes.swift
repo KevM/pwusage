@@ -9,20 +9,35 @@ extension SmartShiftPresentation {
         let bankWithoutRun: Double?
     }
 
+    /// The run being charted, and the lanes that describe the banks it draws on.
+    struct DrawInputs {
+        let profile: LoadProfile
+        let timing: LoadTiming
+        let laneEnd: (LoadTimingForecastEstimator.BalanceLane) -> Double?
+        let lanes: [LoadTimingForecastEstimator.BalanceLane]
+    }
+
     /// What a run takes from each period, in the order it reaches them, and how much
     /// of that its bank covers. A lane ends `kwh` lower than it would without the run,
     /// so the bank it drew from is that lane's end plus the draw.
-    static func draws(from start: Date, to end: Date, profile: LoadProfile, timing: LoadTiming,
-                      laneEnd: (LoadTimingForecastEstimator.BalanceLane) -> Double?,
-                      lanes: [LoadTimingForecastEstimator.BalanceLane]) -> [Draw] {
+    static func draws(from start: Date, to end: Date, inputs: DrawInputs) -> [Draw] {
         let hours = end.timeIntervalSince(start) / 3600
-        guard hours > 0, let energy = energyKwh(of: profile), energy > 0 else { return [] }
+        guard hours > 0, let energy = energyKwh(of: inputs.profile), energy > 0 else { return [] }
         let powerKw = energy / hours
-        return hoursByPeriod(from: start, to: end, timing: timing).map { key, periodHours in
+        return hoursByPeriod(from: start, to: end, timing: inputs.timing).map { key, periodHours in
             let drawn = powerKw * periodHours
-            let bank = lanes.first { $0.periodKey == key }.flatMap(laneEnd).map { $0 + drawn }
+            let bank = inputs.lanes.first { $0.periodKey == key }.flatMap(inputs.laneEnd).map { $0 + drawn }
             return Draw(key: key, kwh: drawn, fromBank: bank.map { min(drawn, max($0, 0)) } ?? 0, bankWithoutRun: bank)
         }
+    }
+
+    /// Compatibility overload for callers that pass the run's inputs one by one;
+    /// omitting `lanes` means no lane describes the banks.
+    static func draws(from start: Date, to end: Date, profile: LoadProfile, timing: LoadTiming,
+                      laneEnd: @escaping (LoadTimingForecastEstimator.BalanceLane) -> Double?,
+                      lanes: [LoadTimingForecastEstimator.BalanceLane] = []) -> [Draw] {
+        draws(from: start, to: end, inputs: DrawInputs(profile: profile, timing: timing,
+                                                       laneEnd: laneEnd, lanes: lanes))
     }
 
     /// Hours a run spends in each rate period, in the order it reaches them.

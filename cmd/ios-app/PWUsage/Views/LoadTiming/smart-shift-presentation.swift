@@ -1,66 +1,96 @@
 import Foundation
 
 enum SmartShiftPresentation {
+    /// The pass-wide inputs every Job priced in one evaluation shares.
+    struct EvaluationInputs {
+        let now: Date
+        let timing: LoadTiming
+        let forecast: ForecastAvailability
+        let intervals: [SolarForecastInterval]?
+        let context: LoadTimingForecastEstimator.PlanningContext?
+        let balanceSourceTime: Date?
+        let billingCycleEnd: Date
+        let currencyCode: String
+        let timeZone: String
+    }
+
+    /// What a blocked card needs to know about the Job and the passing clock.
+    struct BlockerInputs {
+        let profile: LoadProfile
+        let result: LoadTimingForecastEstimator.Result
+        let refreshUnavailable: Bool
+        let timing: LoadTiming
+        let now: Date
+        let billingCycleEnd: Date
+    }
+
+    /// The card's copy inputs, once a Job and its evaluation are known.
+    struct ScreenInputs {
+        let timing: LoadTiming
+        let now: Date
+        let billingCycleEnd: Date
+        let currencyCode: String
+        let timeZone: String
+    }
+
     /// Prices the Job with the solar forecast when one is ready, otherwise with
     /// the site's grid history when the household pattern carries it, otherwise
     /// with balances held still. A forecast comparison that can't run (its
     /// stricter 30-minute balance age, say) falls back to the forecast-free one,
     /// and the card says why in one sentence.
+    static func evaluate(profile: LoadProfile, inputs: EvaluationInputs) -> SmartShiftEvaluation {
+        evaluator(inputs)(profile)
+    }
+
+    /// Compatibility overload for callers that pass the pass inputs one by one;
+    /// omitted parts describe a pass with no usable forecast.
     static func evaluate(
         profile: LoadProfile,
         now: Date,
         timing: LoadTiming,
-        forecast: ForecastAvailability,
-        intervals: [SolarForecastInterval]?,
-        context: LoadTimingForecastEstimator.PlanningContext?,
-        balanceSourceTime: Date?,
+        forecast: ForecastAvailability = .none,
+        intervals: [SolarForecastInterval]? = nil,
+        context: LoadTimingForecastEstimator.PlanningContext? = nil,
+        balanceSourceTime: Date? = nil,
         billingCycleEnd: Date,
-        currencyCode: String,
+        currencyCode: String = "USD",
         timeZone: String
     ) -> SmartShiftEvaluation {
-        evaluator(now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
-                  balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-                  currencyCode: currencyCode, timeZone: timeZone)(profile)
+        evaluate(profile: profile, inputs: EvaluationInputs(
+            now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+            balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+            currencyCode: currencyCode, timeZone: timeZone))
     }
 
     /// Prices Jobs for one pass, as `evaluate` does. The projection work that
     /// doesn't depend on the Job is planned once per projection and shared, so
     /// pricing every saved Job for the hint stays within the per-pass budget.
-    static func evaluator(
-        now: Date,
-        timing: LoadTiming,
-        forecast: ForecastAvailability,
-        intervals: [SolarForecastInterval]?,
-        context: LoadTimingForecastEstimator.PlanningContext?,
-        balanceSourceTime: Date?,
-        billingCycleEnd: Date,
-        currencyCode: String,
-        timeZone: String
-    ) -> (LoadProfile) -> SmartShiftEvaluation {
-        guard let balanceSourceTime else {
+    static func evaluator(_ inputs: EvaluationInputs) -> (LoadProfile) -> SmartShiftEvaluation {
+        guard let balanceSourceTime = inputs.balanceSourceTime else {
             return { _ in
                 SmartShiftEvaluation(result: .init(comparison: nil, unavailableReason: .staleBalance),
-                                     forecast: forecast)
+                                     forecast: inputs.forecast)
             }
         }
         let plans = PassPlans { projection in
-            LoadTimingForecastEstimator.plan(now: now, timing: timing, projection: projection,
-                                             balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-                                             currencyCode: currencyCode)
+            LoadTimingForecastEstimator.plan(LoadTimingForecastEstimator.PlanRequest(
+                now: inputs.now, timing: inputs.timing, projection: projection,
+                balanceSourceTime: balanceSourceTime, billingCycleEnd: inputs.billingCycleEnd,
+                currencyCode: inputs.currencyCode))
         }
         return { profile in
-            var availability = forecast
-            if forecast == .ready, let intervals, let context {
+            var availability = inputs.forecast
+            if inputs.forecast == .ready, let intervals = inputs.intervals, let context = inputs.context {
                 let result = LoadTimingForecastEstimator.evaluate(
                     profile: profile, plan: plans.plan(for: .forecast(intervals: intervals, context: context)))
                 guard let reason = result.unavailableReason else {
                     return SmartShiftEvaluation(result: result, forecast: .ready, projection: .forecast)
                 }
                 availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(reason))
-            } else if forecast == .ready {
+            } else if inputs.forecast == .ready {
                 availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
             }
-            if let context, context.hasGridHistory {
+            if let context = inputs.context, context.hasGridHistory {
                 let result = LoadTimingForecastEstimator.evaluate(profile: profile,
                                                                   plan: plans.plan(for: .history(context: context)))
                 if result.unavailableReason == nil {
@@ -69,9 +99,27 @@ enum SmartShiftPresentation {
             }
             return SmartShiftEvaluation(
                 result: LoadTimingForecastEstimator.evaluate(
-                    profile: profile, plan: plans.plan(for: .flat(timeZone: timeZone))),
+                    profile: profile, plan: plans.plan(for: .flat(timeZone: inputs.timeZone))),
                 forecast: availability, projection: .flat)
         }
+    }
+
+    /// Compatibility overload for callers that pass the pass inputs one by one;
+    /// omitted parts describe a pass with no usable forecast.
+    static func evaluator(
+        now: Date,
+        timing: LoadTiming,
+        forecast: ForecastAvailability = .none,
+        intervals: [SolarForecastInterval]? = nil,
+        context: LoadTimingForecastEstimator.PlanningContext? = nil,
+        balanceSourceTime: Date?,
+        billingCycleEnd: Date,
+        currencyCode: String = "USD",
+        timeZone: String
+    ) -> (LoadProfile) -> SmartShiftEvaluation {
+        evaluator(EvaluationInputs(now: now, timing: timing, forecast: forecast, intervals: intervals,
+                                   context: context, balanceSourceTime: balanceSourceTime,
+                                   billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone))
     }
 
     /// Each projection's plan for one pass, built the first time a Job needs it.
@@ -120,20 +168,14 @@ enum SmartShiftPresentation {
     static let noEnergyMessage = "This car is already at its target charge, so no energy is needed right now."
     static let cannotCompareMessage = "Smart Shift can't compare start times for this job right now."
 
-    static func make(
-        profile: LoadProfile?,
-        result: LoadTimingForecastEstimator.Result,
-        forecast: ForecastAvailability,
-        refreshUnavailable: Bool,
-        timing: LoadTiming,
-        now: Date,
-        billingCycleEnd: Date,
-        currencyCode: String,
-        timeZone: String
-    ) -> SmartShiftScreen {
+    static func make(profile: LoadProfile?, result: LoadTimingForecastEstimator.Result,
+                     forecast: ForecastAvailability, refreshUnavailable: Bool,
+                     inputs: ScreenInputs) -> SmartShiftScreen {
         guard let profile else { return SmartShiftScreen(content: .noJobs) }
-        if let message = blockedMessage(profile: profile, result: result, refreshUnavailable: refreshUnavailable,
-                                        timing: timing, now: now, billingCycleEnd: billingCycleEnd) {
+        if let message = blockedMessage(BlockerInputs(profile: profile, result: result,
+                                                      refreshUnavailable: refreshUnavailable,
+                                                      timing: inputs.timing, now: inputs.now,
+                                                      billingCycleEnd: inputs.billingCycleEnd)) {
             return SmartShiftScreen(content: .blocked(message))
         }
         // A verdict priced without the forecast would flash, then change when it lands.
@@ -141,8 +183,27 @@ enum SmartShiftPresentation {
         guard let comparison = result.comparison else {
             return SmartShiftScreen(content: .blocked(cannotCompareMessage))
         }
-        let context = Context(profile: profile, comparison: comparison, timing: timing, now: now,
-                              billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone)
+        let context = Context(profile: profile, comparison: comparison, timing: inputs.timing, now: inputs.now,
+                              billingCycleEnd: inputs.billingCycleEnd, currencyCode: inputs.currencyCode,
+                              timeZone: inputs.timeZone)
         return SmartShiftScreen(content: .verdict(context.verdict(forecast: forecast)))
+    }
+
+    /// Compatibility overload for callers that pass the card inputs one by one;
+    /// omitted parts describe no Job and no forecast.
+    static func make(
+        profile: LoadProfile? = nil,
+        result: LoadTimingForecastEstimator.Result,
+        forecast: ForecastAvailability = .none,
+        refreshUnavailable: Bool = false,
+        timing: LoadTiming,
+        now: Date,
+        billingCycleEnd: Date,
+        currencyCode: String = "USD",
+        timeZone: String
+    ) -> SmartShiftScreen {
+        make(profile: profile, result: result, forecast: forecast, refreshUnavailable: refreshUnavailable,
+             inputs: ScreenInputs(timing: timing, now: now, billingCycleEnd: billingCycleEnd,
+                                  currencyCode: currencyCode, timeZone: timeZone))
     }
 }

@@ -168,6 +168,14 @@ private func verifySmartShift(_ scenario: SmartShiftScenario,
         sourceLocation: sourceLocation)
     let oracle = SmartShiftReference(scenario: fixture)
     let message = Comment(rawValue: fixture.diagnostic)
+    verifyBounds(comparison, fixture: fixture, oracle: oracle, message: message, sourceLocation: sourceLocation)
+    try verifySelection(comparison, fixture: fixture, oracle: oracle, message: message, sourceLocation: sourceLocation)
+    verifyLanes(comparison, fixture: fixture, oracle: oracle, message: message, sourceLocation: sourceLocation)
+}
+
+/// The horizon bounds, the cost totals and the advertised candidate set.
+private func verifyBounds(_ comparison: LoadTimingForecastEstimator.Comparison, fixture: SmartShiftScenario,
+                          oracle: SmartShiftReference, message: Comment, sourceLocation: SourceLocation) {
     #expect(comparison.projectionEnd == fixture.expectedEnd, message, sourceLocation: sourceLocation)
     #expect(comparison.horizonEnd == min(fixture.tomorrowEnd, fixture.expectedEnd), message,
             sourceLocation: sourceLocation)
@@ -186,9 +194,6 @@ private func verifySmartShift(_ scenario: SmartShiftScenario,
             - fixture.energy) < 1e-7, message, sourceLocation: sourceLocation)
     #expect(comparison.estimatedSolarContribution >= 0 && comparison.estimatedSolarContribution <= fixture.energy,
             message, sourceLocation: sourceLocation)
-
-    // Deliberately check ranking over the advertised candidate set. This is not a
-    // proof of global optimality between candidates; explicit boundary tests cover enumeration.
     let starts = comparison.evaluatedStarts
     #expect(starts.contains(fixture.now) && starts.contains(comparison.recommendedStart),
             message, sourceLocation: sourceLocation)
@@ -196,6 +201,15 @@ private func verifySmartShift(_ scenario: SmartShiftScenario,
         $0 >= fixture.now && $0 < comparison.horizonEnd
             && $0.addingTimeInterval(fixture.duration * 3600) <= fixture.expectedEnd
     }, message, sourceLocation: sourceLocation)
+}
+
+/// The advertised candidate set ranks the recommendation the way `select` should.
+private func verifySelection(_ comparison: LoadTimingForecastEstimator.Comparison, fixture: SmartShiftScenario,
+                             oracle: SmartShiftReference, message: Comment,
+                             sourceLocation: SourceLocation) throws {
+    // Deliberately check ranking over the advertised candidate set. This is not a
+    // proof of global optimality between candidates; explicit boundary tests cover enumeration.
+    let starts = comparison.evaluatedStarts
     let assessed = starts.map { (start: $0, cost: oracle.cost(start: $0), shortfall: oracle.shortfall(start: $0)) }
     let passing = assessed.filter { $0.shortfall <= 3 + 1e-9 }
     let nowShortfall = oracle.shortfall(start: fixture.now)
@@ -224,6 +238,11 @@ private func verifySmartShift(_ scenario: SmartShiftScenario,
             Issue.record("Expected nowUnsafe: \(fixture.diagnostic)", sourceLocation: sourceLocation)
         }
     }
+}
+
+/// Each lane's bill-date projection matches the reference calculator.
+private func verifyLanes(_ comparison: LoadTimingForecastEstimator.Comparison, fixture: SmartShiftScenario,
+                         oracle: SmartShiftReference, message: Comment, sourceLocation: SourceLocation) {
     let baseline = oracle.baseline(until: fixture.expectedEnd)
     let recommendedDraw = oracle.draws(start: comparison.recommendedStart, until: fixture.expectedEnd)
     for lane in comparison.lanes {

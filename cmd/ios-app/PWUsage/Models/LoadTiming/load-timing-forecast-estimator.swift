@@ -252,64 +252,6 @@ struct LoadTimingForecastEstimator {
         model.boundaries(from: start, to: end)
     }
 
-    static func score(start: Date, end: Date, load: (energy: Double, duration: TimeInterval),
-                      baseBalances: [String: Double], rates: [String: PeriodRate],
-                      steps: Steps, safetyEnd: Date) -> ScoreResult {
-        var withLoad = baseBalances
-        var drawsBySafetyEnd: [String: Double] = [:]
-        var solarContribution = 0.0
-        guard start < end, var index = steps.step(containing: start), end <= steps.edges[steps.edges.count - 1] else {
-            return .incompleteCoverage
-        }
-        let powerKw = load.energy / (load.duration / 3600)
-        guard powerKw.isFinite, powerKw > 0 else { return .invalidInput }
-        while index < steps.periods.count, steps.edges[index] < end {
-            defer { index += 1 }
-            let lower = max(steps.edges[index], start), upper = min(steps.edges[index + 1], end)
-            let flow = steps.typical[index]
-            let periodKey = steps.periods[index]
-            guard let balance = withLoad[periodKey] else { return .incompleteCoverage }
-            let seconds = upper.timeIntervalSince(lower)
-            let hours = seconds / 3600
-            let energy = powerKw * hours
-            let loadedBalance = balance - energy
-            let physicalSurplus = flow.physicalSurplusKw
-            let physicalSurplusPower = max(physicalSurplus, 0)
-            let contribution = min(powerKw, physicalSurplusPower) * hours
-            let updatedSolarContribution = solarContribution + contribution
-            guard seconds.isFinite, hours.isFinite, energy.isFinite, loadedBalance.isFinite,
-                  physicalSurplus.isFinite, physicalSurplusPower.isFinite,
-                  contribution.isFinite, updatedSolarContribution.isFinite else { return .invalidInput }
-            withLoad[periodKey] = loadedBalance
-            // A step straddling the cutoff counts only its part before it.
-            if lower < safetyEnd {
-                drawsBySafetyEnd[periodKey, default: 0] += upper <= safetyEnd
-                    ? energy
-                    : powerKw * safetyEnd.timeIntervalSince(lower) / 3600
-            }
-            solarContribution = updatedSolarContribution
-        }
-        var total = 0.0
-        for (key, loadedBalance) in withLoad where loadedBalance != baseBalances[key] {
-            guard let baselineBalance = baseBalances[key], let rate = rates[key] else { return .incompleteCoverage }
-            guard let loadedCost = cost(balance: loadedBalance, rate: rate),
-                  let baselineCost = cost(balance: baselineBalance, rate: rate) else { return .invalidInput }
-            let delta = loadedCost - baselineCost
-            let updatedTotal = total + delta
-            guard delta.isFinite, updatedTotal.isFinite else { return .invalidInput }
-            total = updatedTotal
-        }
-        let cappedSolarContribution = min(max(solarContribution, 0), load.energy)
-        guard total.isFinite, cappedSolarContribution.isFinite else { return .invalidInput }
-        var draws: [String: Double] = [:]
-        for (key, loadedBalance) in withLoad {
-            if let base = baseBalances[key], loadedBalance != base { draws[key] = base - loadedBalance }
-        }
-        return .candidate(Candidate(start: start, end: end, cost: total,
-                                    solarContribution: cappedSolarContribution, draws: draws,
-                                    drawsBySafetyEnd: drawsBySafetyEnd))
-    }
-
     static func cost(balance: Double, rate: PeriodRate) -> Double? {
         let importCost = max(-balance, 0) * rate.buy
         let exportCredit = max(balance, 0) * rate.sell
