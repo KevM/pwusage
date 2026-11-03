@@ -9,6 +9,22 @@ struct SolarLayoutReadiness: Equatable, Sendable {
     var daysNeeded: Int { max(SolarLayoutDetector.minHistoryDays - producingDays, 0) }
 }
 
+/// How the clear-day pass sorted one stored site-local day.
+enum SolarDayType: String, Codable, Equatable, Sendable {
+    case clear
+    case cloudy
+    /// Stored, but nothing produced after the night baseline is removed.
+    case noProduction = "none"
+}
+
+/// The clear-day pass's answer: every stored site-local day (`yyyy-MM-dd`) with its type.
+struct SolarDayClassification: Equatable, Sendable {
+    let days: [String: SolarDayType]
+
+    var clearDays: Int { days.values.count { $0 == .clear } }
+    var producingDays: Int { days.values.count { $0 != .noProduction } }
+}
+
 /// What a detection result says about importing more history.
 enum SolarLayoutHistoryOutlook: String, Codable, Equatable, Sendable {
     /// The forecast can use the layout.
