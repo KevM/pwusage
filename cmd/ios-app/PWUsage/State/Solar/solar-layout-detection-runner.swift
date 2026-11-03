@@ -56,7 +56,8 @@ final class SolarLayoutDetectionRunner {
     }
 
     /// `force` runs detection even when the ordinary cadence is not due (history onboarding
-    /// reassessing after a large import); it still needs a location and current history.
+    /// reassessing after a large import). After joining an older run it reassesses current history;
+    /// it still needs a location and current history.
     func runIfDue(scope: SolarForecastSiteScope, force: Bool = false) async -> SolarLayoutRecord? {
         while let current = inFlightRun {
             guard current.scope == scope else {
@@ -74,7 +75,7 @@ final class SolarLayoutDetectionRunner {
                 return nil
             }
             guard let record = try? await records.record(scope: scope),
-                  !solarLocationsShareCoordinates(record.location, lastRunLocation),
+                  force || !solarLocationsShareCoordinates(record.location, lastRunLocation),
                   force || SolarLayoutDetectionSchedule.isDue(record, now: now()),
                   !Task.isCancelled else {
                 return result
