@@ -31,7 +31,6 @@ final class SiteHistoryOnboarding {
     }
 
     static let sliceDays = 3
-    static let recentDays = 14
     /// Not a promise: the solar search may end earlier or continue past it.
     static let initialCheckpointDays = 90
     static let reassessEveryDays = 30
@@ -276,16 +275,18 @@ final class SiteHistoryOnboarding {
 
     // MARK: - Decisions
 
-    /// After a complete slice: a high-confidence layout ends the search once the recent days are
-    /// in; without a location it ends at the initial checkpoint; otherwise every second slice runs
-    /// the clear-day pass, which may run full detection.
+    /// After a complete slice: a high-confidence layout (one iCloud brought back, say) still loads
+    /// the initial checkpoint for the forecast, sorting days every second slice without detection;
+    /// without a location the search ends there too; otherwise every second slice runs the
+    /// clear-day pass, which may run full detection.
     private func decideAfterSlice(
         _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, timeZone: TimeZone
     ) async -> FinishReason? {
         let checked = progress.checkedDays(timeZone: timeZone)
-        if checked >= Self.recentDays, await environment.layoutConfidence(scope: scope) == .high {
-            _ = await pass(&progress, scope: scope, checked: checked, detection: .never)
-            return progress.lastAssessedCheckedDays == 0 ? .layoutAlreadyUsable : .layoutFound
+        if await environment.layoutConfidence(scope: scope) == .high {
+            let done = checked >= Self.initialCheckpointDays
+            guard done || (progress.completeSlices ?? 0) % Self.passEverySlices == 0 else { return nil }
+            return await sortForHighLayout(&progress, scope: scope, checked: checked, finishing: done)
         }
         guard await environment.hasLocation(scope: scope) else {
             return checked >= Self.initialCheckpointDays ? .locationNeeded : nil
@@ -297,30 +298,6 @@ final class SiteHistoryOnboarding {
         }
         if checked >= Self.initialCheckpointDays, progress.producingDays == 0 { return .noSolarProduction }
         return nil
-    }
-
-    /// Targets whose first crossing runs full detection.
-    enum Target: String, Codable, Sendable {
-        case clear15, clear40, producing180
-
-        static func reached(producingDays: Int, clearDays: Int) -> Set<Target> {
-            var targets: Set<Target> = []
-            if clearDays >= 15 { targets.insert(.clear15) }
-            if clearDays >= 40 { targets.insert(.clear40) }
-            if producingDays >= 180 { targets.insert(.producing180) }
-            return targets
-        }
-    }
-
-    /// Full detection once the detector's producing-day minimum is met, when a target was reached
-    /// since the last run, or 30 checked days after it.
-    private static func detectionDue(
-        _ days: SolarDayClassification, progress: SiteHistoryOnboardingProgress, checked: Int
-    ) -> Bool {
-        guard days.producingDays >= SolarLayoutDetector.minHistoryDays else { return false }
-        let reached = Target.reached(producingDays: days.producingDays, clearDays: days.clearDays)
-        return !reached.isSubset(of: Set(progress.detectedTargets ?? []))
-            || checked - progress.lastAssessedCheckedDays >= reassessEveryDays
     }
 
     /// Whether a clear-day pass runs full detection: when it is due, at the bound, or not at all.
@@ -365,21 +342,27 @@ final class SiteHistoryOnboarding {
         return result
     }
 
-    /// High confidence ends the search; so does a usable layout at the bound, and a problem more
-    /// history will not fix.
-    private static func finishReason(_ result: DetectedSolarLayout, atBound: Bool) -> FinishReason? {
-        switch SolarLayoutDetector.historyOutlook(result) {
-        case .usable: atBound || result.confidence == SolarLayoutConfidence.high.rawValue ? .layoutFound : nil
-        case .needsOtherAction: .detectorNeedsOtherAction
-        case .moreHistoryMayHelp: nil
-        }
+    /// The clear-day pass without detection for a site whose layout is already high confidence,
+    /// and the finish reason when `finishing`.
+    private func sortForHighLayout(
+        _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, checked: Int,
+        finishing: Bool
+    ) async -> FinishReason? {
+        _ = await pass(&progress, scope: scope, checked: checked, detection: .never)
+        guard finishing else { return nil }
+        return progress.lastAssessedCheckedDays == 0 ? .layoutAlreadyUsable : .layoutFound
     }
 
-    /// The search reached the history start or a year back: sort and assess what it found once more.
+    /// The search reached the history start or a year back: sort and assess what it found once more
+    /// (only sort, when the layout is already high confidence).
     private func finishAtBound(
         _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, timeZone: TimeZone
     ) async -> FinishReason {
         let checked = progress.checkedDays(timeZone: timeZone)
+        if await environment.layoutConfidence(scope: scope) == .high,
+           let reason = await sortForHighLayout(&progress, scope: scope, checked: checked, finishing: true) {
+            return reason
+        }
         if await environment.hasLocation(scope: scope),
            let result = await pass(&progress, scope: scope, checked: checked, detection: .atBound),
            let reason = Self.finishReason(result, atBound: true) {

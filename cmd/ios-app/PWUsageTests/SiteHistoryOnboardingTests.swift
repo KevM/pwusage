@@ -167,12 +167,23 @@ struct SiteHistoryOnboardingTests {
         #expect(total == 365)
     }
 
-    @Test func anExistingHighConfidenceLayoutStopsAfterRecentHistory() async {
+    @Test func anExistingHighConfidenceLayoutStillImportsTheInitialCheckpoint() async {
         let environment = FakeOnboardingEnvironment()
         environment.confidence = .high
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.layoutAlreadyUsable))
-        #expect(environment.requests.map(\.days).reduce(0, +) == 15)
+        #expect(environment.requests.map(\.days).reduce(0, +) == 90)
+        #expect(environment.passes.count > 1)
+        #expect(environment.detectionCount == 0)
+    }
+
+    @Test func anExistingHighLayoutIsNotRedetectedAtAShortHistoryStart() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.confidence = .high
+        environment.historyStart = "2026-09-13"
+        let outcome = await make(environment).run(scope: scope)
+        #expect(outcome == .finished(.layoutAlreadyUsable))
+        #expect(environment.requests.map(\.days).reduce(0, +) == 50)
         #expect(environment.detectionCount == 0)
     }
 
