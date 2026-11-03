@@ -168,3 +168,21 @@ needs the refresh scheduling reworked first) and the `file_length` header in
 
 Verification used after every batch: `format.sh`, the strict baseline lint,
 and `./run-tests.sh --quick` (966 tests).
+
+## Complete
+
+As of `1c290c53` the burndown is finished:
+
+- `.swiftlint-baseline.json` holds **0 entries** (from 1091).
+- `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` is clean over 341 files.
+- There are **zero** `swiftlint:disable` comments in the iOS sources.
+- `cmd/ios-app/format.sh` is clean.
+- `./run-tests.sh` (full) passes: 968 tests in 98 suites.
+
+The seven oversized test suites were split into extensions in new files; shared fixtures
+became internal. The last suppression, a SwiftUI dependency read in `load-timing-view`, is
+now `.onChange(of: staleRefreshes)`, which reads the same state without the discardable let.
+
+Remaining follow-up (not part of the burndown): the compatibility overloads added while
+clearing `function_parameter_count` can be removed once their out-of-scope call sites move
+to the new grouped APIs.
