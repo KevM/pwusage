@@ -77,9 +77,14 @@ struct SolarSystemBannerClocks: Equatable {
         days.count { day in day.type == .clear && arcs[day.day].map { now >= $0 + Self.arcDuration } ?? true }
     }
 
+    /// When the last scheduled glide or arc finishes; nil when nothing was ever scheduled.
+    var motionEnd: Date? {
+        let ends = glides.values.map { $0 + Self.glideDuration } + arcs.values.map { $0 + Self.arcDuration }
+        return ends.max()
+    }
+
     func isAnimating(at now: Date) -> Bool {
-        glides.values.contains { now < $0 + Self.glideDuration }
-            || arcs.values.contains { now < $0 + Self.arcDuration }
+        motionEnd.map { now < $0 } ?? false
     }
 
     private static func running(_ start: Date?, over duration: Double, at now: Date) -> Double? {
@@ -101,6 +106,8 @@ struct SolarSystemBanner: View {
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    /// True from a new glide or arc until the last one ends; the timeline sleeps otherwise.
+    @State private var isMoving = false
 
     private var isInline: Bool { placement == .inline }
     private var radius: CGFloat { isInline ? 11 : 15 }
@@ -136,8 +143,9 @@ struct SolarSystemBanner: View {
     }
 
     private var loading: some View {
-        // Only while loading in the foreground (the banner shows only then) and not waiting.
-        let animates = !reduceMotion && !model.isPaused && scenePhase == .active
+        // Only while loading in the foreground (the banner shows only then), not waiting, and a dot
+        // is moving: between slices the drawing is still, so the timeline sleeps.
+        let animates = !reduceMotion && !model.isPaused && scenePhase == .active && isMoving
         return TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animates)) { context in
             HStack(spacing: 10) {
                 Color.clear.frame(width: 2 * radius, height: 2 * radius)
@@ -155,10 +163,21 @@ struct SolarSystemBanner: View {
             }
             .overlay {
                 Canvas { canvas, size in
-                    draw(canvas, size: size, now: reduceMotion ? .distantFuture : context.date)
+                    // A paused timeline keeps the date it paused at; a still frame draws the settled state.
+                    let settled = max(context.date, .now)
+                    draw(canvas, size: size, now: reduceMotion ? .distantFuture : animates ? context.date : settled)
                 }
                 .allowsHitTesting(false)
             }
+        }
+        .task(id: clocks.motionEnd) {
+            guard let end = clocks.motionEnd, end > .now else {
+                isMoving = false
+                return
+            }
+            isMoving = true
+            try? await Task.sleep(for: .seconds(end.timeIntervalSinceNow))
+            if !Task.isCancelled { isMoving = false }
         }
     }
 

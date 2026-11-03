@@ -84,6 +84,19 @@ struct SolarSystemBannerTests {
         #expect(!clocks.isAnimating(at: now.addingTimeInterval(3)))
     }
 
+    @Test func motionEndsWhenTheLastGlideOrArcFinishes() throws {
+        var clocks = SolarSystemBannerClocks()
+        clocks.observe(days: days(["2026-10-01": nil]), now: now)
+        #expect(clocks.motionEnd == nil)
+
+        clocks.observe(days: days(["2026-10-01": .clear, "2026-10-02": nil]), now: now)
+        // The new day glides now; the clear one arcs at once (it never had to glide).
+        let end = try #require(clocks.motionEnd)
+        #expect(end == now.addingTimeInterval(SolarSystemBannerClocks.glideDuration))
+        #expect(clocks.isAnimating(at: end.addingTimeInterval(-0.01)))
+        #expect(!clocks.isAnimating(at: end))
+    }
+
     @Test func clearDaysArcIntoTheCompassAtThePass() {
         var clocks = SolarSystemBannerClocks()
         clocks.observe(days: days(["2026-10-01": nil]), now: now)
