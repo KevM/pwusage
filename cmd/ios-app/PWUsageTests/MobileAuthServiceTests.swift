@@ -544,10 +544,10 @@ final class MobileAuthServiceTests {
 
         let origin = URL(string: "https://pwusage.test")!
         let siteCookie = try #require(HTTPCookie(properties: [
-            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "session-secret", .secure: "TRUE",
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "session-secret", .secure: "TRUE"
         ]))
         let preferenceCookie = try #require(HTTPCookie(properties: [
-            .domain: "pwusage.test", .path: "/", .name: "display", .value: "compact",
+            .domain: "pwusage.test", .path: "/", .name: "display", .value: "compact"
         ]))
         cookieStorage.setCookie(siteCookie)
         cookieStorage.setCookie(preferenceCookie)

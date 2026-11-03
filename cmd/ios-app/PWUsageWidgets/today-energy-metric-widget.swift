@@ -5,7 +5,7 @@ import WidgetKit
 extension TodayEnergyMetric: AppEnum {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Energy Metric"
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .home: "Home", .solar: "Solar", .grid: "Grid", .battery: "Battery",
+        .home: "Home", .solar: "Solar", .grid: "Grid", .battery: "Battery"
     ]
 }
 

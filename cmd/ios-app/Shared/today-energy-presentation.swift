@@ -54,7 +54,7 @@ enum TodayEnergyPresentation {
                        symbol: showsStateOfCharge ? batterySymbol(stateOfCharge) : "battery.100percent",
                        tint: .green, compact: compact,
                        symbolPrefix: showsStateOfCharge ? stateOfCharge.map { "\(Int($0.rounded()))%" } : nil,
-                       spokenRole: chargeDescription),
+                       spokenRole: chargeDescription)
         ]
     }
 }

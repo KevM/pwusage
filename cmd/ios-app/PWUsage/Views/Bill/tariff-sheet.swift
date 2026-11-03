@@ -147,11 +147,11 @@ struct TariffSheet: View {
                 .init(id: 2, name: "Winter", dates: "Oct 1 – Apr 30", isActive: true, periods: [
                     .init(id: 3, name: "Peak", days: "Mon – Fri", times: "08:00 – 20:00", buyRate: 0.30, sellRate: 0.10, isActive: true),
                     .init(id: 4, name: "Off peak", days: "Mon – Fri", times: "20:00 – 08:00", buyRate: 0.15, sellRate: 0.08, isActive: false),
-                    .init(id: 5, name: "Weekend", days: "Sat – Sun", times: "All Day", buyRate: 0.15, sellRate: 0.08, isActive: false),
+                    .init(id: 5, name: "Weekend", days: "Sat – Sun", times: "All Day", buyRate: 0.15, sellRate: 0.08, isActive: false)
                 ]),
                 .init(id: 6, name: "Summer", dates: "May 1 – Sep 30", isActive: false, periods: [
-                    .init(id: 7, name: "Standard", days: "Every day", times: "All Day", buyRate: 0.25, sellRate: 0.10, isActive: false),
-                ]),
+                    .init(id: 7, name: "Standard", days: "Every day", times: "All Day", buyRate: 0.25, sellRate: 0.10, isActive: false)
+                ])
             ])]
         )
     }) }

@@ -102,7 +102,7 @@ extension BatteryHoldActivityCoordinator {
                 for await lifecycle in lifecycles where lifecycle == .ended || lifecycle == .dismissed {
                     await self?.observedEnd(activityID: activityID)
                 }
-            },
+            }
         ]
         tracked[activityID] = item
         shownHoldIDs.insert(handle.attributes.holdID)

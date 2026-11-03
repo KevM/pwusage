@@ -34,7 +34,7 @@ struct BatteryHoldActivityRenderTests {
             ("no-data", active(phase: .waitingForData, charge: nil), false),
             ("stale", active(charge: 82), true),
             ("timer", active(mode: .timer, phase: .timer, charge: 76, hold: 80, peak: nil), false),
-            ("restored", restored, false),
+            ("restored", restored, false)
         ]
     }
 

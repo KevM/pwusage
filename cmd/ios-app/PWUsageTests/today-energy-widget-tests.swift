@@ -214,7 +214,7 @@ struct TodayEnergyWidgetTests {
                                                               batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
             ("no-cost", TodayEnergyPreviewFixtures.snapshot(todayCost: nil)),
             ("net-credit", TodayEnergyPreviewFixtures.snapshot(todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR"))),
-            ("missing", nil),
+            ("missing", nil)
         ]
         let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
                                                  date: TodayEnergyPreviewFixtures.date, compact: true)
@@ -311,7 +311,7 @@ struct TodayEnergyWidgetTests {
             ("full-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: 100)),
             ("unknown-soc", .battery, TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
             ("large-number", .grid, TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
-            ("missing", .solar, nil),
+            ("missing", .solar, nil)
         ]
         let cases = TodayEnergyMetric.allCases.map { ($0.rawValue, $0, Optional(TodayEnergyPreviewFixtures.snapshot())) } + extras
         for (name, metric, value) in cases {

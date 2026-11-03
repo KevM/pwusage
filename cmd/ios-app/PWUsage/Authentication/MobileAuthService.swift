@@ -329,7 +329,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         components.path = "/login"
         components.queryItems = [
             URLQueryItem(name: "mobile_challenge", value: material.challenge),
-            URLQueryItem(name: "mobile_state", value: material.state),
+            URLQueryItem(name: "mobile_state", value: material.state)
         ]
         guard let url = components.url else { throw AuthError.webAuthenticationFailed }
         return url

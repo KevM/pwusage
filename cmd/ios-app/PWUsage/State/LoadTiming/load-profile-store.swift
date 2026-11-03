@@ -207,6 +207,6 @@ final class LoadProfileStore: ObservableObject {
         LoadProfile(id: "washer", name: "Wash the laundry", kind: .appliance, energyKwh: Defaults.washerKwh, durationHours: Defaults.washerHours, carSettings: nil),
         LoadProfile(id: "dryer", name: "Dry the laundry", kind: .appliance, energyKwh: Defaults.dryerKwh, durationHours: Defaults.dryerHours, carSettings: nil),
         LoadProfile(id: "washer-dryer-combo", name: "Wash and dry the laundry", kind: .appliance, energyKwh: Defaults.comboKwh, durationHours: Defaults.comboHours, carSettings: nil),
-        LoadProfile(id: customExampleID, name: "Bake bread", kind: .custom, energyKwh: Defaults.customExampleKwh, durationHours: Defaults.customExampleHours, carSettings: nil),
+        LoadProfile(id: customExampleID, name: "Bake bread", kind: .custom, energyKwh: Defaults.customExampleKwh, durationHours: Defaults.customExampleHours, carSettings: nil)
     ]
 }

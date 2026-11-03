@@ -130,7 +130,7 @@ struct SmartShiftPresentationTests {
         let lanes = [
             Self.lane("Off-Peak", start: 18, later: 4, startNow: 18),
             Self.lane("Peak", start: -6, later: 10.2, startNow: 9.8),
-            Self.lane("Mid", start: 0.2, later: 0, startNow: -3),
+            Self.lane("Mid", start: 0.2, later: 0, startNow: -3)
         ]
         let verdict = try Self.verdict(Self.make(result: .init(comparison: Self.comparison(lanes: lanes), unavailableReason: nil)))
         #expect(verdict.lanes.map(\.title) == ["Off-Peak bank (kWh)", "Peak bank (kWh)", "Mid bank (kWh)"])
@@ -141,7 +141,7 @@ struct SmartShiftPresentationTests {
         #expect(verdict.lanes[0].switches == [
             SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
             SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}", beforeLabel: "\u{2190} Off-Peak", afterLabel: "Peak \u{2192}"),
-            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
+            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}", beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}")
         ])
     }
 
@@ -325,7 +325,7 @@ struct SmartShiftPresentationTests {
     static func rawKeyTiming(hasCycleData: Bool = true) -> LoadTiming {
         let spans: [(Double, Double, String, Double, Double)] = [
             (0, 7, "OFF_PEAK", 0.20, 0.26), (7, 16, "ON_PEAK", 0.38, 0.10), (16, 21, "PARTIAL_PEAK", 0.30, 0.12),
-            (21, 31, "OFF_PEAK", 0.20, 0.26),
+            (21, 31, "OFF_PEAK", 0.20, 0.26)
         ]
         let segments = spans.map { LoadTimingTariffSegment(start: at($0.0), end: at($0.1), periodKey: $0.2, name: $0.2,
                                                            buyRate: $0.3, sellRate: $0.4) }
@@ -402,7 +402,7 @@ struct SmartShiftPresentationTests {
         #expect(later.total == Self.money(3.38))
         #expect(later.lines == [
             CostLine(period: "On-Peak", detail: "31.5 kWh from your bank × \(Self.rate(0.04)) credit", amount: Self.money(1.26)),
-            CostLine(period: "Off-Peak", detail: "21.2 kWh bought × \(Self.rate(0.10))", amount: Self.money(2.12)),
+            CostLine(period: "Off-Peak", detail: "21.2 kWh bought × \(Self.rate(0.10))", amount: Self.money(2.12))
         ])
         // This fixture's projection ends at the chart edge, not the bill date.
         #expect(later.notes == ["On-Peak bank is +5 now, projecting +33 by \(Self.shortDate(Self.horizonEnd)), +2 after this charge."])
@@ -420,7 +420,7 @@ struct SmartShiftPresentationTests {
                                                                timing: Self.timing(), now: Self.now, billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC")
         #expect(try #require(breakdowns.first).lines == [
             CostLine(period: "Off-Peak", detail: "12.0 kWh from your bank × \(Self.rate(0.26)) credit", amount: Self.money(3.12)),
-            CostLine(period: "Off-Peak", detail: "2.0 kWh bought × \(Self.rate(0.20))", amount: Self.money(0.40)),
+            CostLine(period: "Off-Peak", detail: "2.0 kWh bought × \(Self.rate(0.20))", amount: Self.money(0.40))
         ])
     }
 
@@ -567,7 +567,7 @@ extension SmartShiftPresentationTests {
         let later = try #require(breakdowns.first)
         // Draws use the bill-date bank, not the chart edge (where On-Peak ends at -19.7).
         #expect(later.lines == [
-            CostLine(period: "On-Peak", detail: "52.7 kWh from your bank × \(Self.rate(0.04)) credit", amount: Self.money(2.11)),
+            CostLine(period: "On-Peak", detail: "52.7 kWh from your bank × \(Self.rate(0.04)) credit", amount: Self.money(2.11))
         ])
         #expect(later.notes == ["On-Peak bank is +5 now, projecting +60 by \(Self.shortDate(Self.cycleEnd)) (bill date), +7 after this charge."])
     }
