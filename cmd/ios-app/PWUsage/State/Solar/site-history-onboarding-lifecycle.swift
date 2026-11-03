@@ -138,6 +138,32 @@ final class SiteHistoryOnboardingLifecycle {
         await refreshStatus()
     }
 
+    /// Reconsider a search stopped by detection after the home location changes.
+    func resumeAfterLocationChange(scope: SolarForecastSiteScope) async {
+        let session = session
+        guard var progress = try? await store.progress(scope: scope),
+              progress.phase == .finished(.detectorNeedsOtherAction) || progress.phase == .finished(.locationNeeded)
+        else { return }
+        // A finished run may still be unwinding. Do not let the next activation join it.
+        if foreground?.scope == scope {
+            let task = foreground?.task
+            task?.cancel()
+            foreground = nil
+            await task?.value
+        }
+        guard session == self.session else { return }
+        progress.phase = .active
+        progress.lastAssessedCheckedDays = 0
+        progress.detectedTargets = nil
+        progress.sortedCheckedDays = nil
+        progress.lastOutlook = nil
+        progress.failures = 0
+        progress.nextAttemptAt = nil
+        progress.waitReason = nil
+        try? await store.save(progress, scope: scope)
+        await refreshStatus()
+    }
+
     /// One background opportunity: a bounded run, then when to ask for the next one.
     func runInBackground(scope: SolarForecastSiteScope, maxSlices: Int = backgroundSlices) async -> Date? {
         lastScope = scope
@@ -163,8 +189,14 @@ final class SiteHistoryOnboardingLifecycle {
     private func runForeground(_ scope: SolarForecastSiteScope) async {
         while !Task.isCancelled {
             guard await prepare(scope) else { return }
-            guard case .waiting(let until, _) = await onboarding.run(scope: scope) else { return }
-            do { try await sleep(max(until.timeIntervalSince(now()), 0)) } catch { return }
+            switch await onboarding.run(scope: scope) {
+            case .yielded:
+                continue
+            case .waiting(let until, _):
+                do { try await sleep(max(until.timeIntervalSince(now()), 0)) } catch { return }
+            default:
+                return
+            }
         }
     }
 

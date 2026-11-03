@@ -33,6 +33,7 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
     var detections: [DetectedSolarLayout] = []
     var detectionCount = 0
     var onFill: (() -> Void)?
+    var onFillWait: (() async -> Void)?
     /// Passes that come back empty, as one cut off by a background expiry would.
     var lostPasses = 0
     /// Runs when detection starts, before it answers.
@@ -42,6 +43,7 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
         requests.append((from, days))
         sites.append(siteID)
         onFill?()
+        await onFillWait?()
         if let fillDelay { try await Task.sleep(for: fillDelay) }
         let answer = answers.isEmpty ? defaultAnswer : answers.removeFirst()
         switch answer {

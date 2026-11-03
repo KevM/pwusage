@@ -109,6 +109,16 @@ extension PWUsageAppModel {
         return true
     }
 
+    /// A corrected location can unblock detection without discarding imported history.
+    func homeLocationSaved() {
+        guard sessionVerified, let historyOnboarding, let accountScopeID, let selectedSiteID else { return }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+        Task {
+            await historyOnboarding.resumeAfterLocationChange(scope: scope)
+            updateHistoryOnboarding()
+        }
+    }
+
     /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.
     func updateHistoryOnboarding() {
         guard let historyOnboarding else { return }

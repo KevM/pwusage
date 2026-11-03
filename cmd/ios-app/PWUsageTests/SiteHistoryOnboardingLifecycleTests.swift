@@ -161,6 +161,44 @@ struct SiteHistoryOnboardingLifecycleTests {
         lifecycle.stop()
     }
 
+    @Test func correctingTheLocationReopensDetectionAndKeepsTheCursor() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.defaultAnswer = .disabled
+        var progress = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
+        progress.oldestChecked = "2026-09-20"
+        progress.phase = .finished(.detectorNeedsOtherAction)
+        progress.lastAssessedCheckedDays = 42
+        progress.detectedTargets = [.clear15]
+        progress.sortedCheckedDays = 42
+        progress.lastOutlook = .needsOtherAction
+        try await store.save(progress, scope: scope)
+        try await store.save(progress, scope: other)
+        let lifecycle = make(environment, probe: LifecycleProbe(now: start))
+        await lifecycle.resumeAfterLocationChange(scope: scope)
+        let resumed = try #require(try await store.progress(scope: scope))
+        #expect(resumed.phase == .active)
+        #expect(resumed.oldestChecked == progress.oldestChecked)
+        #expect(resumed.lastAssessedCheckedDays == 0)
+        #expect(resumed.detectedTargets == nil)
+        #expect(resumed.sortedCheckedDays == nil)
+        #expect(resumed.lastOutlook == nil)
+        #expect(try await store.progress(scope: other) == progress)
+        lifecycle.activate(scope: scope)
+        await lifecycle.foregroundTask?.value
+        #expect(environment.requests.first?.from == "2026-09-17")
+    }
+
+    @Test(arguments: [SiteHistoryOnboardingProgress.Phase.paused(.reconnectTesla),
+                      .finished(.reachedHistoryStart), .finished(.layoutFound), .active])
+    func changingLocationPreservesOtherPhases(_ phase: SiteHistoryOnboardingProgress.Phase) async throws {
+        var progress = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
+        progress.phase = phase
+        try await store.save(progress, scope: scope)
+        let lifecycle = make(FakeOnboardingEnvironment(), probe: LifecycleProbe(now: start))
+        await lifecycle.resumeAfterLocationChange(scope: scope)
+        #expect(try await store.progress(scope: scope) == progress)
+    }
+
     @Test func resumingAPauseOnlyWakesThatReasonInThatAccount() async throws {
         let saved = store
         let elsewhere = SolarForecastSiteScope(accountScopeID: "account-b", siteID: "site-1")
@@ -200,6 +238,26 @@ struct SiteHistoryOnboardingLifecycleTests {
         let lifecycle = make(environment, probe: probe)
         #expect(await lifecycle.runInBackground(scope: scope, maxSlices: 2) == start)
         #expect(environment.requests.count == 2)
+    }
+
+    @Test func foregroundContinuesAfterJoiningABoundedBackgroundRun() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.producing = false
+        var release: CheckedContinuation<Void, Never>?
+        environment.onFillWait = { await withCheckedContinuation { release = $0 } }
+        let lifecycle = make(environment, probe: LifecycleProbe(now: start))
+        let background = Task { await lifecycle.runInBackground(scope: scope, maxSlices: 1) }
+        try await eventually { release != nil }
+        lifecycle.activate(scope: scope)
+        // Keep the background fill parked while the foreground joins it.
+        try await staysTrue(for: .milliseconds(100)) { environment.requests.count == 1 }
+        environment.onFillWait = nil
+        release?.resume()
+        _ = await background.value
+        await lifecycle.foregroundTask?.value
+        #expect(environment.requests.count == 30)
+        #expect(try await store.progress(scope: scope)?.phase == .finished(.noSolarProduction))
+        lifecycle.stop()
     }
 
     @Test func aBackgroundLaunchRunsAndReschedulesOnce() async throws {

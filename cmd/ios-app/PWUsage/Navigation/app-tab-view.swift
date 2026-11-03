@@ -115,7 +115,7 @@ struct AppTabView: View {
                          onExitDemo: model.isDemo ? { demoMode?.exit() } : nil,
                          siteHistory: coordinator.solarLayoutStatus == .disabled ? nil : model.siteHistoryStatus,
                          siteHistoryDebug: siteHistoryDebug,
-                         onLocationSaved: model.updateHistoryOnboarding)
+                         onLocationSaved: model.homeLocationSaved)
         }
     }
 

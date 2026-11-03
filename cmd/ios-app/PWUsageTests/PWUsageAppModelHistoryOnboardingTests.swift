@@ -29,10 +29,11 @@ struct PWUsageAppModelHistoryOnboardingTests {
 
     /// Every fill is busy and every wait lasts until cancelled, so a run stays on its first slice.
     private func makeLifecycle(
-        _ environment: FakeOnboardingEnvironment, probe: ScheduleProbe
+        _ environment: FakeOnboardingEnvironment, probe: ScheduleProbe,
+        store customStore: SiteHistoryOnboardingStore? = nil
     ) -> SiteHistoryOnboardingLifecycle {
         environment.defaultAnswer = .fill(.busy)
-        let store = SiteHistoryOnboardingStore(directory: directory)
+        let store = customStore ?? SiteHistoryOnboardingStore(directory: directory)
         return SiteHistoryOnboardingLifecycle(
             onboarding: SiteHistoryOnboarding(environment: environment, store: store),
             store: store,
@@ -71,6 +72,27 @@ struct PWUsageAppModelHistoryOnboardingTests {
         try await eventually { environment.sites == ["site-a", "site-b"] }
         #expect(lifecycle.lastScope?.siteID == "site-b")
         try await eventually { model.siteHistoryStatus?.scope.siteID == "site-b" }
+        lifecycle.stop()
+    }
+
+    @Test func savingHomeLocationRestartsBlockedOnboarding() async throws {
+        let environment = FakeOnboardingEnvironment()
+        let store = SiteHistoryOnboardingStore(directory: directory)
+        let lifecycle = makeLifecycle(environment, probe: ScheduleProbe(), store: store)
+        environment.defaultAnswer = .disabled
+        let model = try makeModel(historyOnboarding: lifecycle)
+        model.scenePhaseChanged(isActive: true)
+        await model.bootstrap()
+        try await eventually { lifecycle.status?.progress?.phase == .finished(.historyUnavailable) }
+        await lifecycle.foregroundTask?.value
+        let scope = try #require(lifecycle.lastScope)
+        var progress = try #require(try await store.progress(scope: scope))
+        progress.phase = .finished(.detectorNeedsOtherAction)
+        try await store.save(progress, scope: scope)
+        environment.defaultAnswer = .fill(.busy)
+        model.homeLocationSaved()
+        try await eventually { environment.requests.count == 2 }
+        #expect(try await store.progress(scope: scope)?.oldestChecked == progress.oldestChecked)
         lifecycle.stop()
     }
 
