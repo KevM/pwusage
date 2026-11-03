@@ -9,7 +9,10 @@ struct TodayEnergyWidgetTests {
     let now = Date(timeIntervalSince1970: 1_792_008_000)
     func snapshot() -> TodayEnergySnapshot {
         TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: now,
-                            energy: TodayEnergy(localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"), homeKwh: 12, solarKwh: 18, gridNetKwh: -4, batteryNetKwh: -2, energyDataThrough: now))
+                            energy: TodayEnergy(
+                                localDate: TodayEnergySnapshot.localDate(now, timezone: "America/Chicago"),
+                                homeKwh: 12, solarKwh: 18, gridNetKwh: -4,
+                                batteryNetKwh: -2, energyDataThrough: now))
     }
     @Test func widgetSessionHasBoundedTimeouts() {
         let session = TodayEnergyWidgetRefresh.makeSession()
@@ -26,7 +29,8 @@ struct TodayEnergyWidgetTests {
         try store.save(snapshot())
         let session = URLSession(configuration: .ephemeral)
         session.invalidateAndCancel()
-        let refresh = TodayEnergyWidgetRefresh(origin: URL(string: "https://example.invalid")!, session: session, store: store)
+        let refresh = TodayEnergyWidgetRefresh(origin: URL(string: "https://example.invalid")!,
+                                               session: session, store: store)
         #expect(await refresh.load(at: now) == snapshot())
         #expect(!FileManager.default.fileExists(atPath: store.refreshFileURL.path))
     }
@@ -78,7 +82,8 @@ struct TodayEnergyWidgetTests {
          "today":{"homeKwh":12,"solarKwh":18,"gridNetKwh":-6,"batteryNetKwh":-2},"todayComplete":true,
          "activeTariff":"Off peak","stateOfCharge":78,
          "todayCost":{"netCost":2.47,"importCharges":3.12,"exportCredits":0.65,"currency":"EUR"},
-         "sources":{"liveStatusAt":"2026-10-14T19:55:00Z","energyDataThrough":"2026-10-14T19:55:00Z","stateOfChargeAt":"2026-10-14T19:55:00Z"}}
+         "sources":{"liveStatusAt":"2026-10-14T19:55:00Z","energyDataThrough":"2026-10-14T19:55:00Z",
+         "stateOfChargeAt":"2026-10-14T19:55:00Z"}}
         """
         let live = try decoder.decode(MobileLiveResponse.self, from: Data(json.utf8))
         cache.storeLive(live, at: now)
@@ -145,14 +150,16 @@ struct TodayEnergyWidgetTests {
 
     @Test func todayCostDetailShowsExportCreditsAsPositive() {
         let cost = TodayEnergyCost(netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: "USD")
-        #expect(TodayEnergyPresentation.todayCostDetail(cost, locale: Locale(identifier: "en_US")) == "Import $3.12 · Export $0.65")
+        #expect(TodayEnergyPresentation.todayCostDetail(cost, locale: Locale(identifier: "en_US"))
+            == "Import $3.12 · Export $0.65")
     }
 
     @Test func daylightSavingMidnightUsesSiteTimezone() throws {
         let start = try #require(ISO8601DateFormatter().date(from: "2026-11-01T05:00:00Z"))
         let source = start.addingTimeInterval(24 * 3600)
         let value = TodayEnergySnapshot(siteID: "home", siteName: "Home", timezone: "America/Chicago", fetchedAt: start,
-                                        energy: TodayEnergy(localDate: "2026-11-01", homeKwh: 1, solarKwh: 0, gridNetKwh: 1, batteryNetKwh: 0, energyDataThrough: source))
+                                        energy: TodayEnergy(localDate: "2026-11-01", homeKwh: 1, solarKwh: 0,
+                                                            gridNetKwh: 1, batteryNetKwh: 0, energyDataThrough: source))
         #expect(value.nextMidnight == start.addingTimeInterval(25 * 3600))
         #expect(value.availability(at: source) == .current)
         #expect(value.availability(at: start.addingTimeInterval(25 * 3600)) == .missing)
@@ -200,7 +207,8 @@ struct TodayEnergyWidgetTests {
                                                      stateOfCharge: 78)
         #expect(appTiles[3].symbolPrefix == nil)
         let expired = TodayEnergyPreviewFixtures.snapshot(chargeAge: 2 * 3600 + 1)
-        #expect(TodayEnergyPresentation.tile(for: .battery, snapshot: expired, at: TodayEnergyPreviewFixtures.date)?.symbolPrefix == nil)
+        #expect(TodayEnergyPresentation.tile(for: .battery, snapshot: expired, at: TodayEnergyPreviewFixtures.date)?
+            .symbolPrefix == nil)
     }
 
     @MainActor
@@ -211,9 +219,12 @@ struct TodayEnergyWidgetTests {
             ("unknown-charge", TodayEnergyPreviewFixtures.snapshot(stateOfCharge: nil)),
             ("partial", TodayEnergyPreviewFixtures.snapshot(complete: false)),
             ("long-name", TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
-                                                              batteryNetKwh: -209.8, siteName: "Our family's home with a long site name")),
+                                                              batteryNetKwh: -209.8,
+                                                              siteName: "Our family's home with a long site name")),
             ("no-cost", TodayEnergyPreviewFixtures.snapshot(todayCost: nil)),
-            ("net-credit", TodayEnergyPreviewFixtures.snapshot(todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR"))),
+            ("net-credit", TodayEnergyPreviewFixtures.snapshot(
+                todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0,
+                                           exportCredits: 2.5, currency: "EUR"))),
             ("missing", nil)
         ]
         let smallView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
@@ -224,7 +235,8 @@ struct TodayEnergyWidgetTests {
         let smallRenderer = ImageRenderer(content: smallView)
         smallRenderer.scale = 2
         let smallPNG = try #require(smallRenderer.uiImage?.pngData())
-        let smallOutput = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-small-medium.png")
+        let smallOutput = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("today-widget-small-medium.png")
         try smallPNG.write(to: smallOutput)
         print("Today widget render: \(smallOutput.path)")
         let largerTextView = TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
@@ -235,13 +247,16 @@ struct TodayEnergyWidgetTests {
         let largerTextRenderer = ImageRenderer(content: largerTextView)
         largerTextRenderer.scale = 2
         let largerTextPNG = try #require(largerTextRenderer.uiImage?.pngData())
-        let largerTextOutput = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-medium-larger-text.png")
+        let largerTextOutput = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("today-widget-medium-larger-text.png")
         try largerTextPNG.write(to: largerTextOutput)
         print("Today widget render: \(largerTextOutput.path)")
         for compact in [true, false] {
             for dark in [false, true] {
                 for (name, snapshot) in fixtures {
-                    let view = TodayEnergyWidgetContent(snapshot: snapshot, date: TodayEnergyPreviewFixtures.date, compact: compact)
+                    let view = TodayEnergyWidgetContent(snapshot: snapshot,
+                                                        date: TodayEnergyPreviewFixtures.date,
+                                                        compact: compact)
                         .padding(compact ? TodayEnergyWidgetLayout.mediumInsets : TodayEnergyWidgetLayout.largeInsets)
                         .frame(width: 338, height: compact ? 158 : 354)
                         .background(Color(uiColor: .secondarySystemGroupedBackground))
@@ -250,7 +265,9 @@ struct TodayEnergyWidgetTests {
                     renderer.scale = 2
                     let png = try #require(renderer.uiImage?.pngData())
                     let output = URL(fileURLWithPath: NSTemporaryDirectory())
-                        .appendingPathComponent("today-widget-\(compact ? "medium" : "large")-\(dark ? "dark" : "light")-\(name).png")
+                        .appendingPathComponent(
+                            "today-widget-\(compact ? "medium" : "large")-\(dark ? "dark" : "light")-\(name).png"
+                        )
                     try png.write(to: output)
                     print("Today widget render: \(output.path)")
                 }
@@ -272,11 +289,15 @@ struct TodayEnergyWidgetTests {
         let titles = ["Home", "Solar", "Grid", "Battery"]
         let values = ["18.4 kWh", "22.6 kWh", "↑ 2.4 kWh", "↑ 1.8 kWh"]
         for (index, metric) in TodayEnergyMetric.allCases.enumerated() {
-            let tile = try #require(TodayEnergyPresentation.tile(for: metric, snapshot: value, at: TodayEnergyPreviewFixtures.date))
+            let tile = try #require(
+                TodayEnergyPresentation.tile(for: metric, snapshot: value, at: TodayEnergyPreviewFixtures.date)
+            )
             #expect(tile.title == titles[index])
             #expect(tile.value == values[index])
         }
-        let battery = try #require(TodayEnergyPresentation.tile(for: .battery, snapshot: value, at: TodayEnergyPreviewFixtures.date))
+        let battery = try #require(
+            TodayEnergyPresentation.tile(for: .battery, snapshot: value, at: TodayEnergyPreviewFixtures.date)
+        )
         #expect(battery.symbol == "battery.75percent")
         #expect(battery.spokenRole == "Battery charge 78 percent")
     }
@@ -313,10 +334,14 @@ struct TodayEnergyWidgetTests {
             ("large-number", .grid, TodayEnergyPreviewFixtures.snapshot(gridNetKwh: 1234.5)),
             ("missing", .solar, nil)
         ]
-        let cases = TodayEnergyMetric.allCases.map { ($0.rawValue, $0, Optional(TodayEnergyPreviewFixtures.snapshot())) } + extras
+        let cases = TodayEnergyMetric.allCases.map {
+            ($0.rawValue, $0, Optional(TodayEnergyPreviewFixtures.snapshot()))
+        } + extras
         for (name, metric, value) in cases {
             for dark in [false, true] {
-                let view = TodayEnergySingleMetricContent(snapshot: value, date: TodayEnergyPreviewFixtures.date, metric: metric)
+                let view = TodayEnergySingleMetricContent(snapshot: value,
+                                                          date: TodayEnergyPreviewFixtures.date,
+                                                          metric: metric)
                     .padding(10).frame(width: 141, height: 141)
                     .background(Color(uiColor: .secondarySystemGroupedBackground))
                     .environment(\.colorScheme, dark ? .dark : .light)
@@ -324,7 +349,10 @@ struct TodayEnergyWidgetTests {
                 let renderer = ImageRenderer(content: view)
                 renderer.scale = 2
                 let png = try #require(renderer.uiImage?.pngData())
-                let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-small-\(name)-\(dark ? "dark" : "light").png")
+                let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent(
+                        "today-widget-small-\(name)-\(dark ? "dark" : "light").png"
+                    )
                 try png.write(to: output)
                 print("Today widget render: \(output.path)")
             }
@@ -342,14 +370,16 @@ struct TodayEnergyWidgetTests {
     @Test func renderActualFamilyRoutingForCanvasOverride() throws {
         for metric in [TodayEnergyMetric.home, .battery] {
             let view = TodayEnergyWidgetFamilyContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
-                                                      date: TodayEnergyPreviewFixtures.date, family: .systemSmall, metric: metric)
+                                                      date: TodayEnergyPreviewFixtures.date,
+                                                      family: .systemSmall, metric: metric)
                 .frame(width: 141, height: 141)
                 .background(Color(uiColor: .secondarySystemGroupedBackground))
                 .environment(\.colorScheme, .light)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             let png = try #require(renderer.uiImage?.pngData())
-            let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("today-widget-canvas-small-\(metric.rawValue).png")
+            let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("today-widget-canvas-small-\(metric.rawValue).png")
             try png.write(to: output)
             print("Today widget render: \(output.path)")
         }

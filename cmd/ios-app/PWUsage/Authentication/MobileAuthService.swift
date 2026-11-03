@@ -241,7 +241,8 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         guard let material = activeAttempt else {
             // Unreachable while the slot and the material are cleared together, but resuming
             // is strictly safer than returning: a silent return here would leak `pending`.
-            completeSignIn(generation: generation, pending.continuation, with: .failure(AuthError.webAuthenticationFailed))
+            completeSignIn(generation: generation, pending.continuation,
+                           with: .failure(AuthError.webAuthenticationFailed))
             return
         }
         webSession = nil

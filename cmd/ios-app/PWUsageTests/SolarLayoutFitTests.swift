@@ -135,7 +135,7 @@ struct SolarLayoutFitTests {
     private static func rows(for fixture: SolarLayoutFixture) throws -> LayoutFit.Rows {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: fixture.input.timeZone))
-        let points = zip(fixture.stages.sun, fixture.stages.poa.kw).map { row, powerKw in
+        let points = zip(fixture.stages.sun, fixture.stages.poa.kilowatts).map { row, powerKw in
             let parts = calendar.dateComponents([.year, .month, .day], from: row.timestamp)
             return LayoutSeriesPoint(
                 time: row.timestamp, powerKw: powerKw,

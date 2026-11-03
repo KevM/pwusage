@@ -30,24 +30,30 @@ enum BatteryHoldPresentation {
     static func safetyText(_ hold: BatteryHold, timeZone: String) -> String {
         var format = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
         format.timeZone = TimeZone(identifier: timeZone) ?? .current
-        return "As a safety limit, your original reserve is restored after eight hours (\(hold.safetyExpiresAt.formatted(format)))."
+        return "As a safety limit, your original reserve is restored after eight hours "
+            + "(\(hold.safetyExpiresAt.formatted(format)))."
     }
 
     /// Apple ends a standard Live Activity after eight hours, and this app never restarts one to get around that.
     static func liveActivityLimitText(_ hold: BatteryHold, at now: Date) -> String? {
-        guard hold.safetyExpiresAt.timeIntervalSince(now) > BatteryHoldActivityAttributes.displayLimit else { return nil }
-        return "iOS shows a Live Activity for up to eight hours. Battery Saver runs longer, so open pwusage or the Battery Saver control to check it after that."
+        guard hold.safetyExpiresAt.timeIntervalSince(now) > BatteryHoldActivityAttributes.displayLimit else {
+            return nil
+        }
+        return "iOS shows a Live Activity for up to eight hours. Battery Saver runs longer, "
+            + "so open pwusage or the Battery Saver control to check it after that."
     }
 
     static func noticeText(_ notice: BatteryHold) -> String {
         if let reserve = notice.cancelledObservedReserve {
-            return "Battery Saver stopped. Your reserve was changed outside pwusage to \(reserve)%, so we left it as-is."
+            return "Battery Saver stopped. Your reserve was changed outside pwusage to \(reserve)%, "
+                + "so we left it as-is."
         }
         return "Battery Saver stopped. Your reserve was changed outside pwusage, so we left it as-is."
     }
 
     static func restoreConfirmationText(originalReserve: Int) -> String {
-        "Turning off Battery Saver sets your backup reserve back to \(originalReserve)%. This replaces any reserve changes you made in Tesla while Battery Saver was on."
+        "Turning off Battery Saver sets your backup reserve back to \(originalReserve)%. "
+            + "This replaces any reserve changes you made in Tesla while Battery Saver was on."
     }
 
     static func monitoringText(_ monitoring: BatteryHoldMonitoring, at now: Date) -> String {

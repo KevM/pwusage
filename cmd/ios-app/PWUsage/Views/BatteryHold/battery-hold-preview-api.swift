@@ -18,9 +18,12 @@
                 createdAt: now.addingTimeInterval(-3600), safetyExpiresAt: now.addingTimeInterval(3 * 3600),
                 cancelledObservedReserve: mode == .notice ? 45 : nil,
                 monitoring: mode == .monitoring ? .init(phase: .loadRunning, checkedAt: now.addingTimeInterval(-60),
-                                                        nextCheckAt: now.addingTimeInterval(8 * 60), sampledAt: now.addingTimeInterval(-5 * 60), estimatedLoadW: 9000) : nil
+                                                        nextCheckAt: now.addingTimeInterval(8 * 60),
+                                                        sampledAt: now.addingTimeInterval(-5 * 60),
+                                                        estimatedLoadW: 9000) : nil
             )
-            response = .init(hold: (mode == .active || mode == .monitoring) ? hold : nil, notice: mode == .notice ? hold : nil)
+            response = .init(hold: (mode == .active || mode == .monitoring) ? hold : nil,
+                             notice: mode == .notice ? hold : nil)
         }
 
         func fetchLive(siteID: String) async throws -> MobileLiveResponse {
@@ -34,10 +37,13 @@
             return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(patched.utf8))
         }
 
-        func fetchBill(siteID: String) async throws -> MobileBillResponse { try await dashboard.fetchBill(siteID: siteID) }
+        func fetchBill(siteID: String) async throws -> MobileBillResponse {
+            try await dashboard.fetchBill(siteID: siteID)
+        }
         func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse { response }
 
-        func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
+        func sendBatteryHoldCommand(siteID: String,
+                                    command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
             switch command {
             case .park(let choice):
                 let now = Date.now
@@ -45,7 +51,8 @@
                     id: 2, siteID: siteID, status: .active, mode: choice.mode,
                     originalReserve: 20, targetReserve: mode == .ambiguous ? (choice.reserveChoice ?? 100) : 72,
                     createdAt: now,
-                    safetyExpiresAt: now.addingTimeInterval(Double(choice.mode == .timer ? choice.durationHours : 8) * 3600),
+                    safetyExpiresAt: now.addingTimeInterval(
+                        Double(choice.mode == .timer ? choice.durationHours : 8) * 3600),
                     cancelledObservedReserve: nil
                 )
                 response = .init(hold: hold, notice: response.notice)

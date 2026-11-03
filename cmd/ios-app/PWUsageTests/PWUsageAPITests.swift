@@ -71,7 +71,8 @@ final class PWUsageAPITests {
         #expect(result.current == 45)
         #expect(requests.count == 2)
         let url = try #require(requests.first?.0.url)
-        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath == "/api/site/a%2Fb%20%3F%23%25/battery-hold")
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath
+            == "/api/site/a%2Fb%20%3F%23%25/battery-hold")
         let post = requests[1]
         #expect(post.0.value(forHTTPHeaderField: "Content-Type") == "application/json")
         let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: NSObject])
@@ -84,7 +85,9 @@ final class PWUsageAPITests {
         var requests: [(URLRequest, Data)] = []
         StubURLProtocol.requestHandler = { request in
             requests.append((request, (try? Self.bodyData(from: request)) ?? Data()))
-            let body = request.httpMethod == "POST" ? #"{"status":"registered","holdStatus":"active"}"# : #"{"status":"removed"}"#
+            let body = request.httpMethod == "POST"
+                ? #"{"status":"registered","holdStatus":"active"}"#
+                : #"{"status":"removed"}"#
             return (try Self.response(request, status: 200), Data(body.utf8))
         }
         let registrationID = try #require(UUID(uuidString: "6F1C2E1A-7B4D-4F45-9A0B-1C2D3E4F5A6B"))
@@ -127,16 +130,20 @@ final class PWUsageAPITests {
 
     @Test("Starting a hold sends the selected timer and reserve with the session cookie")
     func batteryHoldStartPayload() async throws {
-        let cookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "test-session"]))
+        let cookie = try #require(HTTPCookie(properties: [
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: "test-session"
+        ]))
         cookieStorage.setCookie(cookie)
         var recordedRequest: URLRequest?
         var recordedBody = Data()
         StubURLProtocol.requestHandler = { request in
             recordedRequest = request
             recordedBody = try Self.bodyData(from: request)
-            return (try Self.response(request, status: 200), Data("{\"status\":\"ok\",\"hold\":\(BatteryHoldTests.holdJSON)}".utf8))
+            return (try Self.response(request, status: 200),
+                    Data("{\"status\":\"ok\",\"hold\":\(BatteryHoldTests.holdJSON)}".utf8))
         }
-        let result = try await api.sendBatteryHoldCommand(siteID: "site-1", command: .park(.init(mode: .timer, durationHours: 6, reserveChoice: 80)))
+        let result = try await api.sendBatteryHoldCommand(
+            siteID: "site-1", command: .park(.init(mode: .timer, durationHours: 6, reserveChoice: 80)))
         #expect(result.hold?.siteID == "site-1")
         #expect(recordedRequest?.value(forHTTPHeaderField: "Cookie") == "site_auth=test-session")
         let body = try #require(JSONSerialization.jsonObject(with: recordedBody) as? [String: NSObject])
@@ -163,7 +170,8 @@ final class PWUsageAPITests {
         StubURLProtocol.requestHandler = { request in
             let url = try #require(request.url)
             let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
-            return (response, Data(TariffSheetTests.fixture.replacingOccurrences(of: "\"id\":\"a\"", with: "\"id\":\"other\"").utf8))
+            return (response, Data(TariffSheetTests.fixture.replacingOccurrences(
+                of: "\"id\":\"a\"", with: "\"id\":\"other\"").utf8))
         }
         await #expect(throws: PWUsageAPIError.invalidResponse) { try await api.fetchTariffs(siteID: "a") }
     }
@@ -171,7 +179,8 @@ final class PWUsageAPITests {
     @Test("Tariff site ID stays in one encoded path segment")
     func tariffSiteIDIsEncoded() async throws {
         let siteID = "a/b ?#%"
-        let body = Data(TariffSheetTests.fixture.replacingOccurrences(of: "\"id\":\"a\"", with: "\"id\":\"a/b ?#%\"").utf8)
+        let body = Data(TariffSheetTests.fixture.replacingOccurrences(
+            of: "\"id\":\"a\"", with: "\"id\":\"a/b ?#%\"").utf8)
         var recordedURL: URL?
         StubURLProtocol.requestHandler = { request in
             recordedURL = request.url
@@ -197,18 +206,24 @@ final class PWUsageAPITests {
             recordedRequests.append((request, body))
             guard let url = request.url else { throw URLError(.badURL) }
             if url.path == "/api/mobile/session" {
-                guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "site_auth=session-value; Path=/"]) else {
+                guard let response = HTTPURLResponse(
+                    url: url, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Set-Cookie": "site_auth=session-value; Path=/"]) else {
                     throw URLError(.badServerResponse)
                 }
                 return (response, Data(#"{"ok":true}"#.utf8))
             }
-            guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else {
+            guard let response = HTTPURLResponse(
+                url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]) else {
                 throw URLError(.badServerResponse)
             }
             return (response, Data(#"[{"id":"site-1","name":"Home","utility":"Utility Co"}]"#.utf8))
         }
 
-        try await api.exchangeSession(MobileSessionExchange(attemptId: "attempt", code: "opaque-code", verifier: String(repeating: "v", count: 43), state: "app-state"))
+        try await api.exchangeSession(
+            MobileSessionExchange(attemptId: "attempt", code: "opaque-code",
+                                  verifier: String(repeating: "v", count: 43), state: "app-state"))
         let sites = try await api.fetchSites()
         #expect(sites.map(\.id) == ["site-1"])
         #expect(recordedRequests.count == 2)
@@ -222,7 +237,8 @@ final class PWUsageAPITests {
         let second = recordedRequests[1]
         let secondURL = try #require(second.0.url)
         #expect(secondURL.path == "/api/sites")
-        #expect(self.cookieStorage.cookies(for: secondURL)?.first(where: { $0.name == "site_auth" })?.value == "session-value")
+        #expect(self.cookieStorage.cookies(for: secondURL)?.first(where: { $0.name == "site_auth" })?.value
+            == "session-value")
         #expect(second.0.value(forHTTPHeaderField: "Cookie") == "site_auth=session-value")
     }
 
@@ -268,23 +284,33 @@ final class PWUsageAPITests {
         var recordedRequest: URLRequest?
         StubURLProtocol.requestHandler = { request in
             recordedRequest = request
-            let fixture = #"{"version":1,"site":{"id":"site/one & two","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":12.5,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","energyDataThrough":null}}"#
+            let fixture = #"{"version":1,"site":{"id":"site/one & two","name":"Home","timezone":"UTC"},"#
+                + #""currentBill":{"estimatedCost":12.5,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","#
+                + #""cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"#
+                + #""sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","energyDataThrough":null}}"#
             return (try Self.response(request, status: 200), Data(fixture.utf8))
         }
         let bill = try await api.fetchBill(siteID: "site/one & two")
         #expect(bill.site.id == "site/one & two")
         let request = try #require(recordedRequest)
         let url = try #require(request.url)
-        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "siteId" })?.value == "site/one & two")
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect(components.queryItems?.first(where: { $0.name == "siteId" })?.value
+            == "site/one & two")
     }
 
     @Test("Planning context uses the authenticated PWUsage transport and typed contract")
     func planningContextUsesPWUsageTransport() async throws {
         var recordedRequest: URLRequest?
         let slots = (0 ..< 48).map { index in
-            "{\"localMinute\":\(index * 30),\"homeKw\":1.25,\"batteryNetChargeKw\":-0.1,\"sampleCount\":14,\"coverage\":1}"
+            "{\"localMinute\":\(index * 30),\"homeKw\":1.25,\"batteryNetChargeKw\":-0.1,\"sampleCount\":14,"
+                + "\"coverage\":1}"
         }.joined(separator: ",")
-        let fixture = "{\"version\":1,\"site\":{\"id\":\"site/one & two\",\"timezone\":\"UTC\"},\"units\":{\"power\":\"kW\",\"localMinute\":\"minute-of-day\"},\"asOf\":\"2027-01-15T08:00:00Z\",\"availability\":\"available\",\"unavailableReason\":null,\"usableDayCount\":14,\"historyStart\":\"2027-01-01T00:00:00Z\",\"historyEnd\":\"2027-01-15T00:00:00Z\",\"slots\":[\(slots)]}"
+        let fixture = "{\"version\":1,\"site\":{\"id\":\"site/one & two\",\"timezone\":\"UTC\"},"
+            + "\"units\":{\"power\":\"kW\",\"localMinute\":\"minute-of-day\"},\"asOf\":\"2027-01-15T08:00:00Z\","
+            + "\"availability\":\"available\",\"unavailableReason\":null,\"usableDayCount\":14,"
+            + "\"historyStart\":\"2027-01-01T00:00:00Z\",\"historyEnd\":\"2027-01-15T00:00:00Z\",\"slots\":["
+            + "\(slots)]}"
         StubURLProtocol.requestHandler = { request in
             recordedRequest = request
             return (try Self.response(request, status: 200), Data(fixture.utf8))
@@ -298,13 +324,17 @@ final class PWUsageAPITests {
         let request = try #require(recordedRequest)
         let url = try #require(request.url)
         #expect(url.path == "/api/mobile/load-planning-context")
-        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "siteId" })?.value == "site/one & two")
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect(components.queryItems?.first(where: { $0.name == "siteId" })?.value
+            == "site/one & two")
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
     }
 
     @Test("Unauthorized maps to sign-in required")
     func unauthorizedMapsToSignInRequired() async {
-        StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 401), Data(#"{"error":"Unauthorized"}"#.utf8)) }
+        StubURLProtocol.requestHandler = { request in
+            (try Self.response(request, status: 401), Data(#"{"error":"Unauthorized"}"#.utf8))
+        }
         await #expect(throws: PWUsageAPIError.signInRequired) {
             _ = try await api.fetchSites()
         }
@@ -348,7 +378,8 @@ final class PWUsageAPITests {
             """
             return (try Self.response(request, status: 200), Data(body.utf8))
         }
-        let refresher = TodayEnergyWidgetRefresh(origin: URL(string: "https://pwusage.test")!, session: session, store: store)
+        let refresher = TodayEnergyWidgetRefresh(
+            origin: URL(string: "https://pwusage.test")!, session: session, store: store)
         let updated = await refresher.load(at: now)
         #expect(requests == 1)
         #expect(updated?.energy.homeKwh == 42)
@@ -371,7 +402,8 @@ final class PWUsageAPITests {
         let store = TodayEnergySnapshotStore(fileURL: directory.appendingPathComponent("widget.json"))
         let saved = TodayEnergySnapshot.sample(at: Date().addingTimeInterval(-3600))
         try store.save(saved)
-        let refresher = TodayEnergyWidgetRefresh(origin: URL(string: "https://pwusage.test")!, session: session, store: store)
+        let refresher = TodayEnergyWidgetRefresh(
+            origin: URL(string: "https://pwusage.test")!, session: session, store: store)
         StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 403), Data()) }
         #expect(await refresher.load(at: .now) == nil)
         StubURLProtocol.requestHandler = { _ in throw URLError(.notConnectedToInternet) }
@@ -415,7 +447,8 @@ final class PWUsageAPITests {
             Thread.sleep(forTimeInterval: 0.005)
             return (try Self.response(request, status: 200), Data(body.utf8))
         }
-        let refresher = TodayEnergyWidgetRefresh(origin: URL(string: "https://pwusage.test")!, session: session, store: store)
+        let refresher = TodayEnergyWidgetRefresh(
+            origin: URL(string: "https://pwusage.test")!, session: session, store: store)
         let result = await refresher.load()
         #expect(result?.energy.homeKwh == 42)
         #expect(result?.stateOfCharge(at: .now) == 78)
@@ -426,8 +459,10 @@ final class PWUsageAPITests {
         let legacy = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
         let shared = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
         let origin = URL(string: "https://pwusage.test")!
-        let cookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
-                                                          .value: "existing-session", .expires: Date().addingTimeInterval(3600)]))
+        let cookie = try #require(HTTPCookie(properties: [
+            .domain: "pwusage.test", .path: "/", .name: "site_auth",
+            .value: "existing-session", .expires: Date().addingTimeInterval(3600)
+        ]))
         legacy.setCookie(cookie)
         SharedWebSession.migrateSession(for: origin, from: legacy, to: shared)
         #expect(shared.cookies(for: origin)?.first?.value == "existing-session")
@@ -440,8 +475,10 @@ final class PWUsageAPITests {
     @Test("Fresh-install cleanup removes only site_auth cookies from a shared jar")
     func freshInstallCookieClear() throws {
         let storage = try #require(URLSessionConfiguration.ephemeral.httpCookieStorage)
-        let siteCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "site_auth",
-                                                              .value: "previous-session", .expires: Date().addingTimeInterval(3600)]))
+        let siteCookie = try #require(HTTPCookie(properties: [
+            .domain: "pwusage.test", .path: "/", .name: "site_auth",
+            .value: "previous-session", .expires: Date().addingTimeInterval(3600)
+        ]))
         let otherCookie = try #require(HTTPCookie(properties: [.domain: "pwusage.test", .path: "/", .name: "display",
                                                                .value: "compact"]))
         storage.setCookie(siteCookie)
@@ -456,7 +493,9 @@ final class PWUsageAPITests {
 
     @Test("Server error maps to recoverable data error")
     func serverErrorMapsToRecoverableDataError() async {
-        StubURLProtocol.requestHandler = { request in (try Self.response(request, status: 503), Data(#"{"error":"Unavailable"}"#.utf8)) }
+        StubURLProtocol.requestHandler = { request in
+            (try Self.response(request, status: 503), Data(#"{"error":"Unavailable"}"#.utf8))
+        }
         await #expect(throws: PWUsageAPIError.recoverableServerError(statusCode: 503)) {
             _ = try await api.fetchSites()
         }
@@ -467,7 +506,8 @@ final class PWUsageAPITests {
         StubURLProtocol.requestHandler = { request in
             (try Self.response(request, status: 200), Data(Self.liveFixture(siteID: "other-site").utf8))
         }
-        await #expect(throws: MobileLiveResponse.ContractError.siteMismatch(expected: "site-1", actual: "other-site")) {
+        await #expect(throws: MobileLiveResponse.ContractError.siteMismatch(
+            expected: "site-1", actual: "other-site")) {
             _ = try await api.fetchLive(siteID: "site-1")
         }
         StubURLProtocol.requestHandler = { request in
@@ -479,7 +519,12 @@ final class PWUsageAPITests {
     @Test("A bill whose load timing omits nextStartPhraseByKey still decodes")
     func billWithoutNextStartPhrasesDecodes() async throws {
         StubURLProtocol.requestHandler = { request in
-            let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":2,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"loadTiming":{"hasTariff":true,"hasCycleData":true,"activeIsCheapest":true,"periods":[],"pricingPeriods":[],"nextCheaper":null,"nextCheaperPhrase":null},"sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","energyDataThrough":null}}"#
+            let fixture = #"{"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC"},"#
+                + #""currentBill":{"estimatedCost":2,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","#
+                + #""cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"loadTiming":{"hasTariff":true,"#
+                + #""hasCycleData":true,"activeIsCheapest":true,"periods":[],"pricingPeriods":[],"nextCheaper":null,"#
+                + #""nextCheaperPhrase":null},"sources":{"calculatedAt":"2026-09-23T12:34:56.123Z","#
+                + #""energyDataThrough":null}}"#
             return (try Self.response(request, status: 200), Data(fixture.utf8))
         }
         let bill = try await api.fetchBill(siteID: "site-1")
@@ -516,7 +561,9 @@ final class PWUsageAPITests {
 
     static func response(_ request: URLRequest, status: Int) throws -> HTTPURLResponse {
         guard let url = request.url,
-              let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else {
+              let response = HTTPURLResponse(
+                  url: url, statusCode: status, httpVersion: nil,
+                  headerFields: ["Content-Type": "application/json"]) else {
             throw URLError(.badServerResponse)
         }
         return response
@@ -591,7 +638,10 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
                 let cookieHeader = response.value(forHTTPHeaderField: "Set-Cookie")
                 if let cookieHeader, cookieHeader.hasPrefix("site_auth=") {
                     let value = String(cookieHeader.dropFirst("site_auth=".count).prefix { $0 != ";" })
-                    if let cookie = HTTPCookie(properties: [.domain: url.host ?? "pwusage.test", .path: "/", .name: "site_auth", .value: value, .discard: "TRUE"]) {
+                    if let cookie = HTTPCookie(properties: [
+                        .domain: url.host ?? "pwusage.test", .path: "/", .name: "site_auth",
+                        .value: value, .discard: "TRUE"
+                    ]) {
                         cookieStorage.setCookie(cookie)
                     }
                 }

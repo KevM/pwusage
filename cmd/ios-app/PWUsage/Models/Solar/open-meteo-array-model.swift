@@ -6,19 +6,25 @@ import Foundation
 enum OpenMeteoArrayModel {
     enum Error: Swift.Error, Equatable { case invalidInput }
 
-    // Radiation components stay explicit at the weather/model boundary.
-    // swiftlint:disable:next function_parameter_count
+    /// The three radiation components at one weather hour.
+    struct Radiation {
+        let ghi: Double
+        let dni: Double
+        let dhi: Double
+    }
+
     static func powerKw(
-        at midpoint: Date, ghi: Double, dni: Double, dhi: Double,
+        at midpoint: Date, radiation: Radiation,
         layout: SolarLayout, location: SolarHomeLocation
     ) throws -> Double {
         guard midpoint.timeIntervalSince1970.isFinite, location.isValid,
-              [ghi, dni, dhi].allSatisfy({ $0.isFinite && $0 >= 0 }),
+              [radiation.ghi, radiation.dni, radiation.dhi].allSatisfy({ $0.isFinite && $0 >= 0 }),
               (1 ... 3).contains(layout.planes.count), layout.planes.allSatisfy(\.isValid),
               layout.acClipKw.map({ $0.isFinite && $0 > 0 }) ?? true else { throw Error.invalidInput }
         let sun = SolarPosition.at(midpoint, latitude: location.latitude, longitude: location.longitude)
         let total = layout.planes.reduce(0.0) { result, plane in
-            result + plane.dcKwp * effectiveIrradiance(plane, sun: sun, ghi: ghi, dni: dni, dhi: dhi) / 1000 * 0.86
+            result + plane.dcKwp * effectiveIrradiance(
+                plane, sun: sun, ghi: radiation.ghi, dni: radiation.dni, dhi: radiation.dhi) / 1000 * 0.86
         }
         guard total.isFinite else { throw Error.invalidInput }
         return layout.acClipKw.map { min(total, $0) } ?? total

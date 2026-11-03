@@ -16,7 +16,9 @@ struct LivePowerFlowCards: View {
                 if let card = cards.first(where: { $0.id == source }) {
                     tile(card)
                         .layoutValue(key: FlowColumn.self, value: flow.supplying.contains(card) ? 0 : 1)
-                        .layoutValue(key: FlowRow.self, value: (flow.supplying.firstIndex(of: card) ?? flow.receiving.firstIndex(of: card) ?? 0) + 1)
+                        .layoutValue(key: FlowRow.self,
+                                     value: (flow.supplying.firstIndex(of: card) ??
+                                         flow.receiving.firstIndex(of: card) ?? 0) + 1)
                 }
             }
         }
@@ -39,8 +41,13 @@ struct LivePowerFlowCards: View {
         switch card.id {
         case .solar: symbol = "sun.max.fill"; tint = .orange
         case .home: symbol = "house.fill"; tint = .blue
-        case .grid: symbol = card.role == .unknown || card.role == .idle ? "powerplug" : (card.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line"); tint = .gray
-        case .battery: symbol = card.role == .receiving ? "battery.100percent.bolt" : "battery.100percent"; tint = .green
+        case .grid:
+            symbol = card.role == .unknown || card.role == .idle
+                ? "powerplug"
+                : (card.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line")
+            tint = .gray
+        case .battery: symbol = card.role == .receiving ? "battery.100percent.bolt" : "battery.100percent"
+            tint = .green
         }
         let role = card.role == .supplying ? "Supplying power" : (card.role == .receiving ? "Receiving power" : nil)
         return MetricTile(title: card.id.title, value: card.watts.map(DashboardPresentation.power) ?? "--",

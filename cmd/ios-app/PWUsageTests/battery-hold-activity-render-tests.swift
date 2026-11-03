@@ -70,7 +70,8 @@ struct BatteryHoldActivityRenderTests {
         let renderer = ImageRenderer(content: sheet)
         renderer.scale = 3
         let png = try #require(renderer.uiImage?.pngData())
-        let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("battery-hold-activity-\(scheme).png")
+        let output = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("battery-hold-activity-\(scheme).png")
         try png.write(to: output)
         print("Rendered activity: \(output.path)")
     }

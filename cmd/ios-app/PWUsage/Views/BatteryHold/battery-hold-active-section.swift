@@ -13,7 +13,8 @@ struct BatteryHoldActiveSection: View {
 
     var body: some View {
         Section("Battery Saver On") {
-            Label("Saving your Powerwall at \(BatteryHoldPresentation.reserveText(hold.targetReserve))", systemImage: "battery.100percent")
+            Label("Saving your Powerwall at \(BatteryHoldPresentation.reserveText(hold.targetReserve))",
+                  systemImage: "battery.100percent")
                 .font(.headline)
             if let monitoring = hold.monitoring {
                 VStack(alignment: .leading, spacing: 4) {
@@ -50,7 +51,8 @@ struct BatteryHoldActiveSection: View {
                 }
                 if let monitoring = hold.monitoring {
                     Text(BatteryHoldPresentation.monitoringText(monitoring, at: now))
-                    LabeledContent("Last checked", value: monitoring.checkedAt.formatted(date: .omitted, time: .shortened))
+                    LabeledContent("Last checked",
+                                   value: monitoring.checkedAt.formatted(date: .omitted, time: .shortened))
                     if let sampledAt = monitoring.sampledAt {
                         LabeledContent("Usage reading", value: sampledAt.formatted(date: .omitted, time: .shortened))
                     }
@@ -58,7 +60,8 @@ struct BatteryHoldActiveSection: View {
             }
             Button("Turn Off Battery Saver", systemImage: "stop.circle", action: confirmRestore)
                 .disabled(!canRestore)
-                .confirmationDialog("Turn Off Battery Saver?", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
+                .confirmationDialog("Turn Off Battery Saver?", isPresented: $isConfirmingRestore,
+                                    titleVisibility: .visible) {
                     Button("Turn Off Battery Saver", action: onRestore).disabled(!canRestore)
                     Button("Cancel", role: .cancel) { }
                 } message: {

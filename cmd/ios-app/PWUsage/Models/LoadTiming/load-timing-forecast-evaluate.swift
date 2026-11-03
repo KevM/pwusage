@@ -48,8 +48,10 @@ extension LoadTimingForecastEstimator {
         billingCycleEnd: Date,
         currencyCode: String
     ) -> Result {
-        evaluate(profile: profile, now: now, timing: timing, projection: .forecast(intervals: forecast, context: context),
-                 balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd, currencyCode: currencyCode)
+        evaluate(profile: profile, now: now, timing: timing,
+                 projection: .forecast(intervals: forecast, context: context),
+                 balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+                 currencyCode: currencyCode)
     }
 
     static func evaluate(
@@ -155,7 +157,8 @@ extension LoadTimingForecastEstimator {
             // Integration can leave a mathematically empty bank a few ULPs above
             // zero. That is no export cushion: it must not activate the safety
             // rule against a potentially large cautious deficit.
-            guard let typical = baseBalances[key], typical > 1e-9, let cautious = cautiousBalances[key] else { continue }
+            guard let typical = baseBalances[key], typical > 1e-9,
+                  let cautious = cautiousBalances[key] else { continue }
             // Only the part the typical bank covers is priced at the sell rate and so
             // at risk in a cloudy week; an overdraw is already priced at the buy rate.
             let covered = min(candidate.drawsBySafetyEnd[key] ?? 0, typical)

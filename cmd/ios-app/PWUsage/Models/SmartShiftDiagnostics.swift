@@ -140,7 +140,8 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         self.forecastFetchedAt = forecastFetchedAt
         self.forecastIntervals = intervals
         self.planningContext = context
-        self.result = Outcome(comparison: evaluation.result.comparison, unavailableReason: evaluation.result.unavailableReason)
+        self.result = Outcome(comparison: evaluation.result.comparison,
+                              unavailableReason: evaluation.result.unavailableReason)
     }
 
     /// Re-runs the recorded projection on the recorded inputs; `nil` when they can't rebuild it.
@@ -194,7 +195,8 @@ struct SmartShiftDiagnostics: Codable, Equatable {
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
             guard let date = timestampFormatter().date(from: value) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 timestamp: \(value)")
+                throw DecodingError.dataCorruptedError(in: container,
+                                                       debugDescription: "Invalid ISO-8601 timestamp: \(value)")
             }
             return date
         }

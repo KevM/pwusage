@@ -28,14 +28,17 @@ struct BatteryHoldActivityPresentationTests {
         #expect(BatteryHoldControlIdentity.symbolName == "bolt.batteryblock")
     }
 
-    private func status(_ state: Presentation.State, stale: Bool = false, now: Date? = nil, startedAt: Date? = nil) -> Presentation.Status? {
+    private func status(_ state: Presentation.State, stale: Bool = false,
+                        now: Date? = nil, startedAt: Date? = nil) -> Presentation.Status? {
         Presentation.status(attributes(startedAt: startedAt ?? start), state, isStale: stale, now: now ?? start)
     }
 
     @Test("The figures line: charge as a whole number, the current home load, and a peak only when it adds something")
     func figures() {
         var watching = state(phase: .watching)
-        #expect(Presentation.batteryText(watching) == nil && Presentation.homeLoadText(watching) == nil && Presentation.peakText(watching) == nil)
+        #expect(Presentation.batteryText(watching) == nil &&
+            Presentation.homeLoadText(watching) == nil &&
+            Presentation.peakText(watching) == nil)
         watching.batteryPercent = 81.6
         watching.homeLoadW = 1840
         watching.peakLoadW = 1790
@@ -82,7 +85,8 @@ struct BatteryHoldActivityPresentationTests {
         #expect(Presentation.headline(reason) == "Restoring 20% backup reserve")
         #expect(status(reason)?.text == "Confirming with Tesla")
         #expect(status(state())?.text == "Waiting for first check")
-        for phase: Presentation.State.Phase in [.watching, .loadRunning, .confirmingEnd, .waitingForData, .checkFailed, .timer, .restoring, .unknown] {
+        for phase: Presentation.State.Phase in [.watching, .loadRunning, .confirmingEnd, .waitingForData,
+                                                .checkFailed, .timer, .restoring, .unknown] {
             let text = (status(state(phase: phase))?.text ?? "").lowercased()
             #expect(!text.contains("car") && !text.contains("vehicle") && !text.contains("charging"))
         }
@@ -91,12 +95,16 @@ struct BatteryHoldActivityPresentationTests {
     @Test("Fixed holds show their stop time; Auto shows its safety stop only in the last hour")
     func deadlines() {
         let timer = state(mode: .timer, phase: .timer, hours: 4)
-        #expect(status(timer) == .init(text: "Stops \(Presentation.clock(timer.safetyExpiresAt, timeZone: utc, now: start))", isWarning: false))
+        #expect(status(timer) == .init(
+            text: "Stops \(Presentation.clock(timer.safetyExpiresAt, timeZone: utc, now: start))",
+            isWarning: false
+        ))
         let auto = state(phase: .watching)
         #expect(status(auto) == nil)
         #expect(status(auto, now: start.addingTimeInterval(6.9 * 3600)) == nil)
         let lastHour = start.addingTimeInterval(7 * 3600 + 60)
-        #expect(status(auto, now: lastHour)?.text == "Safety stop \(Presentation.clock(auto.safetyExpiresAt, timeZone: utc, now: lastHour))")
+        #expect(status(auto, now: lastHour)?.text ==
+            "Safety stop \(Presentation.clock(auto.safetyExpiresAt, timeZone: utc, now: lastHour))")
         // A warning outranks the deadline.
         #expect(status(state(mode: .timer, phase: .checkFailed, hours: 4))?.text == "Last check failed")
     }
@@ -132,7 +140,9 @@ struct BatteryHoldActivityPresentationTests {
         restored.restoreReason = .loadEnded
         var restoring = state(phase: .restoring)
         restoring.restoreReason = .loadEnded
-        let texts = [Presentation.headline(state(phase: .watching)), Presentation.headline(restoring), Presentation.headline(restored), status(restored)?.text ?? ""]
+        let texts = [Presentation.headline(state(phase: .watching)),
+                     Presentation.headline(restoring),
+                     Presentation.headline(restored), status(restored)?.text ?? ""]
         #expect(texts[0].contains("Powerwall"))
         for text in texts {
             #expect(!text.lowercased().contains("job"))
@@ -145,7 +155,8 @@ struct BatteryHoldActivityPresentationTests {
         let watching = state(phase: .watching)
         #expect(watching.staleDate(activityStartedAt: start) == start.addingTimeInterval(1800 + 600))
         // The activity's start doesn't matter once a check is scheduled.
-        #expect(watching.staleDate(activityStartedAt: start.addingTimeInterval(3600)) == start.addingTimeInterval(1800 + 600))
+        #expect(watching.staleDate(activityStartedAt: start.addingTimeInterval(3600))
+            == start.addingTimeInterval(1800 + 600))
     }
 
     @Test("Before the first check, a state goes stale one check interval plus ten minutes after the activity started")
@@ -176,17 +187,20 @@ struct BatteryHoldActivityPresentationTests {
     func displayLimit() {
         let long = state(mode: .timer, phase: .timer, hours: 24)
         let text = status(long)?.text ?? ""
-        #expect(text.hasPrefix("Stops ") && text.hasSuffix(" · display ends \(Presentation.clock(start.addingTimeInterval(8 * 3600), timeZone: utc, now: start))"))
+        let displayEnd = Presentation.clock(start.addingTimeInterval(8 * 3600), timeZone: utc, now: start)
+        #expect(text.hasPrefix("Stops ") && text.hasSuffix(" · display ends \(displayEnd)"))
         #expect(status(state(mode: .timer, phase: .timer, hours: 8))?.text.contains("display") == false)
         // Started late in an Auto hold, the activity still ends after its safety deadline.
-        #expect(status(state(phase: .watching), now: start.addingTimeInterval(7.5 * 3600), startedAt: start.addingTimeInterval(3600))?.text.contains("display") == false)
+        #expect(status(state(phase: .watching), now: start.addingTimeInterval(7.5 * 3600),
+                       startedAt: start.addingTimeInterval(3600))?.text.contains("display") == false)
     }
 
     @Test("The sheet explains the eight-hour display limit only for holds that outlast it")
     func sheetLimitText() {
         let hold = { (hours: Double) in
             BatteryHold(id: 7, siteID: "site-1", status: .active, mode: .timer, originalReserve: 20, targetReserve: 100,
-                        createdAt: start, safetyExpiresAt: start.addingTimeInterval(hours * 3600), cancelledObservedReserve: nil)
+                        createdAt: start, safetyExpiresAt: start.addingTimeInterval(hours * 3600),
+                        cancelledObservedReserve: nil)
         }
         #expect(BatteryHoldPresentation.liveActivityLimitText(hold(24), at: start)?.contains("eight hours") == true)
         #expect(BatteryHoldPresentation.liveActivityLimitText(hold(8), at: start) == nil)

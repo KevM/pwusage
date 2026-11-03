@@ -9,7 +9,8 @@ struct BillOutlookTests {
     }
     func history(complete: Bool = true) -> BillOutlookHistory {
         .init(points: [.init(date: now, buckets: [bucket(10)], complete: complete,
-                             estimatedCost: 3, periods: [.init(tariffName: "Utility", periodName: "Peak", netGridKwh: 10)])],
+                             estimatedCost: 3,
+                             periods: [.init(tariffName: "Utility", periodName: "Peak", netGridKwh: 10)])],
               observedThrough: now, complete: complete,
               tariffTimeline: [.init(start: now, end: now.addingTimeInterval(86400), periodKey: "peak", name: "Peak",
                                      buyRate: 0.3, sellRate: 0.04, tariffName: "Utility", periodName: "Peak")])
@@ -25,7 +26,8 @@ struct BillOutlookTests {
         }, asOf: now)
         let solar = [
             SolarForecastInterval(periodStart: now, periodEnd: now.addingTimeInterval(600), powerKw: 3),
-            SolarForecastInterval(periodStart: now.addingTimeInterval(600), periodEnd: now.addingTimeInterval(3600), powerKw: 3)]
+            SolarForecastInterval(periodStart: now.addingTimeInterval(600),
+                                  periodEnd: now.addingTimeInterval(3600), powerKw: 3)]
         let result = BillOutlook.evaluate(history: history(), context: pattern, forecast: solar,
                                           now: now.addingTimeInterval(900), cycleEnd: now.addingTimeInterval(3600))
         #expect(result.points.last?.date == now.addingTimeInterval(3600))
@@ -95,8 +97,8 @@ struct BillOutlookTests {
         history.tariffTimeline = [
             .init(start: now, end: now.addingTimeInterval(3600), periodKey: "peak", name: "Peak", buyRate: 0.3,
                   sellRate: 0.04, tariffName: "Utility", periodName: "Peak"),
-            .init(start: now.addingTimeInterval(3600), end: now.addingTimeInterval(7200), periodKey: "peak", name: "Peak",
-                  buyRate: 0.6, sellRate: 0.04, tariffName: "Utility", periodName: "Peak")]
+            .init(start: now.addingTimeInterval(3600), end: now.addingTimeInterval(7200), periodKey: "peak",
+                  name: "Peak", buyRate: 0.6, sellRate: 0.04, tariffName: "Utility", periodName: "Peak")]
         let end = try #require(BillOutlook.evaluate(history: history, context: context(grid: -1), forecast: [],
                                                     now: now, cycleEnd: now.addingTimeInterval(7200)).points.last)
         #expect(end.date == now.addingTimeInterval(7200))

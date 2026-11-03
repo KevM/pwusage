@@ -11,7 +11,8 @@ extension SmartShiftPresentation {
     /// Every pricing period, in the order the tariff reaches them.
     static func periodRows(timing: LoadTiming, currencyCode: String) -> [PeriodRow] {
         var order: [String] = []
-        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where !order.contains(segment.periodKey) {
+        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start })
+            where !order.contains(segment.periodKey) {
             order.append(segment.periodKey)
         }
         let periods = timing.pricingPeriods.enumerated().sorted { left, right in
@@ -32,16 +33,18 @@ extension SmartShiftPresentation {
     /// Banks are read where the bill is, at the projection end: the lane's bank after
     /// the run plus the run's draw gives the bank it drew from.
     /// The recommended start's arithmetic, then starting now's (just now's when they're the same).
-    static func costBreakdowns(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-                               now: Date, billingCycleEnd: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
+    static func costBreakdowns(
+        comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
+        now: Date, billingCycleEnd: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
         Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: billingCycleEnd,
                 currencyCode: currencyCode, timeZone: timeZone).costBreakdowns
     }
 
     /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
     /// safety rule turned down a cheaper start; otherwise `nil`.
-    static func ruledOutNote(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-                             now: Date, timeZone: String) -> String? {
+    static func ruledOutNote(
+        comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
+        now: Date, timeZone: String) -> String? {
         guard let ruledOut = comparison.ruledOut else { return nil }
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: nil,
                               currencyCode: "USD", timeZone: timeZone)
@@ -67,7 +70,8 @@ extension SmartShiftPresentation {
     /// "Charge" → "Charging", "Wash" → "Washing", "Start" → "Starting", "Bake" → "Baking".
     static func gerund(_ verb: String) -> String {
         let lower = verb.lowercased()
-        if lower.hasSuffix("e"), !lower.hasSuffix("ee"), !lower.hasSuffix("ye"), !lower.hasSuffix("oe"), lower.count > 2 {
+        if lower.hasSuffix("e"), !lower.hasSuffix("ee"), !lower.hasSuffix("ye"), !lower.hasSuffix("oe"),
+           lower.count > 2 {
             return String(verb.dropLast()) + "ing"
         }
         // A short consonant-vowel-consonant verb doubles its last letter: "Run" → "Running".

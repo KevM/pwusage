@@ -78,10 +78,13 @@ enum SwitchLabelLayout {
             let position = xPositions[index]
             let before = (position - inset - beforeWidths[index]) ... (position - inset)
             let after = (position + inset) ... (position + inset + afterWidths[index])
-            let options: [(Form, [ClosedRange<CGFloat>])] = [(.both, [before, after]), (.after, [after]), (.before, [before])]
+            let options: [(Form, [ClosedRange<CGFloat>])] = [
+                (.both, [before, after]), (.after, [after]), (.before, [before])
+            ]
             for (form, parts) in options {
                 guard parts.allSatisfy({ $0.lowerBound >= 0 && $0.upperBound <= chartWidth }),
-                      let first = parts.first, let last = parts.last, first.lowerBound >= lastRight + gap else { continue }
+                      let first = parts.first, let last = parts.last,
+                      first.lowerBound >= lastRight + gap else { continue }
                 lastRight = last.upperBound
                 return form
             }

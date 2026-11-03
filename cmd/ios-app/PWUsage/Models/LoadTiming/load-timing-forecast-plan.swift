@@ -54,9 +54,13 @@ extension LoadTimingForecastEstimator {
         guard now.timeIntervalSince(balanceSourceTime) <= projection.maximumBalanceAge else {
             return unavailable(.staleBalance, beforeLoad: true)
         }
-        guard timing.hasTariff, !timing.tariffTimeline.isEmpty else { return unavailable(.missingTariff, beforeLoad: true) }
+        guard timing.hasTariff, !timing.tariffTimeline.isEmpty else {
+            return unavailable(.missingTariff, beforeLoad: true)
+        }
         if projection.projectsFlow, !timing.hasCycleData { return unavailable(.incompleteBalance, beforeLoad: true) }
-        guard let zone = TimeZone(identifier: projection.timeZone) else { return unavailable(.invalidInput, beforeLoad: true) }
+        guard let zone = TimeZone(identifier: projection.timeZone) else {
+            return unavailable(.invalidInput, beforeLoad: true)
+        }
         let tariffs = timing.tariffTimeline.sorted { $0.start < $1.start }
         guard validTariffIntervals(tariffs) else { return unavailable(.invalidInput) }
         if case .forecast(let forecast, _) = projection, !validForecast(forecast) { return unavailable(.invalidInput) }
@@ -98,8 +102,8 @@ extension LoadTimingForecastEstimator {
         projectionEnd = min(projectionEnd, contiguousTariffEnd(tariffs, startingAt: projectionStart))
         guard projectionEnd > now else { return unavailable(.incompleteCoverage) }
         let clock = WallClock(timeZone: zone, from: projectionStart, to: projectionEnd)
-        let model = FlowModel(projection: projection, clock: clock, forecastStart: forecastStart, forecastEnd: forecastEnd,
-                              tariffs: tariffs)
+        let model = FlowModel(projection: projection, clock: clock,
+                              forecastStart: forecastStart, forecastEnd: forecastEnd, tariffs: tariffs)
 
         // A rate change for one billing-period balance ends the shared projection.
         // Rates outside the projection do not participate in validation.
@@ -125,7 +129,8 @@ extension LoadTimingForecastEstimator {
         // The forecast-free path reads no balances
         // when the cycle has no data yet, so every period is priced from zero.
         let observedBalances: [String: Double] = timing.hasCycleData
-            ? Dictionary(timing.pricingPeriods.map { ($0.name, $0.cycleNetExportKwh) }, uniquingKeysWith: { _, latest in latest })
+            ? Dictionary(timing.pricingPeriods.map { ($0.name, $0.cycleNetExportKwh) },
+                         uniquingKeysWith: { _, latest in latest })
             : [:]
 
         var balances: [String: Double] = [:]

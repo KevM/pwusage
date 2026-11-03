@@ -47,7 +47,9 @@ enum BatteryHoldActivityPresentation {
     static func headline(_ state: State) -> String {
         switch state.status {
         case .active:
-            isRestoring(state) ? "Restoring \(state.originalReserve)% backup reserve" : "Saving your Powerwall at \(state.targetReserve)%"
+            isRestoring(state)
+                ? "Restoring \(state.originalReserve)% backup reserve"
+                : "Saving your Powerwall at \(state.targetReserve)%"
         case .restored: "Backup reserve restored to \(state.originalReserve)%"
         case .cancelled: "Battery Saver stopped"
         case .ended, .unknown: "Battery Saver ended"
@@ -56,7 +58,8 @@ enum BatteryHoldActivityPresentation {
 
     /// The status line, or nil when the headline and figures already say it all.
     /// One line: a warning wins over a transition, which wins over a deadline.
-    static func status(_ attributes: BatteryHoldActivityAttributes, _ state: State, isStale: Bool, now: Date) -> Status? {
+    static func status(_ attributes: BatteryHoldActivityAttributes, _ state: State,
+                       isStale: Bool, now: Date) -> Status? {
         if let nonActive = nonActiveStatus(state) {
             return nonActive
         }

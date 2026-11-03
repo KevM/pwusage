@@ -242,7 +242,8 @@ struct LoadTiming: Codable, Equatable {
         tariffTimeline = try container.decodeIfPresent([LoadTimingTariffSegment].self, forKey: .tariffTimeline) ?? []
         nextCheaper = try container.decodeIfPresent(NextCheaperPeriod.self, forKey: .nextCheaper)
         nextCheaperPhrase = try container.decodeIfPresent(String.self, forKey: .nextCheaperPhrase)
-        nextStartPhraseByKey = try container.decodeIfPresent([String: String].self, forKey: .nextStartPhraseByKey) ?? [:]
+        nextStartPhraseByKey = try container.decodeIfPresent([String: String].self, forKey: .nextStartPhraseByKey)
+            ?? [:]
     }
 
     var hasFiniteAmounts: Bool {

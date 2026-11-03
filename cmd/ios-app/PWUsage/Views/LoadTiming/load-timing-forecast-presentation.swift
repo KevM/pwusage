@@ -11,7 +11,10 @@ enum LoadTimingForecastPresentation {
     /// a future-dated stamp means the clock has since moved backwards, not that
     /// the server sent the wrong time. Point at the clock, which the user can fix,
     /// the same way `contextInvalid` does for `asOf`.
-    static let futureDatedForecastNote = "This solar forecast is timestamped later than this device's clock, so its age cannot be checked and it is not being used for now. Check this device's date and time, then pull down to refresh."
+    static let futureDatedForecastNote =
+        "This solar forecast is timestamped later than this device's clock, so its age cannot "
+            + "be checked and it is not being used for now. Check this device's date and time, "
+            + "then pull down to refresh."
     /// Matches `SolarForecast.recommendationFreshness`. Data older than this
     /// may be shown as stale, but must not produce a new recommendation.
     static let maximumForecastAge: TimeInterval = 6 * 60 * 60
@@ -40,7 +43,9 @@ enum LoadTimingForecastPresentation {
 
     // MARK: - Smart Shift card
 
-    static let awaitingArraySelectionNote = "Choose your solar arrays to add a forecast. Your estimate below already works without it."
+    static let awaitingArraySelectionNote =
+        "Choose your solar arrays to add a forecast. "
+            + "Your estimate below already works without it."
 
     /// What the forecast layer can add to the Smart Shift card.
     static func forecastAvailability(

@@ -39,7 +39,8 @@ final class DashboardCache {
         let key = SHA256.hash(data: Data(apiOrigin.absoluteString.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let directory = URL.cachesDirectory.appendingPathComponent("pwusage", isDirectory: true)
-        return DashboardCache(fileURL: directory.appendingPathComponent("dashboard-\(key).json"), widgetStore: .shared())
+        return DashboardCache(
+            fileURL: directory.appendingPathComponent("dashboard-\(key).json"), widgetStore: .shared())
     }
 
     func storeSites(_ sites: [MobileSite]) {
@@ -68,7 +69,8 @@ final class DashboardCache {
             let energy = TodayEnergy(localDate: site.localDate, homeKwh: response.today.homeKwh,
                                      solarKwh: response.today.solarKwh, gridNetKwh: response.today.gridNetKwh,
                                      batteryNetKwh: response.today.batteryNetKwh, activeTariff: response.activeTariff,
-                                     todayComplete: response.todayComplete, energyDataThrough: response.sources.energyDataThrough)
+                                     todayComplete: response.todayComplete,
+                                     energyDataThrough: response.sources.energyDataThrough)
             let value = TodayEnergySnapshot(siteID: siteID, siteName: site.name, timezone: site.timezone,
                                             fetchedAt: reading.savedAt, energy: energy,
                                             todayCost: response.todayCost,
@@ -117,7 +119,8 @@ final class DashboardCache {
     private func persist() {
         // A cache failure must never turn a successful network refresh into an error.
         do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(snapshot)
             try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUnlessOpen])
         } catch { /* iOS may evict or temporarily make the cache unavailable. */ }

@@ -66,12 +66,14 @@ struct SmartShiftDetailsView: View {
                 if !snapshot.breakdowns.isEmpty {
                     Section {
                         if let solar = snapshot.comparison?.estimatedSolarContribution, solar > 0 {
-                            Text("About \(solar.formatted(.number.precision(.fractionLength(1)))) kWh of this run could come from your solar.")
+                            let solarKwh = solar.formatted(.number.precision(.fractionLength(1)))
+                            Text("About \(solarKwh) kWh of this run could come from your solar.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                     } footer: {
-                        Text("Energy from a bank costs only the export credit you give up. The rest is bought at the period's rate.")
+                        Text("Energy from a bank costs only the export credit you give up. "
+                            + "The rest is bought at the period's rate.")
                     }
                 }
                 if let ruledOut = snapshot.ruledOutNote {
@@ -101,8 +103,12 @@ struct SmartShiftDetailsView: View {
                 }
                 if snapshot.forecastFetchedAt != nil || snapshot.contextAsOf != nil {
                     Section("Freshness") {
-                        Text("Solar forecast · \(DashboardPresentation.freshness(snapshot.forecastFetchedAt, now: snapshot.capturedAt, staleAfter: 6 * 60 * 60))")
-                        Text("Household pattern · \(DashboardPresentation.freshness(snapshot.contextAsOf, now: snapshot.capturedAt, staleAfter: 24 * 60 * 60))")
+                        let forecastFreshness = DashboardPresentation.freshness(
+                            snapshot.forecastFetchedAt, now: snapshot.capturedAt, staleAfter: 6 * 60 * 60)
+                        Text("Solar forecast · \(forecastFreshness)")
+                        let patternFreshness = DashboardPresentation.freshness(
+                            snapshot.contextAsOf, now: snapshot.capturedAt, staleAfter: 24 * 60 * 60)
+                        Text("Household pattern · \(patternFreshness)")
                     }
                     .font(.subheadline)
                 }
@@ -130,7 +136,8 @@ struct SmartShiftDetailsView: View {
                                   systemImage: copiedDiagnostics ? "checkmark" : "doc.on.doc")
                         }
                     } footer: {
-                        Text("Copies this comparison's inputs and result as JSON, for troubleshooting. It includes your site ID but no keys or passwords.")
+                        Text("Copies this comparison's inputs and result as JSON, for troubleshooting. "
+                            + "It includes your site ID but no keys or passwords.")
                     }
                 }
             }

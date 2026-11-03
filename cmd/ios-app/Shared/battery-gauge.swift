@@ -59,7 +59,9 @@ struct BatteryGaugeGeometry: Equatable {
         let nubHeight = body.height * metrics.nubHeightFraction
         self.body = body
         self.inner = inner
-        nub = CGRect(x: body.maxX + metrics.nubGap, y: body.midY - nubHeight / 2, width: metrics.nubWidth, height: nubHeight)
+        nub = CGRect(
+            x: body.maxX + metrics.nubGap, y: body.midY - nubHeight / 2,
+            width: metrics.nubWidth, height: nubHeight)
         cornerRadius = metrics.cornerRadius ?? body.height * 0.32
         lineWidth = metrics.lineWidth
         if let charge, charge.isFinite {
@@ -71,11 +73,13 @@ struct BatteryGaugeGeometry: Equatable {
         if let holdLevel {
             let holdWidth = metrics.holdLineWidth
             let level = CGFloat(min(max(holdLevel, 0), 100)) / 100
-            let lineX = min(max(inner.minX + inner.width * level, inner.minX + holdWidth / 2), inner.maxX - holdWidth / 2)
+            let lineX = min(
+                max(inner.minX + inner.width * level, inner.minX + holdWidth / 2), inner.maxX - holdWidth / 2)
             // Near either end the inner shape's rounded corners curve in, so a full-height
             // line would poke past the outline (most visibly at a 100% hold).
-            let cornerInset = Self.cornerInset(lineX: lineX, in: inner,
-                                               radius: max(0, (metrics.cornerRadius ?? body.height * 0.32) - metrics.lineWidth))
+            let cornerInset = Self.cornerInset(
+                lineX: lineX, in: inner,
+                radius: max(0, (metrics.cornerRadius ?? body.height * 0.32) - metrics.lineWidth))
             let top = inner.minY + cornerInset
             let bottom = inner.maxY - cornerInset
             holdLine = CGRect(x: lineX - holdWidth / 2, y: top, width: holdWidth, height: bottom - top)
@@ -109,14 +113,17 @@ struct BatteryGaugeView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let gauge = BatteryGaugeGeometry(style: style, size: proxy.size, charge: charge, holdLevel: isFinal ? nil : holdLevel)
+            let gauge = BatteryGaugeGeometry(
+                style: style, size: proxy.size, charge: charge, holdLevel: isFinal ? nil : holdLevel)
             let faint = isFinal ? 0.6 : 1.0
             let outline = Color.primary.opacity((style == .card ? 0.16 : 0.45) * faint)
             ZStack(alignment: .topLeading) {
                 if let fill = gauge.fill, fill.width > 0 {
                     Path(fill)
                         .fill(fillStyle)
-                        .clipShape(Path(roundedRect: gauge.inner, cornerRadius: max(0, gauge.cornerRadius - gauge.lineWidth), style: .continuous))
+                        .clipShape(
+                            Path(roundedRect: gauge.inner,
+                                 cornerRadius: max(0, gauge.cornerRadius - gauge.lineWidth), style: .continuous))
                 }
                 Path(roundedRect: gauge.body, cornerRadius: gauge.cornerRadius, style: .continuous)
                     .stroke(outline, lineWidth: gauge.lineWidth)
@@ -128,7 +135,9 @@ struct BatteryGaugeView: View {
                             path.move(to: CGPoint(x: line.midX, y: line.minY))
                             path.addLine(to: CGPoint(x: line.midX, y: line.maxY))
                         }
-                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: line.width, dash: style == .card ? [5, 4] : [3, 2.5]))
+                        .stroke(
+                            Color.accentColor,
+                            style: StrokeStyle(lineWidth: line.width, dash: style == .card ? [5, 4] : [3, 2.5]))
                     } else {
                         Path(roundedRect: line, cornerRadius: line.width / 2)
                             .fill(Color.accentColor)

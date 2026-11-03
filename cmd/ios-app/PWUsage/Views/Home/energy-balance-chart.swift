@@ -53,7 +53,9 @@ struct BillOutlookChart: View {
         VStack(alignment: .leading, spacing: 16) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { Text("Bill outlook").font(.headline); Spacer(minLength: 0); legends }
-                VStack(alignment: .leading, spacing: 8) { Text("Bill outlook").font(.headline); HStack(spacing: 16) { legends } }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Bill outlook").font(.headline); HStack(spacing: 16) { legends }
+                }
             }
             ForEach(periods, id: \.key) { period in
                 lane(period)
@@ -71,7 +73,9 @@ struct BillOutlookChart: View {
                         Text(DashboardPresentation.currency(selection.estimatedCost, code: currency))
                             .font(.subheadline.weight(.semibold)).monospacedDigit()
                     }
-                    Text(selection.date > history.observedThrough ? "Estimated from expected energy use" : "Estimated from recorded energy")
+                    Text(
+                        selection.date > history.observedThrough
+                            ? "Estimated from expected energy use" : "Estimated from recorded energy")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Button("Show totals so far") { selectedDate = nil }
                         .font(.caption)
@@ -112,9 +116,12 @@ struct BillOutlookChart: View {
     }
     @ViewBuilder private func laneBalance(_ period: BillOutlookPeriod) -> some View {
         let selected = selection.map { point in
-            point.periods.first { $0.key == period.key } ?? .init(tariffName: period.tariffName, periodName: period.periodName, netGridKwh: 0)
+            point.periods.first { $0.key == period.key }
+                ?? .init(
+                    tariffName: period.tariffName, periodName: period.periodName, netGridKwh: 0)
         }
-        if let summary = BillOutlookPresentation.laneSummary(period: period, totals: totals, selected: selected, currency: currency) {
+        if let summary = BillOutlookPresentation.laneSummary(
+            period: period, totals: totals, selected: selected, currency: currency) {
             Text(summary).font(.caption).monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -128,55 +135,65 @@ struct BillOutlookChart: View {
         let balanceRange = (low - pad) ... (high + pad)
         let timeRange = cycleStart ... max(cycleEnd, cycleStart.addingTimeInterval(3600))
         return VStack(alignment: .leading, spacing: 5) {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 3) { laneTitle(period); laneBalance(period) }
-            } else {
-                HStack { laneTitle(period); Spacer(); laneBalance(period) }
+            laneHeader(period)
+            balanceChart(period, recorded: recorded, timeRange: timeRange, balanceRange: balanceRange)
+        }
+    }
+
+    @ViewBuilder
+    private func laneHeader(_ period: BillOutlookPeriod) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 3) { laneTitle(period); laneBalance(period) }
+        } else {
+            HStack { laneTitle(period); Spacer(); laneBalance(period) }
+        }
+        if Set(periods.map(\.tariffName)).count > 1 {
+            Text(period.tariffName).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func balanceChart(_ period: BillOutlookPeriod, recorded: [BillOutlookPoint],
+                              timeRange: ClosedRange<Date>, balanceRange: ClosedRange<Double>) -> some View {
+        Chart {
+            EnergyBalanceBackdrop(timeRange: timeRange, balanceRange: balanceRange)
+            ForEach(Array(recorded.enumerated()), id: \.offset) { _, point in
+                LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
+                         series: .value("Source", "Recorded"))
+                    .foregroundStyle(.indigo).lineStyle(EnergyWeatherChart.laterStroke)
             }
-            if Set(periods.map(\.tariffName)).count > 1 {
-                Text(period.tariffName).font(.caption2).foregroundStyle(.secondary)
+            ForEach(Array(projected.enumerated()), id: \.offset) { _, point in
+                LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
+                         series: .value("Source", "Estimated"))
+                    .foregroundStyle(.indigo).lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
             }
-            Chart {
-                EnergyBalanceBackdrop(timeRange: timeRange, balanceRange: balanceRange)
-                ForEach(Array(recorded.enumerated()), id: \.offset) { _, point in
-                    LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
-                             series: .value("Source", "Recorded"))
-                        .foregroundStyle(.indigo).lineStyle(EnergyWeatherChart.laterStroke)
-                }
-                ForEach(Array(projected.enumerated()), id: \.offset) { _, point in
-                    LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
-                             series: .value("Source", "Estimated"))
-                        .foregroundStyle(.indigo).lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
-                }
-                if now >= cycleStart && now < cycleEnd {
-                    RuleMark(x: .value("Now", now)).foregroundStyle(.secondary)
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
-                        .annotation(position: .overlay, alignment: .topLeading, spacing: 0,
-                                    overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                            Text("Now").font(.caption2).foregroundStyle(.secondary).fixedSize().padding(3)
-                                .background(.background.opacity(0.8))
-                        }
-                }
-                RuleMark(x: .value("Cycle end", cycleEnd)).foregroundStyle(.secondary)
-                if let selectedDate, let selection {
-                    RuleMark(x: .value("Selected", selectedDate)).foregroundStyle(.indigo.opacity(0.5))
-                    PointMark(x: .value("Date", selection.date), y: .value("kWh", energy(selection, key: period.key)))
-                        .foregroundStyle(.indigo)
-                }
+            if now >= cycleStart && now < cycleEnd {
+                RuleMark(x: .value("Now", now)).foregroundStyle(.secondary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                    .annotation(position: .overlay, alignment: .topLeading, spacing: 0,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                        Text("Now").font(.caption2).foregroundStyle(.secondary).fixedSize().padding(3)
+                            .background(.background.opacity(0.8))
+                    }
             }
-            .chartXScale(domain: timeRange).chartYScale(domain: balanceRange)
-            .chartYAxis(.hidden)
-            .chartXAxis(.hidden)
-            .chartLegend(.hidden)
-            .chartXSelection(value: $scrubDate)
-            .frame(height: 125)
-            .accessibilityLabel("\(period.periodName) export cushion and import gap in kilowatt-hours")
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: step(1)
-                case .decrement: step(-1)
-                @unknown default: break
-                }
+            RuleMark(x: .value("Cycle end", cycleEnd)).foregroundStyle(.secondary)
+            if let selectedDate, let selection {
+                RuleMark(x: .value("Selected", selectedDate)).foregroundStyle(.indigo.opacity(0.5))
+                PointMark(x: .value("Date", selection.date), y: .value("kWh", energy(selection, key: period.key)))
+                    .foregroundStyle(.indigo)
+            }
+        }
+        .chartXScale(domain: timeRange).chartYScale(domain: balanceRange)
+        .chartYAxis(.hidden)
+        .chartXAxis(.hidden)
+        .chartLegend(.hidden)
+        .chartXSelection(value: $scrubDate)
+        .frame(height: 125)
+        .accessibilityLabel("\(period.periodName) export cushion and import gap in kilowatt-hours")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: step(1)
+            case .decrement: step(-1)
+            @unknown default: break
             }
         }
     }

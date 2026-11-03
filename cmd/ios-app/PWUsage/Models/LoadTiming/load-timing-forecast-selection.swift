@@ -37,7 +37,8 @@ extension LoadTimingForecastEstimator {
             let pool = assessed.filter { $0.shortfall <= least + 1e-9 }
             let best = cheapest(pool) ?? nowAssessment
             let nowInPool = pool.contains { $0.candidate.start == now }
-            recommended = nowInPool && nowAssessment.candidate.cost - best.candidate.cost <= minorUnit ? nowAssessment : best
+            recommended = nowInPool && nowAssessment.candidate.cost - best.candidate.cost <= minorUnit
+                ? nowAssessment : best
             safety = .noSafeStart(periodKey: recommended.worst?.periodKey ?? "")
         }
         let rejectedCheaper = assessed.filter {
@@ -48,7 +49,8 @@ extension LoadTimingForecastEstimator {
         }
         // Raw saving of the cheapest eligible non-now start, before the minor-unit threshold.
         let alternatives = (passing.isEmpty ? assessed : passing).filter { $0.candidate.start != now }
-        let bestAlternativeSavings = cheapest(alternatives).map { max(0, nowAssessment.candidate.cost - $0.candidate.cost) } ?? 0
+        let bestAlternativeSavings = cheapest(alternatives)
+            .map { max(0, nowAssessment.candidate.cost - $0.candidate.cost) } ?? 0
         return Selection(recommendation: recommended.candidate, safety: safety, ruledOut: ruledOut,
                          bestAlternativeSavings: bestAlternativeSavings)
     }
@@ -68,7 +70,8 @@ extension LoadTimingForecastEstimator {
         func periods(touching start: Date, _ end: Date) -> Set<String> {
             Set(tariffs.filter { $0.start < end && $0.end > start }.map(\.periodKey))
         }
-        var keys = periods(touching: startNow.start, startNow.end).union(periods(touching: recommended.start, recommended.end))
+        var keys = periods(touching: startNow.start, startNow.end)
+            .union(periods(touching: recommended.start, recommended.end))
         if let current = tariffs.first(where: { $0.start <= now && now < $0.end }) { keys.insert(current.periodKey) }
         // When starting now wins, every bank it was compared against keeps a (flat)
         // lane, so people can see the run doesn't draw on them.
@@ -118,7 +121,8 @@ extension LoadTimingForecastEstimator {
             cuts.append(upper)
             cuts.sort()
             for cut in 0 ..< (cuts.count - 1) {
-                guard advance(cuts[cut], cuts[cut + 1], flow: steps.typical[index], periodKey: steps.periods[index]) else {
+                guard advance(cuts[cut], cuts[cut + 1], flow: steps.typical[index],
+                              periodKey: steps.periods[index]) else {
                     return nil
                 }
             }

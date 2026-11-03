@@ -35,7 +35,8 @@ extension DashboardCoordinator {
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
 
         if billAttempts == billAttemptsBeforeWait {
-            launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation, followsLive: true)
+            launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime,
+                                   generation: generation, followsLive: true)
         } else if !latestBillAttemptFollowedLive {
             // Another caller attempted the bill while live was still importing
             // history, so that bill is stale. Let it finish, then recalculate
@@ -43,7 +44,8 @@ extension DashboardCoordinator {
             await billTask?.value
             guard canStillRefresh(trigger: trigger, generation: generation) else { return }
             if !latestBillAttemptFollowedLive {
-                launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(), generation: generation, followsLive: true)
+                launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(),
+                                       generation: generation, followsLive: true)
             }
         }
         // Otherwise a bill already followed this live request. Comparing its
@@ -67,7 +69,8 @@ extension DashboardCoordinator {
         let requestTime = now()
         let generation = siteGeneration
 
-        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation, followsLive: liveTask == nil)
+        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime,
+                               generation: generation, followsLive: liveTask == nil)
 
         await billTask?.value
     }

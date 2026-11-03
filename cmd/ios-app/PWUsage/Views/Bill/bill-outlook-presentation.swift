@@ -30,19 +30,24 @@ enum BillOutlookPresentation {
     static func laneSummary(period: BillOutlookPeriod, totals: [Period], selected: BillOutlookPeriod?,
                             currency: String, locale: Locale = .current) -> String? {
         if let selected { return balance(selected.netGridKwh) }
-        guard let total = totals.first(where: { $0.tariffName == period.tariffName && $0.periodName == period.periodName })
-        else { return nil }
-        return balance(total.netGridKwh) + " · " + DashboardPresentation.currency(total.cost, code: currency, locale: locale)
+        guard let total = totals.first(where: {
+            $0.tariffName == period.tariffName && $0.periodName == period.periodName
+        }) else { return nil }
+        return balance(total.netGridKwh) + " · "
+            + DashboardPresentation.currency(total.cost, code: currency, locale: locale)
     }
     static func guidance(observed: BillOutlookPoint?, projected: BillOutlookPoint?) -> String? {
         guard let observed, let projected else { return nil }
         if let closing = observed.periods.first(where: { period in
             period.netGridKwh > 0.1 && projected.periods.contains { $0.key == period.key && $0.netGridKwh <= 0 }
         }) {
-            return "Expected exports may close your \(DashboardPresentation.tariffPeriodTitle(closing.periodName)) import gap."
+            return "Expected exports may close your "
+                + "\(DashboardPresentation.tariffPeriodTitle(closing.periodName)) import gap."
         }
         if let gap = projected.periods.filter({ $0.netGridKwh > 0.1 }).max(by: { $0.netGridKwh < $1.netGridKwh }) {
-            return "An import gap is expected in \(DashboardPresentation.tariffPeriodTitle(gap.periodName)). Smart Shift can help time your heavy energy use."
+            return "An import gap is expected in "
+                + "\(DashboardPresentation.tariffPeriodTitle(gap.periodName)). "
+                + "Smart Shift can help time your heavy energy use."
         }
         return "An export cushion is expected to remain. Check Smart Shift before starting heavy energy use."
     }

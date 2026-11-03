@@ -83,7 +83,8 @@ struct LoadTimingForecastEstimator {
         }
     }
 
-    static let safetyAssumption = "A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."
+    static let safetyAssumption =
+        "A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."
 
     static func assumptions(for projection: Projection) -> [String] {
         let baseline: [String]
@@ -93,8 +94,9 @@ struct LoadTimingForecastEstimator {
                 "Typical household and battery behavior follows the historical local-time profile.",
                 "Battery behavior is assumed unchanged by this added load."
             ] + (context.hasGridHistory
-                ? ["Solar follows your solar forecast for the next 7 days, then your last four weeks through the bill date.",
-                   safetyAssumption]
+                ? ["Solar follows your solar forecast for the next 7 days, then your last four weeks "
+                    + "through the bill date.",
+                    safetyAssumption]
                 : [])
         case .history:
             baseline = ["Banks follow your last four weeks of grid use through the bill date.", safetyAssumption]
@@ -156,8 +158,10 @@ struct LoadTimingForecastEstimator {
         guard !forecast.isEmpty else { return false }
         var end: Date?
         for interval in forecast.sorted(by: { $0.periodStart < $1.periodStart }) {
-            guard interval.periodStart.timeIntervalSince1970.isFinite, interval.periodEnd.timeIntervalSince1970.isFinite,
-                  interval.periodEnd > interval.periodStart, interval.powerKw.isFinite, interval.powerKw >= 0 else { return false }
+            guard interval.periodStart.timeIntervalSince1970.isFinite,
+                  interval.periodEnd.timeIntervalSince1970.isFinite,
+                  interval.periodEnd > interval.periodStart, interval.powerKw.isFinite,
+                  interval.powerKw >= 0 else { return false }
             if let end, interval.periodStart < end { return false }
             end = interval.periodEnd
         }
@@ -182,7 +186,8 @@ struct LoadTimingForecastEstimator {
 
     static func contiguousEnd(of forecast: [SolarForecastInterval], startingAt source: Date) -> Date {
         let intervals = forecast.sorted { $0.periodStart < $1.periodStart }
-        guard let first = intervals.first(where: { $0.periodStart <= source && $0.periodEnd > source }) else { return source }
+        guard let first = intervals.first(where: { $0.periodStart <= source && $0.periodEnd > source })
+        else { return source }
         var end = first.periodEnd
         for interval in intervals where interval.periodStart >= end {
             guard interval.periodStart == end else { break }
@@ -192,9 +197,11 @@ struct LoadTimingForecastEstimator {
     }
 
     /// The run of back-to-back forecast intervals that contains `date`, if any.
-    static func contiguousBlock(of forecast: [SolarForecastInterval], containing date: Date) -> (start: Date, end: Date)? {
+    static func contiguousBlock(of forecast: [SolarForecastInterval],
+                                containing date: Date) -> (start: Date, end: Date)? {
         let intervals = forecast.sorted { $0.periodStart < $1.periodStart }
-        guard var index = intervals.firstIndex(where: { $0.periodStart <= date && $0.periodEnd > date }) else { return nil }
+        guard var index = intervals.firstIndex(where: { $0.periodStart <= date && $0.periodEnd > date })
+        else { return nil }
         while index > 0, intervals[index - 1].periodEnd == intervals[index].periodStart { index -= 1 }
         return (intervals[index].periodStart, contiguousEnd(of: forecast, startingAt: date))
     }

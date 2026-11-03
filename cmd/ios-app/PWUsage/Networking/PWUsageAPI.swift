@@ -46,10 +46,12 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {
-        let url = try makeURL(path: "/api/site-live-data", siteID: siteID, extra: [URLQueryItem(name: "view", value: "mobile")])
+        let url = try makeURL(path: "/api/site-live-data", siteID: siteID,
+                              extra: [URLQueryItem(name: "view", value: "mobile")])
         let data = try await request(url: url)
         do {
-            return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: data).validating(siteID: siteID)
+            return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: data)
+                .validating(siteID: siteID)
         } catch let error as MobileLiveResponse.ContractError {
             throw error
         } catch {
@@ -69,10 +71,12 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
-        let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID, extra: [URLQueryItem(name: "outlook", value: "1")])
+        let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID,
+                              extra: [URLQueryItem(name: "outlook", value: "1")])
         let data = try await request(url: url)
         do {
-            return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: data).validating(siteID: siteID)
+            return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: data)
+                .validating(siteID: siteID)
         } catch let error as MobileBillResponse.ContractError {
             throw error
         } catch {
@@ -92,14 +96,16 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         guard let url = components.url else { throw PWUsageAPIError.invalidResponse }
         let data = try await request(url: url)
         do {
-            return try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: data).validating(siteID: siteID)
+            return try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: data)
+                .validating(siteID: siteID)
         } catch { throw PWUsageAPIError.invalidResponse }
     }
 
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {
         let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "battery-hold"))
         do {
-            return try MobileContractDecoder.make().decode(BatteryHoldResponse.self, from: data).validating(siteID: siteID)
+            return try MobileContractDecoder.make().decode(BatteryHoldResponse.self, from: data)
+                .validating(siteID: siteID)
         } catch { throw PWUsageAPIError.invalidResponse }
     }
 
@@ -126,7 +132,9 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 
     func unregisterBatteryHoldActivity(siteID: String, registrationID: UUID) async throws {
         let url = try makeSiteURL(siteID: siteID, suffix: "battery-hold/activities")
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw PWUsageAPIError.invalidResponse }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw PWUsageAPIError.invalidResponse
+        }
         components.queryItems = [URLQueryItem(name: "registrationId", value: registrationID.uuidString.lowercased())]
         guard let deleteURL = components.url else { throw PWUsageAPIError.invalidResponse }
         var request = URLRequest(url: deleteURL)

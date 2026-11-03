@@ -6,10 +6,12 @@ import Testing
 struct LoadTimingEstimatorTests {
     @Test("Car charging level changes wall energy and duration while preserving battery energy")
     func carLevelAssumptionsApply() throws {
-        let settings = CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level1)
+        let settings = CarLoadSettings(
+            capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level1)
         let level1Estimate = try #require(LoadTimingEstimator.carChargeEstimate(settings: settings))
         let level2Estimate = try #require(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level2)
+            settings: CarLoadSettings(
+                capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 30, chargingLevel: .level2)
         ))
 
         #expect(level1Estimate.batteryKwh == 6)
@@ -24,7 +26,8 @@ struct LoadTimingEstimatorTests {
     @Test("Zero car charge is distinct from invalid input")
     func zeroCarChargeIsValid() throws {
         let estimate = try #require(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 80, targetStateOfCharge: 80, chargingLevel: .level1)
+            settings: CarLoadSettings(
+                capacityKwh: 60, initialStateOfCharge: 80, targetStateOfCharge: 80, chargingLevel: .level1)
         ))
         #expect(estimate.batteryKwh == 0)
         #expect(estimate.wallKwh == 0)
@@ -34,19 +37,25 @@ struct LoadTimingEstimatorTests {
     @Test("Invalid car settings never produce an estimate")
     func invalidCarSettingsAreRejected() {
         #expect(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: .nan, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1)
+            settings: CarLoadSettings(
+                capacityKwh: .nan, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1)
         ) == nil)
         #expect(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: .infinity, targetStateOfCharge: 80, chargingLevel: .level1)
+            settings: CarLoadSettings(
+                capacityKwh: 60, initialStateOfCharge: .infinity, targetStateOfCharge: 80, chargingLevel: .level1)
         ) == nil)
         #expect(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 80, targetStateOfCharge: 20, chargingLevel: .level1)
+            settings: CarLoadSettings(
+                capacityKwh: 60, initialStateOfCharge: 80, targetStateOfCharge: 20, chargingLevel: .level1)
         ) == nil)
         #expect(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: 0, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1)
+            settings: CarLoadSettings(
+                capacityKwh: 0, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1)
         ) == nil)
         #expect(LoadTimingEstimator.carChargeEstimate(
-            settings: CarLoadSettings(capacityKwh: LoadProfile.maximumCarCapacityKwh + 1, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1)
+            settings: CarLoadSettings(
+                capacityKwh: LoadProfile.maximumCarCapacityKwh + 1,
+                initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level1)
         ) == nil)
     }
 }

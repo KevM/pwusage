@@ -6,7 +6,8 @@ struct EnergyWeatherChartLayoutTests {
     private typealias Layout = SwitchLabelLayout
 
     @Test func roomyChartShowsBothHalvesOfEveryLabel() {
-        let placed = Layout.place(xPositions: [100, 300, 500], beforeWidths: [70, 70, 70], afterWidths: [70, 70, 70], chartWidth: 700)
+        let placed = Layout.place(xPositions: [100, 300, 500], beforeWidths: [70, 70, 70],
+                                  afterWidths: [70, 70, 70], chartWidth: 700)
         #expect(placed == [.both, .both, .both])
     }
 
@@ -19,13 +20,15 @@ struct EnergyWeatherChartLayoutTests {
     @Test func crowdedSwitchesDropHalvesRatherThanOverlap() {
         // Portrait, 250 pt: the first keeps only "On-Peak →" (13–73); the second's left half would
         // touch it, so it keeps its right half (131–191); the third has room for neither.
-        let placed = Layout.place(xPositions: [10, 128, 203], beforeWidths: [60, 60, 60], afterWidths: [60, 60, 60], chartWidth: 250)
+        let placed = Layout.place(xPositions: [10, 128, 203], beforeWidths: [60, 60, 60],
+                                  afterWidths: [60, 60, 60], chartWidth: 250)
         #expect(placed == [.after, .after, .hidden])
     }
 
     @Test func shownHalvesTouchTheirLineAndNeverOverlapOrLeaveTheChart() {
         let xPositions: [CGFloat] = [5, 40, 90, 120, 180, 240]
-        let before = [CGFloat](repeating: 62, count: xPositions.count), after = [CGFloat](repeating: 55, count: xPositions.count)
+        let before = [CGFloat](repeating: 62, count: xPositions.count),
+            after = [CGFloat](repeating: 55, count: xPositions.count)
         let placed = Layout.place(xPositions: xPositions, beforeWidths: before, afterWidths: after, chartWidth: 250)
         var lastRight: CGFloat = -.infinity
         for (index, form) in placed.enumerated() {

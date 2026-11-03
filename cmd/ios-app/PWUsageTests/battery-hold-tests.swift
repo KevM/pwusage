@@ -4,7 +4,9 @@ import Testing
 
 @Suite("Battery hold")
 struct BatteryHoldTests {
-    static let holdJSON = #"{"id":1,"site_id":"site-1","status":"active","mode":"auto","original_reserve":20,"target_reserve":80,"created_at":"2026-10-02T12:00:00.000Z","safety_expires_at":"2026-10-02T20:00:00.000Z","cancelled_observed_reserve":null}"#
+    static let holdJSON = #"{"id":1,"site_id":"site-1","status":"active","mode":"auto","original_reserve":20,"# +
+        #""target_reserve":80,"created_at":"2026-10-02T12:00:00.000Z","# +
+        #""safety_expires_at":"2026-10-02T20:00:00.000Z","cancelled_observed_reserve":null}"#
 
     @Test("Reserve planning matches every website boundary", arguments: [
         (0.0, 0, false), (79.9, 79, false), (80.0, 80, false),
@@ -36,7 +38,10 @@ struct BatteryHoldTests {
     func decodesState() throws {
         let notice = Self.holdJSON.replacingOccurrences(of: "\"active\"", with: "\"cancelled\"")
             .replacingOccurrences(of: "\"cancelled_observed_reserve\":null", with: "\"cancelled_observed_reserve\":45")
-        let response = try MobileContractDecoder.make().decode(BatteryHoldResponse.self, from: Data("{\"hold\":\(Self.holdJSON),\"notice\":\(notice)}".utf8))
+        let response = try MobileContractDecoder.make().decode(
+            BatteryHoldResponse.self,
+            from: Data("{\"hold\":\(Self.holdJSON),\"notice\":\(notice)}".utf8)
+        )
         #expect(try response.validating(siteID: "site-1").hold?.originalReserve == 20)
         #expect(response.notice?.cancelledObservedReserve == 45)
         #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "other") }
@@ -45,7 +50,10 @@ struct BatteryHoldTests {
     @Test("Malformed active reserves fail closed")
     func rejectsMalformedReserves() throws {
         let body = Self.holdJSON.replacingOccurrences(of: "\"target_reserve\":80", with: "\"target_reserve\":180")
-        let response = try MobileContractDecoder.make().decode(BatteryHoldResponse.self, from: Data("{\"hold\":\(body),\"notice\":null}".utf8))
+        let response = try MobileContractDecoder.make().decode(
+            BatteryHoldResponse.self,
+            from: Data("{\"hold\":\(body),\"notice\":null}".utf8)
+        )
         #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "site-1") }
     }
 
@@ -56,7 +64,8 @@ struct BatteryHoldTests {
         #expect(BatteryHoldPresentation.canStart(state: state, stateOfCharge: 75, hasTariff: true, at: now))
         #expect(BatteryHoldPresentation.canStart(state: state, stateOfCharge: nil, hasTariff: true, at: now) == false)
         #expect(BatteryHoldPresentation.canStart(state: state, stateOfCharge: 75, hasTariff: false, at: now) == false)
-        #expect(BatteryHoldPresentation.canStart(state: state, stateOfCharge: 75, hasTariff: true, at: now.addingTimeInterval(121)) == false)
+        #expect(BatteryHoldPresentation.canStart(state: state, stateOfCharge: 75, hasTariff: true,
+                                                 at: now.addingTimeInterval(121)) == false)
         state.isSubmitting = true
         #expect(BatteryHoldPresentation.canStart(state: state, stateOfCharge: 75, hasTariff: true, at: now) == false)
     }
@@ -64,11 +73,17 @@ struct BatteryHoldTests {
     @Test("Automatic and timer holds explain restoration without assuming it happened")
     func restorationCopy() throws {
         let hold = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(Self.holdJSON.utf8))
-        #expect(BatteryHoldPresentation.restorationText(hold, timeZone: "UTC", at: hold.createdAt) == "Restores your backup reserve automatically when the job finishes.")
+        #expect(BatteryHoldPresentation.restorationText(hold, timeZone: "UTC", at: hold.createdAt) ==
+            "Restores your backup reserve automatically when the job finishes.")
         #expect(BatteryHoldPresentation.safetyText(hold, timeZone: "UTC").contains("eight hours"))
-        let timer = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(Self.holdJSON.replacingOccurrences(of: "\"auto\"", with: "\"timer\"").utf8))
-        #expect(BatteryHoldPresentation.restorationText(timer, timeZone: "UTC", at: timer.createdAt).contains("Scheduled"))
-        #expect(BatteryHoldPresentation.restorationText(timer, timeZone: "UTC", at: timer.safetyExpiresAt).contains("Waiting"))
+        let timer = try MobileContractDecoder.make().decode(
+            BatteryHold.self,
+            from: Data(Self.holdJSON.replacingOccurrences(of: "\"auto\"", with: "\"timer\"").utf8)
+        )
+        #expect(BatteryHoldPresentation.restorationText(timer, timeZone: "UTC", at: timer.createdAt)
+            .contains("Scheduled"))
+        #expect(BatteryHoldPresentation.restorationText(timer, timeZone: "UTC", at: timer.safetyExpiresAt)
+            .contains("Waiting"))
     }
 
     @Test("An empty response cannot masquerade as idle status")
@@ -89,17 +104,26 @@ struct BatteryHoldTests {
     @Test("Monitoring countdown expires honestly and load text uses kW")
     func monitoringCopy() {
         let now = Date(timeIntervalSince1970: 1000)
-        let monitoring = BatteryHoldMonitoring(phase: .loadRunning, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: now, estimatedLoadW: 9000)
+        let monitoring = BatteryHoldMonitoring(phase: .loadRunning, checkedAt: now,
+                                               nextCheckAt: now.addingTimeInterval(480), sampledAt: now,
+                                               estimatedLoadW: 9000)
         #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now).contains("9 kW"))
         #expect(BatteryHoldPresentation.loadSummary(monitoring, at: now) == "Detected job: about 9 kW")
         #expect(BatteryHoldPresentation.loadSummary(monitoring, at: now.addingTimeInterval(1300)) == nil)
-        let waiting = BatteryHoldMonitoring(phase: .waitingForData, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: nil, estimatedLoadW: nil)
+        let waiting = BatteryHoldMonitoring(phase: .waitingForData, checkedAt: now,
+                                            nextCheckAt: now.addingTimeInterval(480), sampledAt: nil,
+                                            estimatedLoadW: nil)
         #expect(BatteryHoldPresentation.loadSummary(waiting, at: now) == nil)
         #expect(BatteryHoldPresentation.nextCheckText(monitoring, at: now) == "Checking again in 8 minutes")
-        #expect(BatteryHoldPresentation.nextCheckText(monitoring, at: now.addingTimeInterval(481)) == "Waiting for the next check")
-        #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300)).contains("updated usage data"))
-        #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300)).hasSuffix("Battery Saver is still on."))
-        let watching = BatteryHoldMonitoring(phase: .watching, checkedAt: now, nextCheckAt: now.addingTimeInterval(480), sampledAt: now, estimatedLoadW: nil)
+        #expect(BatteryHoldPresentation.nextCheckText(monitoring, at: now.addingTimeInterval(481)) ==
+            "Waiting for the next check")
+        #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300))
+            .contains("updated usage data"))
+        #expect(BatteryHoldPresentation.monitoringText(monitoring, at: now.addingTimeInterval(1300))
+            .hasSuffix("Battery Saver is still on."))
+        let watching = BatteryHoldMonitoring(phase: .watching, checkedAt: now,
+                                             nextCheckAt: now.addingTimeInterval(480), sampledAt: now,
+                                             estimatedLoadW: nil)
         let expectedWaiting = "Waiting for a job to start. " +
             "Battery Saver turns off if none is detected after two checks."
         #expect(BatteryHoldPresentation.monitoringText(watching, at: now) == expectedWaiting)
@@ -108,7 +132,8 @@ struct BatteryHoldTests {
     @Test("Monitoring decodes alongside an existing hold and remains optional")
     func monitoringDecoding() throws {
         let monitoring = """
-        {"phase":"load_running","checked_at":"2026-10-02T10:16:00Z","next_check_at":"2026-10-02T10:30:00Z","sampled_at":"2026-10-02T10:15:00Z","estimated_load_w":9000}
+        {"phase":"load_running","checked_at":"2026-10-02T10:16:00Z","next_check_at":"2026-10-02T10:30:00Z",
+         "sampled_at":"2026-10-02T10:15:00Z","estimated_load_w":9000}
         """
         let body = Self.holdJSON.dropLast() + ",\"monitoring\":\(monitoring)}"
         let hold = try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(body.utf8))

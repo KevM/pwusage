@@ -19,7 +19,8 @@ struct BatteryHoldControlProvider: AppIntentControlValueProvider {
 
 struct BatteryHoldControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        AppIntentControlConfiguration(kind: BatteryHoldControlIdentity.kind, provider: BatteryHoldControlProvider()) { site in
+        AppIntentControlConfiguration(kind: BatteryHoldControlIdentity.kind,
+                                      provider: BatteryHoldControlProvider()) { site in
             ControlWidgetButton(action: OpenBatteryHoldIntent(site: site)) {
                 // Control Center draws the resting tile from this label.
                 Label("pwusage", systemImage: BatteryHoldControlIdentity.symbolName)
@@ -28,7 +29,10 @@ struct BatteryHoldControl: ControlWidget {
             }
         }
         .displayName("pwusage Battery Saver")
-        .description("Saves your Powerwall charge for when rates spike. Opens pwusage to turn Battery Saver on or off. Sign in to the app first to choose a site.")
+        .description("""
+        Saves your Powerwall charge for when rates spike. Opens pwusage to turn Battery Saver on or off. \
+        Sign in to the app first to choose a site.
+        """)
         .promptsForUserConfiguration()
     }
 }

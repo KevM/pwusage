@@ -57,7 +57,10 @@ extension BatteryHoldActivityCoordinator {
                     await refreshSite(attributes.siteID)
                     return
                 case .requestRejected(let status, let message):
-                    logger.error("Live Activity registration rejected: \(status, privacy: .public) \(message ?? "", privacy: .public)")
+                    logger.error("""
+                    Live Activity registration rejected: \(status, privacy: .public) \
+                    \(message ?? "", privacy: .public)
+                    """)
                     return
                 case .recoverableServerError, .invalidResponse:
                     break

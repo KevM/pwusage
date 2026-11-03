@@ -28,7 +28,8 @@ extension SmartShiftPresentation {
     /// Hours a run spends in each rate period, in the order it reaches them.
     static func hoursByPeriod(from start: Date, to end: Date, timing: LoadTiming) -> [(key: String, hours: Double)] {
         var result: [(key: String, hours: Double)] = []
-        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where segment.start < end && segment.end > start {
+        let sortedSegments = timing.tariffTimeline.sorted(by: { $0.start < $1.start })
+        for segment in sortedSegments where segment.start < end && segment.end > start {
             let overlap = min(segment.end, end).timeIntervalSince(max(segment.start, start)) / 3600
             if let index = result.firstIndex(where: { $0.key == segment.periodKey }) {
                 result[index].hours += overlap
@@ -43,15 +44,20 @@ extension SmartShiftPresentation {
 
     /// "Wash the dishes: save about $2.10 by waiting", when another Job's saving
     /// beats the selected one's by more than a minor unit; otherwise `nil`.
-    static func betterJobHint(selectedID: String, savingsByJob: [(LoadProfile, Double)], currencyCode: String) -> BetterJobHint? {
+    static func betterJobHint(selectedID: String,
+                              savingsByJob: [(LoadProfile, Double)],
+                              currencyCode: String) -> BetterJobHint? {
         let selected = savingsByJob.first { $0.0.id == selectedID }?.1 ?? 0
         let minorUnit = LoadTimingForecastEstimator.currencyMinorUnit(currencyCode)
         guard let (profile, savings) = savingsByJob
             .filter({ $0.0.id != selectedID && $0.1.isFinite })
             .max(by: { $0.1 < $1.1 }),
             savings > minorUnit, savings - selected > minorUnit else { return nil }
-        return BetterJobHint(id: profile.id,
-                             text: "\(profile.name): save about \(DashboardPresentation.currency(savings, code: currencyCode)) by waiting")
+        return BetterJobHint(
+            id: profile.id,
+            text: "\(profile.name): save about "
+                + "\(DashboardPresentation.currency(savings, code: currencyCode)) by waiting"
+        )
     }
 
     // MARK: - Blocked states

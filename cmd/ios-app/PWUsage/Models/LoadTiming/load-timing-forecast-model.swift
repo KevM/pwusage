@@ -30,7 +30,9 @@ extension LoadTimingForecastEstimator {
             if Double(cursor) <= start.timeIntervalSince1970 { cursor += step }
             // The offset only changes at a zone transition, so read it there.
             var offset = timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(cursor)))
-            var nextTransition = timeZone.nextDaylightSavingTimeTransition(after: Date(timeIntervalSince1970: Double(cursor)))
+            var nextTransition = timeZone.nextDaylightSavingTimeTransition(
+                after: Date(timeIntervalSince1970: Double(cursor))
+            )
             while Double(cursor) < end.timeIntervalSince1970 {
                 let date = Date(timeIntervalSince1970: Double(cursor))
                 if let transition = nextTransition, date >= transition {
@@ -103,7 +105,8 @@ extension LoadTimingForecastEstimator {
             self.forecastStart = forecastStart
             self.forecastEnd = forecastEnd
             self.cautious = cautious
-            intervals = projection.intervals.filter { $0.periodStart < forecastEnd }.sorted { $0.periodStart < $1.periodStart }
+            intervals = projection.intervals.filter { $0.periodStart < forecastEnd }
+                .sorted { $0.periodStart < $1.periodStart }
             // Each source is already in order, so a merge is cheaper than hashing and sorting.
             var edges = Array(clock.halfHours(after: .distantPast, before: .distantFuture))
             edges.append(contentsOf: intervals.flatMap { [$0.periodStart, $0.periodEnd] })
@@ -255,7 +258,8 @@ extension LoadTimingForecastEstimator {
         }
 
         /// Integrates the typical (or cautious) flow over [start, end] onto `balances`.
-        func integrate(from start: Date, to end: Date, balances: [String: Double], cautious useCautious: Bool) -> BaselineResult {
+        func integrate(from start: Date, to end: Date, balances: [String: Double],
+                       cautious useCautious: Bool) -> BaselineResult {
             var result = balances
             guard start < end, var index = step(containing: start), end <= edges[edges.count - 1] else {
                 return .incompleteCoverage

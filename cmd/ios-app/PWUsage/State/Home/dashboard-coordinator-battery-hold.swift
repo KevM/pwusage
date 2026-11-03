@@ -54,7 +54,9 @@ extension DashboardCoordinator {
                 if let hold = result.hold { reportBatteryHold(.started(hold), siteID: siteID) }
             } else if case .restore = command {
                 batteryHold.response = .init(hold: nil, notice: batteryHold.response?.notice)
-                if result.status == .succeeded, let previousHoldID { reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID) }
+                if result.status == .succeeded, let previousHoldID {
+                    reportBatteryHold(.stopped(holdID: previousHoldID), siteID: siteID)
+                }
             }
             let response = try await holdAPI.fetchBatteryHold(siteID: siteID).validating(siteID: siteID)
             guard generation == siteGeneration, canRequestAccountData else { return }
@@ -81,7 +83,9 @@ extension DashboardCoordinator {
         }
         guard !live.isUnavailable, let response = live.response,
               response.site.id == selectedSiteID else { return nil }
-        return MobileLiveResponse.validatedStateOfCharge(response.stateOfCharge, takenAt: response.sources.stateOfChargeAt, now: date)
+        return MobileLiveResponse.validatedStateOfCharge(response.stateOfCharge,
+                                                         takenAt: response.sources.stateOfChargeAt,
+                                                         now: date)
     }
 
     func handleBatteryHoldError(_ error: any Error) {

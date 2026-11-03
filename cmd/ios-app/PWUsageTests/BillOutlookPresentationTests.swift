@@ -14,7 +14,8 @@ struct BillOutlookPresentationTests {
         let formatter = ISO8601DateFormatter()
         let now = try #require(formatter.date(from: "2026-11-01T05:00:00Z"))
         let end = try #require(formatter.date(from: "2026-11-02T06:00:00Z"))
-        #expect(BillOutlookPresentation.deadline(now: now, end: end, timeZone: "America/Chicago") == "Cycle ends in 1 day")
+        let deadline = BillOutlookPresentation.deadline(now: now, end: end, timeZone: "America/Chicago")
+        #expect(deadline == "Cycle ends in 1 day")
         #expect(BillOutlookPresentation.deadline(now: end, end: end, timeZone: "America/Chicago") == nil)
     }
     @Test func projectionNamesTheDateItReaches() {
@@ -59,16 +60,27 @@ struct BillOutlookRenderTests {
                 .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -Double(day) * 1.2,
                       buyRate: 0.12, sellRate: 0.04)])
         }
-        // swiftlint:disable:next line_length
-        let history = BillOutlookHistory(points: (0 ... 20).map(point), observedThrough: now, complete: true, tariffTimeline: [])
+        let history = BillOutlookHistory(points: (0 ... 20).map(point),
+                                         observedThrough: now,
+                                         complete: true,
+                                         tariffTimeline: [])
         for large in [false, true] {
-            let chart = BillOutlookChart(history: history, projected: (20 ... 25).map(point), cycleStart: start,
-                                         cycleEnd: end, now: now, timeZone: "America/Chicago", currency: "USD", totals: [
-                                             .init(tariffName: "Home", periodName: "Peak", netGridKwh: 12, cost: 4.8),
-                                             .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -24, cost: -0.96)])
-                .environment(\.dynamicTypeSize, large ? .accessibility2 : .large)
-                .environment(\.colorScheme, .light).frame(width: 353).padding(20)
-                .background(Color(uiColor: .systemGroupedBackground))
+            let chart = BillOutlookChart(
+                history: history,
+                projected: (20 ... 25).map(point),
+                cycleStart: start,
+                cycleEnd: end,
+                now: now,
+                timeZone: "America/Chicago",
+                currency: "USD",
+                totals: [
+                    .init(tariffName: "Home", periodName: "Peak", netGridKwh: 12, cost: 4.8),
+                    .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: -24, cost: -0.96)
+                ]
+            )
+            .environment(\.dynamicTypeSize, large ? .accessibility2 : .large)
+            .environment(\.colorScheme, .light).frame(width: 353).padding(20)
+            .background(Color(uiColor: .systemGroupedBackground))
             let renderer = ImageRenderer(content: chart)
             renderer.scale = 2
             let image = try #require(renderer.uiImage)

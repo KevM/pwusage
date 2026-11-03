@@ -50,7 +50,8 @@ protocol BatteryHoldActivityHandle: AnyObject {
     func pushTokenUpdates() -> AsyncStream<Data>
     func lifecycleUpdates() -> AsyncStream<BatteryHoldActivityLifecycle>
     func update(_ state: BatteryHoldActivityAttributes.ContentState) async
-    /// `immediately` removes it from the Lock Screen; otherwise the final state stays until the person or system removes it.
+    /// `immediately` removes it from the Lock Screen; otherwise the final state stays until the person or
+    /// system removes it.
     func end(_ state: BatteryHoldActivityAttributes.ContentState?, immediately: Bool) async
 }
 

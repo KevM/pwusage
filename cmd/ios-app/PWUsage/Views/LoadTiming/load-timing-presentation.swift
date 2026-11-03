@@ -64,12 +64,14 @@ extension LoadTimingView {
             let others = profileStore.profiles.filter { $0.id != profile.id }.compactMap { other in
                 evaluate(other).result.comparison.map { (other, $0.savings) }
             }
-            hint = SmartShiftPresentation.betterJobHint(selectedID: profile.id, savingsByJob: [(profile, savings)] + others,
+            hint = SmartShiftPresentation.betterJobHint(selectedID: profile.id,
+                                                        savingsByJob: [(profile, savings)] + others,
                                                         currencyCode: currencyCode)
         }
         return SmartShiftState(screen: screen, profile: profile, evaluation: evaluation, timing: timing, now: now,
                                billingCycleEnd: response.currentBill.cycleEnd, hint: hint,
-                               balanceSourceTime: response.sources.energyDataThrough, intervals: intervals, context: context)
+                               balanceSourceTime: response.sources.energyDataThrough,
+                               intervals: intervals, context: context)
     }
 
     func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
@@ -78,17 +80,21 @@ extension LoadTimingView {
         var breakdowns: [CostBreakdown] = []
         var ruledOutNote: String?
         if let comparison, let profile = state.profile {
-            breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison, profile: profile, timing: state.timing,
+            breakdowns = SmartShiftPresentation.costBreakdowns(comparison: comparison,
+                                                               profile: profile, timing: state.timing,
                                                                now: state.now, billingCycleEnd: state.billingCycleEnd,
                                                                currencyCode: currencyCode, timeZone: timeZone)
-            ruledOutNote = SmartShiftPresentation.ruledOutNote(comparison: comparison, profile: profile, timing: state.timing,
+            ruledOutNote = SmartShiftPresentation.ruledOutNote(comparison: comparison,
+                                                               profile: profile, timing: state.timing,
                                                                now: state.now, timeZone: timeZone)
         }
         var diagnostics: SmartShiftDiagnostics?
         if let profile = state.profile, let evaluation = state.evaluation {
             diagnostics = SmartShiftDiagnostics(
-                siteId: site.id, app: .current, job: profile, now: state.now, balanceSourceTime: state.balanceSourceTime,
-                billingCycleEnd: state.billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone, timing: state.timing,
+                siteId: site.id, app: .current, job: profile, now: state.now,
+                balanceSourceTime: state.balanceSourceTime,
+                billingCycleEnd: state.billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone,
+                timing: state.timing,
                 evaluation: evaluation, intervals: state.intervals, context: state.context,
                 forecastFetchedAt: coordinator.publishedForecastFetchedAt)
         }

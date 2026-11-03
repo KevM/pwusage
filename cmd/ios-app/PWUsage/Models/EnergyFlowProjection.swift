@@ -14,7 +14,8 @@ struct EnergyFlowProjection {
                           forecast: [SolarForecastInterval], tariffs: [LoadTimingTariffSegment]) -> [Interval] {
         guard start < end, end.timeIntervalSince(start) <= 32 * 86400,
               let zone = TimeZone(identifier: context.timeZone),
-              context.asOf <= now.addingTimeInterval(3600), now.timeIntervalSince(context.asOf) <= 86400 else { return [] }
+              context.asOf <= now.addingTimeInterval(3600),
+              now.timeIntervalSince(context.asOf) <= 86400 else { return [] }
         let sorted = forecast.sorted { $0.periodStart < $1.periodStart }
         var last: Date?
         guard sorted.allSatisfy({ interval in
@@ -40,14 +41,17 @@ struct EnergyFlowProjection {
             ? .forecast(intervals: sorted, context: context) : .history(context: context)
         let clock = LoadTimingForecastEstimator.WallClock(timeZone: zone, from: start, to: end)
         let model = LoadTimingForecastEstimator.FlowModel(projection: projection, clock: clock,
-                                                          forecastStart: forecastStart, forecastEnd: forecastEnd, tariffs: tariffs)
+                                                          forecastStart: forecastStart,
+                                                          forecastEnd: forecastEnd,
+                                                          tariffs: tariffs)
         let edges = model.boundaries(from: start, to: end)
         var result: [Interval] = []
         for (lower, upper) in zip(edges, edges.dropFirst()) {
             let mid = lower.addingTimeInterval(upper.timeIntervalSince(lower) / 2)
             guard let index = tariffs.firstIndex(where: { $0.start <= lower && $0.end >= upper }),
                   let flow = model.flow(at: mid), flow.netExportKw.isFinite else { break }
-            result.append(.init(start: lower, end: upper, netExportKwh: flow.netExportKw * upper.timeIntervalSince(lower) / 3600,
+            result.append(.init(start: lower, end: upper,
+                                netExportKwh: flow.netExportKw * upper.timeIntervalSince(lower) / 3600,
                                 tariffIndex: index, usesSolar: mid >= forecastStart && mid < forecastEnd))
         }
         return result

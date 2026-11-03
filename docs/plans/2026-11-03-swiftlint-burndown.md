@@ -105,8 +105,25 @@ The baseline reaching zero is not the same as zero exceptions. Remaining
 - `load-timing-view`: `redundant_discardable_let`, where `_ =` breaks
   ViewBuilder type-checking
 
-The last two look like genuine tool false positives; keep them documented
-rather than contorting the code.
+## Zero exceptions
+
+The baseline reaching zero is not the same as zero exceptions. The target is
+zero `swiftlint:disable` comments too, enforced by a CI step added at the end
+of the campaign. Progress:
+
+- Removed: the four `identifier_name` suppressions in `energy-balance-chart`,
+  the `nesting` pair in `open-meteo-weather`, the `function_parameter_count`
+  in `open-meteo-array-model`, the `nesting` pair in `OpenMeteoClientTests`,
+  the `identifier_name` in `solar-layout-fixture-loader`, and the `@Entry`
+  `implicit_optional_initialization` in `demo-mode-controller` (by moving the
+  nested types to file scope, grouping the radiation parameters, renaming
+  `kw` to `kilowatts` with `CodingKeys`, and dropping the explicit default).
+- Handled by the `line_length` batches: the six `line_length` suppressions in
+  `LoadTimingForecastEstimatorTests`, `load-profile-store` and
+  `BillOutlookPresentationTests`.
+- Still open: the `file_length` suppression in
+  `LoadTimingForecastEstimatorTests` (needs the suite split), and the
+  `redundant_discardable_let` in `load-timing-view` (see below).
 
 ## Decisions worth keeping
 
@@ -116,3 +133,9 @@ rather than contorting the code.
 - Do not run `swiftlint --fix` across all rules. `statement_position` collapses
   `do`/`catch` into 200-character lines, and `redundant_discardable_let`
   produces code that does not compile in a ViewBuilder.
+- `load-timing-view` reads `staleRefreshes` with `let _ =` to make the body
+  re-run after a scheduled refresh. SwiftUI's ViewBuilder cannot type-check
+  `_ = staleRefreshes`, and putting the counter into the `.task(id:)` would
+  restart the task immediately and spin. If the suppression is to go, the
+  refresh scheduling has to be reworked first; that is a behaviour change and
+  should not ride along with a lint cleanup.

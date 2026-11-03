@@ -27,7 +27,8 @@ struct BatteryHoldPreviewTests {
                 .padding(16).background(Color.white))
             renderer.scale = 3
             let png = try #require(renderer.uiImage?.pngData())
-            let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("battery-hold-toolbar-\(mode).png")
+            let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("battery-hold-toolbar-\(mode).png")
             try png.write(to: output)
             print("Battery hold toolbar render: \(output.path)")
         }
@@ -50,14 +51,19 @@ struct BatteryHoldPreviewTests {
         window.makeKeyAndVisible()
         defer { window.isHidden = true; priorWindow?.makeKey() }
         for mode in [BatteryHoldPreviewAPI.Mode.idle, .ambiguous, .active, .monitoring, .notice] {
-            let coordinator = DashboardCoordinator(siteID: "preview-home", api: BatteryHoldPreviewAPI(mode: mode), timerInterval: nil)
+            let coordinator = DashboardCoordinator(siteID: "preview-home",
+                                                   api: BatteryHoldPreviewAPI(mode: mode),
+                                                   timerInterval: nil)
             await coordinator.refreshAll(trigger: .userGesture)
             await coordinator.refreshBatteryHold()
             #expect(coordinator.batteryHold.isCurrent)
             for largeText in [false, true] {
-                let view = BatteryHoldSheet(coordinator: coordinator, site: .init(id: "preview-home", name: "Cedar House", utility: "Demo utility"))
-                    .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
-                    .environment(\.colorScheme, .light)
+                let view = BatteryHoldSheet(
+                    coordinator: coordinator,
+                    site: .init(id: "preview-home", name: "Cedar House", utility: "Demo utility")
+                )
+                .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
+                .environment(\.colorScheme, .light)
                 let host = UIHostingController(rootView: view)
                 container.addChild(host)
                 host.beginAppearanceTransition(true, animated: false)

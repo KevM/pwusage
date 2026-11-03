@@ -48,7 +48,8 @@ struct DashboardView: View {
                         }
                         GridRow {
                             billNavigation.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            loadTimingNavigation.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            loadTimingNavigation.frame(maxWidth: .infinity, maxHeight: .infinity,
+                                                       alignment: .topLeading)
                         }
                     }
                     // Side-by-side cards share a top and bottom edge.
@@ -158,7 +159,8 @@ struct DashboardView: View {
                 coordinator.live.isRestored ? "Energy · \(live?.site.localDate ?? "Last visit")" : "Today so far"
             )
             if let live, live.sources.energyDataThrough == nil {
-                EmptyCard(symbol: "chart.bar", title: "No energy data yet", message: "Today’s totals will appear after the first energy sample is recorded.")
+                EmptyCard(symbol: "chart.bar", title: "No energy data yet",
+                          message: "Today’s totals will appear after the first energy sample is recorded.")
             } else if let today = live?.today {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 16) {
@@ -169,7 +171,8 @@ struct DashboardView: View {
                     }
                 }
             } else {
-                EmptyCard(symbol: "chart.bar", title: "Energy data unavailable", message: "No energy samples are available yet.")
+                EmptyCard(symbol: "chart.bar", title: "Energy data unavailable",
+                          message: "No energy samples are available yet.")
             }
         }
         .accessibilityElement(children: .contain)
@@ -190,11 +193,16 @@ struct DashboardView: View {
                                 .frame(width: 48, height: 48)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(DashboardPresentation.currency(bill.currentBill.estimatedCost, code: bill.currentBill.currency))
+                                Text(DashboardPresentation.currency(bill.currentBill.estimatedCost,
+                                                                    code: bill.currentBill.currency))
                                     .font(.title2.weight(.bold))
                                     .foregroundStyle(.primary)
                                     .monospacedDigit()
-                                Text("\(DashboardPresentation.date(bill.currentBill.cycleStart, timeZoneIdentifier: siteTimeZone)) – \(DashboardPresentation.date(bill.currentBill.cycleEnd, timeZoneIdentifier: siteTimeZone))")
+                                let cycleStart = DashboardPresentation.date(
+                                    bill.currentBill.cycleStart, timeZoneIdentifier: siteTimeZone)
+                                let cycleEnd = DashboardPresentation.date(
+                                    bill.currentBill.cycleEnd, timeZoneIdentifier: siteTimeZone)
+                                Text("\(cycleStart) – \(cycleEnd)")
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
@@ -290,9 +298,10 @@ struct DashboardView: View {
                 ForEach(tiles.indices, id: \.self) { tiles[$0] }
             })
         } else {
-            AnyView(LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                ForEach(tiles.indices, id: \.self) { tiles[$0] }
-            })
+            AnyView(LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                              spacing: 10) {
+                    ForEach(tiles.indices, id: \.self) { tiles[$0] }
+                })
         }
     }
 

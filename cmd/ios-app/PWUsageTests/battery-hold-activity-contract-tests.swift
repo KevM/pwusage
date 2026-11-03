@@ -40,8 +40,11 @@ struct BatteryHoldActivityContractTests {
 
     @Test("Decodes the home load range, and its absence from older payloads")
     func decodesLoadRange() throws {
-        let state = try decode(Self.deliveryDocExample.replacingOccurrences(of: #""cancelledObservedReserve": null }"#, with:
-            #""cancelledObservedReserve": null, "sampledAt": 813751800, "baselineLoadW": 1200, "homeLoadW": 8400, "peakLoadW": 9100 }"#))
+        let state = try decode(Self.deliveryDocExample.replacingOccurrences(
+            of: #""cancelledObservedReserve": null }"#,
+            with: #""cancelledObservedReserve": null, "sampledAt": 813751800, "baselineLoadW": 1200, "#
+                + #""homeLoadW": 8400, "peakLoadW": 9100 }"#
+        ))
         #expect(state.sampledAt == Date(timeIntervalSinceReferenceDate: 813751800))
         #expect(state.baselineLoadW == 1200)
         #expect(state.homeLoadW == 8400)
@@ -52,8 +55,10 @@ struct BatteryHoldActivityContractTests {
 
     @Test("Decodes the live battery charge, and its absence from older payloads")
     func decodesBatteryPercent() throws {
-        let state = try decode(Self.deliveryDocExample.replacingOccurrences(of: #""cancelledObservedReserve": null }"#, with:
-            #""cancelledObservedReserve": null, "batteryPercent": 82.4 }"#))
+        let state = try decode(Self.deliveryDocExample.replacingOccurrences(
+            of: #""cancelledObservedReserve": null }"#,
+            with: #""cancelledObservedReserve": null, "batteryPercent": 82.4 }"#
+        ))
         #expect(state.batteryPercent == 82.4)
         #expect(try decode(Self.deliveryDocExample).batteryPercent == nil)
         let data = try JSONEncoder().encode(state)
@@ -66,7 +71,8 @@ struct BatteryHoldActivityContractTests {
         { "schema": 1, "holdId": 7, "status": "restored", "mode": "timer", "phase": null,
           "originalReserve": 20, "targetReserve": 80, "estimatedLoadW": null,
           "startedAt": 813751200, "safetyExpiresAt": 813780000, "checkedAt": null,
-          "nextCheckAt": null, "endedAt": 813760000, "restoreReason": "timer_elapsed", "cancelledObservedReserve": null }
+          "nextCheckAt": null, "endedAt": 813760000, "restoreReason": "timer_elapsed",
+          "cancelledObservedReserve": null }
         """)
         #expect(restored.status == .restored)
         #expect(restored.mode == .timer)
@@ -78,7 +84,8 @@ struct BatteryHoldActivityContractTests {
         { "schema": 1, "holdId": 7, "status": "cancelled", "mode": "auto", "phase": "watching",
           "originalReserve": 20, "targetReserve": 80, "estimatedLoadW": null,
           "startedAt": 813751200, "safetyExpiresAt": 813780000, "checkedAt": 813752102,
-          "nextCheckAt": 813753000, "endedAt": 813752200, "restoreReason": "reserve_changed", "cancelledObservedReserve": 45 }
+          "nextCheckAt": 813753000, "endedAt": 813752200, "restoreReason": "reserve_changed",
+          "cancelledObservedReserve": 45 }
         """)
         #expect(cancelled.status == .cancelled)
         #expect(cancelled.restoreReason == .reserveChanged)
@@ -132,7 +139,8 @@ struct BatteryHoldActivityContractTests {
         #expect(BatteryHoldActivityAttributes.ContentState(hold: hold) == (try decode(Self.deliveryDocExample)))
         let monitoring = try MobileContractDecoder.make().decode(BatteryHoldMonitoring.self, from: Data("""
         {"phase":"load_running","checked_at":"2026-10-15T10:15:02.000Z","next_check_at":"2026-10-15T10:30:00.000Z",
-         "sampled_at":"2026-10-15T10:10:00.000Z","estimated_load_w":7200,"baseline_load_w":1200,"home_load_w":8400,"peak_load_w":9100,"battery_percent":82.4}
+         "sampled_at":"2026-10-15T10:10:00.000Z","estimated_load_w":7200,"baseline_load_w":1200,
+         "home_load_w":8400,"peak_load_w":9100,"battery_percent":82.4}
         """.utf8))
         hold.monitoring = monitoring
         let state = BatteryHoldActivityAttributes.ContentState(hold: hold)

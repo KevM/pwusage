@@ -25,17 +25,20 @@ struct BatteryHoldActivityCoordinatorTests {
 
     private func hold(id: Int = 7, site: String = "site-1", mode: BatteryHoldMode = .auto,
                       checkedAt: TimeInterval? = nil, hours: Double = 8) -> BatteryHold {
-        var hold = BatteryHold(id: id, siteID: site, status: .active, mode: mode, originalReserve: 20, targetReserve: 100,
+        var hold = BatteryHold(id: id, siteID: site, status: .active, mode: mode,
+                               originalReserve: 20, targetReserve: 100,
                                createdAt: start, safetyExpiresAt: start.addingTimeInterval(hours * 3600),
                                cancelledObservedReserve: nil)
         if let checkedAt {
             hold.monitoring = .init(phase: .watching, checkedAt: start.addingTimeInterval(checkedAt),
-                                    nextCheckAt: start.addingTimeInterval(checkedAt + 900), sampledAt: nil, estimatedLoadW: nil)
+                                    nextCheckAt: start.addingTimeInterval(checkedAt + 900),
+                                    sampledAt: nil, estimatedLoadW: nil)
         }
         return hold
     }
 
-    private func started(_ coordinator: BatteryHoldActivityCoordinator, _ hold: BatteryHold) async throws -> FakeActivityHandle {
+    private func started(_ coordinator: BatteryHoldActivityCoordinator,
+                         _ hold: BatteryHold) async throws -> FakeActivityHandle {
         coordinator.batteryHoldConfirmed(.started(hold), siteID: hold.siteID, timeZone: "America/Los_Angeles")
         try await eventually { host.handles.contains { $0.attributes.holdID == hold.id } }
         return try #require(host.handles.last)
@@ -146,17 +149,22 @@ struct BatteryHoldActivityCoordinatorTests {
         let coordinator = makeCoordinator()
         let handle = try await started(coordinator, hold(checkedAt: 900))
         // An older reading (a refresh that raced a push) never replaces a newer one.
-        coordinator.batteryHoldConfirmed(.refreshed(.init(hold: hold(checkedAt: 0), notice: nil)), siteID: "site-1", timeZone: nil)
+        coordinator.batteryHoldConfirmed(.refreshed(.init(hold: hold(checkedAt: 0), notice: nil)),
+                                         siteID: "site-1", timeZone: nil)
         // Another site's state never touches this site's activity.
         coordinator.batteryHoldConfirmed(.refreshed(.init(hold: nil, notice: nil)), siteID: "site-2", timeZone: nil)
         try await staysTrue { handle.updates.isEmpty && handle.ends.isEmpty }
-        coordinator.batteryHoldConfirmed(.refreshed(.init(hold: hold(checkedAt: 1800), notice: nil)), siteID: "site-1", timeZone: nil)
+        coordinator.batteryHoldConfirmed(.refreshed(.init(hold: hold(checkedAt: 1800), notice: nil)),
+                                         siteID: "site-1", timeZone: nil)
         try await eventually { handle.updates.count == 1 }
 
-        var cancelled = BatteryHold(id: 7, siteID: "site-1", status: .cancelled, mode: .auto, originalReserve: 20, targetReserve: 100,
-                                    createdAt: start, safetyExpiresAt: start.addingTimeInterval(8 * 3600), cancelledObservedReserve: 45)
+        var cancelled = BatteryHold(id: 7, siteID: "site-1", status: .cancelled, mode: .auto,
+                                    originalReserve: 20, targetReserve: 100,
+                                    createdAt: start, safetyExpiresAt: start.addingTimeInterval(8 * 3600),
+                                    cancelledObservedReserve: 45)
         cancelled.monitoring = nil
-        coordinator.batteryHoldConfirmed(.refreshed(.init(hold: nil, notice: cancelled)), siteID: "site-1", timeZone: nil)
+        coordinator.batteryHoldConfirmed(.refreshed(.init(hold: nil, notice: cancelled)),
+                                         siteID: "site-1", timeZone: nil)
         try await eventually { handle.ends.count == 1 }
         #expect(handle.ends[0].state?.status == .cancelled)
         #expect(handle.ends[0].state?.cancelledObservedReserve == 45)
@@ -228,7 +236,8 @@ struct BatteryHoldActivityCoordinatorTests {
         handle.emit(token: Data(repeating: 1, count: 32))
         try await eventually { api.registrations.count == 1 }
         first.stopObserving() // the process exits
-        let orphan = FakeActivityHandle(attributes: .init(siteID: "site-9", siteName: "Old", holdID: 3, registrationID: UUID(),
+        let orphan = FakeActivityHandle(attributes: .init(siteID: "site-9", siteName: "Old",
+                                                          holdID: 3, registrationID: UUID(),
                                                           timeZoneIdentifier: "UTC", activityStartedAt: start),
                                         state: .init(hold: hold(id: 3, site: "site-9")))
         host.handles.append(orphan)
@@ -239,7 +248,8 @@ struct BatteryHoldActivityCoordinatorTests {
         // A new process: same host and store, no in-memory state.
         api.holdResponses["site-1"] = .init(hold: hold(checkedAt: 1800), notice: nil)
         let relaunched = BatteryHoldActivityCoordinator(
-            host: host, api: api, apnsEnvironment: .sandbox, store: BatteryHoldActivityRegistrationStore(defaults: defaults),
+            host: host, api: api, apnsEnvironment: .sandbox,
+            store: BatteryHoldActivityRegistrationStore(defaults: defaults),
             now: { [start] in start.addingTimeInterval(2000) }, sleep: { _ in })
         relaunched.sitesAuthorized([MobileSite(id: "site-1", name: "Home", utility: "PGE"),
                                     MobileSite(id: "site-2", name: "Cabin", utility: "PGE")])

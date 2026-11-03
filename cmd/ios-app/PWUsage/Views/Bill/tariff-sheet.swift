@@ -19,8 +19,14 @@ struct TariffSheet: View {
                             Label(summary, systemImage: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                         } else {
-                            Text(failed ? "Current activity unavailable" : response.activityIsCurrent(now: context.date) ? "No period matches the current time." : "Updating current activity…")
-                                .foregroundStyle(.secondary)
+                            Text(
+                                failed
+                                    ? "Current activity unavailable"
+                                    : response.activityIsCurrent(now: context.date)
+                                    ? "No period matches the current time."
+                                    : "Updating current activity…"
+                            )
+                            .foregroundStyle(.secondary)
                         }
                         Text("Times shown in \(response.site.timezone)")
                             .font(.caption).foregroundStyle(.secondary)
@@ -36,12 +42,15 @@ struct TariffSheet: View {
                                 }
                                 ForEach(season.periods) { period in
                                     periodRow(period, currency: response.currency,
-                                              active: period.isActive && !failed && response.activityIsCurrent(now: context.date))
+                                              active: period.isActive && !failed
+                                                  && response.activityIsCurrent(now: context.date))
                                 }
                             } header: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(tariff.name)
-                                    Text(season.name + (season.isActive && !failed && response.activityIsCurrent(now: context.date) ? " · Active season" : ""))
+                                    let isSeasonActive = season.isActive && !failed
+                                        && response.activityIsCurrent(now: context.date)
+                                    Text(season.name + (isSeasonActive ? " · Active season" : ""))
                                         .font(.headline)
                                     Text(season.dates)
                                 }
@@ -49,21 +58,30 @@ struct TariffSheet: View {
                         }
                     }
                     if response.tariffs.isEmpty {
-                        ContentUnavailableView("No rate plans", systemImage: "tag", description: Text("No rate plans are set up for this site."))
+                        ContentUnavailableView("No rate plans",
+                                               systemImage: "tag",
+                                               description: Text("No rate plans are set up for this site."))
                     }
                 } else if isLoading {
                     HStack { Spacer(); ProgressView("Loading rate plans…"); Spacer() }
                 }
                 if failed {
                     Section {
-                        Text(response == nil ? "Rate plans could not be loaded." : "Showing previously loaded rates. Current activity could not be refreshed.")
-                            .foregroundStyle(.secondary)
+                        Text(
+                            response == nil
+                                ? "Rate plans could not be loaded."
+                                : "Showing previously loaded rates. Current activity could not be refreshed."
+                        )
+                        .foregroundStyle(.secondary)
                         Button("Retry") { Task { await refresh() } }.disabled(isLoading)
                     }
                 }
                 Section {
-                    Text("Rates are saved from your Powerwall settings in the Tesla app. Holiday overrides are included when determining the active period.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    Text(
+                        "Rates are saved from your Powerwall settings in the Tesla app. "
+                            + "Holiday overrides are included when determining the active period."
+                    )
+                    .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Rate Plans")
@@ -133,7 +151,13 @@ struct TariffSheet: View {
 #Preview("Rate Plans · Empty") {
     NavigationStack {
         TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
-            MobileTariffsResponse(version: 1, site: .init(id: "preview", name: "Home", timezone: "America/Chicago"), currency: "USD", asOf: .now, tariffs: [])
+            MobileTariffsResponse(
+                version: 1,
+                site: .init(id: "preview", name: "Home", timezone: "America/Chicago"),
+                currency: "USD",
+                asOf: .now,
+                tariffs: []
+            )
         })
     }
 }
@@ -145,12 +169,20 @@ struct TariffSheet: View {
             currency: "USD", asOf: .now,
             tariffs: [.init(id: 1, name: "Residential", seasons: [
                 .init(id: 2, name: "Winter", dates: "Oct 1 – Apr 30", isActive: true, periods: [
-                    .init(id: 3, name: "Peak", days: "Mon – Fri", times: "08:00 – 20:00", buyRate: 0.30, sellRate: 0.10, isActive: true),
-                    .init(id: 4, name: "Off peak", days: "Mon – Fri", times: "20:00 – 08:00", buyRate: 0.15, sellRate: 0.08, isActive: false),
-                    .init(id: 5, name: "Weekend", days: "Sat – Sun", times: "All Day", buyRate: 0.15, sellRate: 0.08, isActive: false)
+                    .init(id: 3, name: "Peak", days: "Mon – Fri",
+                          times: "08:00 – 20:00", buyRate: 0.30, sellRate: 0.10,
+                          isActive: true),
+                    .init(id: 4, name: "Off peak", days: "Mon – Fri",
+                          times: "20:00 – 08:00", buyRate: 0.15, sellRate: 0.08,
+                          isActive: false),
+                    .init(id: 5, name: "Weekend", days: "Sat – Sun",
+                          times: "All Day", buyRate: 0.15, sellRate: 0.08,
+                          isActive: false)
                 ]),
                 .init(id: 6, name: "Summer", dates: "May 1 – Sep 30", isActive: false, periods: [
-                    .init(id: 7, name: "Standard", days: "Every day", times: "All Day", buyRate: 0.25, sellRate: 0.10, isActive: false)
+                    .init(id: 7, name: "Standard", days: "Every day",
+                          times: "All Day", buyRate: 0.25, sellRate: 0.10,
+                          isActive: false)
                 ])
             ])]
         )

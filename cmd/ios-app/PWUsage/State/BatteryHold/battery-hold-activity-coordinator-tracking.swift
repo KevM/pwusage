@@ -69,7 +69,8 @@ extension BatteryHoldActivityCoordinator {
                 await update(item, to: .init(hold: hold))
             } else if let notice = response.notice, notice.id == holdID {
                 await end(item, as: item.handle.state.ended(
-                    as: .cancelled, reason: .reserveChanged, at: now(), observedReserve: notice.cancelledObservedReserve))
+                    as: .cancelled, reason: .reserveChanged, at: now(),
+                    observedReserve: notice.cancelledObservedReserve))
             } else {
                 // Restored, or replaced by a newer hold. This read doesn't say which,
                 // so the activity doesn't claim a restoration it hasn't seen.

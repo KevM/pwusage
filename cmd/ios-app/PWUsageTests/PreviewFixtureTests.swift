@@ -121,7 +121,8 @@ struct PreviewFixtureTests {
         let estimatorContext = try #require(context.estimatorContext)
         let store = PreviewForecastStore(mode: .combinedArrays, now: now)
         let batch = await store.rawBatch()
-        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3,
+                                 durationHours: 1, carSettings: nil)
 
         let result = LoadTimingForecastEstimator.evaluate(
             profile: washer,
@@ -133,7 +134,10 @@ struct PreviewFixtureTests {
             billingCycleEnd: response.currentBill.cycleEnd,
             currencyCode: response.currentBill.currency
         )
-        let comparison = try #require(result.comparison, "The preview must produce real numbers, not a fallback: \(String(describing: result.unavailableReason))")
+        let comparison = try #require(
+            result.comparison,
+            "The preview must produce real numbers, not a fallback: \(String(describing: result.unavailableReason))"
+        )
 
         #expect(comparison.recommendedEnd > comparison.recommendedStart)
         #expect(comparison.horizonEnd > comparison.horizonStart)

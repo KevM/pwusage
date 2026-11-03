@@ -86,7 +86,10 @@ struct MobileLiveResponse: Codable, Equatable {
         case invalidAmount
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayCost, todayComplete, currentBill, sources }
+    private enum CodingKeys: String, CodingKey {
+        case version, site, live, stateOfCharge, activeTariff, activeLoadTiming,
+             today, todayCost, todayComplete, currentBill, sources
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)

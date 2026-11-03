@@ -87,7 +87,9 @@ struct DashboardPresentationTests {
     func unknownPowerFlow() {
         for age in [901.0, -1.0] {
             let result = flow(solar: 1000, home: 1000, grid: 0, battery: 0, age: age)
-            #expect((result.supplying + result.receiving).allSatisfy { $0.role == .unknown && $0.detail == "Flow unknown" })
+            #expect((result.supplying + result.receiving).allSatisfy {
+                $0.role == .unknown && $0.detail == "Flow unknown"
+            })
         }
         let unavailable = flow(solar: 1000, home: 1000, grid: 0, battery: 0, unavailable: true)
         #expect((unavailable.supplying + unavailable.receiving).allSatisfy { $0.role == .unknown })
@@ -97,7 +99,9 @@ struct DashboardPresentationTests {
         )
         #expect((missing.supplying + missing.receiving).allSatisfy { $0.role == .unknown })
         let invalid = flow(solar: .nan, home: -.infinity, grid: 100, battery: 0)
-        #expect((invalid.supplying + invalid.receiving).filter { $0.id == .solar || $0.id == .home }.allSatisfy { $0.role == .unknown && $0.watts == nil })
+        #expect((invalid.supplying + invalid.receiving)
+            .filter { $0.id == .solar || $0.id == .home }
+            .allSatisfy { $0.role == .unknown && $0.watts == nil })
     }
 
     @Test("Unchanged readings expire locally before the next five-minute refresh")
@@ -154,7 +158,8 @@ struct DashboardPresentationTests {
 
     @Test("Battery header describes charge and direction without repeating power")
     func batteryHeaderDescribesChargeAndDirectionWithoutRepeatingPower() {
-        #expect(DashboardPresentation.batteryDescription(stateOfCharge: nil, powerWatts: -250) == "Battery --, Charging")
+        #expect(DashboardPresentation.batteryDescription(stateOfCharge: nil, powerWatts: -250)
+            == "Battery --, Charging")
         #expect(DashboardPresentation.batteryDescription(stateOfCharge: 0, powerWatts: 0) == "Battery 0%, Idle")
     }
 
@@ -173,7 +178,8 @@ struct DashboardPresentationTests {
     func freshnessUsesTheSuppliedSourceTimeAndShowsMissingAndStaleStates() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(DashboardPresentation.freshness(now.addingTimeInterval(-60), now: now) == "Updated 1 min ago")
-        #expect(DashboardPresentation.freshness(now.addingTimeInterval(-16 * 60), now: now) == "Stale · updated 16 min ago")
+        #expect(DashboardPresentation.freshness(now.addingTimeInterval(-16 * 60), now: now)
+            == "Stale · updated 16 min ago")
         #expect(DashboardPresentation.freshness(nil, now: now) == "Source time unavailable")
         #expect(DashboardPresentation.freshness(now.addingTimeInterval(60), now: now) == "Source time is in the future")
     }
@@ -190,16 +196,23 @@ struct DashboardPresentationTests {
         #expect(DashboardPresentation.loadRate(0.29, code: "USD", locale: Locale(identifier: "en_US")) == "29¢/kWh")
         #expect(DashboardPresentation.loadRate(0.57, code: "USD", locale: Locale(identifier: "en_US")) == "57¢/kWh")
         #expect(DashboardPresentation.loadRate(0.14, code: "USD", locale: Locale(identifier: "en_US")) == "14¢/kWh")
-        #expect(DashboardPresentation.loadRate(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34¢/kWh")
+        #expect(DashboardPresentation.loadRate(0.12345, code: "USD", locale: Locale(identifier: "en_US"))
+            == "12.34¢/kWh")
         #expect(DashboardPresentation.loadRate(0.04, code: "GBP", locale: Locale(identifier: "en_GB")) == "£0.04/kWh")
         #expect(DashboardPresentation.liveLoadBalance(3.25) == "Banked 3.3 kWh")
         #expect(DashboardPresentation.liveLoadBalance(-4) == "Owed 4.0 kWh")
         #expect(DashboardPresentation.liveLoadBalance(0) == "Even 0.0 kWh")
         #expect(DashboardPresentation.liveLoadBalance(nil) == "No bank yet")
         #expect(DashboardPresentation.liveLoadBalanceAccessibilityLabel(3.25) == "Banked 3.3 kilowatt-hours")
-        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12, code: "USD", locale: Locale(identifier: "en_US")) == "12 cents per kilowatt-hour")
-        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.01, code: "USD", locale: Locale(identifier: "en_US")) == "1 cent per kilowatt-hour")
-        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12345, code: "USD", locale: Locale(identifier: "en_US")) == "12.34 cents per kilowatt-hour")
+        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12, code: "USD",
+                                                                 locale: Locale(identifier: "en_US"))
+                == "12 cents per kilowatt-hour")
+        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.01, code: "USD",
+                                                                 locale: Locale(identifier: "en_US"))
+                == "1 cent per kilowatt-hour")
+        #expect(DashboardPresentation.loadRateAccessibilityLabel(0.12345, code: "USD",
+                                                                 locale: Locale(identifier: "en_US"))
+                == "12.34 cents per kilowatt-hour")
     }
 
     @Test("Tariff period titles match website normalization")

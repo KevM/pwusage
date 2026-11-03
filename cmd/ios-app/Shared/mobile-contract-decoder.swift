@@ -12,7 +12,8 @@ enum MobileContractDecoder {
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
             guard let date = ISO8601DateFormatter.parse(value) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 timestamp: \(value)")
+                throw DecodingError.dataCorruptedError(in: container,
+                                                       debugDescription: "Invalid ISO-8601 timestamp: \(value)")
             }
             return date
         }

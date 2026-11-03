@@ -306,20 +306,19 @@
         }
 
         private var timing: LoadTiming {
-            let segments = spans.map {
-                LoadTimingTariffSegment(start: Self.local($0.from), end: Self.local($0.end), periodKey: $0.key, name: $0.key,
-                                        buyRate: $0.buy, sellRate: $0.sell)
-            }
+            let segments = spans.map { LoadTimingTariffSegment(start: Self.local($0.from),
+                                                               end: Self.local($0.end), periodKey: $0.key,
+                                                               name: $0.key, buyRate: $0.buy, sellRate: $0.sell) }
             var seen: Set<String> = []
             let periods = spans.compactMap { span -> LoadTimingPeriod? in
                 guard seen.insert(span.key).inserted else { return nil }
                 return LoadTimingPeriod(name: span.key, marginalCost: nil, basis: "cycle-net-export",
-                                        cycleNetExportKwh: balances[span.key] ?? 0, isActive: false, nextStartPhrase: nil,
-                                        buyRate: span.buy, sellRate: span.sell)
+                                        cycleNetExportKwh: balances[span.key] ?? 0, isActive: false,
+                                        nextStartPhrase: nil, buyRate: span.buy, sellRate: span.sell)
             }
             return LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods,
-                              pricingPeriods: periods, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil,
-                              nextStartPhraseByKey: [:])
+                              pricingPeriods: periods, tariffTimeline: segments,
+                              nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
         }
 
         private var projection: LoadTimingForecastEstimator.Projection {
@@ -328,12 +327,14 @@
                 let start = Self.local(Double(index) / 2)
                 let hour = Self.calendar.component(.hour, from: start)
                 let sun = max(0, sin(Double.pi * (Double(hour) - 7) / 11))
-                return SolarForecastInterval(periodStart: start, periodEnd: start.addingTimeInterval(1800), powerKw: 2.6 * sun)
+                return SolarForecastInterval(periodStart: start,
+                                             periodEnd: start.addingTimeInterval(1800), powerKw: 2.6 * sun)
             }
             let slots = stride(from: 0, to: 1440, by: 30).map {
                 LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0.7, batteryNetChargeKw: 0)
             }
-            return .forecast(intervals: intervals, context: .init(timeZone: Self.timeZone, slots: slots, asOf: Self.now))
+            return .forecast(intervals: intervals,
+                             context: .init(timeZone: Self.timeZone, slots: slots, asOf: Self.now))
         }
 
         var screen: SmartShiftScreen {

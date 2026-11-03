@@ -6,7 +6,8 @@
         private let site = MobileSite(id: "preview-home", name: "Cedar House", utility: "Demo utility")
 
         init(mode: BatteryHoldPreviewAPI.Mode) {
-            _coordinator = StateObject(wrappedValue: DashboardCoordinator(siteID: "preview-home", api: BatteryHoldPreviewAPI(mode: mode), timerInterval: nil))
+            _coordinator = StateObject(wrappedValue: DashboardCoordinator(
+                siteID: "preview-home", api: BatteryHoldPreviewAPI(mode: mode), timerInterval: nil))
         }
 
         var body: some View {

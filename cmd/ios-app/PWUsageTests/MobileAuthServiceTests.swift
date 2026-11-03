@@ -27,31 +27,53 @@ final class MobileAuthServiceTests {
 
     @Test("Callback requires exact scheme, host, path and matching state")
     func callbackRequiresExactSchemeHostPathAndMatchingState() throws {
-        let valid = try #require(URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected"))
+        let valid = try #require(
+            URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected"))
         let callback = try MobileAuthService.parseCallback(valid, expectedState: "expected")
         #expect(callback.code == "opaque")
         #expect(callback.attemptID == Self.attemptID)
 
-        let wrongScheme = try #require(URL(string: "https://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected"))
-        let wrongHost = try #require(URL(string: "pwusage://other/callback?code=opaque&attempt=\(Self.attemptID)&state=expected"))
-        let wrongPath = try #require(URL(string: "pwusage://auth/other?code=opaque&attempt=\(Self.attemptID)&state=expected"))
-        let wrongState = try #require(URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=other"))
+        let wrongScheme = try #require(
+            URL(string: "https://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected"))
+        let wrongHost = try #require(
+            URL(string: "pwusage://other/callback?code=opaque&attempt=\(Self.attemptID)&state=expected"))
+        let wrongPath = try #require(
+            URL(string: "pwusage://auth/other?code=opaque&attempt=\(Self.attemptID)&state=expected"))
+        let wrongState = try #require(
+            URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=other"))
 
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(wrongScheme, expectedState: "expected") }
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(wrongHost, expectedState: "expected") }
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(wrongPath, expectedState: "expected") }
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(wrongState, expectedState: "expected") }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(wrongScheme, expectedState: "expected")
+        }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(wrongHost, expectedState: "expected")
+        }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(wrongPath, expectedState: "expected")
+        }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(wrongState, expectedState: "expected")
+        }
     }
 
     @Test("Callback requires unique code, attempt and state and rejects token parameters")
     func callbackRequiresUniqueCodeAttemptAndStateAndRejectsTokenParameters() throws {
-        let missingCode = try #require(URL(string: "pwusage://auth/callback?attempt=\(Self.attemptID)&state=expected"))
-        let duplicateState = try #require(URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected&state=expected"))
-        let tokenInURL = try #require(URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected&jwt=secret"))
+        let missingCode = try #require(
+            URL(string: "pwusage://auth/callback?attempt=\(Self.attemptID)&state=expected"))
+        let duplicateState = try #require(
+            URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected&state=expected"))
+        let tokenInURL = try #require(
+            URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=expected&jwt=secret"))
 
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(missingCode, expectedState: "expected") }
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(duplicateState, expectedState: "expected") }
-        #expect(throws: (any Error).self) { try MobileAuthService.parseCallback(tokenInURL, expectedState: "expected") }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(missingCode, expectedState: "expected")
+        }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(duplicateState, expectedState: "expected")
+        }
+        #expect(throws: (any Error).self) {
+            try MobileAuthService.parseCallback(tokenInURL, expectedState: "expected")
+        }
     }
 
     @Test("Callback server error and ASWebAuthentication cancellation are distinct")
@@ -80,7 +102,9 @@ final class MobileAuthServiceTests {
         let loginURL = try #require(fakeSession.configuredURLs.first)
         let components = try #require(URLComponents(url: loginURL, resolvingAgainstBaseURL: false))
         #expect(components.path == "/login")
-        let query = Dictionary(uniqueKeysWithValues: try #require(components.queryItems).map { ($0.name, $0.value ?? "") })
+        let query = Dictionary(uniqueKeysWithValues: try #require(components.queryItems).map {
+            ($0.name, $0.value ?? "")
+        })
         let challenge = try #require(query["mobile_challenge"])
         let state = try #require(query["mobile_state"])
         #expect((43 ... 128).contains(challenge.count))
@@ -105,7 +129,8 @@ final class MobileAuthServiceTests {
         let service = try makeService()
         let task = Task { try await service.signIn() }
         try #require(await waitUpTo { fakeSession.startCount == 1 })
-        fakeSession.complete(url: URL(string: "pwusage://wrong/callback?code=opaque&attempt=\(Self.attemptID)&state=wrong"))
+        fakeSession.complete(
+            url: URL(string: "pwusage://wrong/callback?code=opaque&attempt=\(Self.attemptID)&state=wrong"))
 
         await #expect(throws: MobileAuthService.AuthError.invalidCallback) {
             try await task.value
@@ -333,8 +358,10 @@ final class MobileAuthServiceTests {
         let task = Task { try await service.signIn() }
         await Task.yield()
         let sessionURL = try #require(fakeSession.url)
-        let state = try #require(URLComponents(url: sessionURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "mobile_state" })?.value)
-        fakeSession.complete(url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)"))
+        let components = URLComponents(url: sessionURL, resolvingAgainstBaseURL: false)
+        let state = try #require(components?.queryItems?.first(where: { $0.name == "mobile_state" })?.value)
+        fakeSession.complete(
+            url: URL(string: "pwusage://auth/callback?code=opaque&attempt=\(Self.attemptID)&state=\(state)"))
 
         await #expect(throws: PWUsageAPIError.signInRequired) {
             try await task.value

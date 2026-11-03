@@ -6,10 +6,12 @@ import Testing
 /// sheet still closes with a single swipe or Cancel.
 @Suite("Job editor unsaved changes")
 struct ProfileDraftTests {
-    private let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2, carSettings: nil)
+    private let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5,
+                                     durationHours: 2, carSettings: nil)
     private let car = LoadProfile(
         id: "car", name: "Car", kind: .car, energyKwh: 0, durationHours: 0,
-        carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level2)
+        carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 20,
+                                     targetStateOfCharge: 80, chargingLevel: .level2)
     )
 
     @Test("An untouched draft has no unsaved changes")

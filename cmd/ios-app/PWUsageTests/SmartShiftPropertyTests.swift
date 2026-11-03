@@ -38,7 +38,9 @@ struct SmartShiftPropertyTests {
         let boundary = scenario.now.addingTimeInterval(12 * 3600)
         let segments = scenario.tariffs.map { segment in
             LoadTimingTariffSegment(start: segment.start, end: segment.end, periodKey: segment.periodKey,
-                                    name: segment.name, buyRate: segment.buyRate + (segment.start >= boundary ? 1 : 0), sellRate: segment.sellRate)
+                                    name: segment.name,
+                                    buyRate: segment.buyRate + (segment.start >= boundary ? 1 : 0),
+                                    sellRate: segment.sellRate)
         }
         let comparison = try #require(scenario.evaluate(segments: segments).comparison)
         #expect(comparison.projectionEnd == boundary)
@@ -50,10 +52,14 @@ struct SmartShiftPropertyTests {
         let scenario = SmartShiftScenario(seed: UInt64(mode))
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: scenario.zone) ?? .gmt
-        let minute = calendar.component(.hour, from: scenario.now) * 60 + calendar.component(.minute, from: scenario.now) / 30 * 30
+        let minute = calendar.component(.hour, from: scenario.now) * 60
+            + calendar.component(.minute, from: scenario.now) / 30 * 30
         let slots = try #require(scenario.projection.context).slots.filter { $0.localMinute != minute }
-        let context = LoadTimingForecastEstimator.PlanningContext(timeZone: scenario.zone, slots: slots, asOf: scenario.now)
-        let projection: LoadTimingForecastEstimator.Projection = mode == 1 ? .history(context: context) : .forecast(intervals: scenario.forecast, context: context)
+        let context = LoadTimingForecastEstimator.PlanningContext(
+            timeZone: scenario.zone, slots: slots, asOf: scenario.now)
+        let projection: LoadTimingForecastEstimator.Projection = mode == 1
+            ? .history(context: context)
+            : .forecast(intervals: scenario.forecast, context: context)
         #expect(scenario.evaluate(projection: projection).comparison == nil)
     }
 
@@ -153,29 +159,43 @@ struct SmartShiftReplayTests {
     }
 }
 
-private func verifySmartShift(_ scenario: SmartShiftScenario, sourceLocation: SourceLocation = #_sourceLocation) throws {
+private func verifySmartShift(_ scenario: SmartShiftScenario,
+                              sourceLocation: SourceLocation = #_sourceLocation) throws {
     let fixture = scenario
-    let comparison = try #require(fixture.evaluate().comparison, "Valid scenario must produce a comparison: \(fixture.diagnostic)", sourceLocation: sourceLocation)
+    let comparison = try #require(
+        fixture.evaluate().comparison,
+        "Valid scenario must produce a comparison: \(fixture.diagnostic)",
+        sourceLocation: sourceLocation)
     let oracle = SmartShiftReference(scenario: fixture)
     let message = Comment(rawValue: fixture.diagnostic)
     #expect(comparison.projectionEnd == fixture.expectedEnd, message, sourceLocation: sourceLocation)
-    #expect(comparison.horizonEnd == min(fixture.tomorrowEnd, fixture.expectedEnd), message, sourceLocation: sourceLocation)
-    #expect(comparison.safetyEnd == min(fixture.expectedEnd, fixture.now.addingTimeInterval(7 * 86400)), message, sourceLocation: sourceLocation)
+    #expect(comparison.horizonEnd == min(fixture.tomorrowEnd, fixture.expectedEnd), message,
+            sourceLocation: sourceLocation)
+    #expect(comparison.safetyEnd == min(fixture.expectedEnd, fixture.now.addingTimeInterval(7 * 86400)),
+            message, sourceLocation: sourceLocation)
     #expect(comparison.recommendedStart >= fixture.now, message, sourceLocation: sourceLocation)
     #expect(comparison.recommendedStart < comparison.horizonEnd, message, sourceLocation: sourceLocation)
     #expect(comparison.recommendedEnd <= fixture.expectedEnd, message, sourceLocation: sourceLocation)
-    #expect(abs(comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart) - fixture.duration * 3600) < 1e-7, message, sourceLocation: sourceLocation)
+    #expect(abs(comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
+            - fixture.duration * 3600) < 1e-7, message, sourceLocation: sourceLocation)
     #expect(comparison.costNow.isFinite && comparison.recommendedCost.isFinite, message, sourceLocation: sourceLocation)
     #expect(abs(comparison.costNow - oracle.cost(start: fixture.now)) < 1e-7, message, sourceLocation: sourceLocation)
-    #expect(abs(comparison.recommendedCost - oracle.cost(start: comparison.recommendedStart)) < 1e-7, message, sourceLocation: sourceLocation)
-    #expect(abs(oracle.draws(start: comparison.recommendedStart, until: fixture.expectedEnd).reduce(0, +) - fixture.energy) < 1e-7, message, sourceLocation: sourceLocation)
-    #expect(comparison.estimatedSolarContribution >= 0 && comparison.estimatedSolarContribution <= fixture.energy, message, sourceLocation: sourceLocation)
+    #expect(abs(comparison.recommendedCost - oracle.cost(start: comparison.recommendedStart)) < 1e-7,
+            message, sourceLocation: sourceLocation)
+    #expect(abs(oracle.draws(start: comparison.recommendedStart, until: fixture.expectedEnd).reduce(0, +)
+            - fixture.energy) < 1e-7, message, sourceLocation: sourceLocation)
+    #expect(comparison.estimatedSolarContribution >= 0 && comparison.estimatedSolarContribution <= fixture.energy,
+            message, sourceLocation: sourceLocation)
 
     // Deliberately check ranking over the advertised candidate set. This is not a
     // proof of global optimality between candidates; explicit boundary tests cover enumeration.
     let starts = comparison.evaluatedStarts
-    #expect(starts.contains(fixture.now) && starts.contains(comparison.recommendedStart), message, sourceLocation: sourceLocation)
-    #expect(starts.allSatisfy { $0 >= fixture.now && $0 < comparison.horizonEnd && $0.addingTimeInterval(fixture.duration * 3600) <= fixture.expectedEnd }, message, sourceLocation: sourceLocation)
+    #expect(starts.contains(fixture.now) && starts.contains(comparison.recommendedStart),
+            message, sourceLocation: sourceLocation)
+    #expect(starts.allSatisfy {
+        $0 >= fixture.now && $0 < comparison.horizonEnd
+            && $0.addingTimeInterval(fixture.duration * 3600) <= fixture.expectedEnd
+    }, message, sourceLocation: sourceLocation)
     let assessed = starts.map { (start: $0, cost: oracle.cost(start: $0), shortfall: oracle.shortfall(start: $0)) }
     let passing = assessed.filter { $0.shortfall <= 3 + 1e-9 }
     let nowShortfall = oracle.shortfall(start: fixture.now)
@@ -186,7 +206,9 @@ private func verifySmartShift(_ scenario: SmartShiftScenario, sourceLocation: So
         if case .noSafeStart = comparison.safety {} else {
             Issue.record("Expected noSafeStart: \(fixture.diagnostic)", sourceLocation: sourceLocation)
         }
-        let cheapest = try #require(assessed.filter { $0.shortfall <= least + 1e-9 }.map(\.cost).min(), sourceLocation: sourceLocation)
+        let cheapest = try #require(
+            assessed.filter { $0.shortfall <= least + 1e-9 }.map(\.cost).min(),
+            sourceLocation: sourceLocation)
         #expect(comparison.recommendedCost <= cheapest + 0.01 + 1e-7, message, sourceLocation: sourceLocation)
     } else {
         #expect(selectedShortfall <= 3 + 1e-7, message, sourceLocation: sourceLocation)
@@ -207,6 +229,7 @@ private func verifySmartShift(_ scenario: SmartShiftScenario, sourceLocation: So
     for lane in comparison.lanes {
         let bank = lane.periodKey == "p0" ? 0 : 1
         #expect(abs(lane.projectedKwh - baseline[bank]) < 1e-7, message, sourceLocation: sourceLocation)
-        #expect(abs(lane.projectedAfterRecommendedKwh - (baseline[bank] - recommendedDraw[bank])) < 1e-7, message, sourceLocation: sourceLocation)
+        #expect(abs(lane.projectedAfterRecommendedKwh - (baseline[bank] - recommendedDraw[bank])) < 1e-7,
+                message, sourceLocation: sourceLocation)
     }
 }

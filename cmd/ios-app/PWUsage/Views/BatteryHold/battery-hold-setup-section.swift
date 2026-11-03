@@ -25,7 +25,8 @@ struct BatteryHoldSetupSection: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(minHeight: 44)
-                    Text("80% lets your Powerwall power your home down to 80%, then saves the rest. 100% keeps it from discharging at all.")
+                    Text("80% lets your Powerwall power your home down to 80%, then saves the rest. "
+                        + "100% keeps it from discharging at all.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 } else {
                     LabeledContent("Backup reserve", value: BatteryHoldPresentation.reserveText(plan.target))
@@ -59,7 +60,8 @@ struct BatteryHoldSetupSection: View {
                     Text("Stays on for the full duration, even if the job finishes early.")
                         .foregroundStyle(.secondary)
                 }
-                Button("Turn On at \(BatteryHoldPresentation.reserveText(target))", systemImage: "battery.100percent", action: confirm)
+                Button("Turn On at \(BatteryHoldPresentation.reserveText(target))",
+                       systemImage: "battery.100percent", action: confirm)
                     .disabled(!canStart)
                     .accessibilityInputLabels(["Turn on Battery Saver", "Battery Saver"])
             } else {

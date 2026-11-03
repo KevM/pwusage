@@ -48,7 +48,8 @@ struct SmartShiftScenario: Codable {
     }
 
     var profile: LoadProfile {
-        .init(id: "fuzz", name: "Fuzz job", kind: .appliance, energyKwh: energy, durationHours: duration, carSettings: nil)
+        .init(id: "fuzz", name: "Fuzz job", kind: .appliance, energyKwh: energy,
+              durationHours: duration, carSettings: nil)
     }
     var source: Date { now.addingTimeInterval(-age) }
     var projectionStart: Date { min(now, source.addingTimeInterval(300)) }
@@ -77,11 +78,14 @@ struct SmartShiftScenario: Codable {
                periodEnd: now.addingTimeInterval(forecastHours * 3600), powerKw: solar, cautiousPowerKw: dullSolar)]
     }
     var projection: LoadTimingForecastEstimator.Projection {
-        let context = LoadTimingForecastEstimator.PlanningContext(timeZone: zone,
-                                                                  slots: stride(from: 0, to: 1440, by: 30).map {
-                                                                      .init(localMinute: $0, homeKw: home, batteryNetChargeKw: battery,
-                                                                            gridNetExportKw: mode == 3 ? nil : grid, cautiousGridNetExportKw: mode == 3 ? nil : dullGrid)
-                                                                  }, asOf: now)
+        let context = LoadTimingForecastEstimator.PlanningContext(
+            timeZone: zone,
+            slots: stride(from: 0, to: 1440, by: 30).map {
+                .init(localMinute: $0, homeKw: home, batteryNetChargeKw: battery,
+                      gridNetExportKw: mode == 3 ? nil : grid,
+                      cautiousGridNetExportKw: mode == 3 ? nil : dullGrid)
+            },
+            asOf: now)
         switch mode {
         case 0: return .flat(timeZone: zone)
         case 1: return .history(context: context)
@@ -91,14 +95,18 @@ struct SmartShiftScenario: Codable {
     func evaluate(reversed: Bool = false, projection override: LoadTimingForecastEstimator.Projection? = nil,
                   segments: [LoadTimingTariffSegment]? = nil) -> LoadTimingForecastEstimator.Result {
         let periods = (0 ..< 2).map { bank in
-            LoadTimingPeriod(name: "p\(bank)", marginalCost: nil, basis: "cycle-net-export", cycleNetExportKwh: balances[bank],
-                             isActive: false, nextStartPhrase: nil, buyRate: buys[bank], sellRate: sells[bank])
+            LoadTimingPeriod(name: "p\(bank)", marginalCost: nil, basis: "cycle-net-export",
+                             cycleNetExportKwh: balances[bank], isActive: false, nextStartPhrase: nil,
+                             buyRate: buys[bank], sellRate: sells[bank])
         }
         let timing = LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods,
-                                pricingPeriods: periods, tariffTimeline: segments ?? (reversed ? tariffs.reversed() : tariffs),
+                                pricingPeriods: periods,
+                                tariffTimeline: segments ?? (reversed ? tariffs.reversed() : tariffs),
                                 nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        return LoadTimingForecastEstimator.evaluate(profile: profile, now: now, timing: timing, projection: override ?? projection,
-                                                    balanceSourceTime: source, billingCycleEnd: billEnd, currencyCode: "USD")
+        return LoadTimingForecastEstimator.evaluate(profile: profile, now: now, timing: timing,
+                                                    projection: override ?? projection,
+                                                    balanceSourceTime: source, billingCycleEnd: billEnd,
+                                                    currencyCode: "USD")
     }
     var diagnostic: String {
         let encoder = JSONEncoder()
@@ -134,14 +142,18 @@ struct SmartShiftReference {
         var result = fixture.balances
         if fixture.mode == 0 { return result }
         let history = cautious ? fixture.grid + (fixture.dullGrid - fixture.grid) / sqrt(7) : fixture.grid
-        let sun = cautious ? fixture.solar + (fixture.dullSolar - fixture.solar) * (0.6745 / 1.2816) / sqrt(7) : fixture.solar
+        let sun = cautious
+            ? fixture.solar + (fixture.dullSolar - fixture.solar) * (0.6745 / 1.2816) / sqrt(7)
+            : fixture.solar
         for tariff in fixture.tariffs {
             let bank = tariff.periodKey == "p0" ? 0 : 1
             let hours = overlap(tariff.start, tariff.end, fixture.projectionStart, end)
             var forecastHours = 0.0
             if fixture.mode >= 2 {
                 let start = max(fixture.projectionStart, fixture.forecast[0].periodStart)
-                let cutoff = fixture.mode == 3 ? fixture.forecast[0].periodEnd : min(fixture.forecast[0].periodEnd, fixture.now.addingTimeInterval(7 * 86400))
+                let cutoff = fixture.mode == 3
+                    ? fixture.forecast[0].periodEnd
+                    : min(fixture.forecast[0].periodEnd, fixture.now.addingTimeInterval(7 * 86400))
                 forecastHours = overlap(tariff.start, tariff.end, start, min(end, cutoff))
             }
             result[bank] += (hours - forecastHours) * history + forecastHours * (sun - fixture.home - fixture.battery)
@@ -153,7 +165,9 @@ struct SmartShiftReference {
         var result = [0.0, 0.0]
         for tariff in fixture.tariffs {
             let bank = tariff.periodKey == "p0" ? 0 : 1
-            result[bank] += overlap(tariff.start, tariff.end, start, min(start.addingTimeInterval(fixture.duration * 3600), cutoff)) * fixture.energy / fixture.duration
+            result[bank] += overlap(tariff.start, tariff.end, start,
+                                    min(start.addingTimeInterval(fixture.duration * 3600), cutoff))
+                * fixture.energy / fixture.duration
         }
         return result
     }

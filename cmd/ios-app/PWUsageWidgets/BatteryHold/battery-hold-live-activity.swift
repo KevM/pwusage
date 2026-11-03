@@ -31,7 +31,8 @@ struct BatteryHoldLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     // Ended activities leave the Dynamic Island at once, so this is always an active hold.
-                    BatteryHoldExpandedBottom(attributes: context.attributes, state: context.state, isStale: context.isStale)
+                    BatteryHoldExpandedBottom(attributes: context.attributes, state: context.state,
+                                              isStale: context.isStale)
                 }
             } compactLeading: {
                 BatteryHoldGlyph(size: 20)
@@ -70,8 +71,10 @@ private enum BatteryHoldActivityPreviews {
         siteID: "site-1", siteName: "Harrison", holdID: 7, registrationID: UUID(),
         timeZoneIdentifier: TimeZone.current.identifier, activityStartedAt: .now)
 
-    static func active(mode: BatteryHoldMode = .auto, phase: BatteryHoldActivityAttributes.ContentState.Phase = .watching,
-                       charge: Double?, hold: Int = 74, safetyIn: TimeInterval = 6.5 * 3600) -> BatteryHoldActivityAttributes.ContentState {
+    static func active(mode: BatteryHoldMode = .auto,
+                       phase: BatteryHoldActivityAttributes.ContentState.Phase = .watching,
+                       charge: Double?, hold: Int = 74, safetyIn: TimeInterval = 6.5 * 3600)
+        -> BatteryHoldActivityAttributes.ContentState {
         .init(holdId: 7, status: .active, mode: mode, phase: phase, originalReserve: 20, targetReserve: hold,
               estimatedLoadW: phase == .loadRunning ? 5400 : nil, startedAt: .now.addingTimeInterval(-1800),
               safetyExpiresAt: .now.addingTimeInterval(safetyIn), checkedAt: .now.addingTimeInterval(-120),

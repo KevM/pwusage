@@ -9,7 +9,9 @@ struct TodayEnergyEntry: TimelineEntry {
 struct TodayEnergyProvider: TimelineProvider {
     func placeholder(in context: Context) -> TodayEnergyEntry { sample() }
     func getSnapshot(in context: Context, completion: @escaping (TodayEnergyEntry) -> Void) {
-        completion(context.isPreview ? sample() : TodayEnergyEntry(date: .now, snapshot: TodayEnergySnapshotStore.shared()?.load()))
+        completion(
+            context.isPreview
+                ? sample() : TodayEnergyEntry(date: .now, snapshot: TodayEnergySnapshotStore.shared()?.load()))
     }
     func getTimeline(in context: Context, completion: @escaping @Sendable (Timeline<TodayEnergyEntry>) -> Void) {
         Task {

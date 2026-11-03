@@ -49,7 +49,9 @@ struct CardContainer<Content: View>: View {
             content
         }
         .padding(padding)
-        .frame(maxWidth: fillsWidth ? .infinity : nil, maxHeight: fillsHeight ? .infinity : nil, alignment: fillAlignment)
+        .frame(maxWidth: fillsWidth ? .infinity : nil,
+               maxHeight: fillsHeight ? .infinity : nil,
+               alignment: fillAlignment)
         .background {
             Group {
                 if let theme {

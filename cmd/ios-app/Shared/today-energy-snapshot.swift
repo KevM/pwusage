@@ -107,7 +107,9 @@ struct TodayEnergySnapshotStore: Sendable {
 
     static func shared() -> Self? {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "PWUSAGE_APP_GROUP") as? String,
-              let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+              let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
+            return nil
+        }
         return Self(fileURL: directory.appendingPathComponent("today-energy-v2.json"))
     }
 
@@ -119,8 +121,10 @@ struct TodayEnergySnapshotStore: Sendable {
     }
 
     func save(_ value: TodayEnergySnapshot) throws {
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(value).write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try JSONEncoder().encode(value)
+            .write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
     var refreshFileURL: URL {

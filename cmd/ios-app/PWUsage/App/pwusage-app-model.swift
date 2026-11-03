@@ -165,14 +165,16 @@ final class PWUsageAppModel: ObservableObject {
             } else {
                 if coordinator == nil { screenState = .unavailable }
                 if pendingBatteryHoldSiteID != nil {
-                    batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
+                    batteryHoldNavigationMessage =
+                        "Could not verify this control’s site. Check your connection and try again."
                 }
             }
         } catch {
             guard generation == siteInstallGeneration else { return }
             if coordinator == nil { screenState = .unavailable }
             if pendingBatteryHoldSiteID != nil {
-                batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
+                batteryHoldNavigationMessage =
+                    "Could not verify this control’s site. Check your connection and try again."
             }
         }
     }
@@ -212,7 +214,8 @@ final class PWUsageAppModel: ObservableObject {
                 await invalidateSession(message: "Sign-in expired. Try again.")
             } else if authService.isAuthenticated {
                 screenState = .unavailable
-                signInMessage = "You’re signed in, but pwusage could not load your sites. Check your connection and try again."
+                signInMessage =
+                    "You’re signed in, but pwusage could not load your sites. Check your connection and try again."
             } else {
                 screenState = .signedOut
                 signInMessage = "Could not complete sign-in. Try again."
@@ -272,7 +275,8 @@ final class PWUsageAppModel: ObservableObject {
             guard generation == siteInstallGeneration else { return }
             if coordinator == nil { screenState = authService.isAuthenticated ? .unavailable : .signedOut }
             if pendingBatteryHoldSiteID != nil {
-                batteryHoldNavigationMessage = "Could not verify this control’s site. Check your connection and try again."
+                batteryHoldNavigationMessage =
+                    "Could not verify this control’s site. Check your connection and try again."
             }
         }
     }

@@ -64,7 +64,9 @@ struct TodayEnergyWidgetRefresh: Sendable {
             components?.queryItems = [URLQueryItem(name: "siteId", value: selection.siteID),
                                       URLQueryItem(name: "view", value: "mobile")]
             guard let url = components?.url else { return fallback }
-            let (data, response) = try await session.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+            let (data, response) = try await session.data(
+                for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+            )
             // Sign-out or a different app selection invalidates any in-flight widget result.
             guard store.load() == selection else { return store.load() }
             guard let http = response as? HTTPURLResponse else { return fallback }
@@ -82,7 +84,8 @@ struct TodayEnergyWidgetRefresh: Sendable {
                 energy: TodayEnergy(localDate: live.site.localDate, homeKwh: live.today.homeKwh,
                                     solarKwh: live.today.solarKwh, gridNetKwh: live.today.gridNetKwh,
                                     batteryNetKwh: live.today.batteryNetKwh, activeTariff: live.activeTariff,
-                                    todayComplete: live.todayComplete, energyDataThrough: live.sources.energyDataThrough),
+                                    todayComplete: live.todayComplete,
+                                    energyDataThrough: live.sources.energyDataThrough),
                 todayCost: live.todayCost, batteryStateOfCharge: live.stateOfCharge,
                 batteryStateOfChargeAt: live.sources.stateOfChargeAt)
             guard value.availability(at: receivedAt) != .missing else { return fallback }
@@ -96,7 +99,10 @@ struct TodayEnergyWidgetRefresh: Sendable {
     private func save(_ snapshot: TodayEnergySnapshot?, selection: TodayEnergySnapshot) {
         // Never write the app's selection file: a late widget write must not undo logout.
         let value = CachedRefresh(origin: origin, selection: selection, snapshot: snapshot)
-        try? JSONEncoder().encode(value).write(to: cacheURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? JSONEncoder().encode(value).write(
+            to: cacheURL,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
     }
 }
 

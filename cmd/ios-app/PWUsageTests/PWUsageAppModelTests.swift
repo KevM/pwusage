@@ -178,7 +178,9 @@ struct PWUsageAppModelTests {
     @Test("Cold launcher with cached sites reports failed validation when bootstrap races control reload")
     func coldControlLoadingRetryWithCachedSites() async throws {
         let defaults = makeDefaults()
-        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("dashboard.json")
         defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
         let cache = DashboardCache(fileURL: cacheURL)
         cache.storeSites([Self.site("site-1"), Self.site("site-2")])
@@ -213,10 +215,12 @@ struct PWUsageAppModelTests {
         #expect(model.coordinator?.isBatteryHoldSheetPresented == true)
     }
 
-    @Test("Cold launcher with cached sites preserves pending request and reports expired session when bootstrap supersedes control reload")
+    @Test("Cold launcher keeps the pending request when bootstrap supersedes the control reload")
     func coldControlLoadingSignInRequiredWithCachedSites() async throws {
         let defaults = makeDefaults()
-        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("dashboard.json")
         defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
         let cache = DashboardCache(fileURL: cacheURL)
         cache.storeSites([Self.site("site-1"), Self.site("site-2")])
@@ -245,8 +249,10 @@ struct PWUsageAppModelTests {
     @Test("Launching an already-active hold opens its status without commands")
     func controlOpensActiveHoldWithoutCommands() async throws {
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        api.batteryHoldResponse = .init(hold: try MobileContractDecoder.make().decode(BatteryHold.self,
-                                                                                      from: Data(BatteryHoldTests.holdJSON.utf8)), notice: nil)
+        api.batteryHoldResponse = .init(
+            hold: try MobileContractDecoder.make().decode(BatteryHold.self,
+                                                          from: Data(BatteryHoldTests.holdJSON.utf8)),
+            notice: nil)
         let model = try makeModel(api: api)
         await model.openBatteryHold(siteID: "site-1")
         let coordinator = try #require(model.coordinator)
@@ -462,7 +468,8 @@ struct PWUsageAppModelTests {
 
     @Test("Successful site retry after bootstrap failure restores authenticated state")
     func successfulSiteRetryAfterBootstrapFailureRestoresAuthenticatedState() async throws {
-        let api = ApplicationAPISpy(sites: [Self.site("site-1")], sitesError: PWUsageAPIError.recoverableServerError(statusCode: 503))
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")],
+                                    sitesError: PWUsageAPIError.recoverableServerError(statusCode: 503))
         let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults())
 
         await model.bootstrap()
@@ -732,23 +739,29 @@ struct PWUsageAppModelTests {
         #expect(model.screenState == .signedIn, "The stale attempt must not change the published screen state.")
         #expect(model.sites.map(\.id) == ["site-2"], "The stale attempt must not replace the newer site list.")
         #expect(model.selectedSiteID == "site-2", "The stale attempt must not reselect the site it found.")
-        #expect(model.coordinator?.selectedSiteID == "site-2", "The stale attempt must not replace the newer coordinator.")
+        #expect(model.coordinator?.selectedSiteID == "site-2",
+                "The stale attempt must not replace the newer coordinator.")
     }
 
     @Test("Relaunch immediately restores the last dashboard before network requests")
     func relaunchRestoresDashboard() async throws {
         let defaults = makeDefaults()
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("dashboard.json")
         defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
-        let first = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: defaults, cache: DashboardCache(fileURL: cacheURL))
+        let first = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api,
+                                    userDefaults: defaults, cache: DashboardCache(fileURL: cacheURL))
         first.scenePhaseChanged(isActive: true)
         await first.bootstrap()
         try await waitUntil { first.coordinator?.bill.response != nil }
         first.scenePhaseChanged(isActive: false)
 
         let offlineAPI = ApplicationAPISpy(sites: [], sitesError: URLError(.notConnectedToInternet))
-        let relaunched = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: offlineAPI, userDefaults: defaults, cache: DashboardCache(fileURL: cacheURL))
+        let relaunched = PWUsageAppModel(configuration: try Self.makeConfiguration(),
+                                         api: offlineAPI, userDefaults: defaults,
+                                         cache: DashboardCache(fileURL: cacheURL))
         #expect(relaunched.screenState == .signedIn)
         #expect(relaunched.sites == first.sites)
         #expect(relaunched.coordinator?.live.response == first.coordinator?.live.response)
@@ -782,7 +795,8 @@ struct PWUsageAppModelTests {
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let cache = DashboardCache(fileURL: fileURL)
         cache.storeSites([Self.site("site-1"), Self.site("site-2")])
-        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")], sitesError: URLError(.notConnectedToInternet))
+        let api = ApplicationAPISpy(sites: [Self.site("site-1"), Self.site("site-2")],
+                                    sitesError: URLError(.notConnectedToInternet))
         let forecast = ForecastServiceSpy()
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(),
@@ -830,11 +844,14 @@ struct PWUsageAppModelTests {
 
     @Test("Sign-out removes the launch snapshot and stops retained coordinator requests")
     func signOutClearsSnapshot() async throws {
-        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("dashboard.json")
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("dashboard.json")
         defer { try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent()) }
         let cache = DashboardCache(fileURL: cacheURL)
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
-        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(), cache: cache)
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api,
+                                    userDefaults: makeDefaults(), cache: cache)
         model.scenePhaseChanged(isActive: true)
         await model.bootstrap()
         try await waitUntil { model.coordinator?.bill.response != nil }
@@ -854,7 +871,12 @@ struct PWUsageAppModelTests {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: fileURL) }
         try Data("broken snapshot".utf8).write(to: fileURL)
-        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: ApplicationAPISpy(sites: [Self.site("site-1")]), userDefaults: makeDefaults(), cache: DashboardCache(fileURL: fileURL))
+        let model = PWUsageAppModel(
+            configuration: try Self.makeConfiguration(),
+            api: ApplicationAPISpy(sites: [Self.site("site-1")]),
+            userDefaults: makeDefaults(),
+            cache: DashboardCache(fileURL: fileURL)
+        )
         #expect(model.screenState == .bootstrapping)
         await model.bootstrap()
         #expect(model.screenState == .signedIn)
@@ -867,7 +889,8 @@ struct PWUsageAppModelTests {
         let cache = DashboardCache(fileURL: fileURL)
         let api = ApplicationAPISpy(sites: [Self.site("site-1")])
         api.holdSites = true
-        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(), cache: cache)
+        let model = PWUsageAppModel(configuration: try Self.makeConfiguration(), api: api,
+                                    userDefaults: makeDefaults(), cache: cache)
         let bootstrap = Task { await model.bootstrap() }
         try await waitUntil { api.siteFetchCount == 1 }
         await model.signOut()
@@ -952,7 +975,8 @@ struct PWUsageAppModelTests {
         let url = try #require(session.loginURL)
         let state = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "mobile_state" })?.value)
-        let callback = try #require(URL(string: "pwusage://auth/callback?code=opaque&attempt=9b47b05a-3f0b-498e-b604-9e43fa7df015&state=\(state)"))
+        let callback = try #require(URL(string:
+            "pwusage://auth/callback?code=opaque&attempt=9b47b05a-3f0b-498e-b604-9e43fa7df015&state=\(state)"))
         session.completion?(callback, nil)
         await reconnect.value
 
@@ -1150,12 +1174,24 @@ private final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldD
         // A charge reading older than two hours decodes as unknown, so date it now rather than
         // reusing the deliberately stale `liveStatusAt` above.
         let chargeAt = ISO8601DateFormatter().string(from: Date())
-        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},"live":{"solarPower":100,"loadPower":200,"batteryPower":0,"gridPower":100},"stateOfCharge":50,"activeTariff":"Peak","today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},"todayComplete":true,"currentBill":null,"sources":{"liveStatusAt":"2026-09-23T12:00:00Z","energyDataThrough":"2026-09-23T12:00:00Z","stateOfChargeAt":"\#(chargeAt)"}}"#
+        let json = #"""
+        {"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},
+         "live":{"solarPower":100,"loadPower":200,"batteryPower":0,"gridPower":100},"stateOfCharge":50,
+         "activeTariff":"Peak","today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},
+         "todayComplete":true,"currentBill":null,
+         "sources":{"liveStatusAt":"2026-09-23T12:00:00Z","energyDataThrough":"2026-09-23T12:00:00Z",
+         "stateOfChargeAt":"\#(chargeAt)"}}
+        """#
         return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
     }
 
     private static func billResponse(siteID: String) throws -> MobileBillResponse {
-        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC"},"currentBill":{"estimatedCost":42,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z","cycleEnd":"2026-10-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2026-09-23T12:00:00Z","energyDataThrough":null}}"#
+        let json = #"""
+        {"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC"},
+         "currentBill":{"estimatedCost":42,"currency":"USD","cycleStart":"2026-09-01T00:00:00Z",
+         "cycleEnd":"2026-10-01T00:00:00Z","periods":[]},
+         "sources":{"calculatedAt":"2026-09-23T12:00:00Z","energyDataThrough":null}}
+        """#
         return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
 }

@@ -19,7 +19,8 @@ final class ActivityKitBatteryHoldHost: BatteryHoldActivityHost {
         // offered in the app rather than appearing on its own.
         let activity = try Activity.request(
             attributes: attributes,
-            content: ActivityContent(state: state, staleDate: state.staleDate(activityStartedAt: attributes.activityStartedAt)),
+            content: ActivityContent(
+                state: state, staleDate: state.staleDate(activityStartedAt: attributes.activityStartedAt)),
             pushType: .token
         )
         return ActivityKitBatteryHoldHandle(activity)
@@ -65,7 +66,9 @@ final class ActivityKitBatteryHoldHandle: BatteryHoldActivityHandle {
     // any context; the handle only ever passes it to them.
     func update(_ state: BatteryHoldActivityAttributes.ContentState) async {
         nonisolated(unsafe) let activity = activity
-        await activity.update(ActivityContent(state: state, staleDate: state.staleDate(activityStartedAt: activity.attributes.activityStartedAt)))
+        await activity.update(
+            ActivityContent(
+                state: state, staleDate: state.staleDate(activityStartedAt: activity.attributes.activityStartedAt)))
     }
 
     func end(_ state: BatteryHoldActivityAttributes.ContentState?, immediately: Bool) async {

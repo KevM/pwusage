@@ -38,7 +38,10 @@ enum SmartShiftPresentation {
         timeZone: String
     ) -> (LoadProfile) -> SmartShiftEvaluation {
         guard let balanceSourceTime else {
-            return { _ in SmartShiftEvaluation(result: .init(comparison: nil, unavailableReason: .staleBalance), forecast: forecast) }
+            return { _ in
+                SmartShiftEvaluation(result: .init(comparison: nil, unavailableReason: .staleBalance),
+                                     forecast: forecast)
+            }
         }
         let plans = PassPlans { projection in
             LoadTimingForecastEstimator.plan(now: now, timing: timing, projection: projection,
@@ -58,13 +61,15 @@ enum SmartShiftPresentation {
                 availability = .unusable(LoadTimingForecastPresentation.forecastUnavailableNote(.incompleteContext))
             }
             if let context, context.hasGridHistory {
-                let result = LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .history(context: context)))
+                let result = LoadTimingForecastEstimator.evaluate(profile: profile,
+                                                                  plan: plans.plan(for: .history(context: context)))
                 if result.unavailableReason == nil {
                     return SmartShiftEvaluation(result: result, forecast: availability, projection: .history)
                 }
             }
             return SmartShiftEvaluation(
-                result: LoadTimingForecastEstimator.evaluate(profile: profile, plan: plans.plan(for: .flat(timeZone: timeZone))),
+                result: LoadTimingForecastEstimator.evaluate(
+                    profile: profile, plan: plans.plan(for: .flat(timeZone: timeZone))),
                 forecast: availability, projection: .flat)
         }
     }
@@ -100,11 +105,17 @@ enum SmartShiftPresentation {
     static let checkingSolarNote = "Checking today's solar…"
     static let unobservedBalanceNote = "Some rate periods have no bank yet, so they're priced at the full rate."
 
-    static let refreshFailedMessage = "The latest refresh failed, so this saved estimate may be old and no recommendation is offered."
-    static let staleMessage = "Energy observations are older than one hour or have no valid source time, so no recommendation is offered."
+    static let refreshFailedMessage =
+        "The latest refresh failed, so this saved estimate may be old and "
+            + "no recommendation is offered."
+    static let staleMessage =
+        "Energy observations are older than one hour or have no valid source time, "
+            + "so no recommendation is offered."
     static let missingRatePlanMessage = "Add a Rate Plan so Smart Shift can compare costs."
     static let incompleteBalanceMessage = "Some rate periods or bank data are missing, so costs can't be compared."
-    static let billingCycleMessage = "This job would continue beyond the current billing cycle, so its current bank can't be used for the estimate."
+    static let billingCycleMessage =
+        "This job would continue beyond the current billing cycle, "
+            + "so its current bank can't be used for the estimate."
     static let tooLongMessage = "This job is longer than the time Smart Shift can compare right now."
     static let noEnergyMessage = "This car is already at its target charge, so no energy is needed right now."
     static let cannotCompareMessage = "Smart Shift can't compare start times for this job right now."
@@ -127,7 +138,9 @@ enum SmartShiftPresentation {
         }
         // A verdict priced without the forecast would flash, then change when it lands.
         if forecast == .loading { return SmartShiftScreen(content: .loading) }
-        guard let comparison = result.comparison else { return SmartShiftScreen(content: .blocked(cannotCompareMessage)) }
+        guard let comparison = result.comparison else {
+            return SmartShiftScreen(content: .blocked(cannotCompareMessage))
+        }
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now,
                               billingCycleEnd: billingCycleEnd, currencyCode: currencyCode, timeZone: timeZone)
         return SmartShiftScreen(content: .verdict(context.verdict(forecast: forecast)))

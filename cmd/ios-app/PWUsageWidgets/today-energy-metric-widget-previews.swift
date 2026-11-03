@@ -36,19 +36,27 @@
     }
 
     #Preview("Small · Home", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .home)
+        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
+                               snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                               metric: .home)
     }
 
     #Preview("Small · Solar", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .solar)
+        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
+                               snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                               metric: .solar)
     }
 
     #Preview("Small · Grid", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .grid)
+        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
+                               snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                               metric: .grid)
     }
 
     #Preview("Small · Battery", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .battery)
+        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
+                               snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                               metric: .battery)
     }
 
     #Preview("Small · Stale grid", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
@@ -65,7 +73,9 @@
         TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: nil, metric: .solar)
     }
     #Preview("Small · Fresh to stale to next day", as: .systemSmall) { TodayEnergyMetricWidget() } timeline: {
-        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date, snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .battery)
+        TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date,
+                               snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                               metric: .battery)
         TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date.addingTimeInterval(2 * 3600),
                                snapshot: TodayEnergyPreviewFixtures.snapshot(), metric: .battery)
         TodayEnergyMetricEntry(date: TodayEnergyPreviewFixtures.date.addingTimeInterval(24 * 3600),

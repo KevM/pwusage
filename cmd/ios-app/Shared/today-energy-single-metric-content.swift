@@ -18,7 +18,9 @@ struct TodayEnergySingleMetricContent: View {
                           systemImage: stale ? "clock.badge.exclamationmark" : "clock")
                         .font(.system(size: 9)).foregroundStyle(stale ? .orange : .secondary)
                         .lineLimit(1).minimumScaleFactor(0.8)
-                        .accessibilityLabel("\(stale ? "Stale. " : "")Updated \(time(source, timezone: snapshot.timezone))")
+                        .accessibilityLabel(
+                            "\(stale ? "Stale. " : "")Updated \(time(source, timezone: snapshot.timezone))"
+                        )
                 }
             }
             if let tile = selectedTile {
@@ -27,7 +29,8 @@ struct TodayEnergySingleMetricContent: View {
                 let identity = TodayEnergyPresentation.tiles(homeKwh: 0, solarKwh: 0, gridNetKwh: 0, batteryNetKwh: 0,
                                                              compact: true, showsStateOfCharge: true)[metric.index]
                 MetricTile(title: identity.title, value: "—", symbol: identity.symbol, tint: identity.tint,
-                           compact: true, prominentValue: true, spokenRole: "Energy unavailable. Open pwusage to refresh.")
+                           compact: true, prominentValue: true,
+                           spokenRole: "Energy unavailable. Open pwusage to refresh.")
             }
             if snapshot == nil || snapshot?.availability(at: date) == .missing {
                 Text("Open pwusage").font(.caption2).foregroundStyle(.secondary)

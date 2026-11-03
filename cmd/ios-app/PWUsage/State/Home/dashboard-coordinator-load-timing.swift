@@ -67,36 +67,8 @@ extension DashboardCoordinator {
         api: any MobileLoadPlanningDataAPI
     ) async -> PlanningContextOutcome {
         let requestTime = now()
-        if let cached = planningContextCache[siteID],
-           requestTime.timeIntervalSince(cached.fetchedAt) >= 0,
-           requestTime.timeIntervalSince(cached.fetchedAt) < Self.planningContextLifetime,
-           let validated = try? cached.response.validating(siteID: siteID, now: requestTime) {
-            // Only an unavailable profile has a reason; a usable cached one must not
-            // mask why the forecast half failed.
-            let context = validated.estimatorContext
-            return PlanningContextOutcome(
-                context: context,
-                unavailableReason: context == nil ? Self.enhancementReason(forReason: validated.unavailableReason) : nil
-            )
-        }
-        let pending: PlanningContextTask
-        if let existing = planningContextTasks[siteID] {
-            pending = existing
-        } else {
-            let id = UUID()
-            let task = Task {
-                do {
-                    return PlanningContextFetchResult(
-                        response: try await api.fetchLoadPlanningContext(siteID: siteID),
-                        error: nil
-                    )
-                } catch {
-                    return PlanningContextFetchResult(response: nil, error: error)
-                }
-            }
-            pending = PlanningContextTask(id: id, task: task)
-            planningContextTasks[siteID] = pending
-        }
+        if let cached = cachedOutcome(for: siteID, at: requestTime) { return cached }
+        let pending = planningContextTask(for: siteID, api: api)
         do {
             let fetched = await pending.task.value
             let receiveTime = now()
@@ -115,22 +87,57 @@ extension DashboardCoordinator {
         } catch {
             if planningContextTasks[siteID]?.id == pending.id { planningContextTasks.removeValue(forKey: siteID) }
             // A thrown error means we never learned anything about the profile.
-            // Reporting it as an unreadable profile would be a guess, and the
-            // user is already frustrated by guesses.
-            let reason: SolarForecastUnavailableReason
-            if let contractError = error as? MobileLoadPlanningContextResponse.ContractError {
-                // Only skew is the device's fault, so only skew earns clock advice.
-                // Every other contract failure would keep failing with a perfect
-                // clock, and telling someone to fix their date is then a dead end.
-                reason = contractError == .timestampSkew ? .contextInvalid : .contextMalformed
-            } else if let rejected = error as? PWUsageAPIError,
-                      case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
-                reason = .serverOutdated
-            } else {
-                reason = .requestFailed
-            }
-            return PlanningContextOutcome(context: nil, unavailableReason: reason)
+            return PlanningContextOutcome(context: nil, unavailableReason: Self.unavailableReason(for: error))
         }
+    }
+
+    /// A usable cached profile, or nil when the cache is missing, stale or invalid.
+    private func cachedOutcome(for siteID: String, at requestTime: Date) -> PlanningContextOutcome? {
+        guard let cached = planningContextCache[siteID],
+              requestTime.timeIntervalSince(cached.fetchedAt) >= 0,
+              requestTime.timeIntervalSince(cached.fetchedAt) < Self.planningContextLifetime,
+              let validated = try? cached.response.validating(siteID: siteID, now: requestTime) else { return nil }
+        // Only an unavailable profile has a reason; a usable cached one must not
+        // mask why the forecast half failed.
+        let context = validated.estimatorContext
+        return PlanningContextOutcome(
+            context: context,
+            unavailableReason: context == nil ? Self.enhancementReason(forReason: validated.unavailableReason) : nil
+        )
+    }
+
+    /// The in-flight fetch for a site, starting one when none is pending.
+    private func planningContextTask(for siteID: String, api: any MobileLoadPlanningDataAPI) -> PlanningContextTask {
+        if let existing = planningContextTasks[siteID] { return existing }
+        let id = UUID()
+        let task = Task {
+            do {
+                return PlanningContextFetchResult(
+                    response: try await api.fetchLoadPlanningContext(siteID: siteID),
+                    error: nil
+                )
+            } catch {
+                return PlanningContextFetchResult(response: nil, error: error)
+            }
+        }
+        let pending = PlanningContextTask(id: id, task: task)
+        planningContextTasks[siteID] = pending
+        return pending
+    }
+
+    /// Why a failed request left the household profile unusable.
+    private static func unavailableReason(for error: any Error) -> SolarForecastUnavailableReason {
+        if let contractError = error as? MobileLoadPlanningContextResponse.ContractError {
+            // Only skew is the device's fault, so only skew earns clock advice.
+            // Every other contract failure would keep failing with a perfect
+            // clock, and telling someone to fix their date is then a dead end.
+            return contractError == .timestampSkew ? .contextInvalid : .contextMalformed
+        }
+        if let rejected = error as? PWUsageAPIError,
+           case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
+            return .serverOutdated
+        }
+        return .requestFailed
     }
 
     /// Pull to refresh on the Load timing screen. This is the only place a person
@@ -153,24 +160,5 @@ extension DashboardCoordinator {
         case "timestamp-misaligned": return .timestampMisaligned
         default: return .contextUnavailable
         }
-    }
-
-    static func enhancementUnavailableReason(
-        refreshSucceeded: Bool,
-        billSucceeded: Bool,
-        siteMatches: Bool,
-        timeZoneMatches: Bool,
-        forecastUsable: Bool,
-        hasBatch: Bool,
-        hasContext: Bool
-    ) -> SolarForecastUnavailableReason? {
-        if !refreshSucceeded { return nil }
-        if !billSucceeded { return .billUnavailable }
-        // A missing context is checked before the timezone comparison, otherwise
-        // the absent value looks like a mismatch and names the wrong cause.
-        if !hasContext { return .contextUnavailable }
-        if !siteMatches || !timeZoneMatches { return .siteMismatch }
-        if !forecastUsable || !hasBatch { return .forecastNotUsable }
-        return nil
     }
 }
