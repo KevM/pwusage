@@ -74,6 +74,19 @@ struct PWUsageAppModelHistoryOnboardingTests {
         lifecycle.stop()
     }
 
+    @Test("A missing location waits for iCloud records; a saved one never does")
+    func missingLocationWaitsForCloudRecords() {
+        let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
+        let progress = SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02")
+        let missing = SiteHistoryStatus(scope: scope, progress: progress, throttledUntil: nil)
+        let saved = SiteHistoryStatus(
+            scope: scope, progress: progress, throttledUntil: nil,
+            homeLocation: SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .device))
+        #expect(PWUsageAppModel.visibleHistoryStatus(missing, awaitingCloudRecords: true) == nil)
+        #expect(PWUsageAppModel.visibleHistoryStatus(missing, awaitingCloudRecords: false) == missing)
+        #expect(PWUsageAppModel.visibleHistoryStatus(saved, awaitingCloudRecords: true) == saved)
+    }
+
     @Test("Leaving the foreground asks for background time; signing out withdraws it")
     func backgroundAndSignOut() async throws {
         let environment = FakeOnboardingEnvironment()

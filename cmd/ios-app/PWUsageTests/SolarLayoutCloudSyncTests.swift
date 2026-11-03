@@ -325,7 +325,7 @@ struct SolarLayoutCloudSyncTests {
     }
 
     @MainActor
-    private func cloudSyncModel(
+    func cloudSyncModel(
         harness: AutomaticForecastHarness, transport: FakeSolarCloudTransport? = nil, cache: DashboardCache? = nil,
         forecastService: (any SolarForecastServing)? = nil
     ) throws -> PWUsageAppModel {

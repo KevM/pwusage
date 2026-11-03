@@ -86,7 +86,15 @@ extension PWUsageAppModel {
     var siteHistoryStatus: SiteHistoryStatus? {
         guard let status = historyOnboarding?.status, status.scope.siteID == selectedSiteID,
               status.scope.accountScopeID == accountScopeID else { return nil }
-        return status
+        return Self.visibleHistoryStatus(status, awaitingCloudRecords: awaitsSolarCloudRecords)
+    }
+
+    /// Nothing to show yet for a site without a location while iCloud may still bring one, so
+    /// the banner never asks for a location the user already gave.
+    static func visibleHistoryStatus(
+        _ status: SiteHistoryStatus, awaitingCloudRecords: Bool
+    ) -> SiteHistoryStatus? {
+        awaitingCloudRecords && status.location == .none ? nil : status
     }
 
     /// From the banner; `focusingLocation` opens straight into the home location step.

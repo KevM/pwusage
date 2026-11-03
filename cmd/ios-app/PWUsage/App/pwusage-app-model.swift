@@ -58,6 +58,10 @@ final class PWUsageAppModel: ObservableObject {
     let historyOnboarding: SiteHistoryOnboardingLifecycle?
     var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
+    /// While iCloud starts (at most a few seconds), a site without a home location may only be
+    /// waiting for its record: signing in again gives the phone a new account scope, and iCloud
+    /// brings that scope its layout and location a moment later.
+    @Published private(set) var awaitsSolarCloudRecords = false
     let solarCloudSync: SolarLayoutCloudSync
     let solarSessionCleanup: SolarSessionCleanup
     let coordinatorFactory: CoordinatorFactory
@@ -288,12 +292,28 @@ final class PWUsageAppModel: ObservableObject {
         guard solarCloudStartup == nil, let accountScopeID else { return }
         let session = adoptSolarCloudSession(accountScopeID: accountScopeID)
         let sync = solarCloudSync
-        solarCloudStartup = Task { [weak self] in
+        awaitsSolarCloudRecords = true
+        let startup = Task { [weak self] in
             await sync.start(session: session)
             guard !Task.isCancelled else { return }
             self?.solarCloudStartup = nil
         }
+        solarCloudStartup = startup
+        Task { [weak self] in
+            // CKSyncEngine may keep retrying a fetch; don't hold the prompt back for long.
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await startup.value }
+                group.addTask { try? await Task.sleep(for: .seconds(Self.solarCloudRecordsWait)) }
+                await group.next()
+                group.cancelAll()
+            }
+            if self?.solarCloudStartup == nil || self?.solarCloudStartup == startup {
+                self?.awaitsSolarCloudRecords = false
+            }
+        }
     }
+
+    nonisolated static let solarCloudRecordsWait: TimeInterval = 5
 
     private func wireCloudSyncListener(
         _ cloudSync: SolarLayoutCloudSync, runner: SolarLayoutDetectionRunner?
