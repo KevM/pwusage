@@ -105,9 +105,7 @@ struct AppTabView: View {
                          onChooseSite: model.openSitePicker,
                          onSignOut: { Task { await model.signOut() } },
                          onExitDemo: model.isDemo ? { demoMode?.exit() } : nil,
-                         showsSiteHistory: model.historyOnboarding != nil
-                             && coordinator.solarLayoutStatus != .disabled,
-                         siteHistory: model.siteHistoryStatus,
+                         siteHistory: coordinator.solarLayoutStatus == .disabled ? nil : model.siteHistoryStatus,
                          siteHistoryDebug: siteHistoryDebug)
         }
     }

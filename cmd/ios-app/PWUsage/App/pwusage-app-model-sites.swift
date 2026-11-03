@@ -91,7 +91,7 @@ extension PWUsageAppModel {
 
     func openSiteHistory() {
         selectTab(.settings)
-        settingsPath = [.siteHistory]
+        settingsPath = [.solarSystem()]
     }
 
     /// Onboarding runs for the selected site of a verified, foreground session, and nowhere else.

@@ -99,7 +99,7 @@ struct PWUsageAppModelHistoryOnboardingTests {
         let model = try makeModel(historyOnboarding: makeLifecycle(FakeOnboardingEnvironment(), probe: ScheduleProbe()))
         model.openSiteHistory()
         #expect(model.selectedTab == .settings)
-        #expect(model.settingsPath == [.siteHistory])
+        #expect(model.settingsPath == [.solarSystem()])
         model.resetNavigation()
         #expect(model.settingsPath.isEmpty)
     }
