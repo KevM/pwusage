@@ -91,6 +91,7 @@ final class DashboardCoordinator: ObservableObject {
     let history: SolarHistoryStore
     let records: SolarLayoutRecordStore
     let runner: SolarLayoutDetectionRunner?
+    var onRecordChanged: ((SolarForecastSiteScope) -> Void)?
     var historyEnabled = true
     var layoutInvalidated = false
     var activeSolarLayoutLookups = 0
@@ -173,6 +174,7 @@ final class DashboardCoordinator: ObservableObject {
         runner?.onRecordChanged = { [weak self] scope in
             guard let self, scope == solarScope, canRequestAccountData, historyEnabled else { return }
             invalidateSolarLayout()
+            onRecordChanged?(scope)
             Task { [weak self] in
                 guard let self, scope == solarScope, canRequestAccountData, historyEnabled else { return }
                 await loadTimingDetailAppeared(surface: nil)

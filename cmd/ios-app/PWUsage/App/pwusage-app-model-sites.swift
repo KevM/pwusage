@@ -116,6 +116,7 @@ extension PWUsageAppModel {
         Task {
             await historyOnboarding.resumeAfterLocationChange(scope: scope)
             updateHistoryOnboarding()
+            await historyOnboarding.refreshStatus()
         }
     }
 
@@ -161,6 +162,11 @@ extension PWUsageAppModel {
         let nextCoordinator = coordinatorFactory(siteID, accountScopeID)
         nextCoordinator.restoreLaunchCache(cache, sessionVerified: sessionVerified)
         nextCoordinator.batteryHoldActivityObserver = liveActivities
+        nextCoordinator.onRecordChanged = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.historyOnboarding?.refreshStatus()
+            }
+        }
         coordinator = nextCoordinator
         coordinatorAuthSubscription = nextCoordinator.$requiresSignIn
             .removeDuplicates()

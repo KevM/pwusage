@@ -143,8 +143,7 @@ final class SolarLayoutDetectionRunner {
         var resolvedTimeZone: TimeZone?
         let isStale = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) != true
         if isStale {
-            guard let zone = await syncHistoryIfCurrent(scope: scope, run: run) else { return nil }
-            resolvedTimeZone = zone
+            resolvedTimeZone = await syncHistoryIfCurrent(scope: scope, run: run)
         }
 
         guard let record = try? await records.record(scope: scope),

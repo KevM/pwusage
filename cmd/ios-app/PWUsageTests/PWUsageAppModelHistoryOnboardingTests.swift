@@ -226,7 +226,8 @@ struct PWUsageAppModelHistoryOnboardingTests {
 
             await actions.clearCloudLayout()
             #expect(try await model.solarRecords.record(scope: scope) == nil)
-            #expect(model.historyOnboarding?.status?.progress == nil)
+            #expect(model.historyOnboarding?.status?.result == nil)
+            #expect(model.historyOnboarding?.status?.layout == nil)
             lifecycle.stop()
         }
 
