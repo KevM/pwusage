@@ -176,7 +176,7 @@ final class AutomaticForecastHarness {
             let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)
             let date = api.now
             try? await records.setLocation(Self.detectedLocation, scope: scope, at: date)
-            try? await records.saveResult(Self.detectedResult, scope: scope, for: Self.detectedLocation, at: date)
+            _ = try? await records.saveResult(Self.detectedResult, scope: scope, for: Self.detectedLocation, at: date)
         }
     }
 
