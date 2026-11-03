@@ -22,6 +22,7 @@ struct SiteHistoryOnboardingLifecycleTests {
     private let start = Date(timeIntervalSince1970: 1_793_642_400)
 
     private var store: SiteHistoryOnboardingStore { SiteHistoryOnboardingStore(directory: directory) }
+    private var ledgers: SiteHistoryDayLedgerStore { SiteHistoryDayLedgerStore(directory: directory) }
 
     /// `sleep` defaults to moving the probe's clock forward, as if the wait had passed.
     private func make(
@@ -33,6 +34,7 @@ struct SiteHistoryOnboardingLifecycleTests {
         return SiteHistoryOnboardingLifecycle(
             onboarding: SiteHistoryOnboarding(environment: environment, store: store, now: clock),
             store: store,
+            ledgers: ledgers,
             isHistoryEnabled: { _ in probe.historyEnabled },
             scheduleBackground: { probe.scheduled.append($0) },
             sleep: sleep ?? { delay in
@@ -238,10 +240,14 @@ struct SiteHistoryOnboardingLifecycleTests {
         environment.defaultAnswer = .fill(.busy)
         let lifecycle = make(environment, probe: LifecycleProbe(now: start), sleep: Self.sleepUntilCancelled)
         try await store.save(SiteHistoryOnboardingProgress(checkedUntil: "2026-11-01"), scope: other)
+        try await ledgers.save(SiteHistoryDayLedger(days: ["2026-11-01": .clear]), scope: scope)
+        try await ledgers.save(SiteHistoryDayLedger(days: ["2026-11-01": .clear]), scope: other)
         lifecycle.activate(scope: scope)
         try await eventually { lifecycle.status?.progress != nil }
         let running = lifecycle.foregroundTask
         await lifecycle.forget(scope: scope)
+        #expect(try await ledgers.ledger(scope: scope) == nil)
+        #expect(try await ledgers.ledger(scope: other) != nil)
         await running?.value
         #expect(lifecycle.foregroundTask == nil)
         #expect(try await store.progress(scope: scope) == nil)

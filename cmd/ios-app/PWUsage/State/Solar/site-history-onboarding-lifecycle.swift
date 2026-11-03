@@ -16,6 +16,7 @@ final class SiteHistoryOnboardingLifecycle {
 
     private let onboarding: SiteHistoryOnboarding
     private let store: SiteHistoryOnboardingStore
+    private let ledgers: SiteHistoryDayLedgerStore
     /// Whether the site has the solar history beta; may sync history to find out.
     private let isHistoryEnabled: @MainActor (SolarForecastSiteScope) async -> Bool
     private let scheduleBackground: @MainActor (Date?) -> Void
@@ -40,6 +41,7 @@ final class SiteHistoryOnboardingLifecycle {
     init(
         onboarding: SiteHistoryOnboarding,
         store: SiteHistoryOnboardingStore = .shared,
+        ledgers: SiteHistoryDayLedgerStore = .shared,
         isHistoryEnabled: @escaping @MainActor (SolarForecastSiteScope) async -> Bool,
         scheduleBackground: @escaping @MainActor (Date?) -> Void,
         sleep: @escaping Sleep = { try await Task.sleep(for: .seconds($0)) },
@@ -47,6 +49,7 @@ final class SiteHistoryOnboardingLifecycle {
     ) {
         self.onboarding = onboarding
         self.store = store
+        self.ledgers = ledgers
         self.isHistoryEnabled = isHistoryEnabled
         self.scheduleBackground = scheduleBackground
         self.sleep = sleep
@@ -115,13 +118,15 @@ final class SiteHistoryOnboardingLifecycle {
         scheduleBackground(nil)
     }
 
-    /// Forget a site's progress: its run stops and the next activation starts it from today.
+    /// Forget a site's progress and day types: its run stops and the next activation starts it
+    /// from today.
     func forget(scope: SolarForecastSiteScope) async {
         if foreground?.scope == scope {
             foreground?.task.cancel()
             foreground = nil
         }
         try? await store.remove(scope: scope)
+        try? await ledgers.remove(scope: scope)
         await refreshStatus()
     }
 

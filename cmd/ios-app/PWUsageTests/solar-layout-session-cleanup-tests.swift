@@ -35,7 +35,7 @@ struct SolarLayoutSessionCleanupTests {
         #expect(!FileManager.default.fileExists(atPath: recordsFolder.path))
     }
 
-    @Test("Sign-out forgets history onboarding progress and Tesla throttles")
+    @Test("Sign-out forgets history onboarding progress, day ledgers and Tesla throttles")
     func signOutRemovesOnboardingProgress() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -43,10 +43,12 @@ struct SolarLayoutSessionCleanupTests {
         let onboarding = SiteHistoryOnboardingStore(directory: folder.appendingPathComponent("onboarding"))
         try await onboarding.save(SiteHistoryOnboardingProgress(checkedUntil: "2026-11-02"), scope: scope)
         try await onboarding.setThrottle(Date(timeIntervalSince1970: 200), accountScopeID: scope.accountScopeID)
+        let ledgers = SiteHistoryDayLedgerStore(directory: folder.appendingPathComponent("onboarding"))
+        try await ledgers.save(SiteHistoryDayLedger(days: ["2026-11-01": .clear]), scope: scope)
         let cleanup = SolarSessionCleanup(
             historyStore: SolarHistoryStore(directory: folder.appendingPathComponent("history")),
             layoutRecordStore: records, cloudSync: try cloudSync(store: records, folder: folder),
-            onboardingStore: onboarding
+            onboardingStore: onboarding, dayLedgerStore: ledgers
         )
 
         try await cleanup.signOut()
@@ -54,6 +56,8 @@ struct SolarLayoutSessionCleanupTests {
         let reloaded = SiteHistoryOnboardingStore(directory: folder.appendingPathComponent("onboarding"))
         #expect(try await reloaded.progress(scope: scope) == nil)
         #expect(try await reloaded.throttle(accountScopeID: scope.accountScopeID) == nil)
+        let reloadedLedgers = SiteHistoryDayLedgerStore(directory: folder.appendingPathComponent("onboarding"))
+        #expect(try await reloadedLedgers.ledger(scope: scope) == nil)
     }
 
     private nonisolated func cloudSync(store: SolarLayoutRecordStore, folder: URL) throws -> SolarLayoutCloudSync {
