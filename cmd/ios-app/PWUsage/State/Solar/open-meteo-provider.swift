@@ -3,7 +3,9 @@ import Foundation
 /// Open-Meteo for the server-detected layout. Owns transport, conversion and the
 /// device-wide request ledger; caching is the shared automatic-provider cache.
 actor OpenMeteoProvider: SolarForecastProviding {
-    nonisolated let descriptor = SolarForecastProviderDescriptor(
+    nonisolated let descriptor = OpenMeteoProvider.sourceDescriptor
+
+    nonisolated static let sourceDescriptor = SolarForecastProviderDescriptor(
         id: .openMeteo,
         displayName: "Open-Meteo",
         attribution: "Forecast by Open-Meteo.",

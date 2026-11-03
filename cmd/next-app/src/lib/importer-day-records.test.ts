@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TeslaClient } from './tesla-client';
+import { TeslaRateLimitError, type TeslaClient } from './tesla-client';
 import type { DayRecordStatus, EmptyDayState } from './prototypes/day-attribution';
 
 const mocks = vi.hoisted(() => ({
@@ -133,6 +133,24 @@ describe('range imports', () => {
         store.writeDay.mockResolvedValue({ status: 'busy' } as never);
         await expect(new Importer(teslaClient() as unknown as TeslaClient, store)
             .ensureDataForRange('site', day, nextDay)).rejects.toThrow(/busy/);
+    });
+
+    it('stops at a Tesla throttle after earlier days were written, keeping the retry deadline', async () => {
+        mocks.coverage.mockResolvedValue([]);
+        const retryAt = new Date('2026-11-02T13:00:00Z');
+        const client = teslaClient();
+        const history = client.getEnergyHistory.getMockImplementation()!;
+        client.getEnergyHistory
+            .mockImplementationOnce(history)
+            .mockRejectedValueOnce(new TeslaRateLimitError(retryAt, 'header'));
+        const store = dayStore();
+        const error = await new Importer(client as unknown as TeslaClient, store)
+            .ensureDataForRange('site', day, new Date(+nextDay + 2 * 86400000)).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(TeslaRateLimitError);
+        expect((error as TeslaRateLimitError).retryAt).toEqual(retryAt);
+        expect(store.writeDay).toHaveBeenCalledOnce();
+        // The third planned day is never requested.
+        expect(client.getEnergyHistory).toHaveBeenCalledTimes(2);
     });
 
     it('refetchDays writes each listed day as a record', async () => {

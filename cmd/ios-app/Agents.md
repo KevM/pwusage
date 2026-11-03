@@ -24,7 +24,7 @@
   - Functions, properties, variables, and enum cases: `lowerCamelCase` (`batteryState`, `.discharging`, `fetchDailyUsage()`).
 
 ## Development & Code Quality
-- **Strict Linting & Formatting**: All Swift code must comply with SwiftLint (`swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json`) and SwiftFormat (`cmd/ios-app/format.sh`).
+- **Strict Linting & Formatting**: All Swift code must comply with SwiftLint (`swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json`) and SwiftFormat (`cmd/ios-app/format.sh`). Better yet adhere to linting rules when generating code!
 - **No Force Unwrapping**: Strict prohibition of `!` (force-unwrap or force-try `try!`). Always handle optionals safely (`guard let`, `if let`, nil-coalescing `??`, or throw).
 - **Pre-commit Checks**: Before finalizing any task or pushing changes, always run:
   1. `cmd/ios-app/format.sh`

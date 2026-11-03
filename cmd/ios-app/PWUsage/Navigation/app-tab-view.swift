@@ -8,6 +8,8 @@ struct AppTabView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     @Environment(\.demoMode) private var demoMode
+    /// The banner's motion outlives its content, which the tab bar recreates as it updates.
+    @State private var bannerClocks = SolarSystemBannerClocks()
 
     var body: some View {
         Group {
@@ -34,14 +36,31 @@ struct AppTabView: View {
         }
     }
 
-    private var tabs: some View {
+    @ViewBuilder private var tabs: some View {
+        let status = model.siteHistoryStatus
+        let presentation = SiteHistoryPresentation(status: status, now: .now)
+        if #available(iOS 26.1, *) {
+            let banner = SolarSystemBannerModel(presentation: presentation, status: status)
+            let showsBanner = presentation.showsBanner && !model.isDemo && !model.isShowingSolarSystem
+            tabView.tabViewBottomAccessory(isEnabled: showsBanner) {
+                SolarSystemBanner(model: banner, clocks: bannerClocks) {
+                    model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
+                }
+            }
+            .onChange(of: banner.days, initial: true) { bannerClocks.observe(days: banner.days, now: .now) }
+        } else {
+            tabView
+        }
+    }
+
+    private var tabView: some View {
         TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
             ForEach(AppTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
                     // An external launch (widget or Battery Saver control) rebuilds
                     // each tab's stack to drop old paths and modals. The id goes here, never on the
                     // TabView, so the sidebar keeps its shown/collapsed state.
-                    NavigationStack { content(for: tab) }
+                    stack(for: tab)
                         .id(model.externalNavigationID)
                 }
             }
@@ -70,6 +89,14 @@ struct AppTabView: View {
         }
     }
 
+    @ViewBuilder private func stack(for tab: AppTab) -> some View {
+        if tab == .settings {
+            NavigationStack(path: $model.settingsPath) { content(for: tab) }
+        } else {
+            NavigationStack { content(for: tab) }
+        }
+    }
+
     @ViewBuilder private func content(for tab: AppTab) -> some View {
         switch tab {
         case .home:
@@ -85,8 +112,19 @@ struct AppTabView: View {
             SettingsView(site: site, coordinator: coordinator,
                          onChooseSite: model.openSitePicker,
                          onSignOut: { Task { await model.signOut() } },
-                         onExitDemo: model.isDemo ? { demoMode?.exit() } : nil)
+                         onExitDemo: model.isDemo ? { demoMode?.exit() } : nil,
+                         siteHistory: coordinator.solarLayoutStatus == .disabled ? nil : model.siteHistoryStatus,
+                         siteHistoryDebug: siteHistoryDebug,
+                         onLocationSaved: model.homeLocationSaved)
         }
+    }
+
+    private var siteHistoryDebug: SiteHistoryDebugActions? {
+        #if DEBUG
+            model.siteHistoryDebugActions
+        #else
+            nil
+        #endif
     }
 
     /// A convenience switcher only: it is hidden when the sidebar is collapsed

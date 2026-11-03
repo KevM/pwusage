@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Settings tab: site, Rate Plans, Solar Forecast, About, and Sign Out
+/// The Settings tab: site, Rate Plans, Solar System, About, and Sign Out
 /// (Exit Demo in the demo).
 /// It has no stack of its own; the tab's `NavigationStack` hosts the pushes.
 struct SettingsView: View {
@@ -11,6 +11,10 @@ struct SettingsView: View {
     /// Set in the demo, where it replaces Sign Out. Nothing is lost by leaving,
     /// so it asks no confirmation.
     var onExitDemo: (() -> Void)?
+    /// The history beta's status for the site, outside the demo; nil otherwise.
+    var siteHistory: SiteHistoryStatus?
+    var siteHistoryDebug: SiteHistoryDebugActions?
+    var onLocationSaved: () -> Void = {}
 
     @State private var isConfirmingSignOut = false
 
@@ -39,8 +43,14 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
-                NavigationLink(value: SettingsDestination.solarForecast) {
-                    Label("Solar Forecast", systemImage: "sun.max")
+                NavigationLink(value: SettingsDestination.solarSystem()) {
+                    LabeledContent {
+                        if siteHistory != nil {
+                            Text(SiteHistoryPresentation(status: siteHistory, now: .now).rowValue)
+                        }
+                    } label: {
+                        Label("Solar System", systemImage: "sun.max")
+                    }
                 }
                 NavigationLink(value: SettingsDestination.about) {
                     Label("About", systemImage: "info.circle")
@@ -61,8 +71,10 @@ struct SettingsView: View {
             case .ratePlans:
                 TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
                     .id(site.id)
-            case .solarForecast:
-                SolarForecastSettingsView(coordinator: coordinator)
+            case .solarSystem(let startsAtLocation):
+                SolarSystemView(
+                    coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
+                    startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved)
             case .about:
                 AboutSheet()
             }
@@ -81,9 +93,10 @@ struct SettingsView: View {
     }
 }
 
-private enum SettingsDestination: Hashable {
+enum SettingsDestination: Hashable {
     case ratePlans
-    case solarForecast
+    /// `startsAtLocation` opens straight into the home location step.
+    case solarSystem(startsAtLocation: Bool = false)
     case about
 }
 

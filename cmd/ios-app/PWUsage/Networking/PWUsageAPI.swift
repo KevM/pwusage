@@ -164,6 +164,43 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         }
     }
 
+    func fillSolarHistory(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse {
+        var request = URLRequest(url: try makeURL(path: "/api/mobile/solar-history"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(FillRequest(siteId: siteID, from: from, days: days))
+        let (data, http) = try await send(request)
+        if let failure = Self.fillFailure(http, data: data, now: Date()) { throw failure }
+        let body = try check(http, data: data)
+        do { return try MobileContractDecoder.make().decode(MobileSolarHistoryFillResponse.self, from: body) } catch {
+            throw PWUsageAPIError.invalidResponse
+        }
+    }
+
+    /// A throttle, token backoff or reconnect, typed with its deadline; nil for any other answer.
+    private static func fillFailure(_ http: HTTPURLResponse, data: Data, now: Date) -> MobileSolarHistoryFillError? {
+        let failure = try? MobileContractDecoder.make().decode(FillFailure.self, from: data)
+        let headerWait = http.value(forHTTPHeaderField: "Retry-After").flatMap { value in
+            UInt(value.trimmingCharacters(in: .whitespaces)).map { TimeInterval($0) }
+        }
+        switch (http.statusCode, failure?.code) {
+        case (529, _):
+            if let retryAt = failure?.retryAt {
+                return .rateLimited(retryAt: retryAt, isFallback: failure?.retryAfterSource == "fallback")
+            }
+            return .rateLimited(
+                retryAt: now.addingTimeInterval(headerWait ?? MobileSolarHistoryFillError.fallbackWait),
+                isFallback: headerWait == nil)
+        case (503, "TESLA_REFRESH_BACKOFF"):
+            let wait = headerWait ?? MobileSolarHistoryFillError.fallbackWait
+            return .teslaUnavailable(retryAt: now.addingTimeInterval(wait))
+        case (409, "TESLA_CONNECTION_REQUIRED"):
+            return .teslaReconnectRequired
+        default:
+            return nil
+        }
+    }
+
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {
         let url = try makeURL(path: "/api/mobile/session")
         var request = URLRequest(url: url)
@@ -200,8 +237,17 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
+        let (data, http) = try await send(request)
+        return try check(http, data: data)
+    }
+
+    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response): (Data, URLResponse) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
+        return (data, http)
+    }
+
+    private func check(_ http: HTTPURLResponse, data: Data) throws -> Data {
         guard (200 ..< 300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw PWUsageAPIError.signInRequired }
             if (500 ..< 600).contains(http.statusCode) {
@@ -227,6 +273,8 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     private struct SessionResponse: Decodable { let ok: Bool }
+    private struct FillRequest: Encodable { let siteId: String; let from: String; let days: Int }
+    private struct FillFailure: Decodable { let code: String?; let retryAt: Date?; let retryAfterSource: String? }
     private struct ErrorResponse: Decodable { let error: String?; let code: String? }
 }
 
@@ -234,7 +282,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
 // declared next to the type that consumes it, which is why these used to be one
 // line each in three files.
 extension PWUsageAPI: MobileDashboardDataAPI, MobileLivePowerDataAPI {}
-extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI {}
+extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI, MobileSolarHistoryFillAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}

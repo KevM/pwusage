@@ -1,4 +1,10 @@
 import Foundation
+#if DEBUG
+    import OSLog
+
+    private let classifyLogger = Logger(subsystem: "fm.rodeo.pwusage", category: "solar-layout")
+    private let classifySignposter = OSSignposter(logger: classifyLogger)
+#endif
 
 /// The detector's result on the phone (port of `detect.ts` `SolarLayoutResult`, without the
 /// shading profile, which nothing on the phone reads).
@@ -30,6 +36,23 @@ struct DetectedSolarLayout: Codable, Equatable, Sendable {
     let clearDays: Int
     let firstDay: String?
     let lastDay: String?
+    /// Which early exit stopped the run; nil when the fit ran to an assessment, and for results
+    /// stored before it was recorded. Phone-only: `reasons` keeps the reference's labels.
+    var shortfall: Shortfall?
+
+    /// The detector's early exits. The reference labels the last three `few-clear-days`.
+    enum Shortfall: String, Codable, Sendable {
+        /// Fewer than `minHistoryDays` producing days.
+        case fewProducingDays = "few-producing-days"
+        /// Producing days, but no production with the sun more than 10° up: usually a wrong location.
+        case noDaylightProduction = "no-daylight-production"
+        /// Under 200 clear-sky samples.
+        case fewClearSamples = "few-clear-samples"
+        /// Under 200 samples or 5 days left after the shade mask and clear-day selection.
+        case fewUsableClearDays = "few-usable-clear-days"
+        /// The plane-count fit chose no layout.
+        case noPlaneFit = "no-plane-fit"
+    }
 }
 
 /// Intermediate values of one detection run, read by the parity tests against each fixture's
@@ -38,6 +61,8 @@ struct SolarLayoutDetectionStages: Sendable {
     var producingDays = 0
     var clipKw: Double?
     var clearDays = 0
+    /// The site-local clear days behind `clearDays`.
+    var clearDayIds: Set<String> = []
     var selectedRows = 0
     var shading: [ShadeSegment] = []
     /// nil unless the plane-count fit ran.
@@ -90,46 +115,41 @@ enum SolarLayoutDetector {
         let rng = LayoutFit.seededRng(0)
         let series = layoutSeries(samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone)
 
-        let producingDays = Set(series.points.filter { $0.powerKw > 0 }.map(\.localDay)).sorted()
+        let producingDays = producingDays(in: series)
         var stages = SolarLayoutDetectionStages(producingDays: producingDays.count)
         let summary = RunSummary(producingDays: producingDays)
-        guard producingDays.count >= minHistoryDays else { return summary.notEnoughHistory(stages) }
+        guard producingDays.count >= minHistoryDays else { return summary.notEnoughHistory(.fewProducingDays, stages) }
 
-        let peak = quantile(series.points.filter { $0.sun.elevation > 10 }.map(\.powerKw), 0.999)
-        guard peak > 0 else { return summary.notEnoughHistory(stages) }
-        let clipKw = detectClip(series)?.limitKw
-        stages.clipKw = clipKw
-        try checkCancellation()
-
-        let clearIndices = selectClearIndices(series, peak: peak, clipKw: clipKw)
-        let rowsC = LayoutFit.fitRows(series, selected: mask(of: clearIndices, count: series.points.count))
-        guard rowsC.powerKw.count >= 200 else { return summary.lowEvidence(acClipKw: nil, clearDays: 0, stages) }
-        let colsC = LayoutFit.gridColumns(rowsC)
-        try checkCancellation()
-
-        let clearFit = ClearFit(
-            series: series, clearIndices: clearIndices, rows: rowsC, columns: colsC, clipKw: clipKw, peak: peak)
-        let (keep, shadeMask) = try clearFit.learnKeepMask(checkCancellation: checkCancellation)
-        let days = clearDaySets(series, clearIndices: clearIndices, keep: keep, shadeMask: shadeMask)
+        let selection: ClearDaySelection
+        switch try selectClearDays(series, checkCancellation: checkCancellation) {
+        case .stopped(let shortfall, let clipKw):
+            stages.clipKw = clipKw
+            return shortfall == .noDaylightProduction
+                ? summary.notEnoughHistory(shortfall, stages) : summary.lowEvidence(shortfall, stages)
+        case .selected(let selected): selection = selected
+        }
+        let (clipKw, clearFit, days) = (selection.clipKw, selection.fit, selection.days)
         let clearDays = days.clear.count
+        stages.clipKw = clipKw
         stages.clearDays = clearDays
-        stages.shading = shadeMask.summary()
+        stages.clearDayIds = days.clear
+        stages.shading = selection.shadeMask.summary()
 
-        let rowCount = rowsC.powerKw.count
-        let finalKeep = (0 ..< rowCount).map { keep[$0] && days.use.contains(clearFit.dayIds[$0]) }
-        let rows = LayoutFit.subsetRows(rowsC) { finalKeep[$0] }
+        let rowCount = clearFit.rows.powerKw.count
+        let finalKeep = (0 ..< rowCount).map { selection.keep[$0] && days.use.contains(clearFit.dayIds[$0]) }
+        let rows = LayoutFit.subsetRows(clearFit.rows) { finalKeep[$0] }
         stages.selectedRows = rows.powerKw.count
         guard rows.powerKw.count >= 200, rows.days.count >= 5 else {
-            return summary.lowEvidence(acClipKw: clipKw, clearDays: clearDays, stages)
+            return summary.lowEvidence(.fewUsableClearDays, acClipKw: clipKw, clearDays: clearDays, stages)
         }
         let keptIndices = (0 ..< rowCount).filter { finalKeep[$0] }
-        let cols = colsC.map { column in keptIndices.map { column[$0] } }
+        let cols = clearFit.columns.map { column in keptIndices.map { column[$0] } }
         try checkCancellation()
 
         let choice = try LayoutFit.planeCountFromRows(
             rows, columns: cols, clipKw: clipKw, rng: rng, checkCancellation: checkCancellation)
         guard let chosen = choice.fits[choice.count] else {
-            return summary.lowEvidence(acClipKw: clipKw, clearDays: clearDays, stages)
+            return summary.lowEvidence(.noPlaneFit, acClipKw: clipKw, clearDays: clearDays, stages)
         }
         let best = LayoutFit.toPlanes(chosen.params)
         stages.planeCount = choice.count
@@ -148,11 +168,13 @@ enum SolarLayoutDetector {
     private struct RunSummary {
         let producingDays: [String]
 
-        func notEnoughHistory(_ stages: SolarLayoutDetectionStages) -> SolarLayoutDetectorOutcome {
+        func notEnoughHistory(
+            _ shortfall: DetectedSolarLayout.Shortfall, _ stages: SolarLayoutDetectionStages
+        ) -> SolarLayoutDetectorOutcome {
             SolarLayoutDetectorOutcome(result: DetectedSolarLayout(
                 status: .notEnoughHistory, confidence: nil, reasons: [], planes: [], acClipKw: nil,
                 historyDays: producingDays.count, clearDays: 0,
-                firstDay: producingDays.first, lastDay: producingDays.last), stages: stages)
+                firstDay: producingDays.first, lastDay: producingDays.last, shortfall: shortfall), stages: stages)
         }
 
         func detected(
@@ -170,13 +192,83 @@ enum SolarLayoutDetector {
         }
 
         func lowEvidence(
-            acClipKw: Double?, clearDays: Int, _ stages: SolarLayoutDetectionStages
+            _ shortfall: DetectedSolarLayout.Shortfall, acClipKw: Double? = nil, clearDays: Int = 0,
+            _ stages: SolarLayoutDetectionStages
         ) -> SolarLayoutDetectorOutcome {
             SolarLayoutDetectorOutcome(result: DetectedSolarLayout(
                 status: .lowConfidence, confidence: "low", reasons: ["few-clear-days"], planes: [],
                 acClipKw: acClipKw, historyDays: producingDays.count, clearDays: clearDays,
-                firstDay: producingDays.first, lastDay: producingDays.last), stages: stages)
+                firstDay: producingDays.first, lastDay: producingDays.last, shortfall: shortfall), stages: stages)
         }
+    }
+
+    /// The stages through clear-day selection, shared by `detect` and `classifyDays`.
+    private struct ClearDaySelection {
+        let clipKw: Double?
+        let fit: ClearFit
+        let keep: [Bool]
+        let shadeMask: ShadeMask
+        let days: (clear: Set<String>, use: Set<String>)
+    }
+
+    private enum ClearDayStage {
+        /// An early exit, with the AC clip when it was detected first.
+        case stopped(DetectedSolarLayout.Shortfall, clipKw: Double?)
+        case selected(ClearDaySelection)
+    }
+
+    /// Clear-day selection without the producing-day gate: peak, AC clip, clear rows and the
+    /// shade mask learned from a two-plane fit.
+    private static func selectClearDays(
+        _ series: LayoutSeries, checkCancellation: () throws -> Void
+    ) throws -> ClearDayStage {
+        let peak = quantile(series.points.filter { $0.sun.elevation > 10 }.map(\.powerKw), 0.999)
+        guard peak > 0 else { return .stopped(.noDaylightProduction, clipKw: nil) }
+        let clipKw = detectClip(series)?.limitKw
+        try checkCancellation()
+
+        let clearIndices = selectClearIndices(series, peak: peak, clipKw: clipKw)
+        let rows = LayoutFit.fitRows(series, selected: mask(of: clearIndices, count: series.points.count))
+        guard rows.powerKw.count >= 200 else { return .stopped(.fewClearSamples, clipKw: clipKw) }
+        let columns = LayoutFit.gridColumns(rows)
+        try checkCancellation()
+
+        let fit = ClearFit(
+            series: series, clearIndices: clearIndices, rows: rows, columns: columns, clipKw: clipKw, peak: peak)
+        let (keep, shadeMask) = try fit.learnKeepMask(checkCancellation: checkCancellation)
+        let days = clearDaySets(series, clearIndices: clearIndices, keep: keep, shadeMask: shadeMask)
+        return .selected(ClearDaySelection(clipKw: clipKw, fit: fit, keep: keep, shadeMask: shadeMask, days: days))
+    }
+
+    /// The clear-day pass: each stored site-local day as clear, cloudy or without production, from
+    /// the same stages `detect` runs before its fit. It writes nothing and needs no minimum history.
+    static func classifyDays(
+        samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
+        timeZone: TimeZone, checkCancellation: () throws -> Void
+    ) throws -> SolarDayClassification {
+        #if DEBUG
+            let started = ContinuousClock.now
+            let signpost = classifySignposter.beginInterval("classifyDays")
+            defer {
+                classifySignposter.endInterval("classifyDays", signpost)
+                classifyLogger.debug(
+                    "Clear-day pass: \(samples.count) samples in \(ContinuousClock.now - started, privacy: .public)")
+            }
+        #endif
+        try checkCancellation()
+        let series = layoutSeries(samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone)
+        let stored = Set(series.points.filter(\.powerKw.isFinite).map(\.localDay))
+        let producing = Set(producingDays(in: series))
+        var clear = Set<String>()
+        if !producing.isEmpty, case .selected(let selection) = try selectClearDays(
+            series, checkCancellation: checkCancellation) {
+            clear = selection.days.clear
+        }
+        var days: [String: SolarDayType] = [:]
+        for day in stored {
+            days[day] = !producing.contains(day) ? .noProduction : clear.contains(day) ? .clear : .cloudy
+        }
+        return SolarDayClassification(days: days)
     }
 
     /// The clear-selected rows with their sun geometry, and the two-plane fit that learns the shade mask.
