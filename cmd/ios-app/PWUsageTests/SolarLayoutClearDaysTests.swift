@@ -6,30 +6,6 @@ import Testing
 struct SolarLayoutClearDaysTests {
     private static let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
 
-    private static func classify(_ fixture: SolarLayoutFixture) throws -> SolarDayClassification {
-        let timeZone = try #require(TimeZone(identifier: fixture.input.timeZone))
-        return try SolarLayoutDetector.classifyDays(
-            samples: SolarLayoutDetectorTests.samples(fixture), latitude: fixture.input.latitude,
-            longitude: fixture.input.longitude, timeZone: timeZone, checkCancellation: {})
-    }
-
-    @Test(arguments: SolarLayoutDetectorTests.fixtureNames)
-    func sortsEveryProducingDayIntoClearOrCloudy(name: String) throws {
-        let fixture = try SolarLayoutFixture.load(name)
-        let days = try Self.classify(fixture)
-        #expect(days.producingDays == fixture.result.historyDays, "\(name) producing days")
-        #expect(days.producingDays == days.clearDays + days.days.values.count(where: { $0 == .cloudy }))
-        #expect(days.days.keys.allSatisfy { $0.count == 10 }, "\(name) site-local day keys")
-    }
-
-    /// The reference records the clear count only when detection got past the producing-day gate.
-    @Test(arguments: ["east-west-clipped-60d", "south-shaded-100d"])
-    func clearCountMatchesTheReference(name: String) throws {
-        let fixture = try SolarLayoutFixture.load(name)
-        let selection = try #require(fixture.stages.selection)
-        #expect(try Self.classify(fixture).clearDays == selection.clearDays)
-    }
-
     @Test func noHistoryHasNoDays() throws {
         let days = try SolarLayoutDetector.classifyDays(
             samples: [], latitude: 43.4, longitude: -87.9, timeZone: Self.chicago, checkCancellation: {})
@@ -60,6 +36,33 @@ struct SolarLayoutClearDaysTests {
             try SolarLayoutDetector.classifyDays(
                 samples: [(Date(timeIntervalSince1970: 1_780_333_200), 50)], latitude: 43.4, longitude: -87.9,
                 timeZone: Self.chicago, checkCancellation: { throw Stop() })
+        }
+    }
+}
+
+/// Fixture parity runs the non-linear fit across multi-month datasets. Gated behind
+/// quick-test-skips.txt and run-tests.sh detector change detection.
+@Suite("Solar layout clear-day fixture parity")
+struct SolarLayoutClearDaysParityTests {
+    private static func classify(_ fixture: SolarLayoutFixture) throws -> SolarDayClassification {
+        let timeZone = try #require(TimeZone(identifier: fixture.input.timeZone))
+        return try SolarLayoutDetector.classifyDays(
+            samples: SolarLayoutDetectorTests.samples(fixture), latitude: fixture.input.latitude,
+            longitude: fixture.input.longitude, timeZone: timeZone, checkCancellation: {})
+    }
+
+    @Test(arguments: SolarLayoutDetectorTests.fixtureNames)
+    func sortsEveryProducingDayIntoClearOrCloudy(name: String) throws {
+        let fixture = try SolarLayoutFixture.load(name)
+        let days = try Self.classify(fixture)
+        #expect(days.producingDays == fixture.result.historyDays, "\(name) producing days")
+        #expect(days.producingDays == days.clearDays + days.days.values.count(where: { $0 == .cloudy }))
+        #expect(days.days.keys.allSatisfy { $0.count == 10 }, "\(name) site-local day keys")
+
+        // The reference records clear days only when history passed the producing-day gate.
+        if fixture.result.historyDays >= SolarLayoutDetector.minHistoryDays,
+           let selection = fixture.stages.selection {
+            #expect(days.clearDays == selection.clearDays, "\(name) clear day count")
         }
     }
 }

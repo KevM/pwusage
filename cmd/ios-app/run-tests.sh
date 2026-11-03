@@ -116,7 +116,7 @@ detector_changed() {
     return
   }
   { git diff --name-only "$base" -- . && git ls-files --others --exclude-standard -- .; } 2> /dev/null \
-    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|mobile-solar-layout\.swift|solar-position\.swift)|PWUsageTests/(Fixtures/SolarLayout/|Fixtures/solar-layout-fixture-loader\.swift|SolarLayoutDetectorTests\.swift))' \
+    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|mobile-solar-layout\.swift|solar-position\.swift)|PWUsageTests/(Fixtures/SolarLayout/|Fixtures/solar-layout-fixture-loader\.swift|SolarLayoutDetectorTests\.swift|SolarLayoutClearDaysTests\.swift))' \
     && echo 1 || echo 0
 }
 
@@ -124,8 +124,9 @@ detector_changed() {
 if [[ "$mode" == default && "$#" -eq 0 ]]; then
   run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
   if [[ "$run_parity" != 1 ]]; then
-    echo 'Skipping SolarLayoutDetectorFixtureParityTests: no detector changes on this branch (PWUSAGE_DETECTOR_PARITY=1 runs it; CI always does).'
+    echo 'Skipping detector parity suites: no detector changes on this branch (PWUSAGE_DETECTOR_PARITY=1 runs them; CI always does).'
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests")
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutClearDaysParityTests")
   fi
 fi
 

@@ -1,1 +1,2 @@
 PWUsageTests/SolarLayoutDetectorFixtureParityTests
+PWUsageTests/SolarLayoutClearDaysParityTests
