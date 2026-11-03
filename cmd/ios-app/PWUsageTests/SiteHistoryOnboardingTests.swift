@@ -269,6 +269,32 @@ struct SiteHistoryOnboardingTests {
         #expect(ledger.checkpoint?.azimuthRange90 == [175, 185])
     }
 
+    @Test func aPassSavesTheSortedDaysBeforeDetectionRuns() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.clearEvery = 2
+        environment.answers = Array(repeating: .fill(.complete), count: 14) + [.disabled]
+        let ledgers = ledgers
+        let scope = scope
+        var sortedAtDetection: [Int] = []
+        environment.onDetect = {
+            sortedAtDetection.append((try? await ledgers.ledger(scope: scope))?.dayTypes.count ?? 0)
+        }
+        _ = await make(environment).run(scope: scope)
+        // The first detection runs at 42 producing days, and the strip already shows all 42.
+        #expect(sortedAtDetection == [42])
+    }
+
+    @Test func aPassThatDidNotFinishRunsAgainAtTheNextSlice() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.answers = Array(repeating: .fill(.complete), count: 4) + [.disabled]
+        environment.lostPasses = 1
+        _ = await make(environment).run(scope: scope)
+        // Slice 2's pass is lost; slice 3 sorts at once rather than waiting for slice 4.
+        #expect(environment.passes.map(\.days.count) == [9])
+        let ledger = try #require(try await ledgers.ledger(scope: scope))
+        #expect(ledger.dayTypes.count == 9)
+    }
+
     @Test func aUsableLayoutKeepsLoadingUntilHighConfidence() async {
         let environment = FakeOnboardingEnvironment()
         environment.clearEvery = 2

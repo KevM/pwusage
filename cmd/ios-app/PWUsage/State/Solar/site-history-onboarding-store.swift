@@ -19,8 +19,8 @@ struct SiteHistoryOnboardingProgress: Codable, Equatable, Sendable {
     var lastAssessedCheckedDays = 0
     /// Targets already reached at the last full detection; nil before the first.
     var detectedTargets: [SiteHistoryOnboarding.Target]?
-    /// Complete slices so far; the clear-day pass runs after every second one.
-    var completeSlices: Int?
+    /// Checked days at the last clear-day pass that saved its days; nil before the first.
+    var sortedCheckedDays: Int?
     /// Producing days at the last clear-day pass.
     var producingDays: Int?
     var lastOutlook: SolarLayoutHistoryOutlook?

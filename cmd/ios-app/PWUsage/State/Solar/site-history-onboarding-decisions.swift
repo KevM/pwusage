@@ -15,6 +15,12 @@ extension SiteHistoryOnboarding {
         }
     }
 
+    /// The clear-day pass is due once enough checked days are unsorted. A pass that was cut off
+    /// leaves them unsorted, so the next slice runs it again.
+    static func sortDue(_ progress: SiteHistoryOnboardingProgress, checked: Int) -> Bool {
+        checked - (progress.sortedCheckedDays ?? 0) >= sortEveryDays
+    }
+
     /// Full detection once the detector's producing-day minimum is met, when a target was reached
     /// since the last run, or 30 checked days after it.
     static func detectionDue(

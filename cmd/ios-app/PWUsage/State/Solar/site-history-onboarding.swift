@@ -1,7 +1,7 @@
 import Foundation
 
 /// Imports a site's recent history, then keeps reaching back toward a high-confidence layout.
-/// A clear-day pass sorts the stored days every second slice; full detection runs only when a
+/// A clear-day pass sorts the stored days once six checked days are unsorted; full detection runs only when a
 /// target is first reached (15 or 40 clear days, 180 producing days) or 30 checked days after the
 /// last one. Walks newest first in short slices from yesterday, so the recent days come
 /// first; the cursor moves only when a whole slice comes back `complete`, and any other answer
@@ -34,7 +34,8 @@ final class SiteHistoryOnboarding {
     /// Not a promise: the solar search may end earlier or continue past it.
     static let initialCheckpointDays = 90
     static let reassessEveryDays = 30
-    static let passEverySlices = 2
+    /// Unsorted checked days that run the clear-day pass: two slices' worth.
+    static let sortEveryDays = 6
     static let maxDaysBack = 365
     static let partialRetries = 3
 
@@ -222,7 +223,6 @@ final class SiteHistoryOnboarding {
         switch status {
         case .complete:
             progress.oldestChecked = slice.from
-            progress.completeSlices = (progress.completeSlices ?? 0) + 1
             progress.failures = 0
             progress.nextAttemptAt = nil
             progress.waitReason = nil
@@ -276,8 +276,8 @@ final class SiteHistoryOnboarding {
     // MARK: - Decisions
 
     /// After a complete slice: a high-confidence layout (one iCloud brought back, say) still loads
-    /// the initial checkpoint for the forecast, sorting days every second slice without detection;
-    /// without a location the search ends there too; otherwise every second slice runs the
+    /// the initial checkpoint for the forecast, sorting days as they come in without detection;
+    /// without a location the search ends there too; otherwise each due sort runs the
     /// clear-day pass, which may run full detection.
     private func decideAfterSlice(
         _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, timeZone: TimeZone
@@ -285,13 +285,13 @@ final class SiteHistoryOnboarding {
         let checked = progress.checkedDays(timeZone: timeZone)
         if await environment.layoutConfidence(scope: scope) == .high {
             let done = checked >= Self.initialCheckpointDays
-            guard done || (progress.completeSlices ?? 0) % Self.passEverySlices == 0 else { return nil }
+            guard done || Self.sortDue(progress, checked: checked) else { return nil }
             return await sortForHighLayout(&progress, scope: scope, checked: checked, finishing: done)
         }
         guard await environment.hasLocation(scope: scope) else {
             return checked >= Self.initialCheckpointDays ? .locationNeeded : nil
         }
-        if (progress.completeSlices ?? 0) % Self.passEverySlices == 0,
+        if Self.sortDue(progress, checked: checked),
            let result = await pass(&progress, scope: scope, checked: checked, detection: .whenDue),
            let reason = Self.finishReason(result, atBound: false) {
             return reason
@@ -313,32 +313,33 @@ final class SiteHistoryOnboarding {
         guard let days = await environment.classifyDays(scope: scope), !Task.isCancelled else { return nil }
         progress.producingDays = days.producingDays
         let previous = try? await ledgers.ledger(scope: scope)
-        var checkpoint = SiteHistoryCheckpoint(
+        var ledger = SiteHistoryDayLedger(classification: days)
+        ledger.checkpoint = SiteHistoryCheckpoint(
             ranAt: now(), producingDays: days.producingDays, clearDays: days.clearDays,
             azimuthRange90: previous?.checkpoint?.azimuthRange90)
-        var result: DetectedSolarLayout?
+        // Saved before detection, which can take minutes, so the strip shows the sorted days now.
+        if (try? await ledgers.save(ledger, scope: scope)) != nil { progress.sortedCheckedDays = checked }
+        guard !Task.isCancelled else { return nil }
+        onProgress?(scope)
         let due = switch detection {
         case .whenDue: Self.detectionDue(days, progress: progress, checked: checked)
         case .atBound:
             days.producingDays >= SolarLayoutDetector.minHistoryDays && checked > progress.lastAssessedCheckedDays
         case .never: false
         }
-        if due {
-            progress.lastAssessedCheckedDays = checked
-            progress.detectedTargets = Target.reached(producingDays: days.producingDays, clearDays: days.clearDays)
-                .sorted { $0.rawValue < $1.rawValue }
-            result = await environment.detect(scope: scope)
-            if let result {
-                progress.lastOutlook = SolarLayoutDetector.historyOutlook(result)
-                if let largest = result.planes.max(by: { $0.effectiveKw < $1.effectiveKw }) {
-                    checkpoint.azimuthRange90 = largest.azimuthRange90
-                }
-            }
-        }
+        guard due else { return nil }
+        let result = await environment.detect(scope: scope)
+        // A detection cut off counts as not run, so the next pass tries again.
         guard !Task.isCancelled else { return nil }
-        var ledger = SiteHistoryDayLedger(classification: days)
-        ledger.checkpoint = checkpoint
-        try? await ledgers.save(ledger, scope: scope)
+        progress.lastAssessedCheckedDays = checked
+        progress.detectedTargets = Target.reached(producingDays: days.producingDays, clearDays: days.clearDays)
+            .sorted { $0.rawValue < $1.rawValue }
+        guard let result else { return nil }
+        progress.lastOutlook = SolarLayoutDetector.historyOutlook(result)
+        if let largest = result.planes.max(by: { $0.effectiveKw < $1.effectiveKw }) {
+            ledger.checkpoint?.azimuthRange90 = largest.azimuthRange90
+            try? await ledgers.save(ledger, scope: scope)
+        }
         return result
     }
 

@@ -33,6 +33,10 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
     var detections: [DetectedSolarLayout] = []
     var detectionCount = 0
     var onFill: (() -> Void)?
+    /// Passes that come back empty, as one cut off by a background expiry would.
+    var lostPasses = 0
+    /// Runs when detection starts, before it answers.
+    var onDetect: (() async -> Void)?
 
     func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse {
         requests.append((from, days))
@@ -76,6 +80,10 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
 
     func classifyDays(scope _: SolarForecastSiteScope) async -> SolarDayClassification? {
         guard location else { return nil }
+        if lostPasses > 0 {
+            lostPasses -= 1
+            return nil
+        }
         let days = stored.flatMap(\.self).sorted(by: >)
         var types: [String: SolarDayType] = [:]
         for (index, day) in days.enumerated() {
@@ -92,6 +100,7 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
 
     func detect(scope _: SolarForecastSiteScope) async -> DetectedSolarLayout? {
         detectionCount += 1
+        await onDetect?()
         return detections.isEmpty ? nil : detections.removeFirst()
     }
 }
