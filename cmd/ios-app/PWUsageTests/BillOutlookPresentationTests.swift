@@ -45,6 +45,70 @@ struct BillOutlookPresentationTests {
         let offPeak = BillOutlookPeriod(tariffName: "Home", periodName: "Off-Peak", netGridKwh: 0)
         #expect(BillOutlookPresentation.laneSummary(period: offPeak, totals: [], selected: nil, currency: "USD") == nil)
     }
+    private struct Rate {
+        let name: String
+        let buy: Double
+        let sell: Double
+    }
+    private static let onPeak = Rate(name: "On-Peak", buy: 0.30, sell: 0.04)
+    private static let offPeak = Rate(name: "Off-Peak", buy: 0.10, sell: 0.04)
+    private static func balances(offPeak: Double, onPeak: Double, plan: String = "Home") -> BillOutlookPoint {
+        BillOutlook.point(date: .init(timeIntervalSince1970: 0), buckets: [
+            .init(tariffName: "Home", periodName: Self.offPeak.name, netGridKwh: offPeak,
+                  buyRate: Self.offPeak.buy, sellRate: Self.offPeak.sell),
+            .init(tariffName: plan, periodName: Self.onPeak.name, netGridKwh: onPeak,
+                  buyRate: Self.onPeak.buy, sellRate: Self.onPeak.sell)
+        ])
+    }
+    private static func remaining(_ periods: [Rate]) -> [BillOutlookTariff] {
+        periods.enumerated().map { index, period in
+            .init(start: .init(timeIntervalSince1970: Double(index) * 3600),
+                  end: .init(timeIntervalSince1970: Double(index + 1) * 3600),
+                  periodKey: period.name, name: period.name, buyRate: period.buy, sellRate: period.sell,
+                  tariffName: "Home", periodName: period.name)
+        }
+    }
+    private static func guidance(projected: BillOutlookPoint, remaining: [BillOutlookTariff]) -> String? {
+        BillOutlookPresentation.guidance(observed: projected, projected: projected, remaining: remaining,
+                                         currency: "USD", locale: Locale(identifier: "en_US"))
+    }
+    @Test func guidanceMovesImportsIntoALowValueCushion() {
+        let text = Self.guidance(projected: Self.balances(offPeak: 340, onPeak: -30),
+                                 remaining: Self.remaining([Self.offPeak, Self.onPeak]))
+        #expect(text == "About 30.0 kWh of your On-Peak export cushion would only earn 4¢/kWh, "
+            + "while Off-Peak imports cost 10¢/kWh. "
+            + "Shifting heavy energy use like EV charging into On-Peak could save about $1.80.")
+    }
+    @Test func guidanceCapsTheShiftAtTheImportGap() {
+        let text = Self.guidance(projected: Self.balances(offPeak: 10, onPeak: -30),
+                                 remaining: Self.remaining([Self.offPeak, Self.onPeak]))
+        #expect(text?.hasPrefix("About 10.0 kWh of your On-Peak export cushion") == true)
+        #expect(text?.hasSuffix("could save about $0.60.") == true)
+    }
+    @Test func guidanceKeepsTheGapMessageWhenTheCushionPeriodIsOver() {
+        let text = Self.guidance(projected: Self.balances(offPeak: 340, onPeak: -30),
+                                 remaining: Self.remaining([Self.offPeak]))
+        #expect(text == "An import gap is expected in Off-Peak. Smart Shift can help time your heavy energy use.")
+    }
+    @Test func guidanceKeepsTheGapMessageWhenTheCushionIsWorthMoreThanTheImportsCost() {
+        let richCredit = Rate(name: "On-Peak", buy: 0.30, sell: 0.20)
+        let projected = BillOutlook.point(date: .init(timeIntervalSince1970: 0), buckets: [
+            .init(tariffName: "Home", periodName: "Off-Peak", netGridKwh: 340, buyRate: 0.10, sellRate: 0.04),
+            .init(tariffName: "Home", periodName: "On-Peak", netGridKwh: -30, buyRate: 0.30, sellRate: 0.20)
+        ])
+        let text = Self.guidance(projected: projected, remaining: Self.remaining([Self.offPeak, richCredit]))
+        #expect(text == "An import gap is expected in Off-Peak. Smart Shift can help time your heavy energy use.")
+    }
+    @Test func guidanceIgnoresACushionOnAPreviousPlan() {
+        let text = Self.guidance(projected: Self.balances(offPeak: 340, onPeak: -30, plan: "Old plan"),
+                                 remaining: Self.remaining([Self.offPeak, Self.onPeak]))
+        #expect(text == "An import gap is expected in Off-Peak. Smart Shift can help time your heavy energy use.")
+    }
+    @Test func guidanceIgnoresASavingTooSmallToAct() {
+        let text = Self.guidance(projected: Self.balances(offPeak: 340, onPeak: -2),
+                                 remaining: Self.remaining([Self.offPeak, Self.onPeak]))
+        #expect(text == "An import gap is expected in Off-Peak. Smart Shift can help time your heavy energy use.")
+    }
 }
 
 @MainActor
