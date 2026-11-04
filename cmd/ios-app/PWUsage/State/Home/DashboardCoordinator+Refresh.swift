@@ -203,7 +203,6 @@ extension DashboardCoordinator {
             cache?.storeLive(snapshot, at: successTime)
             live.isUnavailable = false
             teslaConnectionRestored()
-            live.unavailableStatusCode = nil
         } catch {
             handle(error, generation: generation, endpoint: .live)
         }
@@ -223,7 +222,6 @@ extension DashboardCoordinator {
             bill.isRestored = false
             cache?.storeBill(response, at: successTime)
             bill.isUnavailable = false
-            bill.unavailableStatusCode = nil
         } catch {
             handle(error, generation: generation, endpoint: .bill)
         }
@@ -249,16 +247,8 @@ extension DashboardCoordinator {
         switch endpoint {
         case .live:
             live.isUnavailable = true
-            live.unavailableStatusCode = (error as? PWUsageAPIError).flatMap {
-                guard case let .recoverableServerError(statusCode) = $0 else { return nil }
-                return statusCode
-            }
         case .bill:
             bill.isUnavailable = true
-            bill.unavailableStatusCode = (error as? PWUsageAPIError).flatMap {
-                guard case let .recoverableServerError(statusCode) = $0 else { return nil }
-                return statusCode
-            }
         }
     }
 

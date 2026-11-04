@@ -89,7 +89,6 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
     var lastSuccess: Date?
     var isRestored = false
     var isUnavailable = false
-    var unavailableStatusCode: Int?
 
     mutating func reset() {
         response = nil
@@ -97,7 +96,6 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
         lastAttempt = nil
         lastSuccess = nil
         isUnavailable = false
-        unavailableStatusCode = nil
     }
 }
 

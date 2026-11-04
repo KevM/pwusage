@@ -239,7 +239,6 @@ extension DashboardCoordinatorTests {
         #expect(coordinator.live.lastSuccess == priorSuccess)
         #expect(coordinator.live.lastAttempt == clock.now)
         #expect(coordinator.live.isUnavailable)
-        #expect(coordinator.live.unavailableStatusCode == 503)
         #expect(api.liveSiteIDs.count == 2)
 
         api.liveError = URLError(.notConnectedToInternet)
@@ -249,7 +248,6 @@ extension DashboardCoordinatorTests {
         #expect(coordinator.live.response == priorLive)
         #expect(coordinator.live.lastSuccess == priorSuccess)
         #expect(coordinator.live.isUnavailable)
-        #expect(coordinator.live.unavailableStatusCode == nil)
 
         await coordinator.refreshDue()
         #expect(api.liveSiteIDs.count == 3, "A failed attempt still anchors cadence to prevent rapid retries.")
