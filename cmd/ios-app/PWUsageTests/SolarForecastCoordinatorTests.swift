@@ -43,7 +43,7 @@ struct SolarForecastCoordinatorTests {
         let coordinator = DashboardCoordinator(
             siteID: "site-a", api: api, planningAPI: api,
             accountScopeID: "local-account",
-            now: { clock.now }, timerInterval: nil
+            now: { clock.now }, cadenceNow: { clock.monotonicNow }, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
@@ -61,7 +61,7 @@ struct SolarForecastCoordinatorTests {
         let coordinator = DashboardCoordinator(
             siteID: "site-a", api: api, planningAPI: api,
             accountScopeID: "local-account",
-            now: { clock.now }, timerInterval: nil
+            now: { clock.now }, cadenceNow: { clock.monotonicNow }, timerInterval: nil
         )
 
         await coordinator.loadTimingDetailAppeared()
@@ -78,7 +78,7 @@ struct SolarForecastCoordinatorTests {
         let coordinator = DashboardCoordinator(
             siteID: "site-a", api: api, planningAPI: api,
             accountScopeID: "local-account",
-            now: { clock.now }, timerInterval: nil
+            now: { clock.now }, cadenceNow: { clock.monotonicNow }, timerInterval: nil
         )
 
         await coordinator.loadTimingDetailAppeared()
@@ -131,7 +131,7 @@ struct SolarForecastCoordinatorTests {
         let coordinator = DashboardCoordinator(
             siteID: "site-a", api: api, planningAPI: api,
             accountScopeID: "local-account",
-            now: { clock.now }, timerInterval: nil
+            now: { clock.now }, cadenceNow: { clock.monotonicNow }, timerInterval: nil
         )
 
         await coordinator.loadTimingDetailAppeared()
@@ -240,8 +240,12 @@ struct SolarForecastCoordinatorTests {
 
 private final class ForecastTestClock: @unchecked Sendable {
     var now = Date(timeIntervalSince1970: 1_800_000_000)
-    func advance(hours: Double) { now = now.addingTimeInterval(hours * 3_600) }
-    func advance(seconds: Double) { now = now.addingTimeInterval(seconds) }
+    var monotonicNow = ContinuousClock().now
+    func advance(hours: Double) { advance(seconds: hours * 3_600) }
+    func advance(seconds: Double) {
+        now = now.addingTimeInterval(seconds)
+        monotonicNow = monotonicNow.advanced(by: .seconds(seconds))
+    }
 }
 
 extension MobileLoadPlanningContextResponse {

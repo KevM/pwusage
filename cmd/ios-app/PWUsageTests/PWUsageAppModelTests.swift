@@ -170,6 +170,7 @@ struct PWUsageAppModelTests {
         forecastService: (any SolarForecastServing)? = nil,
         timerInterval: Duration? = nil,
         now: @escaping () -> Date = Date.init,
+        cadenceNow: @escaping () -> ContinuousClock.Instant = { ContinuousClock().now },
         cache: DashboardCache? = nil,
         userDefaults: UserDefaults? = nil
     ) throws -> PWUsageAppModel {
@@ -184,6 +185,7 @@ struct PWUsageAppModelTests {
                     planningAPI: api,
                     accountScopeID: accountScopeID,
                     now: now,
+                    cadenceNow: cadenceNow,
                     timerInterval: timerInterval,
                     forecastService: forecastService
                 )

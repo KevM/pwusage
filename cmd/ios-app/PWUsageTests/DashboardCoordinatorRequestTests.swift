@@ -7,7 +7,7 @@ extension DashboardCoordinatorTests {
     func userGestureRefreshAllBypassesIntervalChecksAndFetchesBoth() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         #expect(api.liveSiteIDs == ["site-1"])
@@ -25,7 +25,7 @@ extension DashboardCoordinatorTests {
     func userGestureRefreshBillBypassesIntervalChecksAndFetchesOnlyBill() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         #expect(api.liveSiteIDs == ["site-1"])

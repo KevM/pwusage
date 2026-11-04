@@ -6,9 +6,13 @@ import Testing
 @MainActor
 final class AppTestClock {
     private(set) var now = Date(timeIntervalSince1970: 1_800_000_000)
+    /// Wall time and the coordinator's monotonic cadence move together by
+    /// default, the way they do on a running device.
+    private(set) var monotonicNow = ContinuousClock().now
 
     func advance(minutes: Int) {
         now = now.addingTimeInterval(TimeInterval(minutes * 60))
+        monotonicNow = monotonicNow.advanced(by: .seconds(minutes * 60))
     }
 }
 

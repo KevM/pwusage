@@ -7,7 +7,7 @@ extension DashboardCoordinatorTests {
     func initialForegroundLoadAndExactSixtyMinuteRequestCounts() async throws {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
 
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
@@ -27,23 +27,120 @@ extension DashboardCoordinatorTests {
     func backwardsClockDoesNotStallThePoll() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.isForeground = true
+        await coordinator.refreshAll(trigger: .scheduled)
+        #expect(api.liveSiteIDs == ["site-1"])
 
-        coordinator.scenePhaseChanged(isActive: true)
+        // The user's clock jumps back an hour. Cadence is monotonic, so the jump
+        // neither triggers a poll nor resets the retry window.
+        clock.advanceWallClock(minutes: -60)
         await coordinator.refreshDue()
         #expect(api.liveSiteIDs == ["site-1"])
 
-        // The user's clock jumps back an hour.
-        clock.advance(minutes: -60)
+        // A forwards jump cannot make a poll due early either.
+        clock.advanceWallClock(minutes: 120)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs == ["site-1"])
+
+        // Real elapsed time still makes the next poll due.
+        clock.advance(minutes: 5)
         await coordinator.refreshDue()
         #expect(api.liveSiteIDs == ["site-1", "site-1"])
+    }
+
+    @Test("A transport cancellation the app did not cause is a real failure")
+    func transportCancellationWithoutOurCancellationMarksTheEndpointUnavailable() async {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.liveError = URLError(.cancelled)
+        api.billError = URLError(.cancelled)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+
+        await coordinator.refreshAll(trigger: .userGesture)
+
+        #expect(coordinator.live.isUnavailable)
+        #expect(coordinator.bill.isUnavailable)
+        #expect(coordinator.live.cadence.lastAttempt == clock.monotonicNow)
+        #expect(coordinator.bill.cadence.lastAttempt == clock.monotonicNow)
+    }
+
+    @Test("A request cancelled by the app is ignored whatever error it returns")
+    func appCancellationIgnoresAnUnrelatedFailure() async {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+
+        let refresh = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        await api.waitUntilLiveRequestStarts()
+        coordinator.liveTask?.cancel()
+        api.failPendingRequests(PWUsageAPIError.recoverableServerError(statusCode: 500))
+        await refresh.value
+
+        #expect(!coordinator.live.isUnavailable)
+        #expect(coordinator.live.cadence.lastAttempt == nil, "An abandoned request must not record an attempt.")
+    }
+
+    @Test("A cancelled waiter still recalculates a bill that followed live from stale history")
+    func cancelledWaiterStillRecalculatesStaleBill() async throws {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        api.holdBill = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.isForeground = true
+
+        let waiting = Task { await coordinator.refreshAll(trigger: .scheduled) }
+        await api.waitUntilLiveRequestStarts()
+        // A bill that starts while live is still importing history is stale.
+        let appearance = Task { await coordinator.refreshBill(trigger: .screenAppearance) }
+        await api.waitUntilBillRequestStarts()
+        #expect(api.billSiteIDs.count == 1)
+
+        // Let the waiting refresh finish its live leg and block on that bill,
+        // then cancel it while the stale bill is still in flight.
+        api.resumeLiveRequests()
+        try await eventually { coordinator.live.response != nil }
+        await Task.yield()
+        waiting.cancel()
+        api.resumeBillRequests()
+        await waiting.value
+        await appearance.value
+
+        #expect(api.billSiteIDs.count == 2, "The cancelled waiter must still request the recalculation.")
+        #expect(!coordinator.refreshSettled, "An aborted refresh must not settle the dashboard.")
+    }
+
+    @Test("Cadence starts when the request finishes, not when it starts")
+    func cadenceStartsWhenTheRequestFinishes() async {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.isForeground = true
+
+        let first = Task { await coordinator.refreshAll(trigger: .scheduled) }
+        await api.waitUntilLiveRequestStarts()
+        clock.advance(minutes: 4)
+        api.resumeRequests()
+        await first.value
+        #expect(api.liveSiteIDs.count == 1)
+
+        clock.advance(minutes: 2)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs.count == 1, "Only two minutes have elapsed since the request completed.")
+
+        clock.advance(minutes: 3)
+        await coordinator.refreshDue()
+        #expect(api.liveSiteIDs.count == 2)
     }
 
     @Test("Background suspends polling and foreground return makes one due request")
     func backgroundSuspendsPollingAndForegroundReturnMakesOneDueRequest() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now },
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock,
                                                timerInterval: .seconds(3_600))
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
@@ -68,7 +165,7 @@ extension DashboardCoordinatorTests {
     func duplicateSceneAndTimerEventsDoNotFetchBeforeEndpointIsDue() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         coordinator.scenePhaseChanged(isActive: true)
@@ -125,7 +222,7 @@ extension DashboardCoordinatorTests {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         api.holdLive = true
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         // Both the scene-phase refresh and this one wait on the same live request.
         coordinator.scenePhaseChanged(isActive: true)
         let waiting = Task { await coordinator.refreshDue() }
@@ -150,7 +247,7 @@ extension DashboardCoordinatorTests {
         let api = DashboardAPISpy()
         api.holdLive = true
         api.holdBill = true
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         let waiting = Task { await coordinator.refreshDue() }
         await api.waitUntilLiveRequestStarts()
@@ -174,7 +271,7 @@ extension DashboardCoordinatorTests {
         let api = DashboardAPISpy()
         api.holdLive = true
         api.holdBill = true
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         let first = Task { await coordinator.refreshDue() }
         await api.waitUntilLiveRequestStarts()
@@ -203,7 +300,7 @@ extension DashboardCoordinatorTests {
 
         #expect(coordinator.requiresSignIn)
         #expect(!coordinator.isForeground)
-        #expect(coordinator.live.lastAttempt == Date(timeIntervalSince1970: 0))
+        #expect(coordinator.live.cadence.lastAttempt != nil)
         #expect(coordinator.live.lastSuccess == nil)
         let liveRequestsAfterUnauthorized = api.liveSiteIDs.count
         let billRequestsAfterUnauthorized = api.billSiteIDs.count
@@ -223,7 +320,7 @@ extension DashboardCoordinatorTests {
     func serverFailureKeepsStaleResponseAndSeparatesAttemptFromSuccess() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         let priorLive = coordinator.live.response
@@ -237,7 +334,7 @@ extension DashboardCoordinatorTests {
 
         #expect(coordinator.live.response == priorLive)
         #expect(coordinator.live.lastSuccess == priorSuccess)
-        #expect(coordinator.live.lastAttempt == clock.now)
+        #expect(coordinator.live.cadence.lastAttempt == clock.monotonicNow)
         #expect(coordinator.live.isUnavailable)
         #expect(api.liveSiteIDs.count == 2)
 

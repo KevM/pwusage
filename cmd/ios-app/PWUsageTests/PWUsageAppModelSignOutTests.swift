@@ -51,7 +51,8 @@ extension PWUsageAppModelTests {
         let model = try makeModel(
             api: api,
             timerInterval: .milliseconds(20),
-            now: { clock.now }
+            now: { clock.now },
+            cadenceNow: { clock.monotonicNow }
         )
         model.scenePhaseChanged(isActive: true)
         await model.bootstrap()
@@ -69,9 +70,9 @@ extension PWUsageAppModelTests {
         // Both endpoints are now well past their cadence, so a surviving timer
         // would immediately issue another authenticated-shaped request.
         clock.advance(minutes: 10)
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(api.liveSiteIDs.count == liveBeforeSignOut)
-        #expect(api.billSiteIDs.count == billBeforeSignOut)
+        try await staysTrue(for: .milliseconds(300)) {
+            api.liveSiteIDs.count == liveBeforeSignOut && api.billSiteIDs.count == billBeforeSignOut
+        }
     }
 
     @Test("Signing out does not flash an expired-session message during cleanup")

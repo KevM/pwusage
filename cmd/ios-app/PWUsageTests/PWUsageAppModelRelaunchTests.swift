@@ -33,7 +33,7 @@ extension PWUsageAppModelTests {
         #expect(relaunched.screenState == .signedIn)
         #expect(!relaunched.authService.isAuthenticated, "Saved presentation cannot authorize a session.")
         #expect(offlineAPI.liveSiteIDs.isEmpty, "Poll only after sites have been authorized.")
-        #expect(relaunched.coordinator?.live.lastAttempt == nil)
+        #expect(relaunched.coordinator?.live.cadence.lastAttempt == nil)
         #expect(relaunched.coordinator?.live.isRestored == true)
         offlineAPI.sitesError = nil
         offlineAPI.sites = first.sites
@@ -89,8 +89,8 @@ extension PWUsageAppModelTests {
         #expect(api.billSiteIDs.isEmpty)
         #expect(api.contextSiteIDs.isEmpty)
         #expect(!coordinator.pollingTimerIsActive)
-        #expect(coordinator.live.lastAttempt == nil)
-        #expect(coordinator.bill.lastAttempt == nil)
+        #expect(coordinator.live.cadence.lastAttempt == nil)
+        #expect(coordinator.bill.cadence.lastAttempt == nil)
 
         api.resumeSites()
         await retry.value

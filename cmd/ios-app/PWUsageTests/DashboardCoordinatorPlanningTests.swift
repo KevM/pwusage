@@ -9,7 +9,7 @@ extension DashboardCoordinatorTests {
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(
             siteID: "site-1", api: api, planningAPI: api,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+            accountScopeID: "local-account", clock: clock, timerInterval: nil
         )
 
         await coordinator.loadTimingDetailAppeared()
@@ -32,7 +32,7 @@ extension DashboardCoordinatorTests {
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(
             siteID: "site-1", api: api, planningAPI: api,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+            accountScopeID: "local-account", clock: clock, timerInterval: nil
         )
 
         await coordinator.loadTimingDetailAppeared()
@@ -51,7 +51,7 @@ extension DashboardCoordinatorTests {
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(
             siteID: "site-1", api: api, planningAPI: api,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+            accountScopeID: "local-account", clock: clock, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
 
@@ -74,7 +74,7 @@ extension DashboardCoordinatorTests {
         let api = DashboardAPISpy()
         let coordinator = DashboardCoordinator(
             siteID: "site-1", api: api, planningAPI: api,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+            accountScopeID: "local-account", clock: clock, timerInterval: nil
         )
         api.contextError = URLError(.notConnectedToInternet)
         await coordinator.loadTimingDetailAppeared()
@@ -101,7 +101,7 @@ extension DashboardCoordinatorTests {
         api.contextAsOf = clock.now.addingTimeInterval(-60)
         let coordinator = DashboardCoordinator(
             siteID: "site-1", api: api, planningAPI: api,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+            accountScopeID: "local-account", clock: clock, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()
@@ -132,7 +132,7 @@ extension DashboardCoordinatorTests {
         api.contextAsOf = clock.now.addingTimeInterval(-24 * 60 * 60)
         let coordinator = DashboardCoordinator(
             siteID: "site-1", api: api, planningAPI: api,
-            accountScopeID: "local-account", now: { clock.now }, timerInterval: nil
+            accountScopeID: "local-account", clock: clock, timerInterval: nil
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.loadTimingDetailAppeared()

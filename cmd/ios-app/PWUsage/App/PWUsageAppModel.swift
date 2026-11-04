@@ -77,6 +77,8 @@ final class PWUsageAppModel: ObservableObject {
     init(
         configuration: AppConfiguration,
         api: any PWUsageApplicationAPI,
+        now: @escaping () -> Date = Date.init,
+        cadenceNow: @escaping () -> ContinuousClock.Instant = { ContinuousClock().now },
         userDefaults: UserDefaults = .standard,
         forecastService: (any SolarForecastServing)? = nil,
         coordinatorFactory: CoordinatorFactory? = nil,
@@ -117,6 +119,8 @@ final class PWUsageAppModel: ObservableObject {
                     api: api,
                     planningAPI: api,
                     accountScopeID: accountScopeID,
+                    now: now,
+                    cadenceNow: cadenceNow,
                     forecastService: forecastService,
                     history: solarHistory,
                     records: solarRecords,

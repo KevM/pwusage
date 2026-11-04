@@ -9,7 +9,7 @@ extension DashboardCoordinatorTests {
         let api = FastDashboardAPISpy(now: { clock.now })
         api.powerError = PWUsageAPIError.recoverableServerError(statusCode: 503)
         api.summary.liveError = URLError(.notConnectedToInternet)
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         try await eventually { coordinator.refreshSettled }
 
@@ -50,7 +50,7 @@ extension DashboardCoordinatorTests {
         let cache = DashboardCache(fileURL: directory.appendingPathComponent("cache.json"))
         cache.storeSites([MobileSite(id: "site-1", name: "Home", utility: "Utility")])
         let coordinator = DashboardCoordinator(
-            siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil, cache: cache
+            siteID: "site-1", api: api, clock: clock, timerInterval: nil, cache: cache
         )
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
@@ -72,7 +72,7 @@ extension DashboardCoordinatorTests {
         let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         api.powerError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         await coordinator.refreshAll(trigger: .userGesture)
         clock.advance(minutes: 5)
         await coordinator.refreshAll(trigger: .screenAppearance)
@@ -85,7 +85,7 @@ extension DashboardCoordinatorTests {
         let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
         api.powerError = PWUsageAPIError.requestRejected(statusCode: 404, message: nil)
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         await coordinator.refreshAll(trigger: .userGesture)
         #expect(!coordinator.livePowerIsUnavailable)
 
@@ -100,7 +100,7 @@ extension DashboardCoordinatorTests {
     func fastEndpointOwnsLivePowerAvailability() async {
         let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         await coordinator.refreshAll(trigger: .userGesture)
         api.summary.liveError = PWUsageAPIError.recoverableServerError(statusCode: 503)
         clock.advance(minutes: 1)
@@ -112,5 +112,14 @@ extension DashboardCoordinatorTests {
         clock.advance(minutes: 1)
         await coordinator.refreshAll(trigger: .userGesture)
         #expect(coordinator.livePowerIsUnavailable)
+    }
+
+    @Test("Power failures route through the shared endpoint handler")
+    func powerFailuresRouteThroughSharedHandler() async {
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: DashboardAPISpy(), timerInterval: nil)
+        coordinator.handle(PWUsageAPIError.recoverableServerError(statusCode: 503),
+                           generation: coordinator.siteGeneration,
+                           endpoint: .power)
+        #expect(coordinator.power.isUnavailable)
     }
 }

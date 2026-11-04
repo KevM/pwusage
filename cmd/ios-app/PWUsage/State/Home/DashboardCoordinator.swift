@@ -105,9 +105,16 @@ final class DashboardCoordinator: ObservableObject {
     var sessionVerified = true
     var canRequestAccountData: Bool { sessionVerified && !requiresSignIn }
     let now: () -> Date
+    /// Monotonic time source for request cadence, kept separate from `now` so a
+    /// device clock change can never move a retry window. Injected so tests can
+    /// advance it without waiting out a real interval.
+    let cadenceNow: () -> ContinuousClock.Instant
     let timerInterval: Duration?
     var sceneIsActive = false
     var timerTask: Task<Void, Never>?
+    /// Identity of the running timer loop, so a loop that exits can clear its
+    /// own handle without clobbering a newer loop started in the meantime.
+    var timerTaskToken: UUID?
     var liveTask: Task<Void, Never>?
     var powerTask: Task<Void, Never>?
     var livePowerEndpointAvailable = true
@@ -149,6 +156,7 @@ final class DashboardCoordinator: ObservableObject {
         planningAPI: (any MobileLoadPlanningDataAPI)? = nil,
         accountScopeID: String? = nil,
         now: @escaping () -> Date = Date.init,
+        cadenceNow: @escaping () -> ContinuousClock.Instant = { ContinuousClock().now },
         timerInterval: Duration? = .seconds(30),
         cache: DashboardCache? = nil,
         forecastService: (any SolarForecastServing)? = nil,
@@ -161,6 +169,7 @@ final class DashboardCoordinator: ObservableObject {
         self.planningAPI = planningAPI
         self.accountScopeID = accountScopeID
         self.now = now
+        self.cadenceNow = cadenceNow
         self.timerInterval = timerInterval
         self.cache = cache
         self.forecastService = forecastService
@@ -289,9 +298,9 @@ final class DashboardCoordinator: ObservableObject {
         sessionVerified = true
         requiresSignIn = false
         cache?.selectWidgetSite(selectedSiteID)
-        live.lastAttempt = nil
-        power.lastAttempt = nil
-        bill.lastAttempt = nil
+        live.cadence.reset()
+        power.cadence.reset()
+        bill.cadence.reset()
         guard sceneIsActive else { return }
         isForeground = true
         refreshSettled = false

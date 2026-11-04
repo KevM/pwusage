@@ -6,7 +6,7 @@
 
 **Status values:** `OPEN` · `IN PROGRESS (PR #N)` · `FIXED (PR pending)` · `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)` · `PARTIAL (evidence)`
 
-**Progress:** 97 findings tracked — **31 open** (30 `OPEN` plus §16.5 `PARTIAL`), **62 FIXED**, **2 WON'T FIX** (§5.6, §9.4), **2 REMOVED** (§7.5, §8.3). §4.6 is a recorded negative result, not a finding.
+**Progress:** 97 findings tracked — **26 open** (25 `OPEN` plus §16.5 `PARTIAL`), **67 FIXED**, **2 WON'T FIX** (§5.6, §9.4), **2 REMOVED** (§7.5, §8.3). §4.6 is a recorded negative result, not a finding.
 
 ### Live queue
 
@@ -14,14 +14,9 @@ Only findings verified still present on 2026-11-04. The detailed entry under the
 
 | Finding | Severity | What remains | Start at |
 | --- | --- | --- | --- |
-| §3.4 | Medium | A cancelled live/bill fetch is still recorded as "data unavailable"; filter `CancellationError` and `URLError.cancelled` | `DashboardCoordinator+Refresh.swift` (`handle`) |
-| §3.5 | Medium | The timer loop returns without clearing `timerTask` | `DashboardCoordinator+Refresh.swift` (`startTimer`) |
-| §3.6 | Medium | `refreshAll` awaits detached task values, so caller cancellation escapes a non-throwing API | `DashboardCoordinator+Refresh.swift` (`refreshAll`) |
-| §3.7 | Medium | `lastAttempt` is stamped before the request; a failed or cancelled attempt costs a full cadence window | `DashboardCoordinator+Refresh.swift` |
 | §3.9 | Low | `authenticationInvalidated` and `selectSite` leave `planningContextCache` and `planningContextTasks` intact | `DashboardCoordinator.swift`, `DashboardCoordinator+LoadTiming.swift` |
 | §3.10 | Medium | The data protocols are `@MainActor` while the conforming `PWUsageAPI` is not | `Models/DashboardContracts.swift` |
 | §3.11 | Medium | Unstructured `Task {}` sites with no retained handle (still widespread) | `LoadTimingView.swift`, `PWUsageAppModel*`, `MobileAuthService.swift` |
-| §3.16 | Medium | Cadence is measured with `Date`; anchor it to `ContinuousClock` together with §3.7 | `DashboardCoordinator+Refresh.swift` (`isDue`) |
 | §4.1 | Medium | The app's observable types still use Combine `ObservableObject` (six files) | `PWUsageAppModel`, `DashboardCoordinator`, `MobileAuthService`, `LoadProfileStore` |
 | §4.2 | Low | `async` remains on synchronous operations | `PWUsageAPI.clearSiteAuthCookie`, `SolarForecastService.activateAccountScope` |
 | §4.3 | Medium | `async let` plus `billSuccessGeneration` still makes `billSucceeded` ordering-dependent | `DashboardCoordinator+AutomaticForecast.swift`, `DashboardCoordinator+LoadTiming.swift` |
@@ -134,7 +129,9 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** Cancelling a pull-to-refresh, or the sibling-cancel in the `signInRequired` branch, shows "Live data is temporarily unavailable" even though nothing failed. The generation check filters the site-switch case but not these.
 - **Action:** Handle `CancellationError` and `URLError.cancelled` explicitly in `performLive`/`performBill` and return without touching endpoint state.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Fix:** `performLive`, `performBill` and the fast power path now decide abandonment from **this task's** cancellation (`isAbandonedRequest()` reads `Task.isCancelled`), not from the error. A `URLError.cancelled` the app did not cause is a real failure: it records an attempt and marks the endpoint unavailable. A task cancelled by the app — sign-out, site switch, backgrounding — ignores any error it surfaces (500, decode or cancellation) and records nothing. An abandoned request also leaves `lastSuccess` and the monotonic cadence untouched.
+- **Pinned by:** `DashboardCoordinatorRefreshTests.transportCancellationWithoutOurCancellationMarksTheEndpointUnavailable` (an uncancelled task that throws `URLError(.cancelled)` records an attempt and marks both endpoints unavailable) and `appCancellationIgnoresAnUnrelatedFailure` (a cancelled task that fails with a 500 records no attempt and marks nothing).
 - **Confidence:** High
 
 ### 3.5 The timer loop can exit without clearing `timerTask`
@@ -143,7 +140,9 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A later `startTimer()` becomes a no-op and `pollingTimerIsActive` lies. This is currently latent — I could not find a path where `isForeground` or `requiresSignIn` changes without `stopTimer` also running — but §3.1 shows the invariant is maintained only by convention, and §3.6 makes the exit reachable.
 - **Action:** Clear `timerTask` in the loop's exit path (a `defer` inside the task body).
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Fix:** the loop body carries a `defer` that calls `timerTaskDidExit(token:)`. A `timerTaskToken` identifies the running loop so an exiting loop cannot clobber a newer one started after `stopTimer()`; `stopTimer()` clears both. This also makes the §3.6 cancellation exit safe.
+- **Pinned by:** `DashboardCoordinatorTimerTests.timerExitClearsPollingHandle`, which exits through the foreground guard and then proves `startTimer()` works again (the stale handle made it a no-op on the base revision), and `cancelledTimerClearsItsHandle`.
 - **Confidence:** High
 
 ### 3.6 `refreshAll` awaits detached task handles, so caller cancellation escapes a non-throwing API
@@ -152,8 +151,11 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** `Task.value` honours cancellation of the *awaiting* context, so a `CancellationError` can escape the timer loop's `Task<Void, Never>` body, terminating the polling loop and leaving `timerTask` non-nil — the exact combination §3.5 describes.
 - **Action:** Make the awaits cancellation-tolerant, or convert to `async let` children. Wrap the timer body in a `catch is CancellationError` that clears `timerTask`.
 - **Severity:** Medium
-- **Status:** OPEN
-- **Confidence:** Medium — reasoned from `Task.value` semantics, not observed at runtime.
+- **Status:** FIXED (PR pending)
+- **Fix:** `refreshAll`, `refreshBill` and `refreshPower` await through `waitForRequest(_:)`, which reports whether the caller was cancelled; `canStillRefresh` re-checks `Task.isCancelled` before each leg, so a cancelled refresh stops instead of starting the bill. Work the refresh already committed to still finishes: `canStillReconcile` deliberately excludes cancellation, so a cancelled waiter still recalculates a bill that was computed from stale history, and the `refreshSettled` defer skips when the caller was cancelled. The timer body's `defer` clears `timerTask` on cancellation.
+- **Reconciled:** the audit's mechanism was partly wrong. `Task<Void, Never>.value` is non-throwing, so a `CancellationError` could not literally escape `refreshAll`; what was real is that the timer loop exited on cancellation while `timerTask` stayed non-nil, which is the §3.5 symptom. The fixes are the same either way, and the non-throwing API is now explicitly cancellation-aware rather than accidentally so.
+- **Pinned by:** `DashboardCoordinatorTimerTests.cancellingRefreshCallerStopsBeforeTheBill` (cancelling a caller mid-live applies the live response but launches no bill), `DashboardCoordinatorRefreshTests.cancelledWaiterStillRecalculatesStaleBill` (a cancelled waiter still sends the stale-bill recalculation and does not settle) and `cancelledTimerClearsItsHandle`.
+- **Confidence:** High — the escape claim was wrong, the exit-without-clearing behaviour was real and is now covered.
 
 ### 3.7 Cadence timestamps are stamped before the request runs
 - **Location:** `PWUsage/State/DashboardCoordinator.swift:251-257`, `:577-584`
@@ -161,7 +163,9 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A request that fails or is abandoned still suppresses the next attempt for the full 5/30 minutes. A transient network failure or a user-cancelled pull-to-refresh silently costs a full cadence window of freshness.
 - **Action:** Record the attempt time on completion, or track last-success separately from last-attempt for the cadence decision.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Fix:** `recordAttempt(_:)` runs only after a request finishes and writes the endpoint's monotonic `cadence` (`live.cadence`, `bill.cadence`, `power.cadence`). Success and failure both record an attempt (the existing `serverFailureKeepsStaleResponseAndSeparatesAttemptFromSuccess` requires a failed attempt to anchor cadence, so that assertion was kept), while an abandoned request records nothing — a cancelled pull-to-refresh no longer consumes a window. The wall-clock `DashboardEndpointState.lastAttempt` stamp was removed: it had no reader, and the monotonic cadence is the only thing that decides polling.
+- **Pinned by:** `DashboardCoordinatorRefreshTests.cadenceStartsWhenTheRequestFinishes`, which holds a live request for four minutes and asserts the next poll is due five minutes after *completion*; it fails on the pre-fix code, where the launch stamp makes the request due at six minutes. The §3.4 cancellation tests also pin the no-attempt-on-abandonment half.
 - **Confidence:** High
 
 ### 3.8 `selectSite` starts multi-endpoint work without checking foreground state
@@ -244,8 +248,10 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** `Date` is not monotonic. A user or an NTP correction can move it, and cadence decisions should not depend on a value the user controls.
 - **Action:** Anchor cadence to `ContinuousClock`. Do this in the same change as §3.7's stamp-after-the-request fix, since a monotonic timeline is what makes that rule meaningful.
 - **Severity:** Medium
-- **Status:** OPEN
-- **Confidence:** High — §5.7's parts (a) and (b) are fixed (`DashboardCoordinatorTests.backwardsClockDoesNotStallThePoll` and `LoadTimingForecastPresentationTests.futureDatedForecastCannotProduceARecommendation`), so the remaining exposure is measured in the wrong *unit* rather than an unbounded stall. The structural fix is unstarted.
+- **Status:** FIXED (PR pending)
+- **Fix:** `EndpointCadence` (`PWUsage/State/Home/EndpointCadence.swift`) stores a `ContinuousClock.Instant` and is owned by `DashboardEndpointState` (`live.cadence`, `power.cadence`, `bill.cadence`), so `reset()` clears the data and the retry window together; `resetCadence()` covers `authenticationRestored`. `isDue` compares `Duration`s, and the coordinator takes a `cadenceNow` closure defaulting to `ContinuousClock().now`; tests advance it alongside wall time, or bend only the wall clock with `advanceWallClock(minutes:)`. `now()` is still the wall clock, but only for cache stamps and data-age questions (`billIsFresh`, `energyDataIsAgingForForecast`), never for a retry window. Attempts are recorded on completion (§3.7), so the stamp and the timeline agree.
+- **Reconciled with §5.7:** the old `isDue` treated a negative `Date` elapsed as due, because a backwards clock made real elapsed time unknown. On a monotonic clock that case cannot occur, so the special case is gone rather than moved. `DashboardCoordinatorTests.backwardsClockDoesNotStallThePoll` was rewritten to pin the new contract: a backwards *or* forwards wall-clock jump neither triggers nor stalls a poll, and a real five-minute interval still polls. §5.7's part (c) is therefore complete.
+- **Confidence:** High — the structural change is complete: every cadence decision in `DashboardCoordinator+Refresh.swift` goes through `EndpointCadence`, and none reads `Date`.
 
 ---
 
@@ -380,9 +386,9 @@ No `NavigationView`, no single-parameter `onChange(of:perform:)` (all seven site
 - **Location:** `PWUsage/State/DashboardCoordinator.swift:667-676` (`isDue`), called at `:289` (the live poll) and at `:657` and `:659` (the two bill arms) — **three invocations in two functions**, not two call sites; `PWUsage/Views/LoadTimingForecastPresentation.swift:121-125` (the forecast-freshness gate); `PWUsage/Models/LoadTimingRecommendation.swift:133-139` (`isFresh`, already correct, recorded as the convention the outlier is aligned to) — re-derived after the fix
 - **What:** `isDue`, the forecast-freshness gate, and `LoadTimingRecommendation.isFresh` all subtract a server timestamp from a device `Date()` with no skew allowance.
 - **Why:** A user who moves the clock backward causes `date.timeIntervalSince(lastAttempt) >= interval` to be false for an unbounded period, so the 5-minute live poll and 30-minute bill poll **stop entirely** with no error and no UI indication. In the other direction the negative-age checks in `isFresh` and `overlay` correctly reject, but the presentation path at `:96` has no `>= 0` guard, so a backwards clock makes any age look fresh.
-- **Action:** Partly done — the negative-elapsed case and the overlay gate are fixed; anchoring cadence to `ContinuousClock` is deferred to §3.16. See the `Fix:` bullet.
+- **Action:** Done — parts (a) and (b) landed with this finding, and part (c), anchoring cadence to `ContinuousClock`, landed with §3.16. See the `Fix:` bullet.
 - **Severity:** Medium
-- **Status:** FIXED (PR pending) for parts (a) and (b); part (c) deferred to §3.16
+- **Status:** FIXED (PR pending) — all three parts landed; part (c) with §3.16
 - **Residual, found and fixed after the branch: the survey was one site short.** This finding is titled "**All** cadence and staleness decisions trust the device clock", so the title is a completeness claim and it was false as landed. A whole-branch review found the eleventh: `DashboardView.swift:224` (`:237` after PR #119) computed the Load timing card's staleness as `timeIntervalSince(source) > 30 * 60` — upper bound only, the exact shape part (b) fixed everywhere else. A future `energyDataThrough` therefore reported the card as **current**, suppressing its "Showing the last successful live summary" line, while the heading two lines above — built by `DashboardPresentation.freshness`, which *does* handle a negative age — rendered "Live summary · Source time is in the future". The card contradicts itself about one timestamp, which is §8.18's defect class in a different place. Fixed by extracting the predicate to `DashboardPresentation.loadTimingSummaryIsStale(source:now:staleAfter:)` at `:192-196`, which is also what made it testable at all: it was an inline expression in a `some View` body, unreachable from a test. It follows `liveFreshnessNotice`'s rule, so the two now share one shape. `futureDatedLoadTimingSourceIsStale` pins the negative-age cases and the exact 30-minute edge; the mutation is restoring the upper bound alone, which fails two of its assertions.
 - **The survey itself, so the title is auditable rather than asserted.** Every age decision in `PWUsage/`, re-derived against the tree. Eleven make a staleness or cadence call and all eleven now handle a negative age: `MobileContracts.swift:119` (SoC, `age >= 0`) and `:241-242` (`asOf`, `>= -maximumNegativeAgeSkew` — §5.8); `LoadTimingRecommendation.swift:138`; `LoadTimingForecastEstimator.swift:105-106` (the balance guard is **split across two lines** — `:105` is `balanceSourceTime <= now` and `:106` is the `<= maximumBalanceAge` bound, so searching for a `>= 0` on the staleness line alone finds nothing and the site looks unguarded); `SolarForecastStore.swift:216` and `:314-315`; `DashboardCoordinator.swift:533-536`, `:673` (`isDue`, deliberately inverted) and `:680`; `LoadTimingForecastPresentation.swift:123`; `DashboardPresentation.swift:195`, `:228` and `:243`. The remaining `timeIntervalSince` uses in the app are interval arithmetic (tariff windows, forecast sub-intervals) and `isFinite` guards, not age decisions.
 - **One site has the same shape and is provably not a defect, recorded so the next reader does not re-open it.** `DashboardPresentation.chargeAgeLabel` (`:247-253`) also has an upper bound only (`guard age > 20 * 60`), so it looks like the eleventh site above. It is not one: a negative age fails that comparison and returns `nil`, and `nil` is the correct answer, because a future-dated `stateOfChargeAt` already forces `stateOfCharge` to `nil` through `MobileContracts.swift:119` and the label is only shown when there is a reading to label. Unlike `:224`, the value it feeds is suppressed rather than contradicted, and the comparison being one-directional is what makes that true — widening it to `age < 0 || age > 20 * 60` would *introduce* the bug by printing "Charge as of 0 min ago". Left alone deliberately, and this paragraph is the reason.
