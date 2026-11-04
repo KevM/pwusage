@@ -120,6 +120,8 @@ final class DashboardCoordinator: ObservableObject {
     var liveTask: Task<Void, Never>?
     var powerTask: Task<Void, Never>?
     var livePowerEndpointAvailable = true
+    /// Whether a selected screen shows live power. Not published: nothing draws from it.
+    var livePowerIsVisible = true
     var usesLivePowerEndpoint: Bool { livePowerEndpointAvailable && api is any MobileLivePowerDataAPI }
     var billTask: Task<Void, Never>?
     var siteGeneration = 0
@@ -255,7 +257,7 @@ final class DashboardCoordinator: ObservableObject {
             startTimer()
             Task {
                 guard isForeground else { return }
-                await refreshPower(force: true)
+                await refreshPower(force: livePowerIsVisible)
                 await refreshDue()
             }
         } else {
