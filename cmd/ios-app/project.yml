@@ -85,6 +85,10 @@ targets:
         PWUSAGE_APS_ENVIRONMENT: production
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage
         CODE_SIGN_STYLE: Automatic
+        # The primary icon is PWUsage/AppIcon.icon. The value has to match that
+        # document's basename; XcodeGen supplies the same default, but naming it
+        # here keeps the link visible when the icon is moved or renamed.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
