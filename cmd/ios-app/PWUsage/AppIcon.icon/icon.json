@@ -1,0 +1,130 @@
+{
+  "fill": {
+    "solid": "srgb:1.00000,0.96471,0.90588,1.00000"
+  },
+  "groups": [
+    {
+      "name": "Powerwall",
+      "layers": [
+        {
+          "image-name": "07-powerwall-bezel.svg",
+          "name": "Powerwall bezel",
+          "glass": true,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:0.90000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "06-bolt.svg",
+          "name": "Bolt",
+          "glass": true,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "05-powerwall-body.svg",
+          "name": "Powerwall body",
+          "glass": true,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:0.10000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "specular": true,
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "blur-material": null,
+      "translucency": {
+        "enabled": false,
+        "value": 0.0
+      }
+    },
+    {
+      "name": "Sun",
+      "layers": [
+        {
+          "image-name": "04-sun-core.svg",
+          "name": "Sun core",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:0.50000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "03-sun-rays-short.svg",
+          "name": "Sun rays short",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:0.56000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "02-sun-rays-long.svg",
+          "name": "Sun rays long",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:0.64000,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "01-sun-body.svg",
+          "name": "Sun body",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:0.32000,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "specular": false,
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.0
+      },
+      "blur-material": null
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared",
+    "circles": [
+      "watchOS"
+    ]
+  }
+}

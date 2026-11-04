@@ -17,6 +17,21 @@ Format and lint with `./lint.sh` (or `./lint.sh --fix`). It is sandbox-safe, use
 
 The app targets iOS 18 and uses `fm.rodeo.pwusage` as its bundle identifier. The project intentionally configures `DEVELOPMENT_TEAM: 6HQGHHRK87` in `project.yml` for device deployment. Preserve this setting unless the user explicitly asks to change or remove it. Regenerate the project with `./generate.sh`, select your connected device in Xcode, and run. Simulator CI disables signing with `CODE_SIGNING_ALLOWED=NO`.
 
+### App icon
+
+The icon is an Icon Composer document at [`PWUsage/AppIcon.icon`](./PWUsage/AppIcon.icon): seven SVG layers, back to front — the sun body disc, the eight long rays, the eight shorter rays on the 22.5° centres, the core the rays spring from, the Powerwall body, its bolt, and the bezel — plus `icon.json`. The artwork reproduces the original mark layer for layer; only the Powerwall takes the Liquid Glass material, so the sun keeps the flat two-tone drawing it has always had. It is the single source for every size. Xcode compiles it for iOS 26 and later and flattens it for earlier releases. Open it with Xcode > Open Developer Tool > Icon Composer.
+
+Groups and layers render front to back in the order they appear in `icon.json`. Render a rendition without the GUI:
+
+```sh
+ictool PWUsage/AppIcon.icon --export-image --output-file icon.png \
+  --platform iOS --rendition Default --width 1024 --height 1024 --scale 1 --design-generation 27
+```
+
+`--rendition` takes `Default`, `Dark`, `TintedLight`, `TintedDark`, `ClearLight` or `ClearDark`, and `--design-generation 26` previews the earlier treatment. Per-appearance colour overrides live in each layer's `fill-specializations`; the tinted entries are a deliberate luminance ramp that keeps the bolt readable against the body. The artwork is vector, so the layers scale without the raster artefacts the old PNG picked up at small sizes.
+
+[`PWUsage/Assets.xcassets/AppIcon.appiconset`](./PWUsage/Assets.xcassets/AppIcon.appiconset) predates the Icon Composer file. It survives as the raster record of the original mark, but Xcode ignores it for the primary icon: the `.icon` supersedes it, and iOS 18–25 receives the flattened Icon Composer design rather than the old PNG.
+
 To build for a device from the command line:
 
 ```sh
@@ -76,7 +91,7 @@ Replaces the screenshots on the App Store version being prepared with those file
 ### Release checks
 
 - Verify a signed archive/export and App Store upload with valid release credentials. An unsigned local archive proves compilation and bundle configuration, not distribution signing.
-- Verify the 1024-pixel app icon has no alpha channel. The current icon is flattened onto white and stored as RGB PNG. The app includes `PrivacyInfo.xcprivacy` for its app-private UserDefaults usage, using Apple's approved `CA92.1` reason, and declares account email, user identifiers and other service data used for app functionality.
+- Verify the 1024 marketing icon has no alpha channel. Xcode generates it from `PWUsage/AppIcon.icon` at archive time, so inspect the uploaded build rather than a hand-made PNG. The app includes `PrivacyInfo.xcprivacy` for its app-private UserDefaults usage, using Apple's approved `CA92.1` reason, and declares account email, user identifiers and other service data used for app functionality.
 - Confirm production contains the mobile sign-in migration and routes described below. On a real device, verify sign-in, session renewal, sign-out, dashboard, and the optional forecast flow. Check Battery Hold only with an intentional, confirmed device command.
 - Complete App Store Connect's app privacy answers for the service's actual data collection, review the public privacy policy, and supply beta review contact details and a usable review account or review instructions.
 - Before a public App Store submission, assess and implement Apple's in-app account-deletion requirement for the Tesla-linked service account. The support page's deletion-request instructions do not replace an in-app deletion flow.
