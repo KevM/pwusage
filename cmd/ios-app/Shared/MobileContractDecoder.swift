@@ -11,7 +11,7 @@ enum MobileContractDecoder {
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
-            guard let date = ISO8601DateFormatter.parse(value) else {
+            guard let date = parseContractTimestamp(value) else {
                 throw DecodingError.dataCorruptedError(in: container,
                                                        debugDescription: "Invalid ISO-8601 timestamp: \(value)")
             }
@@ -36,13 +36,13 @@ extension Decoder {
     }
 }
 
-extension ISO8601DateFormatter {
-    static func parse(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) { return date }
-        let standard = ISO8601DateFormatter()
-        standard.formatOptions = [.withInternetDateTime]
-        return standard.date(from: value)
-    }
+/// Tries the fractional-seconds form first, then the plain one. Kept file-private so the app
+/// does not add a parsing helper to Foundation, and there is only one app-side implementation.
+private func parseContractTimestamp(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) { return date }
+    let standard = ISO8601DateFormatter()
+    standard.formatOptions = [.withInternetDateTime]
+    return standard.date(from: value)
 }

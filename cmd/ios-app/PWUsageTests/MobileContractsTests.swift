@@ -27,7 +27,7 @@ struct MobileContractsTests {
         #expect(response.activeTariff == nil)
         #expect(response.currentBill == nil)
         #expect(response.sources.energyDataThrough == nil)
-        #expect(response.sources.liveStatusAt == ISO8601DateFormatter.parse("2026-09-23T12:34:56.123Z"))
+        #expect(response.sources.liveStatusAt == parseFixtureDate("2026-09-23T12:34:56.123Z"))
         #expect(response.live.batteryPower == -300)
     }
 
@@ -69,7 +69,7 @@ struct MobileContractsTests {
         #expect(response.activeLoadTiming?.basis == "neutral")
         #expect(response.activeLoadTiming?.balanceKwh == nil)
         #expect(response.activeLoadTiming?.marginalCost == 0.48)
-        #expect(response.activeLoadTiming?.energyDataThrough == ISO8601DateFormatter.parse("2026-09-23T12:00:00Z"))
+        #expect(response.activeLoadTiming?.energyDataThrough == parseFixtureDate("2026-09-23T12:00:00Z"))
 
         let unobserved = populated
             .replacingOccurrences(of: #""basis":"neutral""#, with: #""basis":"unobserved""#)
@@ -112,8 +112,8 @@ struct MobileContractsTests {
         #expect(response.loadTiming?.periods[0].isActive == true)
         #expect(response.loadTiming?.nextCheaper?.name == "Off peak")
         #expect(response.loadTiming?.nextStartPhraseByKey["off-peak"] == "in 2 hours")
-        #expect(response.sources.calculatedAt == ISO8601DateFormatter.parse("2026-09-23T12:34:56.123Z"))
-        #expect(response.sources.energyDataThrough == ISO8601DateFormatter.parse("2026-09-23T12:00:00Z"))
+        #expect(response.sources.calculatedAt == parseFixtureDate("2026-09-23T12:34:56.123Z"))
+        #expect(response.sources.energyDataThrough == parseFixtureDate("2026-09-23T12:00:00Z"))
     }
 
     @Test("Decodes tariff timeline segments and supports cached payloads without a timeline")
@@ -129,8 +129,8 @@ struct MobileContractsTests {
             #""energyDataThrough":null}}"#
         let response = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(fixture.utf8))
         let segment = try #require(response.loadTiming?.tariffTimeline.first)
-        #expect(segment.start == ISO8601DateFormatter.parse("2026-09-23T23:30:00.125Z"))
-        #expect(segment.end == ISO8601DateFormatter.parse("2026-09-24T00:00:00.875Z"))
+        #expect(segment.start == parseFixtureDate("2026-09-23T23:30:00.125Z"))
+        #expect(segment.end == parseFixtureDate("2026-09-24T00:00:00.875Z"))
         #expect(segment.periodKey == "off-peak")
         #expect(segment.name == "Off peak")
         #expect(segment.buyRate == 0.2134)
@@ -182,9 +182,9 @@ struct MobileContractsTests {
         #expect(response.sources.energyDataThrough == nil)
         #expect(response.currentBill.periods ==
             [Period(tariffName: "Residential", periodName: "Off peak", netGridKwh: -1.25, cost: -0.12)])
-        #expect(response.currentBill.cycleStart == ISO8601DateFormatter.parse("2026-09-01T00:00:00.000Z"))
-        #expect(response.currentBill.cycleEnd == ISO8601DateFormatter.parse("2026-10-01T00:00:00Z"))
-        #expect(response.sources.calculatedAt == ISO8601DateFormatter.parse("2026-09-23T12:34:56.123Z"))
+        #expect(response.currentBill.cycleStart == parseFixtureDate("2026-09-01T00:00:00.000Z"))
+        #expect(response.currentBill.cycleEnd == parseFixtureDate("2026-10-01T00:00:00Z"))
+        #expect(response.sources.calculatedAt == parseFixtureDate("2026-09-23T12:34:56.123Z"))
         #expect(try response.validating(siteID: "site-1") == response)
     }
 
@@ -340,11 +340,10 @@ enum LiveFixture {
     }
 }
 
-extension ISO8601DateFormatter {
-    static func parse(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = value.contains(".")
-            ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
-        return formatter.date(from: value)
-    }
+/// Test-fixture parser: chooses the format from the string instead of trying both.
+private func parseFixtureDate(_ value: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = value.contains(".")
+        ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+    return formatter.date(from: value)
 }
