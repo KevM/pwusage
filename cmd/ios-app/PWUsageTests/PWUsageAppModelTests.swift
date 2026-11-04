@@ -34,6 +34,25 @@ struct PWUsageAppModelTests {
         #expect(relaunched.selectedTab == .bill)
     }
 
+    @Test("Live power is wanted only while Home is the selected tab")
+    func livePowerFollowsHomeTab() async throws {
+        let defaults = makeDefaults()
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let model = try makeModel(api: api, userDefaults: defaults)
+        await model.bootstrap()
+        #expect(model.coordinator?.livePowerIsVisible == true)
+        model.selectTab(.bill)
+        #expect(model.coordinator?.livePowerIsVisible == false)
+        model.selectTab(.home)
+        #expect(model.coordinator?.livePowerIsVisible == true)
+
+        // A coordinator installed under a restored tab starts hidden.
+        model.selectTab(.bill)
+        let relaunched = try makeModel(api: api, userDefaults: defaults)
+        await relaunched.bootstrap()
+        #expect(relaunched.coordinator?.livePowerIsVisible == false)
+    }
+
     @Test("An unknown saved tab falls back to Home")
     func unknownSavedTabFallsBack() throws {
         let defaults = makeDefaults()
