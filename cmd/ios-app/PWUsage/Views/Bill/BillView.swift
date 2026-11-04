@@ -6,6 +6,7 @@ struct BillView: View {
     var isSelected = true
     var onOpenSmartShift: (() -> Void)?
     @Environment(\.scenePhase) private var scenePhase
+    @State private var projections = BillOutlookProjectionCache()
 
     private var state: DashboardEndpointState<MobileBillResponse> { coordinator.bill }
     private var response: MobileBillResponse? { coordinator.bill.response }
@@ -77,8 +78,8 @@ struct BillView: View {
         let result: BillOutlook.ProjectionResult = {
             guard let history = response.outlook, let context, context.timeZone == timeZone,
                   !state.isUnavailable else { return .empty }
-            return BillOutlook.evaluate(history: history, context: context, forecast: forecast, now: now,
-                                        cycleEnd: response.currentBill.cycleEnd)
+            return projections.result(history: history, context: context, forecast: forecast, now: now,
+                                      cycleEnd: response.currentBill.cycleEnd)
         }()
         let projected = result.points
         estimateCard(response, result: result, now: now)
