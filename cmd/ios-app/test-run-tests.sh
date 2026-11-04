@@ -60,13 +60,13 @@ export PWUSAGE_TEST_CALLS="$fixture_dir/calls"
 export PWUSAGE_TEST_ARGS="$fixture_dir/args"
 
 "$script_dir/run-tests.sh"
-rg -q '^generated$' "$PWUSAGE_TEST_CALLS"
-rg -q '^test$' "$PWUSAGE_TEST_ARGS"
-rg -q '^id=TEST-UDID$' "$PWUSAGE_TEST_ARGS"
-rg -q '^-parallel-testing-enabled$' "$PWUSAGE_TEST_ARGS"
-rg -q '^-collect-test-diagnostics$' "$PWUSAGE_TEST_ARGS"
-rg -q '^on-failure$' "$PWUSAGE_TEST_ARGS"
-rg -q '^COMPILER_INDEX_STORE_ENABLE=NO$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^generated$' "$PWUSAGE_TEST_CALLS"
+grep -qE '^test$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^id=TEST-UDID$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-parallel-testing-enabled$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-collect-test-diagnostics$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^on-failure$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^COMPILER_INDEX_STORE_ENABLE=NO$' "$PWUSAGE_TEST_ARGS"
 
 # expect_failure <expected-status> <output-pattern> -- <run-tests.sh args...>
 expect_failure() {
@@ -85,16 +85,16 @@ expect_failure() {
 # preferring a booted device within it.
 PWUSAGE_TEST_DEVICES='{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-27-0":[{"name":"iPhone 17","udid":"COLD","state":"Shutdown","isAvailable":true},{"name":"iPhone 17 Pro","udid":"WARM","state":"Booted","isAvailable":true}]}}' \
   "$script_dir/run-tests.sh"
-rg -q '^id=WARM$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^id=WARM$' "$PWUSAGE_TEST_ARGS"
 PWUSAGE_TEST_DEVICES='{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-17-5":[{"name":"iPhone 15","udid":"OLD","state":"Booted","isAvailable":true}]}}' \
   expect_failure 2 'iOS 18.0 or newer' --
 PWUSAGE_SIMULATOR_ID=PINNED "$script_dir/run-tests.sh"
-rg -q '^id=PINNED$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^id=PINNED$' "$PWUSAGE_TEST_ARGS"
 
 # A bare test-target name runs the whole bundle, not an invented suite.
 "$script_dir/run-tests.sh" PWUsageTests
-rg -q '^-only-testing:PWUsageTests$' "$PWUSAGE_TEST_ARGS"
-if rg -q 'PWUsageTests/PWUsageTests' "$PWUSAGE_TEST_ARGS"; then
+grep -qE '^-only-testing:PWUsageTests$' "$PWUSAGE_TEST_ARGS"
+if grep -qE 'PWUsageTests/PWUsageTests' "$PWUSAGE_TEST_ARGS"; then
   echo 'Bare PWUsageTests was rewritten into a suite filter' >&2
   exit 1
 fi
@@ -111,19 +111,19 @@ PATH="$fixture_dir/no-xcodegen:/usr/bin:/bin" expect_failure 127 'brew install x
 
 # Test suite filter normalization
 "$script_dir/run-tests.sh" AppConfigurationTests
-rg -q '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
 
 # Test method filter normalization (appends ())
 "$script_dir/run-tests.sh" AppConfigurationTests/defaultsToProductionAPIOrigin
-rg -q '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin\(\)$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin\(\)$' "$PWUSAGE_TEST_ARGS"
 
 # Test full method filter preservation
 "$script_dir/run-tests.sh" "PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin()"
-rg -q '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin\(\)$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests/defaultsToProductionAPIOrigin\(\)$' "$PWUSAGE_TEST_ARGS"
 
 # Test explicit flag passthrough
 "$script_dir/run-tests.sh" -skip-testing:PWUsageTests/MobileContractsTests
-rg -q '^-skip-testing:PWUsageTests/MobileContractsTests$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-skip-testing:PWUsageTests/MobileContractsTests$' "$PWUSAGE_TEST_ARGS"
 
 # --quick skips every suite in quick-test-skips.txt; the full run (no flag) skips none of them.
 "$script_dir/run-tests.sh" --quick
@@ -133,7 +133,7 @@ while IFS= read -r skipped || [[ -n "$skipped" ]]; do
   fi
 done < "$script_dir/quick-test-skips.txt"
 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift' "$script_dir/run-tests.sh"
-if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
   echo 'The default run skipped tests on a detector change' >&2
   exit 1
 fi
@@ -173,16 +173,16 @@ expect_parity 0 'PWUSAGE_DETECTOR_PARITY=0 did not skip it'
 "$script_dir/run-tests.sh" SolarLayoutDetectorFixtureParityTests
 expect_parity 1 'a named filter was gated'
 # The default run stays a Debug build without the opt-in year suite.
-if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
+if grep -qE '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
   echo 'The default run changed the optimization level' >&2
   exit 1
 fi
-rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
 # --full (CI) builds optimized, opens the year-parity gate, and skips nothing.
 "$script_dir/run-tests.sh" --full
-rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
-if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
   echo 'The full run skipped tests' >&2
   exit 1
 fi
@@ -191,20 +191,20 @@ fi
 for changed in cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift \
   cmd/ios-app/project.yml cmd/ios-app/run-tests.sh .github/workflows/ios.yml; do
   PWUSAGE_TEST_CHANGED="$changed" "$script_dir/run-tests.sh" --auto
-  rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-  rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
-  if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+  grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+  grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+  if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
     echo "--auto with $changed skipped tests" >&2
     exit 1
   fi
 done
 
 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh" --auto
-if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
+if grep -qE '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
   echo '--auto without detector changes built optimized' >&2
   exit 1
 fi
-rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
 grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
   echo '--auto without detector changes did not skip parity suites' >&2
   exit 1
@@ -212,12 +212,12 @@ grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
 
 # PWUSAGE_DETECTOR_PARITY overrides --auto as well.
 PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh" --auto
-rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
 
 PWUSAGE_DETECTOR_PARITY=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsageTests/SolarLayoutDetectorTests.swift' \
   "$script_dir/run-tests.sh" --auto
-if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
+if grep -qE '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
   echo 'PWUSAGE_DETECTOR_PARITY=0 with --auto built optimized' >&2
   exit 1
 fi
@@ -226,8 +226,8 @@ grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
   exit 1
 }
 "$script_dir/run-tests.sh" --quick AppConfigurationTests
-rg -q '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
-rg -q '^-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
+grep -qE '^-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests$' "$PWUSAGE_TEST_ARGS"
 
 export PWUSAGE_TEST_HANG=1
 export PWUSAGE_TEST_TIMEOUT_SECONDS=1
