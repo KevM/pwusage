@@ -1,3 +1,5 @@
+require "fileutils"
+require "json"
 require "yaml"
 
 default_platform(:ios)
@@ -7,6 +9,62 @@ PWUSAGE_WIDGET_BUNDLE_ID = "fm.rodeo.pwusage.widgets"
 PWUSAGE_TEAM_ID = "6HQGHHRK87"
 PWUSAGE_PROFILE = "match AppStore #{PWUSAGE_BUNDLE_ID}"
 PWUSAGE_ROOT = File.expand_path("..", __dir__)
+
+# The Duo's open pose is a Device Hub control with no simctl/devicectl
+# equivalent. baguette drives the same vendor HID event from inside the guest,
+# which works headlessly (CI included), unlike Device Hub's accessibility UI.
+module PWUsageDuo
+  module_function
+
+  DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo".freeze
+
+  def udid
+    all = JSON.parse(`xcrun simctl list devices available -j`).fetch("devices")
+    duos = all.flat_map do |runtime, list|
+      list.select { |device| device["name"] == "iPhone Duo" && device.fetch("isAvailable", true) }
+          .map { |device| [runtime, device] }
+    end
+    # The current iPhone19,4 runtime is the one this Xcode's Duo support is
+    # built against; older generic runtimes can move the hinge but leave the
+    # inner panel dark.
+    existing = duos.find { |runtime, _| runtime.include?("iPhone19-4") } ||
+               duos.find { |_, device| device["state"] == "Booted" } ||
+               duos.first
+    return existing.last.fetch("udid") if existing
+
+    unless `xcrun simctl list devicetypes`.include?("iPhone Duo")
+      FastlaneCore::UI.user_error!("This Xcode has no iPhone Duo device type; Xcode 27.1 or later is required.")
+    end
+
+    errors = []
+    runtimes.each do |runtime|
+      output = `xcrun simctl create 'iPhone Duo' #{DEVICE_TYPE} '#{runtime}' 2>&1`.strip
+      return output if $?.success? && output.match?(/\A[0-9A-F-]{36}\z/)
+
+      errors << "#{runtime}: #{output}"
+    end
+    FastlaneCore::UI.user_error!("Could not create an iPhone Duo simulator:\n#{errors.join("\n")}")
+  end
+
+  def state(udid)
+    devices.find { |device| device["udid"] == udid }&.fetch("state", "Shutdown")
+  end
+
+  def devices
+    all = JSON.parse(`xcrun simctl list devices available -j`).fetch("devices")
+    all.values.flatten.select { |device| device.fetch("isAvailable", true) }
+  end
+
+  def runtimes
+    all = JSON.parse(`xcrun simctl list runtimes -j`).fetch("runtimes")
+    ios = all.select do |runtime|
+      runtime.fetch("isAvailable", true) && runtime["version"] && runtime["identifier"].include?(".iOS-")
+    end
+    special = ios.select { |runtime| runtime["identifier"].include?("iPhone19-4") }
+    newest = ios.max_by { |runtime| Gem::Version.new(runtime["version"].to_s.split.first) }
+    (special + [newest]).compact.map { |runtime| runtime["identifier"] }.uniq
+  end
+end
 
 platform :ios do
   private_lane :connect_key do
@@ -93,14 +151,91 @@ platform :ios do
     File.join(PWUSAGE_ROOT, "build", "PWUsage.ipa")
   end
 
-  desc "Capture App Store screenshots from demo data (local only)"
+  desc "Capture App Store screenshots from demo data (local or CI)"
   lane :screenshots do
-    UI.user_error!("Capture screenshots locally, not on CI") if is_ci
+    if `command -v baguette`.strip.empty?
+      UI.user_error!("Install baguette (brew install baguette) to pose and capture the iPhone Duo.")
+    end
     sh(File.join(PWUSAGE_ROOT, "generate.sh"))
+    # snapshot copies every PNG left in fastlane's cache; a stale Duo set from
+    # an earlier run would land in the listing before the real Duo capture.
+    cache_shots = File.expand_path("~/Library/Caches/tools.fastlane/screenshots")
+    FileUtils.mkdir_p(cache_shots)
+    Dir[File.join(cache_shots, "*.png")].each { |png| FileUtils.rm_f(png) }
     capture_screenshots
-    # App Store Connect rejects screenshots with an alpha channel.
+    capture_duo_screenshots
+    # App Store Connect rejects screenshots with an alpha channel, and the
+    # Duo capture comes out one pixel under its accepted size.
     pngs = Dir[File.join(PWUSAGE_ROOT, "fastlane", "screenshots", "**", "*.png")]
     sh("swift", File.join(__dir__, "flatten-screenshots.swift"), *pngs) unless pngs.empty?
+  end
+
+  # snapshot shuts every simulator down and boots it folded, so the Duo can't
+  # go through `capture_screenshots`: pose it open, run the Duo test directly,
+  # and copy the files the snapshot helper writes.
+  private_lane :capture_duo_screenshots do
+    udid = PWUsageDuo.udid
+    if PWUsageDuo.state(udid) == "Booted"
+      sh("xcrun simctl bootstatus #{udid} -b")
+    else
+      sh("baguette boot --udid #{udid}")
+    end
+
+    # The hinge can move before SpringBoard has lit the inner panel. Device Hub's
+    # active-display flag is not reliable after baguette's input heal, so check
+    # the panel's own framebuffer: a black one compresses to a few kilobytes.
+    lit_shot = File.join(Dir.tmpdir, "pwusage-duo-lit-#{Process.pid}.png")
+    inner_lit = lambda do
+      6.times do |attempt|
+        sh("baguette hinge --udid #{udid} --pose open")
+        sleep 2
+        `xcrun simctl io #{udid} screenshot --display=primary-1 #{lit_shot} 2>/dev/null`
+        return true if $?.success? && File.exist?(lit_shot) && File.size(lit_shot) > 50_000
+
+        sleep 5 if attempt < 5
+      end
+      false
+    end
+    UI.user_error!("The Duo never lit its inner display; check baguette and the simulator runtime.") unless inner_lit.call
+
+    cache = File.expand_path("~/Library/Caches/tools.fastlane")
+    shots_cache = File.join(cache, "screenshots")
+    FileUtils.mkdir_p(shots_cache)
+    Dir[File.join(shots_cache, "*.png")].each { |png| FileUtils.rm_f(png) }
+    File.write(File.join(cache, "language.txt"), "en-US")
+    File.write(File.join(cache, "locale.txt"), "en_US")
+    File.write(File.join(cache, "snapshot-launch_arguments.txt"), "")
+
+    output = File.join(PWUSAGE_ROOT, "fastlane", "screenshots", "en-US")
+    FileUtils.mkdir_p(output)
+    Dir[File.join(output, "iPhone Duo-*.png")].each { |png| FileUtils.rm_f(png) }
+
+    begin
+      sh("xcrun simctl status_bar #{udid} override --time 9:41 --dataNetwork wifi --wifiMode active " \
+         "--wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100")
+      derived = File.join(PWUSAGE_ROOT, "build", "duo-derived")
+      result = File.join(PWUSAGE_ROOT, "build", "duo.xcresult")
+      FileUtils.rm_rf(result)
+      sh("xcodebuild test -project '#{File.join(PWUSAGE_ROOT, "PWUsage.xcodeproj")}' " \
+         "-scheme PWUsageScreenshots -destination 'platform=iOS Simulator,id=#{udid}' " \
+         "-only-testing:PWUsageScreenshots/AppStoreScreenshots/testDuoShots " \
+         "-derivedDataPath '#{derived}' -resultBundlePath '#{result}'")
+
+      images = Dir[File.join(shots_cache, "iPhone Duo-*.png")].sort
+      UI.user_error!("The Duo run wrote no screenshots to #{shots_cache}.") if images.empty?
+      images.each { |image| FileUtils.cp(image, output) }
+    ensure
+      begin
+        sh("xcrun simctl status_bar #{udid} clear")
+      rescue StandardError
+        UI.message("Could not clear the Duo status bar override.")
+      end
+      begin
+        sh("baguette hinge --udid #{udid} --pose closed")
+      rescue StandardError
+        UI.message("Could not close the Duo after capturing.")
+      end
+    end
   end
 
   desc "Replace the App Store listing's screenshots with fastlane/screenshots (local only)"

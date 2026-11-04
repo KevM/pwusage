@@ -45,6 +45,16 @@ final class AppStoreScreenshots: XCTestCase {
         captureTabs()
     }
 
+    /// The open Duo is regular width, so Home already shows Live, Today and
+    /// the summary cards; it needs the iPad-style list, not 02-home-today.
+    func testDuoShots() throws {
+        let name = ProcessInfo().environment["SIMULATOR_DEVICE_NAME"] ?? ""
+        try XCTSkipUnless(name.contains("iPhone Duo"), "Duo set only")
+        prepareHome()
+        snapshot("01-home")
+        captureTabs()
+    }
+
     private func captureTabs() {
         open("Bill")
         // The demo's amount moves with the cycle day; the recorded total's label doesn't.
@@ -57,6 +67,17 @@ final class AppStoreScreenshots: XCTestCase {
         open("Settings")
         waitFor(app.staticTexts["Hill Country Electric"])
         snapshot("05-settings")
+        openSolarSystem()
+        snapshot("06-solar-system")
+    }
+
+    /// The Settings row's label carries the found status, so reach it by
+    /// identifier; wait for the details card rather than the screen's title.
+    private func openSolarSystem() {
+        let row = element("settings.solar-system")
+        XCTAssertTrue(row.waitForExistence(timeout: timeout), "No Solar System row")
+        row.tap()
+        waitFor(app.staticTexts["Total size"])
     }
 
     /// Scrolls Home until it stops moving, so Today so far, the bill and Smart

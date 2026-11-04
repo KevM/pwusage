@@ -1,0 +1,60 @@
+name: iOS Screenshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-screenshots
+  cancel-in-progress: false
+
+jobs:
+  screenshots:
+    name: Capture App Store screenshots
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: cmd/ios-app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Check iPhone Duo support
+        run: |
+          if ! xcrun simctl list devicetypes | grep -q "iPhone Duo"; then
+            echo "::error::This runner's Xcode has no iPhone Duo device type; Xcode 27.1 or later is required."
+            exit 1
+          fi
+
+      - name: Install XcodeGen and baguette
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen baguette
+
+      - name: Set up Ruby and Fastlane
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: cmd/ios-app
+
+      - name: Capture screenshots
+        env:
+          TMPDIR: /tmp
+        run: bundle exec fastlane ios screenshots
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ios-screenshots
+          path: cmd/ios-app/fastlane/screenshots/
+          if-no-files-found: ignore
