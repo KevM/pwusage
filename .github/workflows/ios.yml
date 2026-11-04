@@ -28,7 +28,9 @@ jobs:
     # GitHub-hosted only. A self-hosted runner would execute fork PR code on a
     # personal machine once the repository is public.
     runs-on: macos-latest
-    timeout-minutes: 15
+    # The hosted macOS pool can queue longer than the tests themselves; keep the job
+    # alive for that wait. The runner still enforces its own 13-minute test deadline.
+    timeout-minutes: 45
 
     defaults:
       run:
