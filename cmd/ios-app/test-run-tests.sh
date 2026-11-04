@@ -46,7 +46,10 @@ cat > "$fixture_dir/bin/git" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   merge-base) [[ "${PWUSAGE_TEST_NO_BASE:-0}" == 1 ]] && exit 1; echo BASE ;;
-  diff) [[ -n "${PWUSAGE_TEST_CHANGED:-}" ]] && printf '%s\n' "$PWUSAGE_TEST_CHANGED" ;;
+  diff)
+    [[ "${PWUSAGE_TEST_DIFF_FAIL:-0}" == 1 ]] && exit 1
+    [[ -n "${PWUSAGE_TEST_CHANGED:-}" ]] && printf '%s\n' "$PWUSAGE_TEST_CHANGED"
+    ;;
 esac
 exit 0
 EOF
@@ -146,10 +149,13 @@ PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift'
 expect_parity 0 'ran without detector changes'
 for changed in PWUsage/Models/Solar/SolarPosition.swift PWUsage/Models/Solar/MobileSolarLayout.swift \
   PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/SolarLayoutFixtureLoader.swift \
-  PWUsageTests/SolarLayoutDetectorTests.swift PWUsageTests/SolarLayoutSunPOATests.swift; do
+  PWUsageTests/SolarLayoutDetectorTests.swift PWUsageTests/SolarLayoutSunPOATests.swift \
+  project.yml run-tests.sh; do
   PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
   expect_parity 1 "skipped after changing $changed"
 done
+PWUSAGE_TEST_CHANGED=".github/workflows/ios.yml" "$script_dir/run-tests.sh"
+expect_parity 1 "skipped after changing .github/workflows/ios.yml"
 # Adjacent layout infrastructure tests must not pull in the multi-minute parity suite.
 for changed in PWUsageTests/SolarLayoutCloudSyncTests.swift PWUsageTests/SolarLayoutSessionCleanupTests.swift; do
   PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
@@ -157,6 +163,8 @@ for changed in PWUsageTests/SolarLayoutCloudSyncTests.swift PWUsageTests/SolarLa
 done
 PWUSAGE_TEST_NO_BASE=1 "$script_dir/run-tests.sh"
 expect_parity 1 'skipped without a merge base'
+PWUSAGE_TEST_DIFF_FAIL=1 "$script_dir/run-tests.sh"
+expect_parity 1 'skipped when diff failed'
 PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh"
 expect_parity 1 'PWUSAGE_DETECTOR_PARITY=1 did not force it'
 PWUSAGE_DETECTOR_PARITY=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsageTests/SolarLayoutDetectorTests.swift' \
@@ -180,13 +188,16 @@ if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
 fi
 
 # --auto promotes to --full on detector changes and stays default without them.
-PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift' "$script_dir/run-tests.sh" --auto
-rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
-if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
-  echo '--auto with detector changes skipped tests' >&2
-  exit 1
-fi
+for changed in cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift \
+  cmd/ios-app/project.yml cmd/ios-app/run-tests.sh .github/workflows/ios.yml; do
+  PWUSAGE_TEST_CHANGED="$changed" "$script_dir/run-tests.sh" --auto
+  rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+  rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+  if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+    echo "--auto with $changed skipped tests" >&2
+    exit 1
+  fi
+done
 
 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh" --auto
 if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then

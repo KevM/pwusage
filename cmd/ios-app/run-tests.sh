@@ -107,19 +107,28 @@ fi
 
 # Prints 1 when this branch, against its merge base with main, touches the detector or its fixtures.
 # Without a merge base it prints 1, so an unknown diff never skips the parity suite.
+# Prints 1 when this branch touches the detector, its fixtures, or build/CI tooling.
+# Without a merge base or on diff error it prints 1, so an unknown diff never skips parity.
 detector_changed() {
-  local base
+  local base diff_files
   base="$(git merge-base HEAD origin/main 2> /dev/null || git merge-base HEAD main 2> /dev/null)" || {
     echo 1
     return
   }
-  # Match the detector math sources and the suites that pin them by name. Cloud, persistence
-  # and session-cleanup tests deliberately do not trigger the multi-minute parity suite.
-  { git diff --name-only "$base" -- . && git ls-files --others --exclude-standard -- .; } 2> /dev/null \
-    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|[^/]*(Layout|Position)[^/]*\.swift)|PWUsageTests/(Fixtures/SolarLayout(/|[^/]*\.swift)|SolarLayout(Detector|ClearDays|SunPOA|Fit|Selection|Readiness|Research)[^/]*Tests\.swift))' \
-    && echo 1 || echo 0
+  # Match the detector math sources, test suites/fixtures, and build/runner tooling.
+  # Pathspec includes .github/workflows/ios.yml which lives outside cmd/ios-app.
+  diff_files="$({ git diff --name-only "$base" -- . :/:.github/workflows/ios.yml && git ls-files --others --exclude-standard -- . :/:.github/workflows/ios.yml; } 2> /dev/null)" || {
+    echo 1
+    return
+  }
+  if printf '%s\n' "$diff_files" | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|[^/]*(Layout|Position)[^/]*\.swift)|PWUsageTests/(Fixtures/SolarLayout(/|[^/]*\.swift)|SolarLayout(Detector|ClearDays|SunPOA|Fit|Selection|Readiness|Research)[^/]*Tests\.swift)|project\.yml|run-tests\.sh|\.github/workflows/ios\.yml)'; then
+    echo 1
+  else
+    echo 0
+  fi
 }
 
+run_parity=""
 if [[ "$mode" == auto ]]; then
   run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
   if [[ "$run_parity" == 1 ]]; then
@@ -137,7 +146,9 @@ fi
 
 # Named filters pick their own suites; only an unfiltered default run gates detector parity.
 if [[ "$mode" == default && "$#" -eq 0 ]]; then
-  run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
+  if [[ -z "$run_parity" ]]; then
+    run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
+  fi
   if [[ "$run_parity" != 1 ]]; then
     echo 'Skipping detector parity suites: no detector changes on this branch (PWUSAGE_DETECTOR_PARITY=1 forces them; --full runs them).'
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests")

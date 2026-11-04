@@ -3,6 +3,14 @@ name: iOS CI
 run-name: ${{ github.event_name == 'pull_request' && format('👀 {0}', github.event.pull_request.title) || github.event_name == 'push' && format('⛵ {0}', github.event.head_commit.message) || github.ref_name }}
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cmd/ios-app/**'
+      - '.swiftformat'
+      - '.swiftlint.yml'
+      - '.github/workflows/ios.yml'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
@@ -10,6 +18,9 @@ on:
       - '.swiftformat'
       - '.swiftlint.yml'
       - '.github/workflows/ios.yml'
+  schedule:
+    # Nightly run at 05:00 UTC to verify full -O build and parity suites
+    - cron: '0 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -24,7 +35,7 @@ concurrency:
 jobs:
   test:
     name: Run iOS Tests
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     # GitHub-hosted only. A self-hosted runner would execute fork PR code on a
     # personal machine once the repository is public.
     # The macos-26 arm64 pool is failing hosted-runner acquisition (community
@@ -66,13 +77,17 @@ jobs:
           # Same command agents run locally; it switches to the GitHub reporter under Actions.
           ./cmd/ios-app/lint.sh
 
+      - name: Test runner checks
+        run: ./test-run-tests.sh
+
       - name: Run iOS Tests
         env:
           TMPDIR: /tmp
           # 20 minutes accommodates optimized build time variance under macos-15 runner load.
           PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
-          # Workflow dispatch runs the full suite; PRs use change detection via --auto.
-          PWUSAGE_DETECTOR_PARITY: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          # Scheduled runs, pushes to main, and manual workflow dispatch force the full -O suite.
+          # Pull requests use change detection via --auto.
+          PWUSAGE_DETECTOR_PARITY: ${{ github.event_name != 'pull_request' && '1' || '' }}
         # --auto: promotes to --full (-O + year fixtures) on detector changes; runs default fast suite otherwise.
         run: ./run-tests.sh --auto
 
