@@ -11,7 +11,7 @@ struct BatteryHoldCoordinatorTests {
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
         await coordinator.refreshBatteryHold()
         #expect(coordinator.batteryHold.isCurrent)
-        api.commandResult = .init(status: .ok, hold: try Self.hold(), current: nil)
+        api.commandResult = .init(status: .succeeded, hold: try Self.hold(), current: nil)
         api.response = .init(hold: try Self.hold(), notice: nil)
         await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
         #expect(coordinator.batteryHold.response?.hold?.targetReserve == 80)
@@ -20,7 +20,7 @@ struct BatteryHoldCoordinatorTests {
         await coordinator.sendBatteryHoldCommand(.restore)
         #expect(coordinator.batteryHold.response?.hold == nil)
         #expect(coordinator.batteryHold.response?.notice?.cancelledObservedReserve == 45)
-        api.commandResult = .init(status: .ok, hold: nil, current: nil)
+        api.commandResult = .init(status: .succeeded, hold: nil, current: nil)
         api.response = .init(hold: nil, notice: nil)
         await coordinator.sendBatteryHoldCommand(.dismiss)
         #expect(coordinator.batteryHold.response?.notice == nil)
@@ -73,7 +73,7 @@ struct BatteryHoldCoordinatorTests {
         #expect(coordinator.batteryHold.isCurrent)
         #expect(coordinator.batteryHold.failure?.message.contains("last Battery Saver") == true)
         api.error = nil
-        api.commandResult = .init(status: .ok, hold: try Self.hold(), current: nil)
+        api.commandResult = .init(status: .succeeded, hold: try Self.hold(), current: nil)
         api.response = .init(hold: try Self.hold(), notice: nil)
         await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
         #expect(coordinator.batteryHold.failure == nil)
@@ -147,23 +147,27 @@ struct BatteryHoldCoordinatorTests {
         now = now.addingTimeInterval(121)
         await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
         #expect(api.commands.isEmpty)
-        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now).contains("unknown"))
+        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now)
+            .contains("unknown"))
     }
 
     @Test("Battery Saver toolbar accessibility labels describe unknown, idle and active status")
     func batterySaverNavigationLabels() async throws {
         let now = Date.now
         let unknown = BatteryHoldState()
-        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: unknown, at: now) == "Battery Saver, status unknown")
+        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: unknown, at: now)
+            == "Battery Saver, status unknown")
 
         let api = BatteryHoldAPISpy()
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { now }, timerInterval: nil)
         await coordinator.refreshBatteryHold()
-        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now) == "Battery Saver. Open Battery Saver.")
+        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now)
+            == "Battery Saver. Open Battery Saver.")
 
         api.response = .init(hold: try Self.hold(), notice: nil)
         await coordinator.refreshBatteryHold()
-        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now) == "Battery Saver on, saving your Powerwall at 80%. Open Battery Saver.")
+        #expect(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: now)
+            == "Battery Saver on, saving your Powerwall at 80%. Open Battery Saver.")
     }
 
     @Test("Cancelling a pending refresh does not publish its response")
@@ -204,13 +208,13 @@ struct BatteryHoldCoordinatorTests {
         await coordinator.refreshBatteryHold()
         #expect(observer.events == ["refreshed:nil"])
 
-        api.commandResult = .init(status: .ok, hold: try Self.hold(), current: nil)
+        api.commandResult = .init(status: .succeeded, hold: try Self.hold(), current: nil)
         api.response = .init(hold: try Self.hold(), notice: nil)
         await coordinator.sendBatteryHoldCommand(.park(.init(mode: .auto)))
         let holdID = try Self.hold().id
         #expect(observer.events.suffix(2) == ["started:\(holdID)", "refreshed:\(holdID)"])
 
-        api.commandResult = .init(status: .ok, hold: nil, current: nil)
+        api.commandResult = .init(status: .succeeded, hold: nil, current: nil)
         api.response = .init(hold: nil, notice: nil)
         await coordinator.sendBatteryHoldCommand(.restore)
         #expect(observer.events.suffix(2) == ["stopped:\(holdID)", "refreshed:nil"])
@@ -225,7 +229,8 @@ struct BatteryHoldCoordinatorTests {
     private static func hold(cancelled: Bool = false) throws -> BatteryHold {
         let json = cancelled ? BatteryHoldTests.holdJSON
             .replacingOccurrences(of: "\"active\"", with: "\"cancelled\"")
-            .replacingOccurrences(of: "\"cancelled_observed_reserve\":null", with: "\"cancelled_observed_reserve\":45") : BatteryHoldTests.holdJSON
+            .replacingOccurrences(of: "\"cancelled_observed_reserve\":null",
+                                  with: "\"cancelled_observed_reserve\":45") : BatteryHoldTests.holdJSON
         return try MobileContractDecoder.make().decode(BatteryHold.self, from: Data(json.utf8))
     }
 }
@@ -233,7 +238,7 @@ struct BatteryHoldCoordinatorTests {
 @MainActor
 private final class BatteryHoldAPISpy: MobileDashboardDataAPI, MobileBatteryHoldDataAPI {
     var response = BatteryHoldResponse(hold: nil, notice: nil)
-    var commandResult = BatteryHoldCommandResult(status: .ok, hold: nil, current: nil)
+    var commandResult = BatteryHoldCommandResult(status: .succeeded, hold: nil, current: nil)
     var error: (any Error)?
     var commands: [BatteryHoldCommand] = []
     var readCount = 0

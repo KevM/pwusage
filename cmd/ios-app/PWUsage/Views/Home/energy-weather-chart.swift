@@ -71,16 +71,20 @@ enum SwitchLabelLayout {
     /// Space between neighbouring labels.
     static let gap: CGFloat = 6
 
-    static func place(xs: [CGFloat], beforeWidths: [CGFloat], afterWidths: [CGFloat], chartWidth: CGFloat) -> [Form] {
+    static func place(xPositions: [CGFloat], beforeWidths: [CGFloat], afterWidths: [CGFloat],
+                      chartWidth: CGFloat) -> [Form] {
         var lastRight = -CGFloat.infinity
-        return xs.indices.map { index in
-            let x = xs[index]
-            let before = (x - inset - beforeWidths[index]) ... (x - inset)
-            let after = (x + inset) ... (x + inset + afterWidths[index])
-            let options: [(Form, [ClosedRange<CGFloat>])] = [(.both, [before, after]), (.after, [after]), (.before, [before])]
+        return xPositions.indices.map { index in
+            let position = xPositions[index]
+            let before = (position - inset - beforeWidths[index]) ... (position - inset)
+            let after = (position + inset) ... (position + inset + afterWidths[index])
+            let options: [(Form, [ClosedRange<CGFloat>])] = [
+                (.both, [before, after]), (.after, [after]), (.before, [before])
+            ]
             for (form, parts) in options {
                 guard parts.allSatisfy({ $0.lowerBound >= 0 && $0.upperBound <= chartWidth }),
-                      let first = parts.first, let last = parts.last, first.lowerBound >= lastRight + gap else { continue }
+                      let first = parts.first, let last = parts.last,
+                      first.lowerBound >= lastRight + gap else { continue }
                 lastRight = last.upperBound
                 return form
             }
@@ -130,7 +134,7 @@ private struct LaneChart: View {
         }
         let markers = lane.switches
         let forms = SwitchLabelLayout.place(
-            xs: markers.map { CGFloat($0.date.timeIntervalSince(xDomain.lowerBound) / span) * chartWidth },
+            xPositions: markers.map { CGFloat($0.date.timeIntervalSince(xDomain.lowerBound) / span) * chartWidth },
             beforeWidths: markers.map { width($0.beforeLabel) },
             afterWidths: markers.map { width($0.afterLabel) },
             chartWidth: chartWidth)
@@ -176,10 +180,9 @@ private struct LaneChart: View {
     }
 
     private var chart: some View {
-        let x = xDomain, y = yDomain
         let labels = showsSwitchLabels ? switchLabels : [:]
         return Chart {
-            EnergyBalanceBackdrop(x: x, y: y)
+            EnergyBalanceBackdrop(timeRange: xDomain, balanceRange: yDomain)
 
             ForEach(Array(lane.switches.enumerated()), id: \.offset) { _, marker in
                 RuleMark(x: .value("Switch", marker.date))
@@ -226,8 +229,8 @@ private struct LaneChart: View {
                     }
             }
         }
-        .chartXScale(domain: x)
-        .chartYScale(domain: y)
+        .chartXScale(domain: xDomain)
+        .chartYScale(domain: yDomain)
         .chartYAxis(.hidden)
         .chartXAxis {
             AxisMarks(values: axisDates) { value in

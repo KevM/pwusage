@@ -12,7 +12,7 @@ struct BatteryHold: Decodable, Equatable {
     let safetyExpiresAt: Date
     let cancelledObservedReserve: Int?
 
-    var monitoring: BatteryHoldMonitoring? = nil
+    var monitoring: BatteryHoldMonitoring?
 
     private enum CodingKeys: String, CodingKey {
         case id, status, mode, monitoring

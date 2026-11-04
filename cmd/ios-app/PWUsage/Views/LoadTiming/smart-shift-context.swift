@@ -30,7 +30,8 @@ extension SmartShiftPresentation {
         /// "at 4:30 PM", or "tomorrow at 4:30 PM" when the start falls on a later local day,
         /// with the day first so it can't be missed.
         func when(_ date: Date) -> String {
-            let clock = DashboardPresentation.date(date, timeZoneIdentifier: timeZone, dateStyle: .none, timeStyle: .short)
+            let clock = DashboardPresentation.date(date, timeZoneIdentifier: timeZone,
+                                                   dateStyle: .none, timeStyle: .short)
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = TimeZone(identifier: timeZone) ?? .current
             return calendar.isDate(date, inSameDayAs: now) ? "at \(clock)" : "tomorrow at \(clock)"
@@ -68,9 +69,11 @@ extension SmartShiftPresentation {
                 return "\(profile.name) now: no cheaper time today"
             case .nowUnsafe(let key):
                 let more = max(0, comparison.recommendedCost - comparison.costNow)
-                return "\(profile.name) \(time): about \(money(more)) more than now, but it won't leave \(name(key)) short"
+                return "\(profile.name) \(time): about \(money(more)) more than now, "
+                    + "but it won't leave \(name(key)) short"
             case .noSafeStart(let key):
-                return "\(profile.name) \(time): the least risky time, but a cloudy week could still leave \(name(key)) short"
+                return "\(profile.name) \(time): the least risky time, "
+                    + "but a cloudy week could still leave \(name(key)) short"
             }
         }
 
@@ -81,16 +84,21 @@ extension SmartShiftPresentation {
             switch comparison.safety {
             case .nowSafe: return true
             case .nowUnsafe:
-                return comparison.costNow - comparison.recommendedCost > LoadTimingForecastEstimator.currencyMinorUnit(currencyCode)
+                return comparison.costNow - comparison.recommendedCost
+                    > LoadTimingForecastEstimator.currencyMinorUnit(currencyCode)
             case .noSafeStart: return false
             }
         }
 
         func verdict(forecast: ForecastAvailability) -> SmartShiftVerdict {
-            let nowBar = CostBar(label: nowLabel, amount: money(comparison.costNow), value: comparison.costNow, isRecommended: isNow)
+            let nowBar = CostBar(label: nowLabel,
+                                 amount: money(comparison.costNow),
+                                 value: comparison.costNow, isRecommended: isNow)
             let bars = isNow
                 ? [nowBar]
-                : [CostBar(label: laterLabel, amount: money(comparison.recommendedCost), value: comparison.recommendedCost,
+                : [CostBar(label: laterLabel,
+                           amount: money(comparison.recommendedCost),
+                           value: comparison.recommendedCost,
                            isRecommended: true), nowBar]
             let lanes = comparison.lanes.map(lane)
             return SmartShiftVerdict(
@@ -148,7 +156,8 @@ extension SmartShiftPresentation {
             let laterDraws = self.laterDraws
             let time = when(comparison.recommendedStart)
             if case .nowUnsafe(let key) = comparison.safety {
-                let warning = "Starting now would draw on your \(name(key)) bank, which a cloudy week could leave more than "
+                let warning = "Starting now would draw on your \(name(key)) bank, "
+                    + "which a cloudy week could leave more than "
                     + "\(shortfallKwh) kWh short by \(shortDate(comparison.safetyEnd))."
                 guard let laterMain = laterDraws.max(by: { $0.kwh < $1.kwh }) else { return warning }
                 return warning + " " + laterClause(laterMain, total: laterDraws.reduce(0) { $0 + $1.kwh }, time: time)
@@ -186,20 +195,23 @@ extension SmartShiftPresentation {
         /// Starting now's draws, against each bank at the projection end.
         var nowDraws: [Draw] {
             let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
-            return draws(from: now, to: now.addingTimeInterval(duration), profile: profile, timing: timing,
-                         laneEnd: { $0.projectedAfterStartNowKwh }, lanes: comparison.lanes)
+            return draws(from: now, to: now.addingTimeInterval(duration), inputs: .init(
+                profile: profile, timing: timing, laneEnd: { $0.projectedAfterStartNowKwh },
+                lanes: comparison.lanes))
         }
 
         /// The recommended start's draws, against each bank at the projection end.
         var laterDraws: [Draw] {
-            draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, profile: profile, timing: timing,
-                  laneEnd: { $0.projectedAfterRecommendedKwh }, lanes: comparison.lanes)
+            draws(from: comparison.recommendedStart, to: comparison.recommendedEnd, inputs: .init(
+                profile: profile, timing: timing, laneEnd: { $0.projectedAfterRecommendedKwh },
+                lanes: comparison.lanes))
         }
 
         var costBreakdowns: [CostBreakdown] {
             let startNow = breakdown(title: nowLabel, total: comparison.costNow, draws: nowDraws)
             guard !isNow else { return [startNow] }
-            let later = breakdown(title: "\(verb) \(when(comparison.recommendedStart))", total: comparison.recommendedCost,
+            let later = breakdown(title: "\(verb) \(when(comparison.recommendedStart))",
+                                  total: comparison.recommendedCost,
                                   draws: laterDraws)
             return [later, startNow]
         }
@@ -220,8 +232,11 @@ extension SmartShiftPresentation {
                 let period = name(draw.key)
                 let bought = draw.kwh - draw.fromBank
                 if draw.fromBank >= 0.05 {
-                    lines.append(CostLine(period: period, detail: "\(kwh(draw.fromBank)) kWh from your bank × \(rate(draw.key, sell: true)) credit",
-                                          amount: money(draw.fromBank * (rateValue(draw.key, sell: true) ?? 0))))
+                    lines.append(CostLine(
+                        period: period,
+                        detail: "\(kwh(draw.fromBank)) kWh from your bank × \(rate(draw.key, sell: true)) credit",
+                        amount: money(draw.fromBank * (rateValue(draw.key, sell: true) ?? 0))
+                    ))
                     if let projected = draw.bankWithoutRun {
                         let today = startKwh(draw.key) ?? 0
                         notes.append("\(period) bank is \(signedKwh(today)) now, projecting \(signedKwh(projected)) "
@@ -229,7 +244,8 @@ extension SmartShiftPresentation {
                     }
                 }
                 if bought >= 0.05 {
-                    lines.append(CostLine(period: period, detail: "\(kwh(bought)) kWh bought × \(rate(draw.key, sell: false))",
+                    lines.append(CostLine(period: period,
+                                          detail: "\(kwh(bought)) kWh bought × \(rate(draw.key, sell: false))",
                                           amount: money(bought * (rateValue(draw.key, sell: false) ?? 0))))
                 }
             }
@@ -243,7 +259,8 @@ extension SmartShiftPresentation {
                 return "Starting now uses your \(period) bank, giving up \(rate(draw.key, sell: true)) in credit."
             }
             let bought = draw.fromBank > 0.05 ? "most of it is bought" : "it's bought"
-            return "Starting now runs \(crossesPeriods ? "into" : "during") \(period), where you \(bankPhrase(draw.key)), "
+            return "Starting now runs \(crossesPeriods ? "into" : "during") \(period), "
+                + "where you \(bankPhrase(draw.key)), "
                 + "so \(bought) at \(rate(draw.key, sell: false))."
         }
 
@@ -253,14 +270,18 @@ extension SmartShiftPresentation {
             let period = name(draw.key)
             let mostly = total > 0 && draw.kwh / total < 0.95 ? "mostly " : ""
             guard draw.fromBank >= draw.kwh / 2 else {
-                return "\(capitalized(time)) it's \(mostly)bought at the \(period) rate of \(rate(draw.key, sell: false))."
+                return "\(capitalized(time)) it's \(mostly)bought "
+                    + "at the \(period) rate of \(rate(draw.key, sell: false))."
             }
             // A bank larger than today's is filled by projected solar across the
             // days to the projection end, not by tomorrow alone, so say where it stands then.
             let projected = draw.fromBank > max(startKwh(draw.key) ?? 0, 0) + 0.5
-                ? draw.bankWithoutRun.map { ", projected at \(signedKwh($0)) kWh by \(shortDate(comparison.projectionEnd))" } ?? ""
+                ? draw.bankWithoutRun.map {
+                    ", projected at \(signedKwh($0)) kWh by \(shortDate(comparison.projectionEnd))"
+                } ?? ""
                 : ""
-            return "\(capitalized(time)) it \(mostly)uses your \(period) bank\(projected), giving up \(rate(draw.key, sell: true)) in credit."
+            return "\(capitalized(time)) it \(mostly)uses your \(period) bank\(projected), "
+                + "giving up \(rate(draw.key, sell: true)) in credit."
         }
 
         func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {

@@ -7,7 +7,7 @@ struct SolarForecastInterval: Codable, Equatable, Sendable {
     /// Summed `pv_estimate10` across the selected arrays, for the cautious
     /// projection. `nil` when any array lacks it, and in batches stored by
     /// builds that did not keep it.
-    var cautiousPowerKw: Double? = nil
+    var cautiousPowerKw: Double?
     func energyKwh() throws -> Double {
         let duration = periodEnd.timeIntervalSince(periodStart)
         let energy = powerKw * (duration / 3600)
@@ -44,7 +44,8 @@ enum SolarForecast {
             throw SolarForecastError.nonFiniteValue
         }
         guard start < end else { throw SolarForecastError.incompleteCoverage }
-        let ordered = intervals.filter { $0.periodEnd > start && $0.periodStart < end }.sorted { $0.periodStart < $1.periodStart }
+        let ordered = intervals.filter { $0.periodEnd > start && $0.periodStart < end }
+            .sorted { $0.periodStart < $1.periodStart }
         guard ordered.allSatisfy({
             $0.periodStart.timeIntervalSince1970.isFinite && $0.periodEnd.timeIntervalSince1970.isFinite &&
                 $0.periodStart < $0.periodEnd && $0.powerKw.isFinite && $0.powerKw >= 0

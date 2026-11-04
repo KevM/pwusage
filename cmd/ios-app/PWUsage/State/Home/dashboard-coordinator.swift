@@ -44,8 +44,11 @@ final class DashboardCoordinator: ObservableObject {
     var isBatteryHoldSheetPresented: Bool {
         get { presentedSheet == .batteryHold }
         set {
-            if newValue { presentedSheet = .batteryHold }
-            else if presentedSheet == .batteryHold { presentedSheet = nil }
+            if newValue {
+                presentedSheet = .batteryHold
+            } else if presentedSheet == .batteryHold {
+                presentedSheet = nil
+            }
         }
     }
     @Published var batteryHold = BatteryHoldState()
@@ -65,7 +68,7 @@ final class DashboardCoordinator: ObservableObject {
     /// enhanced-and-ready branch, and every one of those returns sets the state to
     /// `.basic` or `.awaitingArraySelection`, which cannot reach it.
     @Published var solarForecastSaveFailure = false
-    @Published var solarForecastUnavailableReason: SolarForecastEnhancementUnavailableReason?
+    @Published var solarForecastUnavailableReason: SolarForecastUnavailableReason?
     @Published var loadPlanningContext: LoadTimingForecastEstimator.PlanningContext?
     /// The household pattern with grid history, published whether or not Solcast
     /// is connected, so Smart Shift can project banks from history alone.

@@ -10,8 +10,8 @@ struct LiveScoreboardTests {
     private func flow(solar: Double, home: Double, grid: Double, battery: Double,
                       age: TimeInterval = 0, unavailable: Bool = false) -> DashboardPresentation.PowerFlow {
         DashboardPresentation.powerFlow(
-            solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
-            sourceTime: now.addingTimeInterval(-age), isUnavailable: unavailable, now: now
+            .init(solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
+                  sourceTime: now.addingTimeInterval(-age), isUnavailable: unavailable), now: now
         )
     }
 

@@ -12,7 +12,7 @@ struct SolarLayoutSunPOATests {
             let fixture = try SolarLayoutFixture.load(name)
             #expect(fixture.name == name)
             #expect(fixture.stages.sun.count == 48)
-            #expect(fixture.stages.poa.kw.count == fixture.stages.sun.count)
+            #expect(fixture.stages.poa.kilowatts.count == fixture.stages.sun.count)
             #expect(!fixture.input.solarWh.isEmpty)
         }
     }
@@ -40,7 +40,7 @@ struct SolarLayoutSunPOATests {
         let planes = fixture.stages.poa.planes.map {
             LayoutPlane(azimuth: $0.azimuth, tilt: $0.tilt, effectiveKw: $0.effectiveKw)
         }
-        for (row, expected) in zip(fixture.stages.sun, fixture.stages.poa.kw) {
+        for (row, expected) in zip(fixture.stages.sun, fixture.stages.poa.kilowatts) {
             let sun = LayoutSunSample(
                 apparentZenith: row.apparentZenith, elevation: row.elevation, azimuth: row.azimuth,
                 dniExtra: row.dniExtra, ghi: row.ghi, dni: row.dni, dhi: row.dhi, ambientFactor: row.ambientFactor)

@@ -11,7 +11,8 @@ extension SmartShiftPresentation {
     /// Every pricing period, in the order the tariff reaches them.
     static func periodRows(timing: LoadTiming, currencyCode: String) -> [PeriodRow] {
         var order: [String] = []
-        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start }) where !order.contains(segment.periodKey) {
+        for segment in timing.tariffTimeline.sorted(by: { $0.start < $1.start })
+            where !order.contains(segment.periodKey) {
             order.append(segment.periodKey)
         }
         let periods = timing.pricingPeriods.enumerated().sorted { left, right in
@@ -28,20 +29,33 @@ extension SmartShiftPresentation {
         }
     }
 
+    /// Everything `costBreakdowns` reads.
+    struct CostBreakdownInputs {
+        let comparison: LoadTimingForecastEstimator.Comparison
+        let profile: LoadProfile
+        let timing: LoadTiming
+        let now: Date
+        /// `nil` where no bill date is shown.
+        let billingCycleEnd: Date?
+        let currencyCode: String
+        let timeZone: String
+    }
+
     /// For each period the recommended run draws on: the part its bank covers and the part bought.
     /// Banks are read where the bill is, at the projection end: the lane's bank after
     /// the run plus the run's draw gives the bank it drew from.
     /// The recommended start's arithmetic, then starting now's (just now's when they're the same).
-    static func costBreakdowns(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-                               now: Date, billingCycleEnd: Date, currencyCode: String, timeZone: String) -> [CostBreakdown] {
-        Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: billingCycleEnd,
-                currencyCode: currencyCode, timeZone: timeZone).costBreakdowns
+    static func costBreakdowns(_ inputs: CostBreakdownInputs) -> [CostBreakdown] {
+        Context(profile: inputs.profile, comparison: inputs.comparison, timing: inputs.timing, now: inputs.now,
+                billingCycleEnd: inputs.billingCycleEnd, currencyCode: inputs.currencyCode,
+                timeZone: inputs.timeZone).costBreakdowns
     }
 
     /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
     /// safety rule turned down a cheaper start; otherwise `nil`.
-    static func ruledOutNote(comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
-                             now: Date, timeZone: String) -> String? {
+    static func ruledOutNote(
+        comparison: LoadTimingForecastEstimator.Comparison, profile: LoadProfile, timing: LoadTiming,
+        now: Date, timeZone: String) -> String? {
         guard let ruledOut = comparison.ruledOut else { return nil }
         let context = Context(profile: profile, comparison: comparison, timing: timing, now: now, billingCycleEnd: nil,
                               currencyCode: "USD", timeZone: timeZone)
@@ -65,29 +79,34 @@ extension SmartShiftPresentation {
     }
 
     /// "Charge" → "Charging", "Wash" → "Washing", "Start" → "Starting", "Bake" → "Baking".
+    /// The input's case is preserved: "RUN" → "RUNNING".
     static func gerund(_ verb: String) -> String {
         let lower = verb.lowercased()
-        if lower.hasSuffix("e"), !lower.hasSuffix("ee"), !lower.hasSuffix("ye"), !lower.hasSuffix("oe"), lower.count > 2 {
-            return String(verb.dropLast()) + "ing"
+        if lower.hasSuffix("e"), !lower.hasSuffix("ee"), !lower.hasSuffix("ye"), !lower.hasSuffix("oe"),
+           lower.count > 2 {
+            return addingIng(to: String(verb.dropLast()))
         }
         // A short consonant-vowel-consonant verb doubles its last letter: "Run" → "Running".
         let vowels = Set("aeiou")
         let letters = Array(lower)
         if letters.count == 3, !vowels.contains(letters[0]), vowels.contains(letters[1]),
            !vowels.contains(letters[2]), !"wxy".contains(letters[2]) {
-            return verb + String(verb.last!) + "ing"
+            return addingIng(to: verb + String(verb.suffix(1)))
         }
-        return verb + "ing"
+        return addingIng(to: verb)
+    }
+
+    /// "ing" for a lower-case stem, "ING" when the stem ends in a capital.
+    private static func addingIng(to stem: String) -> String {
+        stem + (stem.last?.isUppercase == true ? "ING" : "ing")
     }
 
     // MARK: - Blocked states
 
-    static func blockedMessage(profile: LoadProfile, result: LoadTimingForecastEstimator.Result,
-                               refreshUnavailable: Bool, timing: LoadTiming, now: Date,
-                               billingCycleEnd: Date) -> String? {
-        if refreshUnavailable { return refreshFailedMessage }
-        if !timing.hasTariff { return missingRatePlanMessage }
-        switch result.unavailableReason {
+    static func blockedMessage(_ inputs: BlockerInputs) -> String? {
+        if inputs.refreshUnavailable { return refreshFailedMessage }
+        if !inputs.timing.hasTariff { return missingRatePlanMessage }
+        switch inputs.result.unavailableReason {
         case .none:
             return nil
         case .staleBalance:
@@ -97,7 +116,8 @@ extension SmartShiftPresentation {
         case .incompleteBalance:
             return incompleteBalanceMessage
         case .noFittingRun:
-            if let hours = durationHours(of: profile), now.addingTimeInterval(hours * 3600) > billingCycleEnd {
+            if let hours = durationHours(of: inputs.profile),
+               inputs.now.addingTimeInterval(hours * 3600) > inputs.billingCycleEnd {
                 return billingCycleMessage
             }
             return tooLongMessage

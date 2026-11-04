@@ -105,7 +105,9 @@ enum SettingsDestination: Hashable {
         NavigationStack {
             SettingsView(
                 site: MobileSite(id: "preview-home", name: "Cedar House", utility: "Demo utility"),
-                coordinator: DashboardCoordinator(siteID: "preview-home", api: DashboardPreviewAPI(mode: .normal), timerInterval: nil),
+                coordinator: DashboardCoordinator(siteID: "preview-home",
+                                                  api: DashboardPreviewAPI(mode: .normal),
+                                                  timerInterval: nil),
                 onChooseSite: {},
                 onSignOut: {}
             )

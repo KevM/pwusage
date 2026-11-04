@@ -28,7 +28,8 @@ struct BatteryHoldControlSiteStore {
     let fileURL: URL
     static func shared() -> Self? {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "PWUSAGE_APP_GROUP") as? String,
-              let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+              let directory = FileManager.default.containerURL(
+                  forSecurityApplicationGroupIdentifier: group) else { return nil }
         return Self(fileURL: directory.appendingPathComponent("battery-hold-control-sites.json"))
     }
     func load() -> [BatteryHoldControlSite] {
@@ -38,8 +39,10 @@ struct BatteryHoldControlSiteStore {
     }
     func save(_ sites: [BatteryHoldControlSite]) {
         do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(sites).write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try JSONEncoder().encode(sites).write(
+                to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch { clear() }
     }
     func clear() {

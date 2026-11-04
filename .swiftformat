@@ -3,7 +3,9 @@
 --indent 4
 --linebreaks lf
 --semicolons never
---trailing-commas always
+# SwiftLint's default trailing_comma rule forbids trailing commas, so the
+# formatter must not add them (it previously did, and the linter rejected them).
+--trailing-commas never
 --import-grouping alpha
 --disable all
 --enable blankLineAfterImports,blankLinesAtEndOfScope,blankLinesAtStartOfScope,consecutiveBlankLines,duplicateImports,elseOnSameLine,indent,linebreakAtEndOfFile,linebreaks,sortImports,spaceAroundBraces,spaceAroundOperators,spaceInsideBraces,trailingCommas,trailingSpace

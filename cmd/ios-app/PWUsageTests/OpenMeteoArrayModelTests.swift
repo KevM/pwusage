@@ -80,7 +80,8 @@ struct OpenMeteoArrayModelTests {
     @Test("Matches independent pvlib synthetic cases", arguments: cases)
     func pvlibParity(_ sample: Case) throws {
         let result = try OpenMeteoArrayModel.powerKw(
-            at: Date(timeIntervalSince1970: sample.unix), ghi: sample.ghi, dni: sample.dni, dhi: sample.dhi,
+            at: Date(timeIntervalSince1970: sample.unix),
+            radiation: .init(ghi: sample.ghi, dni: sample.dni, dhi: sample.dhi),
             layout: SolarLayout(
                 planes: [.init(azimuth: sample.azimuth, tilt: sample.tilt, dcKwp: sample.capacityKw)],
                 acClipKw: sample.clip, confidence: .high, detectedAt: nil),
@@ -99,13 +100,13 @@ struct OpenMeteoArrayModelTests {
         for irradiance in [-1.0, Double.nan, Double.infinity] {
             #expect(throws: OpenMeteoArrayModel.Error.invalidInput) {
                 try OpenMeteoArrayModel.powerKw(
-                    at: Date(timeIntervalSince1970: 0), ghi: irradiance, dni: 0, dhi: 0,
+                    at: Date(timeIntervalSince1970: 0), radiation: .init(ghi: irradiance, dni: 0, dhi: 0),
                     layout: layout, location: location)
             }
         }
         #expect(throws: OpenMeteoArrayModel.Error.invalidInput) {
             try OpenMeteoArrayModel.powerKw(
-                at: Date(timeIntervalSince1970: 0), ghi: 0, dni: 0, dhi: 0,
+                at: Date(timeIntervalSince1970: 0), radiation: .init(ghi: 0, dni: 0, dhi: 0),
                 layout: layout,
                 location: .init(latitude: .nan, longitude: 0, source: .estimated))
         }
@@ -118,7 +119,7 @@ struct OpenMeteoArrayModelTests {
         let date = Date(timeIntervalSince1970: 1_718_991_000)
         func output(_ planes: [SolarLayoutPlane], clip: Double?) throws -> Double {
             try OpenMeteoArrayModel.powerKw(
-                at: date, ghi: 850, dni: 800, dhi: 150,
+                at: date, radiation: .init(ghi: 850, dni: 800, dhi: 150),
                 layout: .init(planes: planes, acClipKw: clip, confidence: .high, detectedAt: nil),
                 location: location)
         }

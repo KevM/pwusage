@@ -8,7 +8,8 @@ struct LoadProfileStoreTests {
     @MainActor
     func seedsDefaults() {
         let store = Fixture().store
-        #expect(store.profiles.map(\.id) == ["car", "dishwasher", "washer", "dryer", "washer-dryer-combo", "custom-example"])
+        #expect(store.profiles.map(\.id) ==
+            ["car", "dishwasher", "washer", "dryer", "washer-dryer-combo", "custom-example"])
         #expect(store.profile(id: "car")?.carSettings?.capacityKwh == 60)
         #expect(store.profile(id: "car")?.carSettings?.initialStateOfCharge == 20)
         #expect(store.profile(id: "car")?.carSettings?.targetStateOfCharge == 80)
@@ -130,16 +131,23 @@ struct LoadProfileStoreTests {
         fixture.defaults.set(Data("not-json".utf8), forKey: LoadProfileStore.storageKey)
         let store = LoadProfileStore(userDefaults: fixture.defaults)
         #expect(store.profile(id: "dishwasher")?.energyKwh == 5)
-        #expect(throws: LoadProfileError.self) { try store.createCustomProfile(name: "  ", energyKwh: 2, durationHours: 1) }
-        #expect(throws: LoadProfileError.self) { try store.createCustomProfile(name: "Bad", energyKwh: .infinity, durationHours: 1) }
-        #expect(throws: LoadProfileError.self) { try store.createCustomProfile(name: "Bad", energyKwh: 2, durationHours: 0) }
+        #expect(throws: LoadProfileError.self) {
+            try store.createCustomProfile(name: "  ", energyKwh: 2, durationHours: 1)
+        }
+        #expect(throws: LoadProfileError.self) {
+            try store.createCustomProfile(name: "Bad", energyKwh: .infinity, durationHours: 1)
+        }
+        #expect(throws: LoadProfileError.self) {
+            try store.createCustomProfile(name: "Bad", energyKwh: 2, durationHours: 0)
+        }
         var invalidCar = try #require(store.profile(id: "car"))
         invalidCar.carSettings?.targetStateOfCharge = -1
         #expect(throws: LoadProfileError.self) {
             try store.editProfile(id: "car", energyKwh: invalidCar.energyKwh, durationHours: invalidCar.durationHours,
                                   carSettings: invalidCar.carSettings)
         }
-        invalidCar.carSettings = CarLoadSettings(capacityKwh: 201, initialStateOfCharge: 0, targetStateOfCharge: 100, chargingLevel: .level1)
+        invalidCar.carSettings = CarLoadSettings(capacityKwh: 201, initialStateOfCharge: 0,
+                                                 targetStateOfCharge: 100, chargingLevel: .level1)
         #expect(throws: LoadProfileError.self) {
             try store.editProfile(id: "car", energyKwh: invalidCar.energyKwh, durationHours: invalidCar.durationHours,
                                   carSettings: invalidCar.carSettings)
@@ -164,7 +172,9 @@ struct LoadProfileStoreTests {
     @MainActor
     func freshInstallUsesVerbNames() {
         let store = Fixture().store
-        #expect(store.profiles.map(\.name) == ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry", "Wash and dry the laundry", "Bake bread"])
+        #expect(store.profiles.map(\.name) ==
+            ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry",
+             "Wash and dry the laundry", "Bake bread"])
     }
 
     @Test("Version 1 built-in names migrate to verb phrases without touching custom Jobs or settings")
@@ -172,20 +182,27 @@ struct LoadProfileStoreTests {
     func migratesVersionOneBuiltInNames() throws {
         let defaults = Fixture.emptyDefaults()
         let poolPumpID = UUID().uuidString
-        let car = CarLoadSettings(capacityKwh: 75, initialStateOfCharge: 30, targetStateOfCharge: 90, chargingLevel: .level1)
+        let car = CarLoadSettings(capacityKwh: 75, initialStateOfCharge: 30,
+                                  targetStateOfCharge: 90, chargingLevel: .level1)
         let saved = VersionOneCollection(version: 1, profiles: [
             LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 36, durationHours: 4, carSettings: car),
-            LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 6, durationHours: 3, carSettings: nil),
-            LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5, carSettings: nil),
+            LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 6, durationHours: 3,
+                        carSettings: nil),
+            LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5,
+                        carSettings: nil),
             LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil),
-            LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil),
-            LoadProfile(id: poolPumpID, name: "Pool pump", kind: .custom, energyKwh: 4, durationHours: 2, carSettings: nil),
+            LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance,
+                        energyKwh: 8, durationHours: 3, carSettings: nil),
+            LoadProfile(id: poolPumpID, name: "Pool pump", kind: .custom, energyKwh: 4, durationHours: 2,
+                        carSettings: nil)
         ], selectedProfileID: "dryer")
         defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
 
         let store = LoadProfileStore(userDefaults: defaults)
 
-        #expect(store.profiles.map(\.name) == ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry", "Wash and dry the laundry", "Pool pump"])
+        #expect(store.profiles.map(\.name) ==
+            ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry",
+             "Wash and dry the laundry", "Pool pump"])
         #expect(store.selectedProfileID == "dryer")
         #expect(store.profile(id: "car")?.carSettings == car)
         #expect(store.profile(id: "dishwasher")?.energyKwh == 6)
@@ -200,7 +217,8 @@ struct LoadProfileStoreTests {
         for (savedName, expected) in [("Custom", "Bake bread"), ("Hot tub", "Hot tub")] {
             let defaults = Fixture.emptyDefaults()
             let saved = VersionOneCollection(version: 1, profiles: VersionOneCollection.builtIns + [
-                LoadProfile(id: "custom-example", name: savedName, kind: .custom, energyKwh: 20, durationHours: 4, carSettings: nil),
+                LoadProfile(id: "custom-example", name: savedName, kind: .custom, energyKwh: 20,
+                            durationHours: 4, carSettings: nil)
             ], selectedProfileID: nil)
             defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
 
@@ -213,10 +231,12 @@ struct LoadProfileStoreTests {
     @Test("Describes every profile failure in user-facing language")
     func describesProfileErrors() {
         let cases: [(LoadProfileError, String)] = [
-            (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. Check the car charge settings too."),
+            (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. "
+                + "Check the car charge settings too."),
             (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles."),
-            (.cannotDeleteBuiltIn, "Built-in load profiles can’t be deleted. Edit them instead, or reset them to their default settings."),
-            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead."),
+            (.cannotDeleteBuiltIn, "Built-in load profiles can’t be deleted. Edit them instead, "
+                + "or reset them to their default settings."),
+            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead.")
         ]
         for (error, expected) in cases {
             #expect(error.errorDescription == expected)
@@ -232,7 +252,7 @@ private struct Fixture {
 
     init() {
         let suiteName = "LoadProfileStoreTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)!
+        defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
         store = LoadProfileStore(userDefaults: defaults)
     }
@@ -240,7 +260,7 @@ private struct Fixture {
     /// A fixture whose defaults hold nothing yet, so a test can seed saved data before the store reads it.
     static func emptyDefaults() -> UserDefaults {
         let suiteName = "LoadProfileStoreTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
@@ -253,10 +273,15 @@ private struct VersionOneCollection: Codable {
     let selectedProfileID: String?
 
     static let builtIns: [LoadProfile] = [
-        LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 36, durationHours: 4, carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20, targetStateOfCharge: 80, chargingLevel: .level2)),
-        LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 5, durationHours: 2, carSettings: nil),
-        LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5, carSettings: nil),
+        LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 36, durationHours: 4,
+                    carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20,
+                                                 targetStateOfCharge: 80, chargingLevel: .level2)),
+        LoadProfile(id: "dishwasher", name: "Dishwasher", kind: .appliance, energyKwh: 5, durationHours: 2,
+                    carSettings: nil),
+        LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 2, durationHours: 1.5,
+                    carSettings: nil),
         LoadProfile(id: "dryer", name: "Dryer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil),
-        LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance, energyKwh: 8, durationHours: 3, carSettings: nil),
+        LoadProfile(id: "washer-dryer-combo", name: "Washer–Dryer Combo", kind: .appliance,
+                    energyKwh: 8, durationHours: 3, carSettings: nil)
     ]
 }

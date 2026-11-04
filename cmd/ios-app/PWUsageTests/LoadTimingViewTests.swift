@@ -4,10 +4,26 @@ import Testing
 
 @Suite("Load Timing Presentation Tests")
 struct LoadTimingViewTests {
+    private static let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func forecastAvailability(
+        state: SolarForecastEnhancementState,
+        connection: SolarForecastConnectionState,
+        cause: SolarForecastUnavailableCause?,
+        reason: SolarForecastUnavailableReason?,
+        forecastFetchedAt: Date?
+    ) -> ForecastAvailability {
+        LoadTimingForecastPresentation.forecastAvailability(
+            .init(state: state, connection: connection, cause: cause, reason: reason,
+                  forecastFetchedAt: forecastFetchedAt, now: Self.now),
+            usesAutomaticForecast: false, automaticStatus: nil)
+    }
+
     @Test("Dashboard summary keeps its active rate and measured balance")
     func dashboardSummaryRetainsObservedDetails() {
         let summary = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Off peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.12, basis: "sell", balanceKwh: 10, energyDataThrough: nil),
+            .init(periodName: "Off peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.12,
+                  basis: "sell", balanceKwh: 10, energyDataThrough: nil),
             hasTariff: true,
             currencyCode: "USD"
         )
@@ -20,7 +36,8 @@ struct LoadTimingViewTests {
     @Test("Unobserved active period shows its configured buy rate and no balance")
     func dashboardSummaryRetainsUnobservedState() {
         let summary = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil, basis: "unobserved", balanceKwh: nil, energyDataThrough: nil),
+            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil,
+                  basis: "unobserved", balanceKwh: nil, energyDataThrough: nil),
             hasTariff: true,
             currencyCode: "USD"
         )
@@ -34,14 +51,16 @@ struct LoadTimingViewTests {
         #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: false).message == "No rate plan is set up")
         #expect(DashboardPresentation.loadTimingSummary(nil, hasTariff: true).message == "No live summary is available")
         let owed = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48, basis: "buy", balanceKwh: -4, energyDataThrough: nil),
+            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48,
+                  basis: "buy", balanceKwh: -4, energyDataThrough: nil),
             hasTariff: true,
             currencyCode: "USD"
         )
         #expect(owed.balance == "Owed 4.0 kWh")
         #expect(!owed.isBanked)
         let unobservedWithBalance = DashboardPresentation.loadTimingSummary(
-            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil, basis: "unobserved", balanceKwh: 5, energyDataThrough: nil),
+            .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil,
+                  basis: "unobserved", balanceKwh: 5, energyDataThrough: nil),
             hasTariff: true
         )
         #expect(unobservedWithBalance.balance == "No bank yet")
@@ -50,7 +69,9 @@ struct LoadTimingViewTests {
 
     @Test("Live rate stays hidden until bill currency is known")
     func liveSummaryWaitsForCurrency() {
-        let timing = ActiveLoadTiming(periodName: "Peak", buyRate: 0.485, sellRate: 0.12, marginalCost: 0.485, basis: "buy", balanceKwh: 2, energyDataThrough: nil)
+        let timing = ActiveLoadTiming(periodName: "Peak", buyRate: 0.485, sellRate: 0.12,
+                                      marginalCost: 0.485, basis: "buy", balanceKwh: 2,
+                                      energyDataThrough: nil)
         let unlocalized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true)
         #expect(unlocalized.rate == nil)
         #expect(!unlocalized.accessibilityLabel.contains("cents per kilowatt-hour"))
@@ -61,12 +82,18 @@ struct LoadTimingViewTests {
 
     @Test("Profile chip title honors edited profile values")
     func profileChipUsesEditedProfile() {
-        let edited = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3.5, durationHours: 2.25, carSettings: nil)
+        let edited = LoadProfile(id: "washer", name: "Washer", kind: .appliance,
+                                 energyKwh: 3.5, durationHours: 2.25, carSettings: nil)
         #expect(LoadTimingPresentation.profileChipTitle(edited) == "Washer · 3.5 kWh")
 
-        let editedCar = LoadProfile(id: "car", name: "Car", kind: .car, energyKwh: 999, durationHours: 999, carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10, targetStateOfCharge: 50, chargingLevel: .level1))
+        let editedCar = LoadProfile(
+            id: "car", name: "Car", kind: .car, energyKwh: 999, durationHours: 999,
+            carSettings: CarLoadSettings(capacityKwh: 80, initialStateOfCharge: 10,
+                                         targetStateOfCharge: 50, chargingLevel: .level1)
+        )
         #expect(LoadTimingPresentation.profileChipTitle(editedCar) == "Car · 32 kWh battery")
-        #expect(LoadTimingPresentation.profileChipAccessibilityLabel(editedCar).contains("37.6 kilowatt-hours from the wall"))
+        #expect(LoadTimingPresentation.profileChipAccessibilityLabel(editedCar)
+            .contains("37.6 kilowatt-hours from the wall"))
     }
 
     @Test("Source time has an explicit label")
@@ -89,70 +116,77 @@ struct LoadTimingViewTests {
 
     @Test("Forecast states map to what the Smart Shift card can show")
     func forecastAvailabilityMapsStates() throws {
-        typealias P = LoadTimingForecastPresentation
+        typealias Presentation = LoadTimingForecastPresentation
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let fresh = now.addingTimeInterval(-25 * 60)
-        #expect(P.forecastAvailability(state: .basic, connection: .notConnected, cause: nil, reason: nil,
-                                       forecastFetchedAt: nil, now: now) == ForecastAvailability.none)
-        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: nil, now: now) == .loading)
+        #expect(forecastAvailability(state: .basic, connection: .notConnected, cause: nil, reason: nil,
+                                     forecastFetchedAt: nil) == ForecastAvailability.none)
+        #expect(forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                     forecastFetchedAt: nil) == .loading)
         // A refresh keeps the previous batch in memory; while it is still fresh it keeps
         // pricing the card, so the verdict doesn't flip to the forecast-free answer and back.
-        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: fresh, now: now) == .ready)
-        #expect(P.forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now) == .loading)
-        #expect(P.forecastAvailability(state: .basic, connection: .awaitingArraySelection, cause: nil, reason: nil,
-                                       forecastFetchedAt: nil, now: now) == .unusable("Choose your solar arrays to add a forecast."))
-        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: fresh, now: now) == .ready)
-        #expect(P.forecastAvailability(
+        #expect(forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                     forecastFetchedAt: fresh) == .ready)
+        #expect(forecastAvailability(state: .loadingWithBasic, connection: .ready, cause: nil, reason: nil,
+                                     forecastFetchedAt: now.addingTimeInterval(-7 * 3600)) == .loading)
+        #expect(forecastAvailability(state: .basic, connection: .awaitingArraySelection,
+                                     cause: nil, reason: nil,
+                                     forecastFetchedAt: nil)
+                == .unusable("Choose your solar arrays to add a forecast."))
+        #expect(forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                     forecastFetchedAt: fresh) == .ready)
+        #expect(forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: .rateLimited, reason: nil,
-            forecastFetchedAt: fresh, now: now
+            forecastFetchedAt: fresh
         ) == .unusable("The forecast provider is limiting requests."))
-        #expect(P.forecastAvailability(state: .failedWithBasic, connection: .ready, cause: nil, reason: .insufficientHistory,
-                                       forecastFetchedAt: fresh, now: now)
+        #expect(forecastAvailability(state: .failedWithBasic, connection: .ready,
+                                     cause: nil, reason: .insufficientHistory,
+                                     forecastFetchedAt: fresh)
                 == .unusable("Your household profile needs at least 5 complete days in the last 14 days."))
-        #expect(P.forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
-                                       forecastFetchedAt: now.addingTimeInterval(-7 * 3600), now: now)
+        #expect(forecastAvailability(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                                     forecastFetchedAt: now.addingTimeInterval(-7 * 3600))
                 == .unusable("The forecast was too old or incomplete to use."))
-        #expect(P.forecastUnavailableNote(.staleBalance)
+        #expect(Presentation.forecastUnavailableNote(.staleBalance)
             == "Energy observations are too old for the solar comparison, so it's paused.")
     }
 
     @Test("Forecast notes keep their reason and avoid misleading clock advice")
     func forecastNotesKeepReasonsAccurate() {
-        typealias P = LoadTimingForecastPresentation
+        typealias Presentation = LoadTimingForecastPresentation
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(P.forecastUnavailableNote(.noFittingRun) == "This load is longer than the search horizon.")
-        #expect(P.forecastUnavailableNote(.incompleteContext)
+        #expect(Presentation.forecastUnavailableNote(.noFittingRun) == "This load is longer than the search horizon.")
+        #expect(Presentation.forecastUnavailableNote(.incompleteContext)
             == "There is not enough household history yet to estimate expected usage.")
-        #expect(P.forecastUnavailableNote(.missingTariff)
+        #expect(Presentation.forecastUnavailableNote(.missingTariff)
             == "An active rate plan is needed before costs can be compared.")
 
-        let malformed = P.forecastAvailability(
+        let malformed = forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: nil, reason: .contextMalformed,
-            forecastFetchedAt: nil, now: now
+            forecastFetchedAt: nil
         )
-        #expect(malformed == .unusable("The household profile your server sent could not be read by this app version, so start times cannot be compared right now."))
+        #expect(malformed == .unusable(
+            "The household profile your server sent could not be read by this app version, "
+                + "so start times cannot be compared right now."))
         if case .unusable(let note) = malformed {
             #expect(!note.localizedCaseInsensitiveContains("date and time"))
         }
 
-        #expect(P.forecastAvailability(
+        #expect(forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: .budgetExhausted, reason: nil,
-            forecastFetchedAt: nil, now: now
+            forecastFetchedAt: nil
         ) == .unusable("This device has used its forecast allowance for today."))
-        #expect(P.forecastAvailability(
+        #expect(forecastAvailability(
             state: .failedWithBasic, connection: .ready, cause: nil, reason: .timestampMisaligned,
-            forecastFetchedAt: nil, now: now
-        ) == .unusable("Your energy readings exist, but their timestamps do not line up with this site's local time, so a household profile cannot be built."))
+            forecastFetchedAt: nil
+        ) == .unusable(
+            "Your energy readings exist, but their timestamps do not line up with this site's local time, "
+                + "so a household profile cannot be built."))
 
-        let future = P.forecastAvailability(
+        let future = forecastAvailability(
             state: .enhanced, connection: .ready, cause: nil, reason: nil,
-            forecastFetchedAt: now.addingTimeInterval(10 * 60), now: now
+            forecastFetchedAt: now.addingTimeInterval(10 * 60)
         )
-        #expect(future == .unusable(P.firstSentence(P.futureDatedForecastNote)))
+        #expect(future == .unusable(Presentation.firstSentence(Presentation.futureDatedForecastNote)))
         if case .unusable(let note) = future {
             #expect(!note.contains("too old"))
         }
@@ -182,10 +216,13 @@ struct LoadTimingViewTests {
         let context = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: slots, asOf: now)
         func evaluate(_ forecast: ForecastAvailability, sourceAge: TimeInterval?) -> SmartShiftEvaluation {
             SmartShiftPresentation.evaluate(
-                profile: SmartShiftPresentationTests.car, now: now, timing: timing, forecast: forecast,
-                intervals: forecast == .ready ? intervals : nil, context: forecast == .ready ? context : nil,
-                balanceSourceTime: sourceAge.map { now.addingTimeInterval(-$0) },
-                billingCycleEnd: now.addingTimeInterval(20 * 86_400), currencyCode: "USD", timeZone: "UTC")
+                profile: SmartShiftPresentationTests.car,
+                inputs: .init(now: now, timing: timing, forecast: forecast,
+                              intervals: forecast == .ready ? intervals : nil,
+                              context: forecast == .ready ? context : nil,
+                              balanceSourceTime: sourceAge.map { now.addingTimeInterval(-$0) },
+                              billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                              currencyCode: "USD", timeZone: "UTC"))
         }
 
         let fresh = evaluate(.ready, sourceAge: 0)
@@ -198,9 +235,15 @@ struct LoadTimingViewTests {
 
         let none = evaluate(.none, sourceAge: 0)
         #expect(none.forecast == ForecastAvailability.none)
-        #expect(none.result.comparison?.assumptions.contains { $0 == "Banks are held at today's observed values; no solar or household use is projected." } == true)
-        #expect(none.result.comparison?.assumptions.contains { $0 == "Estimated cost uses each period's current bank through the shared horizon." } == true)
-        #expect(none.result.comparison?.assumptions.contains { $0.localizedCaseInsensitiveContains("balance") } == false)
+        #expect(none.result.comparison?.assumptions.contains {
+            $0 == "Banks are held at today's observed values; no solar or household use is projected."
+        } == true)
+        #expect(none.result.comparison?.assumptions.contains {
+            $0 == "Estimated cost uses each period's current bank through the shared horizon."
+        } == true)
+        #expect(none.result.comparison?.assumptions.contains {
+            $0.localizedCaseInsensitiveContains("balance")
+        } == false)
 
         let missingSource = evaluate(.none, sourceAge: nil)
         #expect(missingSource.result.unavailableReason == .staleBalance)
@@ -217,17 +260,22 @@ struct LoadTimingViewTests {
         }
         let context = LoadTimingForecastEstimator.PlanningContext(timeZone: "UTC", slots: slots, asOf: now)
         let jobs = [SmartShiftPresentationTests.car, SmartShiftPresentationTests.pump,
-                    LoadProfile(id: "kettle", name: "Boil the kettle", kind: .appliance, energyKwh: 0.2, durationHours: 0.1, carSettings: nil)]
+                    LoadProfile(id: "kettle", name: "Boil the kettle", kind: .appliance,
+                                energyKwh: 0.2, durationHours: 0.1, carSettings: nil)]
         for (forecast, sourceAge) in [(ForecastAvailability.ready, 0.0), (.ready, 40.0 * 60), (.none, 0)] {
-            let evaluate = SmartShiftPresentation.evaluator(
+            let evaluate = SmartShiftPresentation.evaluator(.init(
                 now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
-                balanceSourceTime: now.addingTimeInterval(-sourceAge), billingCycleEnd: now.addingTimeInterval(20 * 86_400),
-                currencyCode: "USD", timeZone: "UTC")
+                balanceSourceTime: now.addingTimeInterval(-sourceAge),
+                billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                currencyCode: "USD", timeZone: "UTC"))
             for job in jobs {
                 let alone = SmartShiftPresentation.evaluate(
-                    profile: job, now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
-                    balanceSourceTime: now.addingTimeInterval(-sourceAge), billingCycleEnd: now.addingTimeInterval(20 * 86_400),
-                    currencyCode: "USD", timeZone: "UTC")
+                    profile: job,
+                    inputs: .init(now: now, timing: timing, forecast: forecast, intervals: intervals,
+                                  context: context,
+                                  balanceSourceTime: now.addingTimeInterval(-sourceAge),
+                                  billingCycleEnd: now.addingTimeInterval(20 * 86_400),
+                                  currencyCode: "USD", timeZone: "UTC"))
                 #expect(evaluate(job) == alone)
             }
         }

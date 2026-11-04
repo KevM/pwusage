@@ -134,7 +134,7 @@ Always execute these commands in sequence whenever modifying Swift files:
    ```
 2. **Lint**:
    ```bash
-   swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json
+   swiftlint lint cmd/ios-app --strict
    ```
    *Any warning is considered a failure. Fix all warnings before proceeding.*
 3. **Run Tests**:

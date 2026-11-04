@@ -16,7 +16,9 @@ struct LivePowerFlowCards: View {
                 if let card = cards.first(where: { $0.id == source }) {
                     tile(card)
                         .layoutValue(key: FlowColumn.self, value: flow.supplying.contains(card) ? 0 : 1)
-                        .layoutValue(key: FlowRow.self, value: (flow.supplying.firstIndex(of: card) ?? flow.receiving.firstIndex(of: card) ?? 0) + 1)
+                        .layoutValue(key: FlowRow.self,
+                                     value: (flow.supplying.firstIndex(of: card) ??
+                                         flow.receiving.firstIndex(of: card) ?? 0) + 1)
                 }
             }
         }
@@ -39,8 +41,13 @@ struct LivePowerFlowCards: View {
         switch card.id {
         case .solar: symbol = "sun.max.fill"; tint = .orange
         case .home: symbol = "house.fill"; tint = .blue
-        case .grid: symbol = card.role == .unknown || card.role == .idle ? "powerplug" : (card.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line"); tint = .gray
-        case .battery: symbol = card.role == .receiving ? "battery.100percent.bolt" : "battery.100percent"; tint = .green
+        case .grid:
+            symbol = card.role == .unknown || card.role == .idle
+                ? "powerplug"
+                : (card.role == .supplying ? "arrow.down.to.line" : "arrow.up.to.line")
+            tint = .gray
+        case .battery: symbol = card.role == .receiving ? "battery.100percent.bolt" : "battery.100percent"
+            tint = .green
         }
         let role = card.role == .supplying ? "Supplying power" : (card.role == .receiving ? "Receiving power" : nil)
         return MetricTile(title: card.id.title, value: card.watts.map(DashboardPresentation.power) ?? "--",
@@ -65,14 +72,14 @@ private struct PowerFlowLayout: Layout {
         let cardWidth = useStack ? width : (width - spacing) / 2
         let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: cardWidth, height: nil)) }
         var result = Array(repeating: CGRect.zero, count: subviews.count)
-        var y: CGFloat = 0
+        var yPosition: CGFloat = 0
         if useStack {
             for column in 0 ... 1 {
                 let indices = subviews.indices.filter { subviews[$0][FlowColumn.self] == column }
                     .sorted { subviews[$0][FlowRow.self] < subviews[$1][FlowRow.self] }
                 for index in indices {
-                    result[index] = CGRect(x: 0, y: y, width: cardWidth, height: sizes[index].height)
-                    y += sizes[index].height + spacing
+                    result[index] = CGRect(x: 0, y: yPosition, width: cardWidth, height: sizes[index].height)
+                    yPosition += sizes[index].height + spacing
                 }
             }
         } else {
@@ -82,9 +89,9 @@ private struct PowerFlowLayout: Layout {
                 let height = indices.map { sizes[$0].height }.max() ?? 0
                 for index in indices {
                     result[index] = CGRect(x: CGFloat(subviews[index][FlowColumn.self]) * (cardWidth + spacing),
-                                           y: y, width: cardWidth, height: height)
+                                           y: yPosition, width: cardWidth, height: height)
                 }
-                y += height + spacing
+                yPosition += height + spacing
             }
         }
         return result

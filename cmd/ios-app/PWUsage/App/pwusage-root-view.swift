@@ -38,7 +38,8 @@ struct PWUsageRootView: View {
                         }
                     } else {
                         AppTabView(model: model, coordinator: coordinator, site: site)
-                            .environment(\.reconnectTesla, TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
+                            .environment(\.reconnectTesla,
+                                         TeslaReconnectAction(owner: model) { await model.reconnectTesla() })
                     }
                 } else {
                     errorState

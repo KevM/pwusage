@@ -20,7 +20,12 @@
     }
 
     #Preview("Net credit · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
-        entry(TodayEnergyPreviewFixtures.snapshot(todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0, exportCredits: 2.5, currency: "EUR")))
+        entry(
+            TodayEnergyPreviewFixtures.snapshot(
+                todayCost: TodayEnergyCost(netCost: -2.5, importCharges: 0,
+                                           exportCredits: 2.5, currency: "EUR")
+            )
+        )
     }
 
     #Preview("Cost unavailable · Large", as: .systemLarge) { TodayEnergyWidget() } timeline: {
@@ -61,7 +66,8 @@
 
     #Preview("Long name and large totals", as: .systemMedium) { TodayEnergyWidget() } timeline: {
         entry(TodayEnergyPreviewFixtures.snapshot(homeKwh: 1234.5, solarKwh: 456.7, gridNetKwh: 987.6,
-                                                  batteryNetKwh: -209.8, siteName: "Our family's home with a long site name"))
+                                                  batteryNetKwh: -209.8,
+                                                  siteName: "Our family's home with a long site name"))
     }
 
     #Preview("Fresh → stale → next day", as: .systemMedium) { TodayEnergyWidget() } timeline: {
@@ -70,7 +76,9 @@
         entry(at: TodayEnergyPreviewFixtures.date.addingTimeInterval(24 * 3600))
     }
     #Preview("Small device · Medium") {
-        TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(), date: TodayEnergyPreviewFixtures.date, compact: true)
+        TodayEnergyWidgetContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                                 date: TodayEnergyPreviewFixtures.date,
+                                 compact: true)
             .padding(TodayEnergyWidgetLayout.mediumInsets).frame(width: 292, height: 141)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 22))

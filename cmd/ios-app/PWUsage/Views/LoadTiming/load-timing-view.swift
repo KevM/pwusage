@@ -8,12 +8,14 @@ enum LoadTimingPresentation {
 
     static let noResponseRecommendationMessage = RecommendationMessage(
         title: "Recommendation unavailable",
-        detail: "The latest refresh failed and no saved bill data is available, so no recommendation or job estimates can be shown."
+        detail: "The latest refresh failed and no saved bill data is available, "
+            + "so no recommendation or job estimates can be shown."
     )
     static func profileChipTitle(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let settings = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
-            return "\(profile.name) · \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh battery"
+            return "\(profile.name) · "
+                + "\(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh battery"
         }
         return "\(profile.name) · \(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh"
     }
@@ -21,13 +23,22 @@ enum LoadTimingPresentation {
     static func profileChipAccessibilityLabel(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let settings = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
-            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours to the battery, about \(estimate.wallKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours from the wall, Level \(settings.chargingLevel == .level1 ? "1" : "2")"
+            return "\(profile.name), "
+                + "\(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours "
+                + "to the battery, about "
+                + "\(estimate.wallKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours "
+                + "from the wall, Level \(settings.chargingLevel == .level1 ? "1" : "2")"
         }
-        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours"
+        return "\(profile.name), "
+            + "\(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours, "
+            + "\(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours"
     }
 
     static func sourceTimeSummary(_ energyDataThrough: Date?, timeZone: String) -> String {
-        let time = energyDataThrough.map { DashboardPresentation.date($0, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short) } ?? "unavailable"
+        let time = energyDataThrough.map {
+            DashboardPresentation.date($0, timeZoneIdentifier: timeZone,
+                                       dateStyle: .medium, timeStyle: .short)
+        } ?? "unavailable"
         return "Energy observations through \(time)"
     }
 
@@ -108,7 +119,8 @@ struct LoadTimingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if coordinator.bill.isUnavailable {
-                    AvailabilityBanner(message: "Smart Shift could not be refreshed. Showing saved data.", symbol: "clock.badge.exclamationmark")
+                    AvailabilityBanner(message: "Smart Shift could not be refreshed. Showing saved data.",
+                                       symbol: "clock.badge.exclamationmark")
                 }
                 if let response {
                     let timingForDisplay = timing ?? LoadTiming(
@@ -122,11 +134,12 @@ struct LoadTimingView: View {
                         nextCheaperPhrase: nil,
                         nextStartPhraseByKey: [:]
                     )
-                    // Read so a scheduled refresh re-runs this pass.
-                    let _ = staleRefreshes
                     let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
                     jobCard(state)
-                        .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison, now: state.now)) {
+                        // Reading the counter re-runs this pass after a scheduled refresh so the task re-arms.
+                        .onChange(of: staleRefreshes) { _, _ in }
+                        .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison,
+                                                                     now: state.now)) {
                             guard let refresh = SmartShiftPresentation.nextRefresh(
                                 comparison: state.evaluation?.result.comparison, now: state.now) else { return }
                             // A second past the boundary, so the next pass sees it as passed.
@@ -166,7 +179,9 @@ struct LoadTimingView: View {
                 } label: {
                     BatteryHoldToolbarLabel(state: coordinator.batteryHold, now: .now)
                 }
-                .accessibilityLabel(BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: .now))
+                .accessibilityLabel(
+                    BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: .now)
+                )
                 .accessibilityIdentifier("battery-hold-toolbar")
                 Button("Manage Jobs", systemImage: "gearshape") { isProfileSheetPresented = true }
                     .accessibilityLabel("Manage Jobs")
@@ -344,9 +359,16 @@ struct LoadTimingView: View {
 
     func metadata(_ response: MobileBillResponse, usesSolar: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Billing cycle \(DashboardPresentation.date(response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)) – \(DashboardPresentation.date(response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short))")
+            let cycleStart = DashboardPresentation.date(
+                response.currentBill.cycleStart, timeZoneIdentifier: timeZone, dateStyle: .short)
+            let cycleEnd = DashboardPresentation.date(
+                response.currentBill.cycleEnd, timeZoneIdentifier: timeZone, dateStyle: .short)
+            Text("Billing cycle \(cycleStart) – \(cycleEnd)")
             Text(LoadTimingPresentation.sourceTimeSummary(response.sources.energyDataThrough, timeZone: timeZone))
-            Text("Calculated \(DashboardPresentation.date(response.sources.calculatedAt, timeZoneIdentifier: timeZone, dateStyle: .medium, timeStyle: .short))")
+            let calculatedAt = DashboardPresentation.date(
+                response.sources.calculatedAt, timeZoneIdentifier: timeZone,
+                dateStyle: .medium, timeStyle: .short)
+            Text("Calculated \(calculatedAt)")
             LoadTimingFreshnessLabel(
                 isUnavailable: coordinator.bill.isUnavailable,
                 energyDataThrough: response.sources.energyDataThrough,

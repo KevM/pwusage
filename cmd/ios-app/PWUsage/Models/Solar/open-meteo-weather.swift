@@ -1,25 +1,23 @@
 import Foundation
 
+/// The hourly radiation columns of an Open-Meteo response.
+struct OpenMeteoWeatherHourly: Decodable, Sendable {
+    let time: [Double]
+    let ghi: [Double?]
+    let dni: [Double?]
+    let dhi: [Double?]
+    enum CodingKeys: String, CodingKey {
+        case time
+        case ghi = "shortwave_radiation"
+        case dni = "direct_normal_irradiance"
+        case dhi = "diffuse_radiation"
+    }
+}
+
 struct OpenMeteoWeather: Decodable, Sendable {
     let utcOffsetSeconds: Int
     let units: [String: String]
-    let hourly: Hourly
-
-    // swiftlint:disable nesting
-    struct Hourly: Decodable, Sendable {
-        let time: [Double]
-        let ghi: [Double?]
-        let dni: [Double?]
-        let dhi: [Double?]
-        enum CodingKeys: String, CodingKey {
-            case time
-            case ghi = "shortwave_radiation"
-            case dni = "direct_normal_irradiance"
-            case dhi = "diffuse_radiation"
-        }
-    }
-
-    // swiftlint:enable nesting
+    let hourly: OpenMeteoWeatherHourly
 
     enum CodingKeys: String, CodingKey {
         case utcOffsetSeconds = "utc_offset_seconds"
@@ -64,7 +62,8 @@ struct OpenMeteoWeather: Decodable, Sendable {
                 throw OpenMeteoClientError.invalidResponse
             }
             let power = try OpenMeteoArrayModel.powerKw(
-                at: start.addingTimeInterval(1800), ghi: ghi, dni: dni, dhi: dhi, layout: layout, location: location
+                at: start.addingTimeInterval(1800), radiation: .init(ghi: ghi, dni: dni, dhi: dhi),
+                layout: layout, location: location
             )
             guard power.isFinite, power >= 0 else { throw OpenMeteoClientError.invalidResponse }
             result.append(SolarForecastInterval(periodStart: start, periodEnd: end, powerKw: power))

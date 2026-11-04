@@ -34,8 +34,6 @@ struct MobileLiveResponse: Codable, Equatable {
         let batteryPower: Double
         let gridPower: Double
 
-        private enum CodingKeys: String, CodingKey { case solarPower, loadPower, batteryPower, gridPower }
-
         /// Power readings are non-optional doubles, so a non-finite value has no "unknown" to map
         /// to without inventing one: `loadPower` drives the home total, so a null there would
         /// ripple. `0` is the honest floor — no generation, no draw — and both `batterySymbol` and
@@ -47,11 +45,20 @@ struct MobileLiveResponse: Codable, Equatable {
         static func finiteOrZero(_ value: Double) -> Double { value.isFinite ? value : 0 }
 
         init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: LiveCodingKeys.self)
             solarPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .solarPower))
             loadPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .loadPower))
             batteryPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .batteryPower))
             gridPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .gridPower))
+        }
+
+        /// Encoding uses the same keys as decoding, so the two cannot drift apart.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: LiveCodingKeys.self)
+            try container.encode(solarPower, forKey: .solarPower)
+            try container.encode(loadPower, forKey: .loadPower)
+            try container.encode(batteryPower, forKey: .batteryPower)
+            try container.encode(gridPower, forKey: .gridPower)
         }
     }
 
@@ -86,7 +93,10 @@ struct MobileLiveResponse: Codable, Equatable {
         case invalidAmount
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, live, stateOfCharge, activeTariff, activeLoadTiming, today, todayCost, todayComplete, currentBill, sources }
+    private enum CodingKeys: String, CodingKey {
+        case version, site, live, stateOfCharge, activeTariff, activeLoadTiming,
+             today, todayCost, todayComplete, currentBill, sources
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -151,6 +161,11 @@ struct MobileLiveResponse: Codable, Equatable {
         guard age >= 0, age <= stateOfChargeMaximumAge else { return nil }
         return reported
     }
+}
+
+/// Lifted out of `MobileLiveResponse.Live` so the coding keys stay one type level deep.
+private enum LiveCodingKeys: String, CodingKey {
+    case solarPower, loadPower, batteryPower, gridPower
 }
 
 struct ActiveLoadTiming: Codable, Equatable {

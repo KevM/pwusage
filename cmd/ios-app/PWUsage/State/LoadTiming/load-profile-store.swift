@@ -66,7 +66,10 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @discardableResult
-    func editProfile(id: String, name: String? = nil, energyKwh: Double, durationHours: Double, carSettings: CarLoadSettings? = nil) throws -> LoadProfile {
+    func editProfile(
+        id: String, name: String? = nil, energyKwh: Double, durationHours: Double,
+        carSettings: CarLoadSettings? = nil
+    ) throws -> LoadProfile {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
         var updated = profiles[index]
         if updated.kind == .custom, let name {
@@ -118,7 +121,8 @@ final class LoadProfileStore: ObservableObject {
     }
 
     private func persist() {
-        let collection = PersistedCollection(version: Self.schemaVersion, profiles: profiles, selectedProfileID: selectedProfileID)
+        let collection = PersistedCollection(
+            version: Self.schemaVersion, profiles: profiles, selectedProfileID: selectedProfileID)
         guard let data = try? JSONEncoder().encode(collection) else { return }
         userDefaults.set(data, forKey: Self.storageKey)
     }
@@ -139,7 +143,8 @@ final class LoadProfileStore: ObservableObject {
             settings.capacityKwh = LoadProfile.maximumCarCapacityKwh
             profiles[index].carSettings = settings
         }
-        let normalized = PersistedCollection(version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID)
+        let normalized = PersistedCollection(
+            version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID)
         return isValidCollection(normalized) ? normalized : nil
     }
 
@@ -163,7 +168,9 @@ final class LoadProfileStore: ObservableObject {
     private static func isValidCollection(_ collection: PersistedCollection) -> Bool {
         let ids = collection.profiles.map(\.id)
         guard Set(ids).count == ids.count,
-              defaultProfiles.filter({ $0.kind != .custom }).allSatisfy({ defaults in collection.profiles.contains(where: { $0.id == defaults.id && $0.kind == defaults.kind }) }),
+              defaultProfiles.filter({ $0.kind != .custom }).allSatisfy({ defaults in
+                  collection.profiles.contains(where: { $0.id == defaults.id && $0.kind == defaults.kind })
+              }),
               collection.profiles.allSatisfy({ profile in
                   if let reservedProfile = defaultProfiles.first(where: { $0.id == profile.id }) {
                       return reservedProfile.kind == profile.kind
@@ -186,8 +193,8 @@ final class LoadProfileStore: ObservableObject {
                   settings.capacityKwh.isFinite, settings.capacityKwh > 0,
                   settings.capacityKwh <= LoadProfile.maximumCarCapacityKwh,
                   settings.initialStateOfCharge.isFinite, (0 ... 100).contains(settings.initialStateOfCharge),
-                  // swiftlint:disable:next line_length
-                  settings.targetStateOfCharge.isFinite, (settings.initialStateOfCharge ... 100).contains(settings.targetStateOfCharge) else {
+                  settings.targetStateOfCharge.isFinite,
+                  (settings.initialStateOfCharge ... 100).contains(settings.targetStateOfCharge) else {
                 throw LoadProfileError.invalidProfile
             }
         } else if profile.carSettings != nil {
@@ -202,11 +209,26 @@ final class LoadProfileStore: ObservableObject {
     }
 
     private static let defaultProfiles: [LoadProfile] = [
-        LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: Defaults.carEnergyKwh, durationHours: Defaults.carDurationHours, carSettings: CarLoadSettings(capacityKwh: Defaults.carCapacityKwh, initialStateOfCharge: Defaults.carInitialSOC, targetStateOfCharge: Defaults.carTargetSOC, chargingLevel: Defaults.carLevel)),
-        LoadProfile(id: "dishwasher", name: "Wash the dishes", kind: .appliance, energyKwh: Defaults.dishwasherKwh, durationHours: Defaults.dishwasherHours, carSettings: nil),
-        LoadProfile(id: "washer", name: "Wash the laundry", kind: .appliance, energyKwh: Defaults.washerKwh, durationHours: Defaults.washerHours, carSettings: nil),
-        LoadProfile(id: "dryer", name: "Dry the laundry", kind: .appliance, energyKwh: Defaults.dryerKwh, durationHours: Defaults.dryerHours, carSettings: nil),
-        LoadProfile(id: "washer-dryer-combo", name: "Wash and dry the laundry", kind: .appliance, energyKwh: Defaults.comboKwh, durationHours: Defaults.comboHours, carSettings: nil),
-        LoadProfile(id: customExampleID, name: "Bake bread", kind: .custom, energyKwh: Defaults.customExampleKwh, durationHours: Defaults.customExampleHours, carSettings: nil),
+        LoadProfile(
+            id: "car", name: "Charge the car", kind: .car, energyKwh: Defaults.carEnergyKwh,
+            durationHours: Defaults.carDurationHours,
+            carSettings: CarLoadSettings(
+                capacityKwh: Defaults.carCapacityKwh, initialStateOfCharge: Defaults.carInitialSOC,
+                targetStateOfCharge: Defaults.carTargetSOC, chargingLevel: Defaults.carLevel)),
+        LoadProfile(
+            id: "dishwasher", name: "Wash the dishes", kind: .appliance, energyKwh: Defaults.dishwasherKwh,
+            durationHours: Defaults.dishwasherHours, carSettings: nil),
+        LoadProfile(
+            id: "washer", name: "Wash the laundry", kind: .appliance, energyKwh: Defaults.washerKwh,
+            durationHours: Defaults.washerHours, carSettings: nil),
+        LoadProfile(
+            id: "dryer", name: "Dry the laundry", kind: .appliance, energyKwh: Defaults.dryerKwh,
+            durationHours: Defaults.dryerHours, carSettings: nil),
+        LoadProfile(
+            id: "washer-dryer-combo", name: "Wash and dry the laundry", kind: .appliance,
+            energyKwh: Defaults.comboKwh, durationHours: Defaults.comboHours, carSettings: nil),
+        LoadProfile(
+            id: customExampleID, name: "Bake bread", kind: .custom,
+            energyKwh: Defaults.customExampleKwh, durationHours: Defaults.customExampleHours, carSettings: nil)
     ]
 }

@@ -5,7 +5,7 @@ import WidgetKit
 extension TodayEnergyMetric: AppEnum {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Energy Metric"
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .home: "Home", .solar: "Solar", .grid: "Grid", .battery: "Battery",
+        .home: "Home", .solar: "Solar", .grid: "Grid", .battery: "Battery"
     ]
 }
 
@@ -36,13 +36,18 @@ struct TodayEnergyMetricProvider: AppIntentTimelineProvider {
         return TodayEnergyMetricEntry(date: now, snapshot: .sample(at: now), metric: .home)
     }
 
-    func snapshot(for configuration: TodayEnergyMetricConfiguration, in context: Context) async -> TodayEnergyMetricEntry {
+    func snapshot(for configuration: TodayEnergyMetricConfiguration,
+                  in context: Context) async -> TodayEnergyMetricEntry {
         let now = Date()
-        return TodayEnergyMetricEntry(date: now, snapshot: context.isPreview ? .sample(at: now) : TodayEnergySnapshotStore.shared()?.load(),
+        return TodayEnergyMetricEntry(date: now,
+                                      snapshot: context.isPreview
+                                          ? .sample(at: now)
+                                          : TodayEnergySnapshotStore.shared()?.load(),
                                       metric: configuration.metric)
     }
 
-    func timeline(for configuration: TodayEnergyMetricConfiguration, in context: Context) async -> Timeline<TodayEnergyMetricEntry> {
+    func timeline(for configuration: TodayEnergyMetricConfiguration,
+                  in context: Context) async -> Timeline<TodayEnergyMetricEntry> {
         let snapshot = await TodayEnergyWidgetRefresh.current()
         let now = Date()
         let entries = TodayEnergySnapshot.timelineDates(for: snapshot, at: now).map {
@@ -61,7 +66,8 @@ struct TodayEnergyMetricProvider: AppIntentTimelineProvider {
 struct TodayEnergyMetricWidget: Widget {
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: TodayEnergySnapshot.metricWidgetKind,
-                               intent: TodayEnergyMetricConfiguration.self, provider: TodayEnergyMetricProvider()) { entry in
+                               intent: TodayEnergyMetricConfiguration.self,
+                               provider: TodayEnergyMetricProvider()) { entry in
             TodayEnergyWidgetFamilyContent(snapshot: entry.snapshot, date: entry.date,
                                            family: .systemSmall, metric: entry.metric)
                 .widgetURL(DashboardLink.url)

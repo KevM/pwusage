@@ -13,12 +13,11 @@ extension DashboardView {
     /// The flow and validated charge both the Live card and the bar's scoreboard show.
     func liveReadings(now: Date) -> (flow: DashboardPresentation.PowerFlow, charge: Double?)? {
         guard let power else { return nil }
-        let flow = DashboardPresentation.powerFlow(
+        let flow = DashboardPresentation.powerFlow(.init(
             solarPower: power.live.solarPower, loadPower: power.live.loadPower,
             batteryPower: power.live.batteryPower, gridPower: power.live.gridPower,
             sourceTime: power.sources.liveStatusAt,
-            isUnavailable: coordinator.livePowerIsUnavailable, now: now
-        )
+            isUnavailable: coordinator.livePowerIsUnavailable), now: now)
         let charge = MobileLiveResponse.validatedStateOfCharge(
             power.stateOfCharge, takenAt: power.sources.stateOfChargeAt, now: now
         )

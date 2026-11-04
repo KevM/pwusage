@@ -56,9 +56,9 @@ struct LoadTimingForecastEstimator {
         let homeKw: Double?
         let batteryNetChargeKw: Double?
         /// Typical grid net export from the site's history (export positive).
-        var gridNetExportKw: Double? = nil
+        var gridNetExportKw: Double?
         /// The cautious ("dull day") grid net export from the site's history.
-        var cautiousGridNetExportKw: Double? = nil
+        var cautiousGridNetExportKw: Double?
     }
 
     struct PlanningContext: Codable, Equatable {
@@ -83,7 +83,8 @@ struct LoadTimingForecastEstimator {
         }
     }
 
-    static let safetyAssumption = "A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."
+    static let safetyAssumption =
+        "A start that dips into a bank must leave it no more than 3 kWh short after a cloudy week."
 
     static func assumptions(for projection: Projection) -> [String] {
         let baseline: [String]
@@ -91,10 +92,11 @@ struct LoadTimingForecastEstimator {
         case .forecast(_, let context):
             baseline = [
                 "Typical household and battery behavior follows the historical local-time profile.",
-                "Battery behavior is assumed unchanged by this added load.",
+                "Battery behavior is assumed unchanged by this added load."
             ] + (context.hasGridHistory
-                ? ["Solar follows your solar forecast for the next 7 days, then your last four weeks through the bill date.",
-                   safetyAssumption]
+                ? ["Solar follows your solar forecast for the next 7 days, then your last four weeks "
+                    + "through the bill date.",
+                    safetyAssumption]
                 : [])
         case .history:
             baseline = ["Banks follow your last four weeks of grid use through the bill date.", safetyAssumption]
@@ -103,7 +105,7 @@ struct LoadTimingForecastEstimator {
         }
         return baseline + [
             "Recommendation is the best among evaluated start times, not a continuous-time optimum.",
-            "Estimated cost uses each period's current bank through the shared horizon.",
+            "Estimated cost uses each period's current bank through the shared horizon."
         ]
     }
 
@@ -156,33 +158,43 @@ struct LoadTimingForecastEstimator {
         guard !forecast.isEmpty else { return false }
         var end: Date?
         for interval in forecast.sorted(by: { $0.periodStart < $1.periodStart }) {
-            guard interval.periodStart.timeIntervalSince1970.isFinite, interval.periodEnd.timeIntervalSince1970.isFinite,
-                  interval.periodEnd > interval.periodStart, interval.powerKw.isFinite, interval.powerKw >= 0 else { return false }
+            guard interval.periodStart.timeIntervalSince1970.isFinite,
+                  interval.periodEnd.timeIntervalSince1970.isFinite,
+                  interval.periodEnd > interval.periodStart, interval.powerKw.isFinite,
+                  interval.powerKw >= 0 else { return false }
             if let end, interval.periodStart < end { return false }
             end = interval.periodEnd
         }
         return true
     }
 
-    static func supportedRates(in tariffs: [LoadTimingTariffSegment], from source: Date, before horizonEnd: Date)
-        -> (rates: [String: PeriodRate], incompatibleBoundary: Date?, invalid: Bool) {
+    /// What the tariffs support over a projection, and why they may not.
+    struct SupportedRates {
+        let rates: [String: PeriodRate]
+        let incompatibleBoundary: Date?
+        let invalid: Bool
+    }
+
+    static func supportedRates(in tariffs: [LoadTimingTariffSegment], from source: Date,
+                               before horizonEnd: Date) -> SupportedRates {
         var values: [String: PeriodRate] = [:]
         for tariff in tariffs where tariff.end > source && tariff.start < horizonEnd {
             guard !tariff.periodKey.isEmpty, tariff.buyRate.isFinite, tariff.sellRate.isFinite else {
-                return (values, nil, true)
+                return SupportedRates(rates: values, incompatibleBoundary: nil, invalid: true)
             }
             let rate = PeriodRate(buy: tariff.buyRate, sell: tariff.sellRate)
             if let old = values[tariff.periodKey], old != rate {
-                return (values, tariff.start, false)
+                return SupportedRates(rates: values, incompatibleBoundary: tariff.start, invalid: false)
             }
             values[tariff.periodKey] = rate
         }
-        return (values, nil, false)
+        return SupportedRates(rates: values, incompatibleBoundary: nil, invalid: false)
     }
 
     static func contiguousEnd(of forecast: [SolarForecastInterval], startingAt source: Date) -> Date {
         let intervals = forecast.sorted { $0.periodStart < $1.periodStart }
-        guard let first = intervals.first(where: { $0.periodStart <= source && $0.periodEnd > source }) else { return source }
+        guard let first = intervals.first(where: { $0.periodStart <= source && $0.periodEnd > source })
+        else { return source }
         var end = first.periodEnd
         for interval in intervals where interval.periodStart >= end {
             guard interval.periodStart == end else { break }
@@ -192,9 +204,11 @@ struct LoadTimingForecastEstimator {
     }
 
     /// The run of back-to-back forecast intervals that contains `date`, if any.
-    static func contiguousBlock(of forecast: [SolarForecastInterval], containing date: Date) -> (start: Date, end: Date)? {
+    static func contiguousBlock(of forecast: [SolarForecastInterval],
+                                containing date: Date) -> (start: Date, end: Date)? {
         let intervals = forecast.sorted { $0.periodStart < $1.periodStart }
-        guard var index = intervals.firstIndex(where: { $0.periodStart <= date && $0.periodEnd > date }) else { return nil }
+        guard var index = intervals.firstIndex(where: { $0.periodStart <= date && $0.periodEnd > date })
+        else { return nil }
         while index > 0, intervals[index - 1].periodEnd == intervals[index].periodStart { index -= 1 }
         return (intervals[index].periodStart, contiguousEnd(of: forecast, startingAt: date))
     }
@@ -202,14 +216,13 @@ struct LoadTimingForecastEstimator {
     static func contiguousTariffEnd(_ tariffs: [LoadTimingTariffSegment], startingAt source: Date) -> Date {
         var end: Date?
         for tariff in tariffs where tariff.end > source {
-            if end == nil {
+            guard let current = end else {
                 guard tariff.start <= source else { return source }
                 end = tariff.end
-            } else if tariff.start == end {
-                end = tariff.end
-            } else if tariff.start > end! {
-                break
+                continue
             }
+            guard tariff.start <= current else { break }
+            if tariff.start == current { end = tariff.end }
         }
         return end ?? source
     }
@@ -237,62 +250,6 @@ struct LoadTimingForecastEstimator {
     static func integrationBoundaries(from start: Date, to end: Date, model: FlowModel,
                                       tariffs: [LoadTimingTariffSegment]) -> [Date] {
         model.boundaries(from: start, to: end)
-    }
-
-    static func score(start: Date, end: Date, load: (energy: Double, duration: TimeInterval),
-                      baseBalances: [String: Double], rates: [String: PeriodRate],
-                      steps: Steps, safetyEnd: Date) -> ScoreResult {
-        var withLoad = baseBalances
-        var drawsBySafetyEnd: [String: Double] = [:]
-        var solarContribution = 0.0
-        guard start < end, var index = steps.step(containing: start), end <= steps.edges[steps.edges.count - 1] else {
-            return .incompleteCoverage
-        }
-        let powerKw = load.energy / (load.duration / 3600)
-        guard powerKw.isFinite, powerKw > 0 else { return .invalidInput }
-        while index < steps.periods.count, steps.edges[index] < end {
-            defer { index += 1 }
-            let a = max(steps.edges[index], start), b = min(steps.edges[index + 1], end)
-            let flow = steps.typical[index]
-            let periodKey = steps.periods[index]
-            guard let balance = withLoad[periodKey] else { return .incompleteCoverage }
-            let seconds = b.timeIntervalSince(a)
-            let hours = seconds / 3600
-            let energy = powerKw * hours
-            let loadedBalance = balance - energy
-            let physicalSurplus = flow.physicalSurplusKw
-            let physicalSurplusPower = max(physicalSurplus, 0)
-            let contribution = min(powerKw, physicalSurplusPower) * hours
-            let updatedSolarContribution = solarContribution + contribution
-            guard seconds.isFinite, hours.isFinite, energy.isFinite, loadedBalance.isFinite,
-                  physicalSurplus.isFinite, physicalSurplusPower.isFinite,
-                  contribution.isFinite, updatedSolarContribution.isFinite else { return .invalidInput }
-            withLoad[periodKey] = loadedBalance
-            // A step straddling the cutoff counts only its part before it.
-            if a < safetyEnd {
-                drawsBySafetyEnd[periodKey, default: 0] += b <= safetyEnd ? energy : powerKw * safetyEnd.timeIntervalSince(a) / 3600
-            }
-            solarContribution = updatedSolarContribution
-        }
-        var total = 0.0
-        for (key, loadedBalance) in withLoad where loadedBalance != baseBalances[key] {
-            guard let baselineBalance = baseBalances[key], let rate = rates[key] else { return .incompleteCoverage }
-            guard let loadedCost = cost(balance: loadedBalance, rate: rate),
-                  let baselineCost = cost(balance: baselineBalance, rate: rate) else { return .invalidInput }
-            let delta = loadedCost - baselineCost
-            let updatedTotal = total + delta
-            guard delta.isFinite, updatedTotal.isFinite else { return .invalidInput }
-            total = updatedTotal
-        }
-        let cappedSolarContribution = min(max(solarContribution, 0), load.energy)
-        guard total.isFinite, cappedSolarContribution.isFinite else { return .invalidInput }
-        var draws: [String: Double] = [:]
-        for (key, loadedBalance) in withLoad {
-            if let base = baseBalances[key], loadedBalance != base { draws[key] = base - loadedBalance }
-        }
-        return .candidate(Candidate(start: start, end: end, cost: total,
-                                    solarContribution: cappedSolarContribution, draws: draws,
-                                    drawsBySafetyEnd: drawsBySafetyEnd))
     }
 
     static func cost(balance: Double, rate: PeriodRate) -> Double? {

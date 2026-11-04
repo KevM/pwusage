@@ -73,7 +73,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
             unavailableCause: SolarForecastUnavailableCause?,
             connection: SolarForecastConnectionState,
             state: SolarForecastEnhancementState,
-            unavailableReason: SolarForecastEnhancementUnavailableReason?
+            unavailableReason: SolarForecastUnavailableReason?
         ) {
             self.connection = "\(connection)"
             self.state = "\(state)"
@@ -119,7 +119,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     let planningContext: Estimator.PlanningContext?
     let result: Outcome
     /// Added when the copy is made, since reading the store is asynchronous.
-    var solarForecast: SolarForecast? = nil
+    var solarForecast: SolarForecast?
 
     init(siteId: String, app: App?, job: LoadProfile, now: Date, balanceSourceTime: Date?, billingCycleEnd: Date,
          currencyCode: String, timeZone: String, timing: LoadTiming, evaluation: SmartShiftEvaluation,
@@ -140,15 +140,17 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         self.forecastFetchedAt = forecastFetchedAt
         self.forecastIntervals = intervals
         self.planningContext = context
-        self.result = Outcome(comparison: evaluation.result.comparison, unavailableReason: evaluation.result.unavailableReason)
+        self.result = Outcome(comparison: evaluation.result.comparison,
+                              unavailableReason: evaluation.result.unavailableReason)
     }
 
     /// Re-runs the recorded projection on the recorded inputs; `nil` when they can't rebuild it.
     func replay() -> Estimator.Result? {
         guard let balanceSourceTime, let projection = rebuiltProjection() else { return nil }
-        return Estimator.evaluate(profile: job, now: now, timing: loadTiming, projection: projection,
-                                  balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
-                                  currencyCode: currencyCode)
+        let plan = Estimator.plan(.init(now: now, timing: loadTiming, projection: projection,
+                                        balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
+                                        currencyCode: currencyCode))
+        return Estimator.evaluate(profile: job, plan: plan)
     }
 
     private func rebuiltProjection() -> Estimator.Projection? {
@@ -170,7 +172,10 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     /// what a debugging session would want to see.
     func json() throws -> String {
         let data = try Self.encoder().encode(self)
-        return String(decoding: data, as: UTF8.self)
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return text
     }
 
     static func encoder() -> JSONEncoder {
@@ -191,7 +196,8 @@ struct SmartShiftDiagnostics: Codable, Equatable {
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
             guard let date = timestampFormatter().date(from: value) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 timestamp: \(value)")
+                throw DecodingError.dataCorruptedError(in: container,
+                                                       debugDescription: "Invalid ISO-8601 timestamp: \(value)")
             }
             return date
         }

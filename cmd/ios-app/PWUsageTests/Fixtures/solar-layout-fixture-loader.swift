@@ -1,5 +1,17 @@
 import Foundation
 
+/// Plane-of-array model output for one fixture.
+struct SolarLayoutPOA: Decodable {
+    let planes: [SolarLayoutFixture.Plane]
+    /// Plane-of-array model output in kW, one per daylight sun row (JSON key `kw`).
+    let kilowatts: [Double]
+
+    private enum CodingKeys: String, CodingKey {
+        case planes
+        case kilowatts = "kw"
+    }
+}
+
 /// One stage-by-stage parity fixture written by `cmd/next-app/scripts/solar-layout-fixtures.ts`.
 /// Every field is decoded, including the optional `selection` and `fit` stages, so later
 /// parity tests only consume it.
@@ -42,7 +54,7 @@ struct SolarLayoutFixture: Decodable {
 
     struct Stages: Decodable {
         let sun: [Sun]
-        let poa: POA
+        let poa: SolarLayoutPOA
         let selection: Selection?
         let fit: Fit?
     }
@@ -58,12 +70,6 @@ struct SolarLayoutFixture: Decodable {
         let dni: Double
         let dhi: Double
         let ambientFactor: Double
-    }
-
-    struct POA: Decodable {
-        let planes: [Plane]
-        /// Plane-of-array model output in kW, one per daylight sun row (JSON key `kw`).
-        let kw: [Double] // swiftlint:disable:this identifier_name
     }
 
     struct Plane: Decodable {

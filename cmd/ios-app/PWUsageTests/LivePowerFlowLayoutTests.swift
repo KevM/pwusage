@@ -7,8 +7,8 @@ import Testing
 struct LivePowerFlowLayoutTests {
     private func flow(solar: Double, home: Double, grid: Double, battery: Double) -> DashboardPresentation.PowerFlow {
         DashboardPresentation.powerFlow(
-            solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
-            sourceTime: .now, isUnavailable: false
+            .init(solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
+                  sourceTime: .now, isUnavailable: false)
         )
     }
 
@@ -17,7 +17,7 @@ struct LivePowerFlowLayoutTests {
         let scenarios: [(String, DashboardPresentation.PowerFlow)] = [
             ("solar-battery", flow(solar: 754, home: 1064, grid: 0, battery: 310)),
             ("grid-charging", flow(solar: 0, home: 1000, grid: 3000, battery: -2000)),
-            ("night", flow(solar: 0, home: 1000, grid: 0, battery: 1000)),
+            ("night", flow(solar: 0, home: 1000, grid: 0, battery: 1000))
         ]
         for (name, flow) in scenarios {
             let compact = try render(flow, width: 330, typeSize: .large, name: name)

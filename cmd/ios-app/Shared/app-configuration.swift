@@ -29,6 +29,13 @@ struct AppConfiguration: Equatable {
             ?? AppConfiguration(fallbackOrigin: defaultAPIOrigin, reason: "Demo configuration")
     }()
 
+    /// The beta origin as a configuration, for previews that need a real host
+    /// without handling a validation failure. Guaranteed not to throw.
+    static let debugFallback: AppConfiguration = {
+        (try? AppConfiguration(apiOrigin: debugFallbackAPIOrigin, isRelease: false))
+            ?? AppConfiguration(fallbackOrigin: debugFallbackAPIOrigin, reason: "Debug fallback configuration")
+    }()
+
     private static let logger = Logger(subsystem: "fm.rodeo.pwusage", category: "configuration")
 
     let apiOrigin: URL
@@ -114,7 +121,7 @@ struct AppConfiguration: Equatable {
               components.path.isEmpty || components.path == "/",
               components.query == nil,
               components.fragment == nil,
-              (scheme == "https" || (!isRelease && scheme == "http")) else {
+              scheme == "https" || (!isRelease && scheme == "http") else {
             throw ValidationError.invalidOrigin
         }
         // Required HTTPS is not the same as required *ours*: a Release

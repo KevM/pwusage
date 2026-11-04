@@ -241,7 +241,8 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         guard let material = activeAttempt else {
             // Unreachable while the slot and the material are cleared together, but resuming
             // is strictly safer than returning: a silent return here would leak `pending`.
-            completeSignIn(generation: generation, pending.continuation, with: .failure(AuthError.webAuthenticationFailed))
+            completeSignIn(generation: generation, pending.continuation,
+                           with: .failure(AuthError.webAuthenticationFailed))
             return
         }
         webSession = nil
@@ -249,18 +250,23 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         let continuation = pending.continuation
 
         if let error {
-            if Self.isUserCancellation(error) {
-                completeSignIn(generation: generation, continuation, with: .failure(AuthError.cancelled))
-            } else {
-                completeSignIn(generation: generation, continuation, with: .failure(AuthError.webAuthenticationFailed))
-            }
+            let failure = Self.isUserCancellation(error) ? AuthError.cancelled : AuthError.webAuthenticationFailed
+            completeSignIn(generation: generation, continuation, with: .failure(failure))
             return
         }
         guard let callbackURL else {
             completeSignIn(generation: generation, continuation, with: .failure(AuthError.invalidCallback))
             return
         }
+        startSessionExchange(callbackURL, material: material, generation: generation, continuation: continuation)
+    }
 
+    private func startSessionExchange(
+        _ callbackURL: URL,
+        material: PKCEMaterial,
+        generation: Int,
+        continuation: CheckedContinuation<Void, Error>
+    ) {
         do {
             let callback = try Self.parseCallback(callbackURL, expectedState: material.state)
             let exchange = MobileSessionExchange(
@@ -273,35 +279,52 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
             let previousExchange = exchangeTask
             exchangeTask = Task { @MainActor in
                 await previousExchange?.value
-                // Cancellation/logout may have happened while waiting in the queue.
-                guard sessionEpoch == epoch,
-                      pendingSignIn?.generation == generation,
-                      !Task.isCancelled else { return }
-                do {
-                    try await api.exchangeSession(exchange)
-                    guard sessionEpoch == epoch else {
-                        // URLSession may already have persisted Set-Cookie, even when
-                        // cancellation was requested. Revoke that late credential too.
-                        await api.clearSiteAuthCookie()
-                        return
-                    }
-                    if pendingSignIn?.generation == generation { exchangeTask = nil }
-                    if completeSignIn(generation: generation, continuation, with: .success(())) {
-                        isAuthenticated = true
-                    }
-                } catch {
-                    guard sessionEpoch == epoch else {
-                        await api.clearSiteAuthCookie()
-                        return
-                    }
-                    if pendingSignIn?.generation == generation { exchangeTask = nil }
-                    if completeSignIn(generation: generation, continuation, with: .failure(error)) {
-                        isAuthenticated = false
-                    }
-                }
+                await performSessionExchange(
+                    exchange, generation: generation, continuation: continuation, epoch: epoch
+                )
             }
         } catch {
             completeSignIn(generation: generation, continuation, with: .failure(error))
+        }
+    }
+
+    private func performSessionExchange(
+        _ exchange: MobileSessionExchange,
+        generation: Int,
+        continuation: CheckedContinuation<Void, Error>,
+        epoch: Int
+    ) async {
+        // Cancellation/logout may have happened while waiting in the queue.
+        guard sessionEpoch == epoch,
+              pendingSignIn?.generation == generation,
+              !Task.isCancelled else { return }
+        do {
+            try await api.exchangeSession(exchange)
+            await applySessionExchange(.success(()), generation: generation,
+                                       continuation: continuation, epoch: epoch)
+        } catch {
+            await applySessionExchange(.failure(error), generation: generation,
+                                       continuation: continuation, epoch: epoch)
+        }
+    }
+
+    private func applySessionExchange(
+        _ result: Result<Void, Error>,
+        generation: Int,
+        continuation: CheckedContinuation<Void, Error>,
+        epoch: Int
+    ) async {
+        guard sessionEpoch == epoch else {
+            // URLSession may already have persisted Set-Cookie, even when
+            // cancellation was requested. Revoke that late credential too.
+            await api.clearSiteAuthCookie()
+            return
+        }
+        if pendingSignIn?.generation == generation { exchangeTask = nil }
+        guard completeSignIn(generation: generation, continuation, with: result) else { return }
+        switch result {
+        case .success: isAuthenticated = true
+        case .failure: isAuthenticated = false
         }
     }
 
@@ -329,7 +352,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         components.path = "/login"
         components.queryItems = [
             URLQueryItem(name: "mobile_challenge", value: material.challenge),
-            URLQueryItem(name: "mobile_state", value: material.state),
+            URLQueryItem(name: "mobile_state", value: material.state)
         ]
         guard let url = components.url else { throw AuthError.webAuthenticationFailed }
         return url

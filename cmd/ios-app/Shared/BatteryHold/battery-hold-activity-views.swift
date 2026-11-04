@@ -35,7 +35,8 @@ struct BatteryHoldGauge: View {
 enum BatteryHoldActivityAccessibility {
     static func summary(_ state: BatteryHoldActivityAttributes.ContentState) -> String {
         [BatteryHoldActivityPresentation.headline(state),
-         BatteryHoldActivityPresentation.batteryText(state).map { "battery \($0)" }].compactMap { $0 }.joined(separator: ", ")
+         BatteryHoldActivityPresentation.batteryText(state).map { "battery \($0)" }].compactMap { $0 }
+            .joined(separator: ", ")
     }
 }
 

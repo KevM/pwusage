@@ -20,43 +20,42 @@ actor OpenMeteoTestTransport: OpenMeteoTransport {
     }
 }
 
-// swiftlint:disable nesting
 enum OpenMeteoFixture {
     static func body(start: Date, hours: Int = 72, missing: Bool = false) throws -> Data {
         let time = (0 ..< hours).map { start.addingTimeInterval(Double($0) * 3600).timeIntervalSince1970 }
         let values: [Double?] = (0 ..< hours).map { missing && $0 == 1 ? nil : 400 }
-        return try JSONEncoder().encode(Body(
+        return try JSONEncoder().encode(OpenMeteoFixtureBody(
             utcOffsetSeconds: 0,
             units: ["time": "unixtime", "shortwave_radiation": "W/m²",
                     "direct_normal_irradiance": "W/m²", "diffuse_radiation": "W/m²"],
-            hourly: Hourly(time: time, ghi: values,
-                           dni: values, dhi: values)))
-    }
-    struct Body: Encodable {
-        let utcOffsetSeconds: Int
-        let units: [String: String]
-        let hourly: Hourly
-        enum CodingKeys: String, CodingKey {
-            case utcOffsetSeconds = "utc_offset_seconds"
-            case units = "hourly_units"
-            case hourly
-        }
-    }
-    struct Hourly: Encodable {
-        let time: [Double]
-        let ghi: [Double?]
-        let dni: [Double?]
-        let dhi: [Double?]
-        enum CodingKeys: String, CodingKey {
-            case time
-            case ghi = "shortwave_radiation"
-            case dni = "direct_normal_irradiance"
-            case dhi = "diffuse_radiation"
-        }
+            hourly: OpenMeteoFixtureHourly(time: time, ghi: values,
+                                           dni: values, dhi: values)))
     }
 }
 
-// swiftlint:enable nesting
+private struct OpenMeteoFixtureBody: Encodable {
+    let utcOffsetSeconds: Int
+    let units: [String: String]
+    let hourly: OpenMeteoFixtureHourly
+    enum CodingKeys: String, CodingKey {
+        case utcOffsetSeconds = "utc_offset_seconds"
+        case units = "hourly_units"
+        case hourly
+    }
+}
+
+private struct OpenMeteoFixtureHourly: Encodable {
+    let time: [Double]
+    let ghi: [Double?]
+    let dni: [Double?]
+    let dhi: [Double?]
+    enum CodingKeys: String, CodingKey {
+        case time
+        case ghi = "shortwave_radiation"
+        case dni = "direct_normal_irradiance"
+        case dhi = "diffuse_radiation"
+    }
+}
 
 @Suite("Open-Meteo weather transport and interval alignment")
 struct OpenMeteoClientTests {
@@ -123,9 +122,9 @@ struct OpenMeteoClientTests {
     func malformedWeather() throws {
         let stamp = 1_790_035_200.0
         let variants = [
-            OpenMeteoWeather.Hourly(time: [stamp, stamp], ghi: [0, 0], dni: [0, 0], dhi: [0, 0]),
-            OpenMeteoWeather.Hourly(time: [stamp], ghi: [], dni: [0], dhi: [0]),
-            OpenMeteoWeather.Hourly(time: [stamp], ghi: [-1], dni: [0], dhi: [0])]
+            OpenMeteoWeatherHourly(time: [stamp, stamp], ghi: [0, 0], dni: [0, 0], dhi: [0, 0]),
+            OpenMeteoWeatherHourly(time: [stamp], ghi: [], dni: [0], dhi: [0]),
+            OpenMeteoWeatherHourly(time: [stamp], ghi: [-1], dni: [0], dhi: [0])]
         let units = ["time": "unixtime", "shortwave_radiation": "W/m²",
                      "direct_normal_irradiance": "W/m²", "diffuse_radiation": "W/m²"]
         let window = DateInterval(start: Date(timeIntervalSince1970: stamp - 3600), duration: 3600)

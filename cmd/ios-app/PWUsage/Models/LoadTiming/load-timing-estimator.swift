@@ -11,7 +11,8 @@ struct LoadTimingEstimator {
         guard settings.capacityKwh.isFinite, settings.capacityKwh > 0,
               settings.capacityKwh <= LoadProfile.maximumCarCapacityKwh,
               settings.initialStateOfCharge.isFinite, (0 ... 100).contains(settings.initialStateOfCharge),
-              settings.targetStateOfCharge.isFinite, (settings.initialStateOfCharge ... 100).contains(settings.targetStateOfCharge) else {
+              settings.targetStateOfCharge.isFinite,
+              (settings.initialStateOfCharge ... 100).contains(settings.targetStateOfCharge) else {
             return nil
         }
         let batteryKwh = settings.capacityKwh * (settings.targetStateOfCharge - settings.initialStateOfCharge) / 100

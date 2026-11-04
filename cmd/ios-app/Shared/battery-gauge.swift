@@ -51,17 +51,19 @@ struct BatteryGaugeGeometry: Equatable {
     let holdLine: CGRect?
 
     init(style: BatteryGaugeStyle, size: CGSize, charge: Double?, holdLevel: Int?) {
-        let m = style.metrics
-        let body = CGRect(x: m.insets.leading, y: m.insets.top,
-                          width: max(0, size.width - m.insets.leading - m.insets.trailing),
-                          height: max(0, size.height - m.insets.top - m.insets.bottom))
-        let inner = body.insetBy(dx: m.lineWidth, dy: m.lineWidth)
-        let nubHeight = body.height * m.nubHeightFraction
+        let metrics = style.metrics
+        let body = CGRect(x: metrics.insets.leading, y: metrics.insets.top,
+                          width: max(0, size.width - metrics.insets.leading - metrics.insets.trailing),
+                          height: max(0, size.height - metrics.insets.top - metrics.insets.bottom))
+        let inner = body.insetBy(dx: metrics.lineWidth, dy: metrics.lineWidth)
+        let nubHeight = body.height * metrics.nubHeightFraction
         self.body = body
         self.inner = inner
-        nub = CGRect(x: body.maxX + m.nubGap, y: body.midY - nubHeight / 2, width: m.nubWidth, height: nubHeight)
-        cornerRadius = m.cornerRadius ?? body.height * 0.32
-        lineWidth = m.lineWidth
+        nub = CGRect(
+            x: body.maxX + metrics.nubGap, y: body.midY - nubHeight / 2,
+            width: metrics.nubWidth, height: nubHeight)
+        cornerRadius = metrics.cornerRadius ?? body.height * 0.32
+        lineWidth = metrics.lineWidth
         if let charge, charge.isFinite {
             let fraction = min(max(charge, 0), 100) / 100
             fill = CGRect(x: inner.minX, y: inner.minY, width: inner.width * fraction, height: inner.height)
@@ -69,16 +71,18 @@ struct BatteryGaugeGeometry: Equatable {
             fill = nil
         }
         if let holdLevel {
-            let w = m.holdLineWidth
+            let holdWidth = metrics.holdLineWidth
             let level = CGFloat(min(max(holdLevel, 0), 100)) / 100
-            let x = min(max(inner.minX + inner.width * level, inner.minX + w / 2), inner.maxX - w / 2)
+            let lineX = min(
+                max(inner.minX + inner.width * level, inner.minX + holdWidth / 2), inner.maxX - holdWidth / 2)
             // Near either end the inner shape's rounded corners curve in, so a full-height
             // line would poke past the outline (most visibly at a 100% hold).
-            let cornerInset = Self.cornerInset(lineX: x, in: inner,
-                                               radius: max(0, (m.cornerRadius ?? body.height * 0.32) - m.lineWidth))
+            let cornerInset = Self.cornerInset(
+                lineX: lineX, in: inner,
+                radius: max(0, (metrics.cornerRadius ?? body.height * 0.32) - metrics.lineWidth))
             let top = inner.minY + cornerInset
             let bottom = inner.maxY - cornerInset
-            holdLine = CGRect(x: x - w / 2, y: top, width: w, height: bottom - top)
+            holdLine = CGRect(x: lineX - holdWidth / 2, y: top, width: holdWidth, height: bottom - top)
         } else {
             holdLine = nil
         }
@@ -89,11 +93,11 @@ struct BatteryGaugeGeometry: Equatable {
     /// continuous, which curve in sooner than circular ones; the inset is capped so at
     /// least 40% of the line remains.
     private static func cornerInset(lineX: CGFloat, in rect: CGRect, radius: CGFloat) -> CGFloat {
-        let r = min(radius * 1.5, rect.height / 2, rect.width / 2)
+        let cornerRadius = min(radius * 1.5, rect.height / 2, rect.width / 2)
         let fromEdge = max(0, min(lineX - rect.minX, rect.maxX - lineX))
-        guard r > 0, fromEdge < r else { return 0 }
-        let d = r - fromEdge
-        return min(r - (r * r - d * d).squareRoot(), rect.height * 0.3)
+        guard cornerRadius > 0, fromEdge < cornerRadius else { return 0 }
+        let distance = cornerRadius - fromEdge
+        return min(cornerRadius - (cornerRadius * cornerRadius - distance * distance).squareRoot(), rect.height * 0.3)
     }
 }
 
@@ -109,26 +113,31 @@ struct BatteryGaugeView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let g = BatteryGaugeGeometry(style: style, size: proxy.size, charge: charge, holdLevel: isFinal ? nil : holdLevel)
+            let gauge = BatteryGaugeGeometry(
+                style: style, size: proxy.size, charge: charge, holdLevel: isFinal ? nil : holdLevel)
             let faint = isFinal ? 0.6 : 1.0
             let outline = Color.primary.opacity((style == .card ? 0.16 : 0.45) * faint)
             ZStack(alignment: .topLeading) {
-                if let fill = g.fill, fill.width > 0 {
+                if let fill = gauge.fill, fill.width > 0 {
                     Path(fill)
                         .fill(fillStyle)
-                        .clipShape(Path(roundedRect: g.inner, cornerRadius: max(0, g.cornerRadius - g.lineWidth), style: .continuous))
+                        .clipShape(
+                            Path(roundedRect: gauge.inner,
+                                 cornerRadius: max(0, gauge.cornerRadius - gauge.lineWidth), style: .continuous))
                 }
-                Path(roundedRect: g.body, cornerRadius: g.cornerRadius, style: .continuous)
-                    .stroke(outline, lineWidth: g.lineWidth)
-                Path(roundedRect: g.nub, cornerRadius: g.nub.width / 2)
+                Path(roundedRect: gauge.body, cornerRadius: gauge.cornerRadius, style: .continuous)
+                    .stroke(outline, lineWidth: gauge.lineWidth)
+                Path(roundedRect: gauge.nub, cornerRadius: gauge.nub.width / 2)
                     .fill(outline)
-                if let line = g.holdLine {
+                if let line = gauge.holdLine {
                     if style.dashedHoldLine {
                         Path { path in
                             path.move(to: CGPoint(x: line.midX, y: line.minY))
                             path.addLine(to: CGPoint(x: line.midX, y: line.maxY))
                         }
-                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: line.width, dash: style == .card ? [5, 4] : [3, 2.5]))
+                        .stroke(
+                            Color.accentColor,
+                            style: StrokeStyle(lineWidth: line.width, dash: style == .card ? [5, 4] : [3, 2.5]))
                     } else {
                         Path(roundedRect: line, cornerRadius: line.width / 2)
                             .fill(Color.accentColor)

@@ -216,7 +216,7 @@ struct SolarForecastCoordinatorTests {
     func contextErrorsMapDistinctly() async {
         func reason(
             error: Error? = nil, unavailable: Bool = false, reasonText: String? = nil
-        ) async -> SolarForecastEnhancementUnavailableReason? {
+        ) async -> SolarForecastUnavailableReason? {
             let api = ForecastDashboardAPISpy()
             api.contextError = error
             api.contextIsUnavailable = unavailable
@@ -266,7 +266,8 @@ private extension MobileLoadPlanningContextResponse {
             historyStart: asOf.addingTimeInterval(-14 * 24 * 60 * 60),
             historyEnd: asOf.addingTimeInterval(-60),
             slots: (0 ..< 48).map {
-                Slot(localMinute: $0 * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: sampleCount, coverage: coverage)
+                Slot(localMinute: $0 * 30, homeKw: 1, batteryNetChargeKw: 0, sampleCount: sampleCount,
+                     coverage: coverage)
             }
         )
     }
@@ -304,7 +305,12 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         billSiteIDs.append(siteID)
         if let billError { throw billError }
-        let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"\#(billTimeZone)"},"currentBill":{"estimatedCost":1,"currency":"USD","cycleStart":"2026-01-01T00:00:00Z","cycleEnd":"2030-01-01T00:00:00Z","periods":[]},"sources":{"calculatedAt":"2027-01-15T08:00:00Z","energyDataThrough":"\#(energyDataThrough)"}}"#
+        let json = #"""
+        {"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"\#(billTimeZone)"},
+        "currentBill":{"estimatedCost":1,"currency":"USD","cycleStart":"2026-01-01T00:00:00Z",
+        "cycleEnd":"2030-01-01T00:00:00Z","periods":[]},
+        "sources":{"calculatedAt":"2027-01-15T08:00:00Z","energyDataThrough":"\#(energyDataThrough)"}}
+        """#
         return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(json.utf8))
     }
 

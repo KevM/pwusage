@@ -16,14 +16,16 @@ enum TodayEnergyPresentation {
     }
 
     static func todayCostDetail(_ cost: TodayEnergyCost, locale: Locale = .current) -> String {
-        "Import \(money(cost.importCharges, currency: cost.currency, locale: locale)) · Export \(money(cost.exportCredits, currency: cost.currency, locale: locale))"
+        "Import \(money(cost.importCharges, currency: cost.currency, locale: locale)) · "
+            + "Export \(money(cost.exportCredits, currency: cost.currency, locale: locale))"
     }
 
     static func tile(for metric: TodayEnergyMetric, snapshot: TodayEnergySnapshot?, at date: Date) -> MetricTile? {
         guard let snapshot, snapshot.availability(at: date) != .missing else { return nil }
         return tiles(homeKwh: snapshot.energy.homeKwh, solarKwh: snapshot.energy.solarKwh,
                      gridNetKwh: snapshot.energy.gridNetKwh, batteryNetKwh: snapshot.energy.batteryNetKwh,
-                     compact: true, showsStateOfCharge: true, stateOfCharge: snapshot.stateOfCharge(at: date))[metric.index]
+                     compact: true, showsStateOfCharge: true,
+                     stateOfCharge: snapshot.stateOfCharge(at: date))[metric.index]
     }
 
     /// Same charge bands as the app's battery glyph. Unknown has no filled segments.
@@ -39,13 +41,15 @@ enum TodayEnergyPresentation {
     }
 
     static func tiles(homeKwh: Double, solarKwh: Double, gridNetKwh: Double, batteryNetKwh: Double,
-                      compact: Bool = false, showsStateOfCharge: Bool = false, stateOfCharge: Double? = nil) -> [MetricTile] {
+                      compact: Bool = false, showsStateOfCharge: Bool = false,
+                      stateOfCharge: Double? = nil) -> [MetricTile] {
         let chargeDescription = showsStateOfCharge
             ? stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown"
             : nil
         return [
             MetricTile(title: "Home", value: energy(homeKwh), symbol: "house.fill", tint: .blue, compact: compact),
-            MetricTile(title: "Solar", value: energy(solarKwh), symbol: "sun.max.fill", tint: .orange, compact: compact),
+            MetricTile(title: "Solar", value: energy(solarKwh), symbol: "sun.max.fill", tint: .orange,
+                       compact: compact),
             MetricTile(title: "Grid", value: signedEnergy(gridNetKwh),
                        detail: gridNetKwh > 0 ? "Net import" : (gridNetKwh < 0 ? "Net export" : "Even"),
                        symbol: "powerplug", tint: .gray, compact: compact),
@@ -54,7 +58,7 @@ enum TodayEnergyPresentation {
                        symbol: showsStateOfCharge ? batterySymbol(stateOfCharge) : "battery.100percent",
                        tint: .green, compact: compact,
                        symbolPrefix: showsStateOfCharge ? stateOfCharge.map { "\(Int($0.rounded()))%" } : nil,
-                       spokenRole: chargeDescription),
+                       spokenRole: chargeDescription)
         ]
     }
 }
@@ -106,7 +110,8 @@ struct TodayEnergyWidgetContent: View {
                     }
                     .frame(maxHeight: .infinity)
                 } else {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                              spacing: 10) {
                         ForEach(tiles.indices, id: \.self) { tiles[$0] }
                     }
                     todayCost(snapshot)
@@ -143,7 +148,10 @@ struct TodayEnergyWidgetContent: View {
                     Text(TodayEnergyPresentation.money(cost.netCost, currency: cost.currency))
                         .font(.title2.weight(.bold)).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.6)
-                        .accessibilityLabel("Estimated net cost \(TodayEnergyPresentation.money(cost.netCost, currency: cost.currency))")
+                        .accessibilityLabel(
+                            "Estimated net cost "
+                                + "\(TodayEnergyPresentation.money(cost.netCost, currency: cost.currency))"
+                        )
                 } else {
                     Text("—").font(.title2.weight(.bold))
                         .accessibilityLabel("Cost unavailable")
@@ -153,7 +161,13 @@ struct TodayEnergyWidgetContent: View {
                 Text(TodayEnergyPresentation.todayCostDetail(cost))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.65)
-                    .accessibilityLabel("Import charges \(TodayEnergyPresentation.money(cost.importCharges, currency: cost.currency)). Export credits \(TodayEnergyPresentation.money(cost.exportCredits, currency: cost.currency)). Netted by rate period.")
+                    .accessibilityLabel(
+                        "Import charges "
+                            + "\(TodayEnergyPresentation.money(cost.importCharges, currency: cost.currency)). "
+                            + "Export credits "
+                            + "\(TodayEnergyPresentation.money(cost.exportCredits, currency: cost.currency)). "
+                            + "Netted by rate period."
+                    )
             }
             Text("Estimated").font(.caption2).foregroundStyle(.secondary)
         }
@@ -171,7 +185,9 @@ struct TodayEnergyWidgetContent: View {
             Label(stale ? "Stale · \(time)" : time,
                   systemImage: stale ? "clock.badge.exclamationmark" : "clock")
                 .foregroundStyle(stale ? .orange : .secondary)
-                .accessibilityLabel("\(stale ? "Stale. " : "")Updated \(updatedTime(source, timezone: snapshot.timezone))")
+                .accessibilityLabel(
+                    "\(stale ? "Stale. " : "")Updated \(updatedTime(source, timezone: snapshot.timezone))"
+                )
         }
     }
 

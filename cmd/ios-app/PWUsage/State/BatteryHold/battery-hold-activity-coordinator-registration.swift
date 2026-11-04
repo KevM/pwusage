@@ -2,6 +2,12 @@ import CryptoKit
 
 import Foundation
 
+/// Whether a rejected registration attempt should be retried.
+private enum RegistrationAttemptOutcome: Equatable {
+    case retry
+    case finished
+}
+
 extension BatteryHoldActivityCoordinator {
     func tokenReceived(_ token: Data, activityID: String) {
         guard let item = tracked[activityID], item.latestToken != token else { return }
@@ -35,41 +41,70 @@ extension BatteryHoldActivityCoordinator {
         for attempt in 0 ... Self.retryDelays.count {
             // A rotated token or ended activity makes this attempt pointless.
             guard generation == self.generation, tracked[activityID]?.latestToken == token else { return }
-            do {
-                try await api.registerBatteryHoldActivity(siteID: attributes.siteID, registration: registration)
-                guard generation == self.generation else { return }
-                store.record(.init(registrationID: attributes.registrationID, siteID: attributes.siteID,
-                                   holdID: attributes.holdID, tokenDigest: digest))
-                // Ended while the request was in flight: don't leave it registered.
-                if tracked[activityID] == nil { await unregister(attributes) }
-                return
-            } catch let error as PWUsageAPIError {
-                guard generation == self.generation else { return }
-                switch error {
-                case .signInRequired:
-                    return
-                case .requestRejected(403, _):
-                    // Access to this site is gone: clear its private presentation.
-                    if let item = tracked[activityID] { await end(item, as: nil, immediately: true) }
-                    return
-                case .requestRejected(404, _), .requestRejected(410, _):
-                    // The hold ended or this registration was retired; the site's status says which.
-                    await refreshSite(attributes.siteID)
-                    return
-                case .requestRejected(let status, let message):
-                    logger.error("Live Activity registration rejected: \(status, privacy: .public) \(message ?? "", privacy: .public)")
-                    return
-                case .recoverableServerError, .invalidResponse:
-                    break
-                }
-            } catch {
-                guard generation == self.generation else { return }
-            }
+            let outcome = await attemptRegistration(
+                registration, attributes: attributes, digest: digest, activityID: activityID,
+                expectedGeneration: generation
+            )
+            if outcome == .finished { return }
             guard attempt < Self.retryDelays.count else { break }
             do { try await sleep(Self.retryDelays[attempt]) } catch { return }
         }
         logger.error("Live Activity registration failed after retries; next foreground reconcile retries")
         tracked[activityID]?.latestToken = nil
+    }
+
+    private func attemptRegistration(
+        _ registration: BatteryHoldActivityRegistration,
+        attributes: BatteryHoldActivityAttributes,
+        digest: String,
+        activityID: String,
+        expectedGeneration: Int
+    ) async -> RegistrationAttemptOutcome {
+        do {
+            try await api.registerBatteryHoldActivity(siteID: attributes.siteID, registration: registration)
+            guard expectedGeneration == generation else { return .finished }
+            store.record(.init(registrationID: attributes.registrationID, siteID: attributes.siteID,
+                               holdID: attributes.holdID, tokenDigest: digest))
+            // Ended while the request was in flight: don't leave it registered.
+            if tracked[activityID] == nil { await unregister(attributes) }
+            return .finished
+        } catch let error as PWUsageAPIError {
+            return await rejectionOutcome(
+                for: error, attributes: attributes, activityID: activityID,
+                expectedGeneration: expectedGeneration
+            )
+        } catch {
+            return expectedGeneration == generation ? .retry : .finished
+        }
+    }
+
+    private func rejectionOutcome(
+        for error: PWUsageAPIError,
+        attributes: BatteryHoldActivityAttributes,
+        activityID: String,
+        expectedGeneration: Int
+    ) async -> RegistrationAttemptOutcome {
+        guard expectedGeneration == generation else { return .finished }
+        switch error {
+        case .signInRequired:
+            return .finished
+        case .requestRejected(403, _):
+            // Access to this site is gone: clear its private presentation.
+            if let item = tracked[activityID] { await end(item, as: nil, immediately: true) }
+            return .finished
+        case .requestRejected(404, _), .requestRejected(410, _):
+            // The hold ended or this registration was retired; the site's status says which.
+            await refreshSite(attributes.siteID)
+            return .finished
+        case .requestRejected(let status, let message):
+            logger.error("""
+            Live Activity registration rejected: \(status, privacy: .public) \
+            \(message ?? "", privacy: .public)
+            """)
+            return .finished
+        case .recoverableServerError, .invalidResponse:
+            return .retry
+        }
     }
 
     func unregister(_ attributes: BatteryHoldActivityAttributes) async {
@@ -109,21 +144,7 @@ extension BatteryHoldActivityCoordinator {
         let generation = generation
         let running = host.activities()
         for handle in running {
-            let attributes = handle.attributes
-            if siteNames[attributes.siteID] == nil {
-                _ = untrack(handle.id)
-                await handle.end(nil, immediately: true)
-                await unregister(attributes)
-            } else if handle.lifecycle == .pending {
-                continue
-            } else if handle.lifecycle == .active || handle.lifecycle == .stale {
-                track(handle)
-                // Retries a registration that gave up, or a token rotated while suspended.
-                if let token = handle.pushToken { tokenReceived(token, activityID: handle.id) }
-            } else {
-                _ = untrack(handle.id)
-                if store.entry(attributes.registrationID) != nil { await unregister(attributes) }
-            }
+            await reconcile(handle)
             guard generation == self.generation else { return }
         }
         let live = Set(tracked.values.map(\.handle.attributes.registrationID))
@@ -135,6 +156,24 @@ extension BatteryHoldActivityCoordinator {
         for siteID in Set(tracked.values.map(\.handle.attributes.siteID)) {
             await refreshSite(siteID)
             guard generation == self.generation else { return }
+        }
+    }
+
+    private func reconcile(_ handle: any BatteryHoldActivityHandle) async {
+        let attributes = handle.attributes
+        if siteNames[attributes.siteID] == nil {
+            _ = untrack(handle.id)
+            await handle.end(nil, immediately: true)
+            await unregister(attributes)
+        } else if handle.lifecycle == .pending {
+            return
+        } else if handle.lifecycle == .active || handle.lifecycle == .stale {
+            track(handle)
+            // Retries a registration that gave up, or a token rotated while suspended.
+            if let token = handle.pushToken { tokenReceived(token, activityID: handle.id) }
+        } else {
+            _ = untrack(handle.id)
+            if store.entry(attributes.registrationID) != nil { await unregister(attributes) }
         }
     }
 

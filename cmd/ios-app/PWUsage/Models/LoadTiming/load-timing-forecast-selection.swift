@@ -8,6 +8,29 @@ extension LoadTimingForecastEstimator {
         let bestAlternativeSavings: Double
     }
 
+    /// Everything `balanceLanes` needs about the pass and the two runs it charts.
+    struct BalanceLaneInputs {
+        let now: Date
+        let horizonEnd: Date
+        let nowBalances: [String: Double]
+        let baseBalances: [String: Double]
+        let load: (energy: Double, duration: TimeInterval)
+        let startNow: Candidate
+        let recommended: Candidate
+        let steps: Steps
+        let tariffs: [LoadTimingTariffSegment]
+    }
+
+    /// One run integrated over a window on top of `balances`, for `balanceSeries`.
+    struct BalanceSeriesInputs {
+        let start: Date
+        let end: Date
+        let balances: [String: Double]
+        let run: (start: Date, end: Date)
+        let powerKw: Double
+        let steps: Steps
+    }
+
     /// The cheapest start that passes the safety rule (ties: earliest); starting
     /// now unless a passing later start saves more than a minor unit while now
     /// passes too. When nothing passes, the start leaving its bank least short
@@ -18,7 +41,9 @@ extension LoadTimingForecastEstimator {
                 : $0.candidate.cost < $1.candidate.cost }
         }
         // `evaluate` only calls this with a scored "now".
-        let nowAssessment = assessed.first { $0.candidate.start == now }!
+        guard let nowAssessment = assessed.first(where: { $0.candidate.start == now }) else {
+            preconditionFailure("select requires a scored assessment for now")
+        }
         let passing = assessed.filter(\.passes)
         let recommended: Assessment
         let safety: Safety
@@ -35,7 +60,8 @@ extension LoadTimingForecastEstimator {
             let pool = assessed.filter { $0.shortfall <= least + 1e-9 }
             let best = cheapest(pool) ?? nowAssessment
             let nowInPool = pool.contains { $0.candidate.start == now }
-            recommended = nowInPool && nowAssessment.candidate.cost - best.candidate.cost <= minorUnit ? nowAssessment : best
+            recommended = nowInPool && nowAssessment.candidate.cost - best.candidate.cost <= minorUnit
+                ? nowAssessment : best
             safety = .noSafeStart(periodKey: recommended.worst?.periodKey ?? "")
         }
         let rejectedCheaper = assessed.filter {
@@ -46,77 +72,87 @@ extension LoadTimingForecastEstimator {
         }
         // Raw saving of the cheapest eligible non-now start, before the minor-unit threshold.
         let alternatives = (passing.isEmpty ? assessed : passing).filter { $0.candidate.start != now }
-        let bestAlternativeSavings = cheapest(alternatives).map { max(0, nowAssessment.candidate.cost - $0.candidate.cost) } ?? 0
+        let bestAlternativeSavings = cheapest(alternatives)
+            .map { max(0, nowAssessment.candidate.cost - $0.candidate.cost) } ?? 0
         return Selection(recommendation: recommended.candidate, safety: safety, ruledOut: ruledOut,
                          bestAlternativeSavings: bestAlternativeSavings)
     }
 
-    static func balanceLanes(now: Date, horizonEnd: Date, nowBalances: [String: Double],
-                             baseBalances: [String: Double], load: (energy: Double, duration: TimeInterval),
-                             startNow: Candidate, recommended: Candidate, steps: Steps,
-                             tariffs: [LoadTimingTariffSegment]) -> [BalanceLane]? {
-        let powerKw = load.energy / (load.duration / 3600)
-        guard let nowSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
-                                            run: (startNow.start, startNow.end), powerKw: powerKw, steps: steps),
-            let recommendedSeries = balanceSeries(from: now, to: horizonEnd, balances: nowBalances,
-                                                  run: (recommended.start, recommended.end), powerKw: powerKw,
-                                                  steps: steps)
+    static func balanceLanes(_ inputs: BalanceLaneInputs) -> [BalanceLane]? {
+        let powerKw = inputs.load.energy / (inputs.load.duration / 3600)
+        guard let nowSeries = balanceSeries(.init(start: inputs.now, end: inputs.horizonEnd,
+                                                  balances: inputs.nowBalances,
+                                                  run: (inputs.startNow.start, inputs.startNow.end),
+                                                  powerKw: powerKw, steps: inputs.steps)),
+            let recommendedSeries = balanceSeries(.init(start: inputs.now, end: inputs.horizonEnd,
+                                                        balances: inputs.nowBalances,
+                                                        run: (inputs.recommended.start, inputs.recommended.end),
+                                                        powerKw: powerKw, steps: inputs.steps))
         else { return nil }
 
-        func periods(touching start: Date, _ end: Date) -> Set<String> {
-            Set(tariffs.filter { $0.start < end && $0.end > start }.map(\.periodKey))
+        var keys = periods(touching: inputs.startNow.start, inputs.startNow.end, in: inputs.tariffs)
+            .union(periods(touching: inputs.recommended.start, inputs.recommended.end, in: inputs.tariffs))
+        if let current = inputs.tariffs.first(where: { $0.start <= inputs.now && inputs.now < $0.end }) {
+            keys.insert(current.periodKey)
         }
-        var keys = periods(touching: startNow.start, startNow.end).union(periods(touching: recommended.start, recommended.end))
-        if let current = tariffs.first(where: { $0.start <= now && now < $0.end }) { keys.insert(current.periodKey) }
         // When starting now wins, every bank it was compared against keeps a (flat)
         // lane, so people can see the run doesn't draw on them.
-        if recommended.start == startNow.start { keys.formUnion(periods(touching: now, horizonEnd)) }
-        let firstOccurrence = Dictionary(tariffs.filter { $0.end > now && $0.start < horizonEnd }
-            .map { ($0.periodKey, max($0.start, now)) }, uniquingKeysWith: min)
+        if inputs.recommended.start == inputs.startNow.start {
+            keys.formUnion(periods(touching: inputs.now, inputs.horizonEnd, in: inputs.tariffs))
+        }
+        let firstOccurrence = Dictionary(inputs.tariffs.filter { $0.end > inputs.now && $0.start < inputs.horizonEnd }
+            .map { ($0.periodKey, max($0.start, inputs.now)) }, uniquingKeysWith: min)
 
-        return keys.filter { nowBalances[$0] != nil }
+        return keys.filter { inputs.nowBalances[$0] != nil }
             .sorted { (firstOccurrence[$0] ?? .distantFuture, $0) < (firstOccurrence[$1] ?? .distantFuture, $1) }
             .compactMap { key in
-                guard let start = nowBalances[key], let later = recommendedSeries[key], let immediate = nowSeries[key],
-                      let projected = baseBalances[key] else {
+                guard let start = inputs.nowBalances[key], let later = recommendedSeries[key],
+                      let immediate = nowSeries[key], let projected = inputs.baseBalances[key] else {
                     return nil
                 }
                 return BalanceLane(periodKey: key, startKwh: start, recommended: later, startNow: immediate,
                                    projectedKwh: projected,
-                                   projectedAfterRecommendedKwh: projected - (recommended.draws[key] ?? 0),
-                                   projectedAfterStartNowKwh: projected - (startNow.draws[key] ?? 0))
+                                   projectedAfterRecommendedKwh: projected - (inputs.recommended.draws[key] ?? 0),
+                                   projectedAfterStartNowKwh: projected - (inputs.startNow.draws[key] ?? 0))
             }
+    }
+
+    /// The tariff periods a window touches.
+    private static func periods(touching start: Date, _ end: Date,
+                                in tariffs: [LoadTimingTariffSegment]) -> Set<String> {
+        Set(tariffs.filter { $0.start < end && $0.end > start }.map(\.periodKey))
     }
 
     /// Integrates the baseline plus, inside `run`, the load's draw, recording every
     /// period's balance at each integration boundary. `nil` when a value overflows.
-    static func balanceSeries(from start: Date, to end: Date, balances: [String: Double],
-                              run: (start: Date, end: Date), powerKw: Double,
-                              steps: Steps) -> [String: [BalancePoint]]? {
-        guard start < end, var index = steps.step(containing: start), end <= steps.edges[steps.edges.count - 1] else {
+    static func balanceSeries(_ inputs: BalanceSeriesInputs) -> [String: [BalancePoint]]? {
+        guard inputs.start < inputs.end, var index = inputs.steps.step(containing: inputs.start),
+              inputs.end <= inputs.steps.edges[inputs.steps.edges.count - 1] else {
             return nil
         }
-        var current = balances
-        var series = current.mapValues { [BalancePoint(date: start, kwh: $0)] }
-        func advance(_ a: Date, _ b: Date, flow: Flow, periodKey: String) -> Bool {
+        var current = inputs.balances
+        var series = current.mapValues { [BalancePoint(date: inputs.start, kwh: $0)] }
+        func advance(_ lower: Date, _ upper: Date, flow: Flow, periodKey: String) -> Bool {
             guard let old = current[periodKey] else { return false }
-            let hours = b.timeIntervalSince(a) / 3600
-            let draw = a >= run.start && b <= run.end ? powerKw * hours : 0
+            let hours = upper.timeIntervalSince(lower) / 3600
+            let draw = lower >= inputs.run.start && upper <= inputs.run.end ? inputs.powerKw * hours : 0
             let updated = old + flow.netExportKw * hours - draw
             guard updated.isFinite else { return false }
             current[periodKey] = updated
-            for (key, kwh) in current { series[key, default: []].append(BalancePoint(date: b, kwh: kwh)) }
+            for (key, kwh) in current { series[key, default: []].append(BalancePoint(date: upper, kwh: kwh)) }
             return true
         }
-        while index < steps.periods.count, steps.edges[index] < end {
-            let a = max(steps.edges[index], start), b = min(steps.edges[index + 1], end)
+        while index < inputs.steps.periods.count, inputs.steps.edges[index] < inputs.end {
+            let lower = max(inputs.steps.edges[index], inputs.start)
+            let upper = min(inputs.steps.edges[index + 1], inputs.end)
             // The run's own edges split a step so its draw starts and stops on time.
-            var cuts = [a]
-            for edge in [run.start, run.end] where edge > a && edge < b { cuts.append(edge) }
-            cuts.append(b)
+            var cuts = [lower]
+            for edge in [inputs.run.start, inputs.run.end] where edge > lower && edge < upper { cuts.append(edge) }
+            cuts.append(upper)
             cuts.sort()
             for cut in 0 ..< (cuts.count - 1) {
-                guard advance(cuts[cut], cuts[cut + 1], flow: steps.typical[index], periodKey: steps.periods[index]) else {
+                guard advance(cuts[cut], cuts[cut + 1], flow: inputs.steps.typical[index],
+                              periodKey: inputs.steps.periods[index]) else {
                     return nil
                 }
             }

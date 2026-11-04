@@ -33,18 +33,26 @@ enum DashboardPresentation {
         var receiving: [PowerCard]
     }
 
-    static func powerFlow(solarPower: Double, loadPower: Double, batteryPower: Double, gridPower: Double,
-                          sourceTime: Date?, isUnavailable: Bool,
-                          now: Date = .now) -> PowerFlow {
-        let isCurrent = !isUnavailable && sourceTime.map {
+    /// The four readings one card row shows, with the source state they share.
+    struct PowerReadings: Equatable {
+        let solarPower: Double
+        let loadPower: Double
+        let batteryPower: Double
+        let gridPower: Double
+        let sourceTime: Date?
+        let isUnavailable: Bool
+    }
+
+    static func powerFlow(_ readings: PowerReadings, now: Date = .now) -> PowerFlow {
+        let isCurrent = !readings.isUnavailable && readings.sourceTime.map {
             let age = now.timeIntervalSince($0)
             return age >= 0 && age <= 15 * 60
         } == true
-        let readings: [(PowerSource, Double)] = [
-            (.solar, solarPower), (.home, loadPower),
-            (.grid, gridPower), (.battery, batteryPower),
+        let sources: [(PowerSource, Double)] = [
+            (.solar, readings.solarPower), (.home, readings.loadPower),
+            (.grid, readings.gridPower), (.battery, readings.batteryPower)
         ]
-        let cards = readings.map { source, watts -> PowerCard in
+        let cards = sources.map { source, watts -> PowerCard in
             guard isCurrent, watts.isFinite else {
                 return PowerCard(id: source, watts: watts.isFinite ? abs(watts) : nil,
                                  role: .unknown, detail: "Flow unknown")
@@ -210,10 +218,22 @@ enum DashboardPresentation {
         currencyCode: String? = nil
     ) -> LoadTimingSummary {
         guard hasTariff else {
-            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No rate plan is set up", accessibilityLabel: "Smart Shift unavailable. No rate plan is set up")
+            return LoadTimingSummary(
+                title: "Smart Shift unavailable",
+                rate: nil,
+                balance: nil,
+                message: "No rate plan is set up",
+                accessibilityLabel: "Smart Shift unavailable. No rate plan is set up"
+            )
         }
         guard let timing else {
-            return LoadTimingSummary(title: "Smart Shift unavailable", rate: nil, balance: nil, message: "No live summary is available", accessibilityLabel: "Smart Shift unavailable. No live summary is available")
+            return LoadTimingSummary(
+                title: "Smart Shift unavailable",
+                rate: nil,
+                balance: nil,
+                message: "No live summary is available",
+                accessibilityLabel: "Smart Shift unavailable. No live summary is available"
+            )
         }
 
         let title = tariffPeriodTitle(timing.periodName)
@@ -222,11 +242,14 @@ enum DashboardPresentation {
         let rate = currencyCode.map { loadRate(rateValue, code: $0) }
         let balance = isUnobserved ? "No bank yet" : (timing.balanceKwh.map(liveLoadBalance) ?? "No bank data")
         let spokenRate = currencyCode.map { loadRateAccessibilityLabel(rateValue, code: $0) }
-        let label = [title, spokenRate, isUnobserved ? "No bank yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh)]
+        let label = [title, spokenRate,
+                     isUnobserved ? "No bank yet" : liveLoadBalanceAccessibilityLabel(timing.balanceKwh)]
             .compactMap { $0 }
             .joined(separator: ", ")
         let isBanked = !isUnobserved && (timing.balanceKwh ?? 0) > 0
-        return LoadTimingSummary(title: title, rate: rate, balance: balance, message: nil, accessibilityLabel: label, isBanked: isBanked)
+        return LoadTimingSummary(title: title, rate: rate, balance: balance,
+                                 message: nil, accessibilityLabel: label,
+                                 isBanked: isBanked)
     }
 
     static func hasActiveTariff(label: String?) -> Bool {
@@ -272,13 +295,17 @@ enum DashboardPresentation {
         guard age >= 0 else { return "Source time is in the future" }
         let minutes = Int(age / 60)
         let ageText: String
-        if minutes < 1 { ageText = "updated just now" }
-        else if minutes < 60 { ageText = "updated \(minutes) min ago" }
-        else {
+        if minutes < 1 {
+            ageText = "updated just now"
+        } else if minutes < 60 {
+            ageText = "updated \(minutes) min ago"
+        } else {
             let hours = minutes / 60
             ageText = hours < 24 ? "updated \(hours) hr ago" : "updated \(hours / 24) days ago"
         }
-        return age > staleAfter ? "Stale · \(ageText)" : "Updated \(ageText.replacingOccurrences(of: "updated ", with: ""))"
+        return age > staleAfter
+            ? "Stale · \(ageText)"
+            : "Updated \(ageText.replacingOccurrences(of: "updated ", with: ""))"
     }
 
     static func liveFreshnessNotice(_ date: Date?, now: Date = .now) -> String? {
@@ -288,7 +315,9 @@ enum DashboardPresentation {
         return freshness(date, now: now)
     }
 
-    static func date(_ date: Date, timeZoneIdentifier: String, dateStyle: DateFormatter.Style = .medium, timeStyle: DateFormatter.Style = .none) -> String {
+    static func date(_ date: Date, timeZoneIdentifier: String,
+                     dateStyle: DateFormatter.Style = .medium,
+                     timeStyle: DateFormatter.Style = .none) -> String {
         let formatter = DateFormatter()
         formatter.locale = .current
         formatter.timeZone = TimeZone(identifier: timeZoneIdentifier) ?? .current

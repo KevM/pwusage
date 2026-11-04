@@ -44,6 +44,6 @@
 ## Mandatory iOS Pre-Completion Verification
 Before claiming any iOS / Swift task is complete:
 1. Format: Run `cmd/ios-app/format.sh` (or `swiftformat cmd/ios-app --config .swiftformat`).
-2. Lint: Run `swiftlint lint cmd/ios-app --strict --baseline .swiftlint-baseline.json` from the repository root. All checks must pass with zero new warnings or errors.
+2. Lint: Run `swiftlint lint cmd/ios-app --strict` from the repository root. All checks must pass with zero new warnings or errors.
 3. Test: Run `cmd/ios-app/run-tests.sh` to ensure all tests pass.
 4. Testing Framework: All tests must use Swift Testing (`import Testing`, `@Suite`, `@Test`, `#expect`, `#require`). Never use `XCTest`.

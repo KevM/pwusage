@@ -93,7 +93,8 @@ extension PWUsageAppModel {
         guard let requestedID = pendingBatteryHoldSiteID else { return }
         pendingBatteryHoldSiteID = nil
         guard let site = sites.first(where: { $0.id == requestedID }) else {
-            batteryHoldNavigationMessage = "This control’s site is no longer available to this account. Choose an available site in the control’s configuration."
+            batteryHoldNavigationMessage = "This control’s site is no longer available to this account. "
+                + "Choose an available site in the control’s configuration."
             return
         }
         selectSite(site)

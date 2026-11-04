@@ -11,7 +11,10 @@ enum LoadTimingForecastPresentation {
     /// a future-dated stamp means the clock has since moved backwards, not that
     /// the server sent the wrong time. Point at the clock, which the user can fix,
     /// the same way `contextInvalid` does for `asOf`.
-    static let futureDatedForecastNote = "This solar forecast is timestamped later than this device's clock, so its age cannot be checked and it is not being used for now. Check this device's date and time, then pull down to refresh."
+    static let futureDatedForecastNote =
+        "This solar forecast is timestamped later than this device's clock, so its age cannot "
+            + "be checked and it is not being used for now. Check this device's date and time, "
+            + "then pull down to refresh."
     /// Matches `SolarForecast.recommendationFreshness`. Data older than this
     /// may be shown as stale, but must not produce a new recommendation.
     static let maximumForecastAge: TimeInterval = 6 * 60 * 60
@@ -40,40 +43,49 @@ enum LoadTimingForecastPresentation {
 
     // MARK: - Smart Shift card
 
-    static let awaitingArraySelectionNote = "Choose your solar arrays to add a forecast. Your estimate below already works without it."
+    static let awaitingArraySelectionNote =
+        "Choose your solar arrays to add a forecast. "
+            + "Your estimate below already works without it."
+
+    /// The device state the forecast layer is read from.
+    struct Inputs {
+        let state: SolarForecastEnhancementState
+        let connection: SolarForecastConnectionState
+        let cause: SolarForecastUnavailableCause?
+        let reason: SolarForecastUnavailableReason?
+        let forecastFetchedAt: Date?
+        let now: Date
+    }
 
     /// What the forecast layer can add to the Smart Shift card.
     static func forecastAvailability(
-        state: SolarForecastEnhancementState,
-        connection: SolarForecastConnectionState,
-        cause: SolarForecastUnavailableCause?,
-        reason: SolarForecastEnhancementUnavailableReason?,
-        forecastFetchedAt: Date?,
-        now: Date,
-        usesAutomaticForecast: Bool = false,
-        automaticStatus: MobileSolarLayoutResponse? = nil
+        _ inputs: Inputs,
+        usesAutomaticForecast: Bool,
+        automaticStatus: MobileSolarLayoutResponse?
     ) -> ForecastAvailability {
-        switch connection {
+        switch inputs.connection {
         case .checking: return .loading
         case .notConnected:
             return usesAutomaticForecast
-                ? .automaticUnavailable(automaticUnavailableNote(status: automaticStatus, reason: reason)) : .none
+                ? .automaticUnavailable(automaticUnavailableNote(status: automaticStatus, reason: inputs.reason))
+                : .none
         case .awaitingArraySelection: return .unusable(firstSentence(awaitingArraySelectionNote))
         case .ready: break
         }
-        let age = forecastFetchedAt.map { now.timeIntervalSince($0) }
+        let age = inputs.forecastFetchedAt.map { inputs.now.timeIntervalSince($0) }
         let isFresh = age.map { $0 >= 0 && $0 <= maximumForecastAge } ?? false
         // A refresh keeps the previous batch in memory until it is replaced. While
         // that batch is still fresh it keeps pricing the card, so the verdict
         // doesn't flip to the forecast-free answer and back on every pull.
-        if state == .loadingWithBasic { return isFresh ? .ready : .loading }
-        if state == .enhanced, isFresh { return .ready }
-        if let reason { return .unusable(firstSentence(enhancementDetail(reason))) }
-        return .unusable(firstSentence(causeDetail(cause, forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
+        if inputs.state == .loadingWithBasic { return isFresh ? .ready : .loading }
+        if inputs.state == .enhanced, isFresh { return .ready }
+        if let reason = inputs.reason { return .unusable(firstSentence(enhancementDetail(reason))) }
+        return .unusable(firstSentence(causeDetail(inputs.cause,
+                                                   forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
     }
 
     private static func automaticUnavailableNote(
-        status: MobileSolarLayoutResponse?, reason: SolarForecastEnhancementUnavailableReason?
+        status: MobileSolarLayoutResponse?, reason: SolarForecastUnavailableReason?
     ) -> String {
         if let reason { return firstSentence(enhancementDetail(reason)) }
         if case .enabled(_, let layout, let setupReason) = status, layout == nil, let setupReason {
@@ -93,7 +105,7 @@ enum LoadTimingForecastPresentation {
         return String(text[..<end.lowerBound]) + "."
     }
 
-    private static func enhancementDetail(_ reason: SolarForecastEnhancementUnavailableReason) -> String {
+    private static func enhancementDetail(_ reason: SolarForecastUnavailableReason) -> String {
         switch reason {
         case .requestFailed:
             return "This device could not reach your server for household data. "

@@ -1,59 +1,9 @@
 import Foundation
 
 extension LoadTimingForecastEstimator {
-    enum Projection: Equatable {
-        case forecast(intervals: [SolarForecastInterval], context: PlanningContext)
-        case history(context: PlanningContext)
-        case flat(timeZone: String)
-
-        enum Kind: String, Codable, Equatable {
-            case forecast, history, flat
-        }
-
-        var kind: Kind {
-            switch self {
-            case .forecast: .forecast
-            case .history: .history
-            case .flat: .flat
-            }
-        }
-
-        var timeZone: String {
-            switch self {
-            case .forecast(_, let context), .history(let context): context.timeZone
-            case .flat(let timeZone): timeZone
-            }
-        }
-
-        var maximumBalanceAge: TimeInterval {
-            switch self {
-            // Grid history fills the gap between the energy data and the forecast's
-            // first interval, so only a forecast without it needs the 30-minute limit.
-            case .forecast(_, let context) where context.hasGridHistory: LoadTimingForecastEstimator.maximumFlatBalanceAge
-            case .forecast: LoadTimingForecastEstimator.maximumBalanceAge
-            // Like `.flat`, the forecast-free card uses a one-hour balance window.
-            case .history, .flat: LoadTimingForecastEstimator.maximumFlatBalanceAge
-            }
-        }
-
-        /// Solar intervals whose edges are integration and candidate boundaries; none without a forecast.
-        var intervals: [SolarForecastInterval] {
-            switch self {
-            case .forecast(let intervals, _): intervals
-            case .history, .flat: []
-            }
-        }
-
-        var context: PlanningContext? {
-            switch self {
-            case .forecast(_, let context), .history(let context): context
-            case .flat: nil
-            }
-        }
-
-        /// Balances move with projected household flow, so every period needs an observed balance.
-        var projectsFlow: Bool { context != nil }
-    }
+    /// The estimator's name for `LoadTimingProjection`, kept so callers never see
+    /// the move. The enum lives at file scope so its `Kind` is nested one level.
+    typealias Projection = LoadTimingProjection
 
     struct BalancePoint: Codable, Equatable {
         let date: Date
@@ -174,4 +124,66 @@ extension LoadTimingForecastEstimator {
         let buy: Double
         let sell: Double
     }
+}
+
+/// How balances move between now and the end of the projection.
+/// `.forecast` projects solar and typical household use for up to
+/// `forecastWindow`, then the site's grid history when the context carries
+/// it; without history it ends with the forecast, as before the projection
+/// reached the bill date. `.history` projects the site's grid history from
+/// now. `.flat` holds each period's balance at today's observed value, so
+/// only the job moves it.
+enum LoadTimingProjection: Equatable {
+    case forecast(intervals: [SolarForecastInterval], context: LoadTimingForecastEstimator.PlanningContext)
+    case history(context: LoadTimingForecastEstimator.PlanningContext)
+    case flat(timeZone: String)
+
+    enum Kind: String, Codable, Equatable {
+        case forecast, history, flat
+    }
+
+    var kind: Kind {
+        switch self {
+        case .forecast: .forecast
+        case .history: .history
+        case .flat: .flat
+        }
+    }
+
+    var timeZone: String {
+        switch self {
+        case .forecast(_, let context), .history(let context): context.timeZone
+        case .flat(let timeZone): timeZone
+        }
+    }
+
+    var maximumBalanceAge: TimeInterval {
+        switch self {
+        // Grid history fills the gap between the energy data and the forecast's
+        // first interval, so only a forecast without it needs the 30-minute limit.
+        case .forecast(_, let context) where context.hasGridHistory:
+            LoadTimingForecastEstimator.maximumFlatBalanceAge
+        case .forecast: LoadTimingForecastEstimator.maximumBalanceAge
+        // Like `.flat`, the forecast-free card uses a one-hour balance window.
+        case .history, .flat: LoadTimingForecastEstimator.maximumFlatBalanceAge
+        }
+    }
+
+    /// Solar intervals whose edges are integration and candidate boundaries; none without a forecast.
+    var intervals: [SolarForecastInterval] {
+        switch self {
+        case .forecast(let intervals, _): intervals
+        case .history, .flat: []
+        }
+    }
+
+    var context: LoadTimingForecastEstimator.PlanningContext? {
+        switch self {
+        case .forecast(_, let context), .history(let context): context
+        case .flat: nil
+        }
+    }
+
+    /// Balances move with projected household flow, so every period needs an observed balance.
+    var projectsFlow: Bool { context != nil }
 }

@@ -147,7 +147,8 @@ struct LoadProfilesSheet: View {
 
     func save(_ draft: ProfileDraft) {
         guard draft.isValid else {
-            validationMessage = draft.kind == .custom && draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            validationMessage = draft.kind == .custom
+                && draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Enter a name for this custom job."
                 : "Energy and duration must be greater than zero. Check the car charge settings too."
             return
@@ -163,7 +164,8 @@ struct LoadProfilesSheet: View {
                     carSettings: draft.carSettings
                 )
             } else {
-                saved = try store.createCustomProfile(name: draft.name, energyKwh: draft.energyKwh, durationHours: draft.durationHours)
+                saved = try store.createCustomProfile(name: draft.name, energyKwh: draft.energyKwh,
+                                                      durationHours: draft.durationHours)
             }
             try store.selectProfile(id: saved.id)
             self.draft = nil
@@ -184,17 +186,28 @@ struct LoadProfilesSheet: View {
 
     func profileSummary(_ profile: LoadProfile) -> String {
         guard profile.kind == .car, let car = profile.carSettings else {
-            return "\(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh · \(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hr"
+            let energy = profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))
+            let duration = profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))
+            return "\(energy) kWh · \(duration) hr"
         }
-        guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) else { return "Car estimate unavailable" }
-        return "\(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh to add · about \(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hr"
+        guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) else {
+            return "Car estimate unavailable"
+        }
+        let batteryKwh = estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))
+        let durationHours = estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))
+        return "\(batteryKwh) kWh to add · about \(durationHours) hr"
     }
 
     func profileAccessibilitySummary(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let car = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: car) {
-            return "\(profile.name), \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours to add, about \(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours at Level \(car.chargingLevel == .level1 ? "1" : "2")"
+            let batteryKwh = estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))
+            let durationHours = estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))
+            return "\(profile.name), \(batteryKwh) kilowatt-hours to add, about \(durationHours) hours at Level "
+                + "\(car.chargingLevel == .level1 ? "1" : "2")"
         }
-        return "\(profile.name), \(profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kilowatt-hours, \(profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours"
+        let energyKwh = profile.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))
+        let durationHours = profile.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))
+        return "\(profile.name), \(energyKwh) kilowatt-hours, \(durationHours) hours"
     }
 }

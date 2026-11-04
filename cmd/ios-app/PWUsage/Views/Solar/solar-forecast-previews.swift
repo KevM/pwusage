@@ -6,7 +6,7 @@
     /// The preview site's timezone. The bill fixture, the planning context, and the
     /// synthetic solar curve must all agree: the coordinator rejects the enhancement
     /// when the bill's site timezone and the planning context's differ.
-    let SITE_PREVIEW_TIME_ZONE = "America/Chicago"
+    let sitePreviewTimeZone = "America/Chicago"
 
     /// Synthetic, offline forecast fixtures for Load timing previews. No Solcast key
     /// or account data is present anywhere in this file.
@@ -54,7 +54,7 @@
             let step: TimeInterval = 30 * 60
             let start = now.addingTimeInterval(-30 * 60)
             var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = TimeZone(identifier: SITE_PREVIEW_TIME_ZONE) ?? .current
+            calendar.timeZone = TimeZone(identifier: sitePreviewTimeZone) ?? .current
             return (0 ..< 120).map { index in
                 let periodStart = start.addingTimeInterval(TimeInterval(index) * step)
                 let hour = calendar.component(.hour, from: periodStart)
@@ -127,7 +127,7 @@
                 )
             }
             response = MobileLoadPlanningContextResponse(
-                version: 1, site: .init(id: "preview-home", timezone: SITE_PREVIEW_TIME_ZONE),
+                version: 1, site: .init(id: "preview-home", timezone: sitePreviewTimeZone),
                 units: .init(power: "kW", localMinute: "minute-of-day"), asOf: now,
                 availability: mode == .missingContext ? .unavailable : .available,
                 unavailableReason: mode == .missingContext ? "not_enough_days" : nil,
@@ -192,8 +192,7 @@
             let now = Date.now
             _coordinator = StateObject(wrappedValue: makePreviewCoordinator(mode: mode, now: now))
             let suiteName = "pwusage.preview.solar.\(mode.rawValue)"
-            let defaults = UserDefaults(suiteName: suiteName) ?? .standard
-            defaults.removePersistentDomain(forName: suiteName)
+            let defaults = PreviewDefaults.suite(suiteName)
             let store = LoadProfileStore(userDefaults: defaults)
             if mode == .longCharge {
                 _ = try? store.editProfile(
@@ -255,13 +254,13 @@
         case nowIsCheapest
         case threePeriods
 
-        static let timeZone = SITE_PREVIEW_TIME_ZONE
+        static let timeZone = sitePreviewTimeZone
         /// 08:30 local, during Peak (or Mid for the three-period plan).
-        static let now = ISO8601DateFormatter().date(from: "2026-10-19T13:30:00Z")!
+        static let now = Date(timeIntervalSince1970: 1_792_416_600) // 2026-10-19T13:30:00Z
 
         private static var calendar: Calendar {
             var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = TimeZone(identifier: timeZone)!
+            calendar.timeZone = TimeZone(identifier: timeZone) ?? .gmt
             return calendar
         }
 
@@ -271,7 +270,7 @@
 
         private struct Span {
             let from: Double
-            let to: Double
+            let end: Double
             let key: String
             let buy: Double
             let sell: Double
@@ -281,17 +280,17 @@
             let day: [Span]
             switch self {
             case .threePeriods:
-                day = [Span(from: 0, to: 7, key: "Off-Peak", buy: 0.20, sell: 0.26),
-                       Span(from: 7, to: 15, key: "Mid", buy: 0.30, sell: 0.12),
-                       Span(from: 15, to: 20, key: "Peak", buy: 0.45, sell: 0.10),
-                       Span(from: 20, to: 24, key: "Off-Peak", buy: 0.20, sell: 0.26)]
+                day = [Span(from: 0, end: 7, key: "Off-Peak", buy: 0.20, sell: 0.26),
+                       Span(from: 7, end: 15, key: "Mid", buy: 0.30, sell: 0.12),
+                       Span(from: 15, end: 20, key: "Peak", buy: 0.45, sell: 0.10),
+                       Span(from: 20, end: 24, key: "Off-Peak", buy: 0.20, sell: 0.26)]
             default:
-                day = [Span(from: 0, to: 7, key: "Off-Peak", buy: 0.20, sell: 0.26),
-                       Span(from: 7, to: 16.5, key: "Peak", buy: 0.38, sell: 0.10),
-                       Span(from: 16.5, to: 24, key: "Off-Peak", buy: 0.20, sell: 0.26)]
+                day = [Span(from: 0, end: 7, key: "Off-Peak", buy: 0.20, sell: 0.26),
+                       Span(from: 7, end: 16.5, key: "Peak", buy: 0.38, sell: 0.10),
+                       Span(from: 16.5, end: 24, key: "Off-Peak", buy: 0.20, sell: 0.26)]
             }
             return [0.0, 24].flatMap { offset in
-                day.map { Span(from: $0.from + offset, to: $0.to + offset, key: $0.key, buy: $0.buy, sell: $0.sell) }
+                day.map { Span(from: $0.from + offset, end: $0.end + offset, key: $0.key, buy: $0.buy, sell: $0.sell) }
             }
         }
 
@@ -306,20 +305,19 @@
         }
 
         private var timing: LoadTiming {
-            let segments = spans.map {
-                LoadTimingTariffSegment(start: Self.local($0.from), end: Self.local($0.to), periodKey: $0.key, name: $0.key,
-                                        buyRate: $0.buy, sellRate: $0.sell)
-            }
+            let segments = spans.map { LoadTimingTariffSegment(start: Self.local($0.from),
+                                                               end: Self.local($0.end), periodKey: $0.key,
+                                                               name: $0.key, buyRate: $0.buy, sellRate: $0.sell) }
             var seen: Set<String> = []
             let periods = spans.compactMap { span -> LoadTimingPeriod? in
                 guard seen.insert(span.key).inserted else { return nil }
                 return LoadTimingPeriod(name: span.key, marginalCost: nil, basis: "cycle-net-export",
-                                        cycleNetExportKwh: balances[span.key] ?? 0, isActive: false, nextStartPhrase: nil,
-                                        buyRate: span.buy, sellRate: span.sell)
+                                        cycleNetExportKwh: balances[span.key] ?? 0, isActive: false,
+                                        nextStartPhrase: nil, buyRate: span.buy, sellRate: span.sell)
             }
             return LoadTiming(hasTariff: true, hasCycleData: true, activeIsCheapest: false, periods: periods,
-                              pricingPeriods: periods, tariffTimeline: segments, nextCheaper: nil, nextCheaperPhrase: nil,
-                              nextStartPhraseByKey: [:])
+                              pricingPeriods: periods, tariffTimeline: segments,
+                              nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
         }
 
         private var projection: LoadTimingForecastEstimator.Projection {
@@ -328,25 +326,30 @@
                 let start = Self.local(Double(index) / 2)
                 let hour = Self.calendar.component(.hour, from: start)
                 let sun = max(0, sin(Double.pi * (Double(hour) - 7) / 11))
-                return SolarForecastInterval(periodStart: start, periodEnd: start.addingTimeInterval(1800), powerKw: 2.6 * sun)
+                return SolarForecastInterval(periodStart: start,
+                                             periodEnd: start.addingTimeInterval(1800), powerKw: 2.6 * sun)
             }
             let slots = stride(from: 0, to: 1440, by: 30).map {
                 LoadTimingForecastEstimator.PlanningSlot(localMinute: $0, homeKw: 0.7, batteryNetChargeKw: 0)
             }
-            return .forecast(intervals: intervals, context: .init(timeZone: Self.timeZone, slots: slots, asOf: Self.now))
+            return .forecast(intervals: intervals,
+                             context: .init(timeZone: Self.timeZone, slots: slots, asOf: Self.now))
         }
 
         var screen: SmartShiftScreen {
             let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0,
                                   carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 60,
                                                                targetStateOfCharge: 80, chargingLevel: .level2))
-            let result = LoadTimingForecastEstimator.evaluate(
-                profile: car, now: Self.now, timing: timing, projection: projection, balanceSourceTime: Self.now,
-                billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD")
+            let plan = LoadTimingForecastEstimator.plan(.init(
+                now: Self.now, timing: timing, projection: projection, balanceSourceTime: Self.now,
+                billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD"))
+            let result = LoadTimingForecastEstimator.evaluate(profile: car, plan: plan)
             return SmartShiftPresentation.make(
                 profile: car, result: result, forecast: self == .laterWithForecast ? .ready : .none,
-                refreshUnavailable: false, timing: timing, now: Self.now,
-                billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD", timeZone: Self.timeZone)
+                refreshUnavailable: false,
+                inputs: .init(timing: timing, now: Self.now,
+                              billingCycleEnd: Self.now.addingTimeInterval(20 * 86_400), currencyCode: "USD",
+                              timeZone: Self.timeZone))
         }
     }
 
@@ -379,11 +382,9 @@
     #Preview("Smart Shift · Later start with forecast") {
         SmartShiftVerdictPreview(fixture: .laterWithForecast)
     }
-
     #Preview("Smart Shift · Later start without forecast") {
         SmartShiftVerdictPreview(fixture: .laterWithoutForecast)
     }
-
     #Preview("Smart Shift · Now is cheapest") {
         SmartShiftVerdictPreview(fixture: .nowIsCheapest)
     }

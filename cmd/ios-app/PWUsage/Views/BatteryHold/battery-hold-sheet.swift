@@ -17,7 +17,9 @@ struct BatteryHoldSheet: View {
                     }
                     if let response = coordinator.batteryHold.response {
                         if let notice = response.notice {
-                            BatteryHoldNoticeSection(notice: notice, canDismiss: canControl(at: context.date), onDismiss: dismissNotice)
+                            BatteryHoldNoticeSection(
+                                notice: notice, canDismiss: canControl(at: context.date),
+                                onDismiss: dismissNotice)
                         }
                         if !coordinator.batteryHold.statusIsCurrent(at: context.date) {
                             Section {
@@ -54,13 +56,19 @@ struct BatteryHoldSheet: View {
                                                description: Text("Refresh to load the current Battery Saver status."))
                     }
                     if coordinator.batteryHold.isBusy {
-                        Section { ProgressView(coordinator.batteryHold.isSubmitting ? "Updating Battery Saver…" : "Loading Battery Saver…") }
+                        Section {
+                            ProgressView(
+                                coordinator.batteryHold.isSubmitting
+                                    ? "Updating Battery Saver…" : "Loading Battery Saver…")
+                        }
                     }
                     if let failure = coordinator.batteryHold.failure {
                         Section {
                             Text(failure.message).foregroundStyle(.secondary)
                             if failure == .needsReauthentication {
-                                Button("Reconnect Tesla Account", systemImage: "person.crop.circle.badge.checkmark", action: reconnect)
+                                Button(
+                                    "Reconnect Tesla Account",
+                                    systemImage: "person.crop.circle.badge.checkmark", action: reconnect)
                                     .disabled(reconnectTesla == nil || coordinator.batteryHold.isBusy)
                             }
                         }
@@ -88,7 +96,8 @@ struct BatteryHoldSheet: View {
     }
 
     private func needsRetry(at now: Date) -> Bool {
-        guard !coordinator.batteryHold.isBusy, coordinator.batteryHold.failure != .needsReauthentication else { return false }
+        guard !coordinator.batteryHold.isBusy,
+              coordinator.batteryHold.failure != .needsReauthentication else { return false }
         return !coordinator.batteryHold.statusIsCurrent(at: now)
             || (coordinator.batteryHold.response?.hold == nil && coordinator.batteryHoldStateOfCharge(at: now) == nil)
     }
@@ -98,7 +107,8 @@ struct BatteryHoldSheet: View {
     }
 
     private var timeZone: String {
-        coordinator.live.response?.site.timezone ?? coordinator.bill.response?.site.timezone ?? TimeZone.current.identifier
+        coordinator.live.response?.site.timezone ?? coordinator.bill.response?.site.timezone
+            ?? TimeZone.current.identifier
     }
 
     private func canControl(at now: Date) -> Bool {

@@ -44,9 +44,15 @@ struct ProfileEditorSheet: View {
 
                 if draft.kind == .car, let settings = draft.carSettings {
                     Section("Car") {
-                        decimalStepper("Battery capacity", value: carValue(\.capacityKwh), range: 1 ... LoadProfile.maximumCarCapacityKwh, step: 1, unit: "kWh")
-                        decimalStepper("Current charge", value: carValue(\.initialStateOfCharge), range: 0 ... 100, step: 1, unit: "%")
-                        decimalStepper("Target charge", value: carValue(\.targetStateOfCharge), range: settings.initialStateOfCharge ... 100, step: 1, unit: "%")
+                        decimalStepper(
+                            "Battery capacity", value: carValue(\.capacityKwh),
+                            range: 1 ... LoadProfile.maximumCarCapacityKwh, step: 1, unit: "kWh")
+                        decimalStepper(
+                            "Current charge", value: carValue(\.initialStateOfCharge), range: 0 ... 100,
+                            step: 1, unit: "%")
+                        decimalStepper(
+                            "Target charge", value: carValue(\.targetStateOfCharge),
+                            range: settings.initialStateOfCharge ... 100, step: 1, unit: "%")
                         Picker("Charging level", selection: carLevelBinding) {
                             Text("Level 1").tag(CarChargingLevel.level1)
                             Text("Level 2").tag(CarChargingLevel.level2)
@@ -58,7 +64,9 @@ struct ProfileEditorSheet: View {
                 if draft.kind != .car {
                     Section("Job Estimate") {
                         decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: 0.5, unit: "kWh")
-                        decimalStepper("Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5, unit: "hours")
+                        decimalStepper(
+                            "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5,
+                            unit: "hours")
                     }
                 } else {
                     Section {
@@ -88,16 +96,19 @@ struct ProfileEditorSheet: View {
                 settings.targetStateOfCharge = max(settings.targetStateOfCharge, current)
                 draft.carSettings = settings
             }
-            .confirmationDialog("Discard changes to this job?", isPresented: $isConfirmingDiscard, titleVisibility: .visible) {
-                Button("Discard Changes", role: .destructive, action: onCancel)
-                Button("Keep Editing", role: .cancel) {}
+            .confirmationDialog(
+                "Discard changes to this job?", isPresented: $isConfirmingDiscard, titleVisibility: .visible) {
+                    Button("Discard Changes", role: .destructive, action: onCancel)
+                    Button("Keep Editing", role: .cancel) {}
             }
         }
         .interactiveDismissDisabled(hasUnsavedChanges)
         .background(SheetDismissAttemptObserver(onAttempt: requestDismiss))
     }
 
-    func decimalStepper(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, unit: String) -> some View {
+    func decimalStepper(
+        _ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double,
+        unit: String) -> some View {
         Stepper(value: value, in: range, step: step) {
             ViewThatFits(in: .horizontal) {
                 HStack {
@@ -144,15 +155,19 @@ struct ProfileEditorSheet: View {
 
     var carEstimateSummary: String {
         guard let settings = draft.carSettings else { return "Enter car settings to calculate the estimate." }
-        guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else { return "Check the car settings to calculate the estimate." }
+        guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else {
+            return "Check the car settings to calculate the estimate."
+        }
         guard estimate.batteryKwh > 0 else { return "No energy will be added at this charge target." }
-        return "About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh to add, with charging losses excluded from that amount. Estimated charging time is \(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours at Level \(settings.chargingLevel == .level1 ? "1" : "2")."
+        return "About \(estimate.batteryKwh.formatted(.number.precision(.fractionLength(0 ... 1)))) kWh to add, "
+            + "with charging losses excluded from that amount. Estimated charging time is "
+            + "\(estimate.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))) hours at Level "
+            + "\(settings.chargingLevel == .level1 ? "1" : "2")."
     }
 }
 
 #Preview("Load profiles · built-ins and custom") {
-    let defaults = UserDefaults(suiteName: "LoadProfilesSheetPreview")!
-    defaults.removePersistentDomain(forName: "LoadProfilesSheetPreview")
+    let defaults = PreviewDefaults.suite("LoadProfilesSheetPreview")
     let store = LoadProfileStore(userDefaults: defaults)
     _ = try? store.createCustomProfile(name: "Workshop heater", energyKwh: 6, durationHours: 2)
     _ = try? store.createCustomProfile(name: "Garden pump", energyKwh: 1.5, durationHours: 0.5)
@@ -160,8 +175,7 @@ struct ProfileEditorSheet: View {
 }
 
 #Preview("Load profiles · accessibility size") {
-    let defaults = UserDefaults(suiteName: "LoadProfilesSheetAccessibilityPreview")!
-    defaults.removePersistentDomain(forName: "LoadProfilesSheetAccessibilityPreview")
+    let defaults = PreviewDefaults.suite("LoadProfilesSheetAccessibilityPreview")
     let store = LoadProfileStore(userDefaults: defaults)
     _ = try? store.createCustomProfile(name: "Workshop heater", energyKwh: 6, durationHours: 2)
     _ = try? store.createCustomProfile(name: "Garden pump", energyKwh: 1.5, durationHours: 0.5)

@@ -121,19 +121,23 @@ struct PreviewFixtureTests {
         let estimatorContext = try #require(context.estimatorContext)
         let store = PreviewForecastStore(mode: .combinedArrays, now: now)
         let batch = await store.rawBatch()
-        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3, durationHours: 1, carSettings: nil)
+        let washer = LoadProfile(id: "washer", name: "Washer", kind: .appliance, energyKwh: 3,
+                                 durationHours: 1, carSettings: nil)
 
-        let result = LoadTimingForecastEstimator.evaluate(
-            profile: washer,
+        let balanceSourceTime = try #require(response.sources.energyDataThrough)
+        let plan = LoadTimingForecastEstimator.plan(.init(
             now: now,
             timing: timing,
-            forecast: batch.intervals,
-            context: estimatorContext,
-            balanceSourceTime: try #require(response.sources.energyDataThrough),
+            projection: .forecast(intervals: batch.intervals, context: estimatorContext),
+            balanceSourceTime: balanceSourceTime,
             billingCycleEnd: response.currentBill.cycleEnd,
             currencyCode: response.currentBill.currency
+        ))
+        let result = LoadTimingForecastEstimator.evaluate(profile: washer, plan: plan)
+        let comparison = try #require(
+            result.comparison,
+            "The preview must produce real numbers, not a fallback: \(String(describing: result.unavailableReason))"
         )
-        let comparison = try #require(result.comparison, "The preview must produce real numbers, not a fallback: \(String(describing: result.unavailableReason))")
 
         #expect(comparison.recommendedEnd > comparison.recommendedStart)
         #expect(comparison.horizonEnd > comparison.horizonStart)
@@ -141,8 +145,9 @@ struct PreviewFixtureTests {
         #expect(comparison.estimatedSolarContribution >= 0)
 
         #expect(LoadTimingForecastPresentation.forecastAvailability(
-            state: .enhanced, connection: .ready, cause: nil, reason: nil,
-            forecastFetchedAt: batch.fetchedAt, now: now
+            .init(state: .enhanced, connection: .ready, cause: nil, reason: nil,
+                  forecastFetchedAt: batch.fetchedAt, now: now),
+            usesAutomaticForecast: false, automaticStatus: nil
         ) == .ready)
     }
     @Test("Smart Shift preview fixtures render the states they are named for")

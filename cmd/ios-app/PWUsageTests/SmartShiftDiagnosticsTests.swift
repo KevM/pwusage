@@ -7,7 +7,8 @@ struct SmartShiftDiagnosticsTests {
     typealias Fixtures = SmartShiftPresentationTests
 
     static let intervals = (0 ..< 96).map { index in
-        SolarForecastInterval(periodStart: Fixtures.at(Double(index) / 2), periodEnd: Fixtures.at(Double(index + 1) / 2),
+        SolarForecastInterval(periodStart: Fixtures.at(Double(index) / 2),
+                              periodEnd: Fixtures.at(Double(index + 1) / 2),
                               powerKw: 1, cautiousPowerKw: index.isMultiple(of: 2) ? 0.4 : nil)
     }
 
@@ -26,15 +27,21 @@ struct SmartShiftDiagnosticsTests {
     static func diagnostics(forecast: ForecastAvailability = .ready, intervals: [SolarForecastInterval]? = intervals,
                             context: Estimator.PlanningContext?,
                             balanceSourceTime: Date? = nil) -> (SmartShiftDiagnostics, SmartShiftEvaluation) {
-        let (timing, _, now, car) = Fixtures.harrisonSunday()
+        let harrison = Fixtures.harrisonSunday()
+        let timing = harrison.timing
+        let now = harrison.now
+        let car = harrison.car
         let source = balanceSourceTime ?? now
         let evaluation = SmartShiftPresentation.evaluate(
-            profile: car, now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
-            balanceSourceTime: source, billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: car,
+            inputs: .init(now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
+                          balanceSourceTime: source, billingCycleEnd: Fixtures.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         let diagnostics = SmartShiftDiagnostics(
             siteId: "site-42", app: .init(version: "1.2", build: "34"), job: car, now: now, balanceSourceTime: source,
             billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC", timing: timing,
-            evaluation: evaluation, intervals: intervals, context: context, forecastFetchedAt: now.addingTimeInterval(-600))
+            evaluation: evaluation, intervals: intervals, context: context,
+            forecastFetchedAt: now.addingTimeInterval(-600))
         var withForecast = diagnostics
         withForecast.solarForecast = exhaustedForecast(now: now)
         return (withForecast, evaluation)
@@ -70,7 +77,8 @@ struct SmartShiftDiagnosticsTests {
         #expect(record.savings == comparison.savings)
         #expect(record.projectionEnd == comparison.projectionEnd)
         #expect(record.safetyEnd == comparison.safetyEnd)
-        #expect(record.lanes.map(\.projectedAfterRecommendedKwh) == comparison.lanes.map(\.projectedAfterRecommendedKwh))
+        #expect(record.lanes.map(\.projectedAfterRecommendedKwh)
+            == comparison.lanes.map(\.projectedAfterRecommendedKwh))
     }
 
     @Test func roundTripsTheSolarForecastState() throws {
@@ -113,9 +121,10 @@ struct SmartShiftDiagnosticsTests {
 
     @Test func recordsTheHistoryFallbackAndWhyTheForecastWasSkipped() throws {
         // A forecast that doesn't reach the present rules itself out; grid history still prices the run.
-        let (_, _, now, _) = Fixtures.harrisonSunday()
-        let (diagnostics, evaluation) = Self.diagnostics(intervals: Self.intervals.filter { $0.periodStart > now.addingTimeInterval(3600) },
-                                                         context: Fixtures.historyContext(asOf: now))
+        let now = Fixtures.harrisonSunday().now
+        let (diagnostics, evaluation) = Self.diagnostics(
+            intervals: Self.intervals.filter { $0.periodStart > now.addingTimeInterval(3600) },
+            context: Fixtures.historyContext(asOf: now))
         let decoded = try Self.roundTrip(diagnostics)
         #expect(decoded.projection == .history)
         #expect(decoded.forecastAvailability.state == "unusable")
@@ -125,13 +134,18 @@ struct SmartShiftDiagnosticsTests {
     }
 
     @Test func recordsAnUnavailableFlatPass() throws {
-        var (timing, _, now, car) = Fixtures.harrisonSunday()
+        let harrison = Fixtures.harrisonSunday()
+        var timing = harrison.timing
+        let now = harrison.now
+        let car = harrison.car
         timing = LoadTiming(hasTariff: false, hasCycleData: true, activeIsCheapest: false, periods: timing.periods,
-                            pricingPeriods: timing.pricingPeriods, tariffTimeline: timing.tariffTimeline, nextCheaper: nil,
-                            nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
+                            pricingPeriods: timing.pricingPeriods, tariffTimeline: timing.tariffTimeline,
+                            nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
         let evaluation = SmartShiftPresentation.evaluate(
-            profile: car, now: now, timing: timing, forecast: .none, intervals: nil, context: nil,
-            balanceSourceTime: now, billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC")
+            profile: car,
+            inputs: .init(now: now, timing: timing, forecast: .none, intervals: nil, context: nil,
+                          balanceSourceTime: now, billingCycleEnd: Fixtures.at(48),
+                          currencyCode: "USD", timeZone: "UTC"))
         let diagnostics = SmartShiftDiagnostics(
             siteId: "site-42", app: nil, job: car, now: now, balanceSourceTime: now, billingCycleEnd: Fixtures.at(48),
             currencyCode: "USD", timeZone: "UTC", timing: timing, evaluation: evaluation, intervals: nil, context: nil,
@@ -146,7 +160,8 @@ struct SmartShiftDiagnosticsTests {
 
     @Test func writesUTCDatesAndTheSiteTimeZone() throws {
         let (diagnostics, _) = Self.diagnostics(context: Fixtures.historyContext(asOf: Fixtures.at(13)))
-        let object = try #require(try JSONSerialization.jsonObject(with: Data(diagnostics.json().utf8)) as? [String: Any])
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(diagnostics.json().utf8)) as? [String: Any])
         let now = try #require(object["now"] as? String)
         #expect(now.hasSuffix("Z"))
         #expect(ISO8601DateFormatter().date(from: now.replacingOccurrences(of: ".000", with: "")) == Fixtures.at(13.2))
@@ -172,7 +187,10 @@ struct SmartShiftDiagnosticsTests {
         let json = try diagnostics.json()
         #expect(!json.contains("secret"), "The forecast batch's credential and resource IDs must not be copied.")
         #expect(keys.contains("siteid"))
-        let forbidden = ["apikey", "api_key", "token", "secret", "cookie", "password", "resource", "authorization", "credential"]
+        let forbidden = [
+            "apikey", "api_key", "token", "secret", "cookie",
+            "password", "resource", "authorization", "credential"
+        ]
         let leaks = keys.filter { key in forbidden.contains { key.contains($0) } }
         #expect(leaks.isEmpty, "Credential-like keys in diagnostics: \(leaks.sorted())")
     }

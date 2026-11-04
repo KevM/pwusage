@@ -91,10 +91,9 @@ struct HomeLiveTitle: View {
     private func previewScoreboard(solar: Double, home: Double, grid: Double, battery: Double,
                                    charge: Double?) -> DashboardPresentation.LiveScoreboard? {
         DashboardPresentation.liveScoreboard(
-            flow: DashboardPresentation.powerFlow(
+            flow: DashboardPresentation.powerFlow(.init(
                 solarPower: solar, loadPower: home, batteryPower: battery, gridPower: grid,
-                sourceTime: .now, isUnavailable: false
-            ),
+                sourceTime: .now, isUnavailable: false)),
             stateOfCharge: charge
         )
     }
