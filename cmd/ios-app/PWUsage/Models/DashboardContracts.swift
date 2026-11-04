@@ -99,10 +99,6 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
         isUnavailable = false
         cadence.reset()
     }
-
-    mutating func resetCadence() {
-        cadence.reset()
-    }
 }
 
 /// The sheet the dashboard itself owns. There is only one, but it stays a

@@ -298,9 +298,9 @@ final class DashboardCoordinator: ObservableObject {
         sessionVerified = true
         requiresSignIn = false
         cache?.selectWidgetSite(selectedSiteID)
-        live.resetCadence()
-        power.resetCadence()
-        bill.resetCadence()
+        live.cadence.reset()
+        power.cadence.reset()
+        bill.cadence.reset()
         guard sceneIsActive else { return }
         isForeground = true
         refreshSettled = false
