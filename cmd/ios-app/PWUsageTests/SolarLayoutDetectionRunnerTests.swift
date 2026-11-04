@@ -57,7 +57,7 @@ struct SolarLayoutDetectionRunnerTests {
         let api = HistoryAPI(responses: [page, page])
         let expected = result(.notEnoughHistory)
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
-                                                detect: { _, _, _, _, _ in expected }, now: { self.attempt })
+                                                detect: { _, _, _, _, _ in expected }, now: { attempt })
         var changed: SolarForecastSiteScope?
         runner.onRecordChanged = { changed = $0 }
         let saved = try #require(await runner.runIfDue(scope: scope))
@@ -74,7 +74,7 @@ struct SolarLayoutDetectionRunnerTests {
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
                                                 detect: { _, _, _, _, _ in
                                                     Issue.record("Detector ran while history was disabled")
-                                                    return self.result(.failed)
+                                                    return result(.failed)
                                                 })
         #expect(await runner.runIfDue(scope: scope) == nil)
         #expect(try await records.record(scope: scope)?.result == nil)
@@ -89,8 +89,8 @@ struct SolarLayoutDetectionRunnerTests {
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
                                                 detect: { _, _, _, _, _ in
                                                     gate.onDetect()
-                                                    return self.result(.detected)
-                                                }, now: { self.attempt })
+                                                    return result(.detected)
+                                                }, now: { attempt })
         var notified = false
         runner.onRecordChanged = { _ in notified = true }
         let runTask = Task { await runner.runIfDue(scope: scope) }
@@ -117,7 +117,7 @@ struct SolarLayoutDetectionRunnerTests {
                                                 detect: { _, _, _, _, _ in
                                                     gate.onDetect()
                                                     throw TestDetectionError()
-                                                }, now: { self.attempt })
+                                                }, now: { attempt })
         var notified = false
         runner.onRecordChanged = { _ in notified = true }
         let runTask = Task { await runner.runIfDue(scope: scope) }
@@ -150,8 +150,8 @@ struct SolarLayoutDetectionRunnerTests {
                                                         observedCancellation.withLock { $0 = true }
                                                         throw CancellationError()
                                                     }
-                                                    return self.result(.detected)
-                                                }, now: { self.attempt })
+                                                    return result(.detected)
+                                                }, now: { attempt })
         let runTask = Task { await runner.runIfDue(scope: scope) }
         await gate.waitUntilStarted()
         runner.cancel()
@@ -183,8 +183,8 @@ struct SolarLayoutDetectionRunnerTests {
         try await records.setLocation(location, scope: pair.scopeB, at: attempt)
         let switchingAPI = ScopeSwitchingHistoryAPI(page: historyPage(at: attempt))
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: switchingAPI,
-                                                detect: { _, _, _, _, _ in self.result(.detected) },
-                                                now: { self.attempt })
+                                                detect: { _, _, _, _, _ in result(.detected) },
+                                                now: { attempt })
         var published: [SolarForecastSiteScope] = []
         var savedScopes: [SolarForecastSiteScope] = []
         runner.onRecordChanged = { published.append($0) }
@@ -214,8 +214,8 @@ struct SolarLayoutDetectionRunnerTests {
             history: history, records: records, api: api,
             detect: { _, _, _, _, _ in
                 gate.onDetect()
-                return self.result(.detected)
-            }, now: { self.attempt }
+                return result(.detected)
+            }, now: { attempt }
         )
         var published: [SolarForecastSiteScope] = []
         var savedScopes: [SolarForecastSiteScope] = []
@@ -243,8 +243,8 @@ struct SolarLayoutDetectionRunnerTests {
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
                                                 detect: { _, _, _, _, _ in
                                                     gate.onDetect()
-                                                    return self.result(.detected)
-                                                }, now: { self.attempt })
+                                                    return result(.detected)
+                                                }, now: { attempt })
         let task1 = Task { await runner.runIfDue(scope: scope) }
         await gate.waitUntilStarted()
         let task2 = Task { await runner.runIfDue(scope: scope) }
@@ -260,7 +260,7 @@ struct SolarLayoutDetectionRunnerTests {
     func sameScopeConcurrentSyncHistoryJoins() async throws {
         let (records, history) = try await setupStores(scope: scope, location: location)
         let api = HistoryAPI(responses: [historyPage(at: attempt), historyPage(at: attempt)])
-        let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api, now: { self.attempt })
+        let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api, now: { attempt })
         async let sync1 = runner.syncHistory(scope: scope)
         async let sync2 = runner.syncHistory(scope: scope)
         let (res1, res2) = await (sync1, sync2)
@@ -276,7 +276,7 @@ struct SolarLayoutDetectionRunnerTests {
         let api = HistoryAPI(responses: [historyPage(at: attempt), historyPage(at: attempt)])
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
                                                 detect: { _, _, _, _, _ in throw TestDetectionError() },
-                                                now: { self.attempt })
+                                                now: { attempt })
         let saved = try #require(await runner.runIfDue(scope: scope))
         #expect(saved.result?.status == .failed)
         #expect(saved.attemptedAt == attempt)
@@ -291,12 +291,12 @@ struct SolarLayoutDetectionRunnerTests {
         let (records, history) = try await setupStores(scope: scope, location: location)
         let api = HistoryAPI(responses: [historyPage(at: attempt), historyPage(at: attempt)])
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
-                                                detect: { _, _, _, _, _ in self.result(.detected) },
-                                                now: { self.attempt })
+                                                detect: { _, _, _, _, _ in result(.detected) },
+                                                now: { attempt })
         let fakeTask = FakeBackgroundTask()
         var scheduledDue: Date?
         BackgroundSolarLayoutDetection.handleLaunch(
-            task: fakeTask, runner: runner, records: records, dueScope: { self.scope },
+            task: fakeTask, runner: runner, records: records, dueScope: { scope },
             reschedule: { scheduledDue = $0 }
         )
         try await eventually { fakeTask.completedCount == 1 }
@@ -315,12 +315,12 @@ struct SolarLayoutDetectionRunnerTests {
         let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api,
                                                 detect: { _, _, _, _, _ in
                                                     gate.onDetect()
-                                                    return self.result(.detected)
-                                                }, now: { self.attempt })
+                                                    return result(.detected)
+                                                }, now: { attempt })
         let fakeTask = FakeBackgroundTask()
         var scheduledDue: Date?
         BackgroundSolarLayoutDetection.handleLaunch(
-            task: fakeTask, runner: runner, records: records, dueScope: { self.scope },
+            task: fakeTask, runner: runner, records: records, dueScope: { scope },
             reschedule: { scheduledDue = $0 }
         )
         await gate.waitUntilStarted()
@@ -341,7 +341,7 @@ struct SolarLayoutDetectionRunnerTests {
     func backgroundLaunchWithNoScopeCompletes() async throws {
         let (records, history) = try await setupStores(scope: scope)
         let api = HistoryAPI(responses: [])
-        let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api, now: { self.attempt })
+        let runner = SolarLayoutDetectionRunner(history: history, records: records, api: api, now: { attempt })
         let fakeTask = FakeBackgroundTask()
         BackgroundSolarLayoutDetection.handleLaunch(
             task: fakeTask, runner: runner, records: records, dueScope: { nil }

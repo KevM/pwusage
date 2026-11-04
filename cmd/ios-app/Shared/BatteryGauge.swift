@@ -8,7 +8,7 @@ enum BatteryGaugeStyle {
     /// A dash vanishes at mini size, so the mini hold mark is a solid tick instead.
     var dashedHoldLine: Bool { self != .mini }
 
-    fileprivate var metrics: BatteryGaugeMetrics {
+    var metrics: BatteryGaugeMetrics {
         switch self {
         case .card:
             .init(insets: .init(top: 8, leading: 8, bottom: 8, trailing: 18), nubGap: 3, nubWidth: 5,
@@ -23,7 +23,7 @@ enum BatteryGaugeStyle {
     }
 }
 
-private struct BatteryGaugeMetrics {
+struct BatteryGaugeMetrics {
     /// From the frame to the outline.
     let insets: EdgeInsets
     let nubGap: CGFloat

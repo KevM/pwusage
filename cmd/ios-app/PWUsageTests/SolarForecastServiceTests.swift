@@ -137,6 +137,17 @@ struct SolarForecastServiceTests {
         #expect(await pending.value == nil)
         #expect((await file.value ?? []).isEmpty)
     }
+    @Test("Failed automatic refresh retains its outcome even with no usable publication")
+    func failedAttemptDiagnostics() async {
+        let setup = Self.setup(automaticStatus: 500)
+        var request = Fixture.request(now: Self.now)
+        request.automaticOnly = true
+        let attempt = await setup.service.publicationAttempt(for: request)
+        #expect(attempt.publication == nil)
+        #expect(attempt.providerID == .openMeteo)
+        #expect(attempt.outcome == .failed(.transient))
+        #expect(attempt.diagnostic != nil)
+    }
 }
 
 /// Holds `refresh` until the test opens it, then defers to the wrapped provider.
@@ -176,18 +187,4 @@ actor GatedForecastProvider: SolarForecastProviding {
 
     func activateAccountScope(_ accountScopeID: String?) async {}
     func clearAccountData() async throws {}
-}
-
-extension SolarForecastServiceTests {
-    @Test("Failed automatic refresh retains its outcome even with no usable publication")
-    func failedAttemptDiagnostics() async {
-        let setup = Self.setup(automaticStatus: 500)
-        var request = Fixture.request(now: Self.now)
-        request.automaticOnly = true
-        let attempt = await setup.service.publicationAttempt(for: request)
-        #expect(attempt.publication == nil)
-        #expect(attempt.providerID == .openMeteo)
-        #expect(attempt.outcome == .failed(.transient))
-        #expect(attempt.diagnostic != nil)
-    }
 }

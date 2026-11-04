@@ -196,174 +196,19 @@ struct SolarHistoryStoreTests {
         #expect(try await store.sync(scope: scope, api: HistoryAPI(responses: [.disabled]), now: now) == .disabled)
         #expect(try await store.samples(scope: scope).isEmpty)
     }
-}
 
-extension SolarHistoryStoreTests {
-    @Test("Hourly aggregation returns UTC hour sums and completeness")
-    func hourlyActualsMatchHourlySolarWh() async throws {
-        let now = date("2026-10-31T13:00:00Z")
-        let start = date("2026-10-31T12:00:00Z")
-        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "hourly")
-        let store = SolarHistoryStore(directory: temporaryFolder())
-        let hour = historyDay(day: "2026-10-31", start: start, fetchedAt: now,
-                              slots: Array(repeating: 1, count: 288))
-        _ = try await store.sync(
-            scope: scope,
-            api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("UTC"), days: [hour], nextFrom: nil))), now: now)
-        let values = try await store.hourlyActuals(scope: scope, now: now)
-        let actualHour = try #require(values.first { $0.hourStart == start })
-        #expect(actualHour.energyWh == 12)
-        #expect(actualHour.complete)
-        let boundaryHour = try #require(values.first { $0.hourStart == date("2026-10-31T13:00:00Z") })
-        #expect(boundaryHour.energyWh == 1)
-        #expect(!boundaryHour.complete)
-    }
-
-    @Test("Hourly aggregation marks missing and negative slots incomplete")
-    func hourlyActualsRejectMissingAndNegativeSlots() async throws {
-        let now = date("2026-10-31T12:00:00Z")
-        let start = date("2026-10-31T11:00:00Z")
-        let missingScope = SolarForecastSiteScope(accountScopeID: "a", siteID: "missing")
-        let negativeScope = SolarForecastSiteScope(accountScopeID: "a", siteID: "negative")
-        let missingStore = SolarHistoryStore(directory: temporaryFolder())
-        let negativeStore = SolarHistoryStore(directory: temporaryFolder())
-        var missingSlots = [Double?](repeating: 1, count: 288)
-        missingSlots[3] = nil
-        let missingDay = historyDayWithSlots(day: "2026-10-31", start: start, fetchedAt: now, slots: missingSlots)
-        var negativeSlots = [Double?](repeating: 1, count: 288)
-        negativeSlots[3] = -1
-        let negativeDay = historyDayWithSlots(day: "2026-10-31", start: start, fetchedAt: now, slots: negativeSlots)
-        _ = try await missingStore.sync(
-            scope: missingScope,
-            api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("UTC"), days: [missingDay], nextFrom: nil))), now: now)
-        _ = try await negativeStore.sync(
-            scope: negativeScope,
-            api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("UTC"), days: [negativeDay], nextFrom: nil))), now: now)
-        let missingHours = try await missingStore.hourlyActuals(scope: missingScope, now: now)
-        let negativeHours = try await negativeStore.hourlyActuals(scope: negativeScope, now: now)
-        let missingHour = try #require(missingHours.first { $0.hourStart == start })
-        let negativeHour = try #require(negativeHours.first { $0.hourStart == start })
-        #expect(missingHour.energyWh == 11)
-        #expect(!missingHour.complete)
-        #expect(negativeHour.energyWh == 11)
-        #expect(!negativeHour.complete)
-    }
-
-    @Test("All-zero samples form a complete zero-energy hour")
-    func zeroSlotsAreValid() async throws {
-        let now = date("2026-10-31T12:00:00Z")
-        let start = date("2026-10-31T11:00:00Z")
-        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "zero")
-        let store = SolarHistoryStore(directory: temporaryFolder())
-        let day = historyDay(day: "2026-10-31", start: start, fetchedAt: now,
-                             slots: Array(repeating: 0, count: 288))
-        _ = try await store.sync(
-            scope: scope,
-            api: HistoryAPI(responses: initialResponses(.enabled(timeZone: zone("UTC"), days: [day], nextFrom: nil))),
-            now: now)
-        let hours = try await store.hourlyActuals(scope: scope, now: now)
-        let hour = try #require(hours.first { $0.hourStart == start })
-        #expect(hour.energyWh == 0)
-        #expect(hour.complete)
-    }
-
-    @Test("Fall DST day keeps both repeated local hours as separate UTC hours")
-    func fallDSTRetainsRepeatedHours() async throws {
-        let now = date("2026-11-01T12:00:00Z")
-        let start = date("2026-11-01T07:00:00Z")
-        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "fall-dst")
-        let store = SolarHistoryStore(directory: temporaryFolder())
-        let day = historyDay(day: "2026-11-01", start: start, fetchedAt: now,
-                             slots: Array(repeating: 1, count: 300))
-        _ = try await store.sync(
-            scope: scope,
-            api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("America/Los_Angeles"), days: [day], nextFrom: nil),
-                timeZone: "America/Los_Angeles")), now: now)
-        let hours = try await store.hourlyActuals(scope: scope, now: now)
-        let firstOne = try #require(hours.first { $0.hourStart == date("2026-11-01T08:00:00Z") })
-        let secondOne = try #require(hours.first { $0.hourStart == date("2026-11-01T09:00:00Z") })
-        #expect(firstOne.energyWh == 12)
-        #expect(secondOne.energyWh == 12)
-        #expect(firstOne.complete && secondOne.complete)
-    }
-
-    @Test("Spring DST day retains real UTC five minute timestamps")
-    func dstDayUsesRealUTCTimestamps() async throws {
-        let now = date("2026-03-08T12:00:00Z")
-        let dayStart = date("2026-03-08T08:00:00Z")
-        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "dst")
-        let store = SolarHistoryStore(directory: temporaryFolder())
-        let day = historyDay(day: "2026-03-08", start: dayStart, fetchedAt: now,
-                             slots: Array(repeating: 1, count: 276))
-        _ = try await store.sync(
-            scope: scope,
-            api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("America/Los_Angeles"), days: [day], nextFrom: nil),
-                timeZone: "America/Los_Angeles")), now: now)
-        let samples = try await store.samples(scope: scope)
-        #expect(samples.count == 276)
-        #expect(samples[12].timestamp == date("2026-03-08T09:00:00Z"))
-    }
-
-    @Test("Sign out removes all persisted files")
-    func signOutRemovesFiles() async throws {
-        let now = date("2026-10-31T12:00:00Z")
-        let folder = temporaryFolder()
-        let store = SolarHistoryStore(directory: folder)
-        let day = historyDay(day: "2026-10-31", start: date("2026-10-31T00:00:00Z"),
-                             fetchedAt: now, slots: Array(repeating: 1, count: 288))
-        _ = try await store.sync(
-            scope: SolarForecastSiteScope(accountScopeID: "a", siteID: "signout"),
-            api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("UTC"), days: [day], nextFrom: nil))), now: now)
-        try await store.removeAll()
-        #expect(!FileManager.default.fileExists(atPath: folder.path))
-    }
-
-    @Test("Sign out prevents an in-flight sync from restoring removed history")
-    @MainActor
-    func signOutInvalidatesInFlightSync() async throws {
-        let now = date("2026-10-31T12:00:00Z")
-        let folder = temporaryFolder()
-        let store = SolarHistoryStore(directory: folder)
-        let api = SuspendedHistoryAPI()
-        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "in-flight")
-        let layoutFolder = temporaryFolder()
-        let layoutStore = SolarLayoutRecordStore(directory: layoutFolder)
-        try await layoutStore.setLocation(
-            SolarHomeLocation(latitude: 43, longitude: -87, source: .device), scope: scope)
-        let day = historyDay(day: "2026-10-31", start: date("2026-10-31T00:00:00Z"),
-                             fetchedAt: now, slots: Array(repeating: 1, count: 288))
-        _ = try await store.sync(scope: scope, api: HistoryAPI(responses: initialResponses(
-            .enabled(timeZone: zone("UTC"), days: [day], nextFrom: nil))), now: now)
-        #expect(FileManager.default.fileExists(atPath: folder.path))
-        let sync = Task { try await store.sync(scope: scope, api: api, now: now) }
-        await api.waitUntilRequested()
-        let cleanup = SolarSessionCleanup(historyStore: store, layoutRecordStore: layoutStore)
-        let configuration = try AppConfiguration(apiOriginString: "https://pwusage.test", allowUnlistedHost: true)
-        let auth = MobileAuthService(configuration: configuration, forecastCleanup: cleanup)
-        try await auth.invalidateAuthenticatedSession()
-        await api.resume(with: .enabled(timeZone: zone("UTC"), days: [], nextFrom: nil))
-        await #expect(throws: CancellationError.self) { try await sync.value }
-        #expect(!FileManager.default.fileExists(atPath: folder.path))
-        #expect(!FileManager.default.fileExists(atPath: layoutFolder.path))
-    }
-    private func response(day fetchedAt: Date, nextFrom: String?) -> MobileSolarHistoryResponse {
+    func response(day fetchedAt: Date, nextFrom: String?) -> MobileSolarHistoryResponse {
         let start = ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z") ?? .distantPast
         let data = MobileSolarHistoryDay(
             day: "2026-01-01", dayStart: start, status: .complete, fetchedAt: fetchedAt,
             solarWh: Array(repeating: 1, count: 288).map(Optional.some))
         return .enabled(timeZone: zone("UTC"), days: [data], nextFrom: nextFrom)
     }
-    private func historyDay(day: String, start: Date, fetchedAt: Date, slots: [Double]) -> MobileSolarHistoryDay {
+    func historyDay(day: String, start: Date, fetchedAt: Date, slots: [Double]) -> MobileSolarHistoryDay {
         MobileSolarHistoryDay(day: day, dayStart: start, status: .complete, fetchedAt: fetchedAt,
                               solarWh: slots.map(Optional.some))
     }
-    private func historyDayWithSlots(
+    func historyDayWithSlots(
         day: String,
         start: Date,
         fetchedAt: Date,
@@ -371,19 +216,19 @@ extension SolarHistoryStoreTests {
     ) -> MobileSolarHistoryDay {
         MobileSolarHistoryDay(day: day, dayStart: start, status: .complete, fetchedAt: fetchedAt, solarWh: slots)
     }
-    private func date(_ value: String) -> Date {
+    func date(_ value: String) -> Date {
         ISO8601DateFormatter().date(from: value) ?? .distantPast
     }
-    private func initialResponses(
+    func initialResponses(
         _ response: MobileSolarHistoryResponse,
         timeZone: String = "UTC"
     ) -> [MobileSolarHistoryResponse] {
         [.enabled(timeZone: zone(timeZone), days: [], nextFrom: nil), response]
     }
-    private func temporaryFolder() -> URL {
+    func temporaryFolder() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
-    private func zone(_ identifier: String) -> TimeZone {
+    func zone(_ identifier: String) -> TimeZone {
         TimeZone(identifier: identifier) ?? .gmt
     }
 }

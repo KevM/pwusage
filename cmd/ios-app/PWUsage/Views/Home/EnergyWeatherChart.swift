@@ -130,7 +130,7 @@ private struct LaneChart: View {
         let font = UIFont.preferredFont(forTextStyle: .caption2)
         func width(_ text: String?) -> CGFloat {
             guard let text else { return .infinity }
-            return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+            return ceil(text.size(withAttributes: [.font: font]).width)
         }
         let markers = lane.switches
         let forms = SwitchLabelLayout.place(

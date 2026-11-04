@@ -152,9 +152,6 @@ struct SolarForecastPublicationAttempt: Sendable {
     var providerID: SolarForecastProviderID?
     var outcome: SolarForecastRefreshOutcome
     var diagnostic: String?
-}
-
-extension SolarForecastPublicationAttempt {
     var unavailableCause: SolarForecastUnavailableCause? {
         switch outcome {
         case .failed(.access): .unauthorized

@@ -107,15 +107,11 @@ Common fixes, in the order agents hit them:
 Fix by hand or use `./cmd/ios-app/lint.sh --fix`, which only runs SwiftFormat.
 
 The opt-in rules in `.swiftlint.yml` enforce the collection and state idioms above (`toggle_bool`,
-`first_where`, `contains_over_filter_count`, `untyped_error_in_catch`, and friends). They were
-chosen because they have zero violations today; keep them that way. The default rules, including
-`blanket_disable_command`, stay on as well.
-
-Rules deliberately not enabled yet, because they still have existing violations:
-`prefer_key_path`, `redundant_self`, `optional_enum_case_matching`, `legacy_objc_type`,
-`no_grouping_extension`, `no_extension_access_modifier`, `strict_fileprivate`, `modifier_order` and
-`convenience_type`. Fix those violations as a separate tranche, then add the rule — do not add a
-baseline to hide them.
+`first_where`, `contains_over_filter_count`, `untyped_error_in_catch`, and friends). Every opt-in
+rule passes with zero violations today; keep it that way. Add a rule only when it is clean, and fix
+the code rather than removing the rule or adding a baseline. `swiftlint --fix` remains unsafe
+repo-wide, but the narrow form (`swiftlint lint --fix --only-rule <rule>`) is how the mechanical
+tranche fixes were applied.
 
 ## Formatting and linting
 

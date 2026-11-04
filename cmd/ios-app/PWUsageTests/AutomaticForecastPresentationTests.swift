@@ -101,9 +101,6 @@ struct AutomaticForecastPresentationTests {
         #expect(source.id == .openMeteo)
         #expect(source.attribution == "Forecast by Open-Meteo.")
     }
-}
-
-extension AutomaticForecastPresentationTests {
     @Test("A newer operation clears the pending state owned by a superseded load")
     func supersededLoadDoesNotLeavePending() async throws {
         let harness = await AutomaticForecastHarness()

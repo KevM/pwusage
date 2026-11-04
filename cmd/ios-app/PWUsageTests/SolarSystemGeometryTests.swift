@@ -80,7 +80,8 @@ struct SolarSystemGeometryTests {
         }
         // The newest end carries its year, ending at the newest column.
         let recent = SolarSystemStripLayout(days: Self.days(from: "2026-09-20", count: 40), width: 400)
-        let newest = try #require(recent.labels.first { $0.trailing })
+        let trailingLabel = recent.labels.first(where: \.trailing)
+        let newest = try #require(trailingLabel)
         #expect(newest.text == "2026")
         #expect(newest.column == recent.columns - 1)
     }

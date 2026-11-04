@@ -141,9 +141,6 @@ struct OpenMeteoClientTests {
                                   location: SolarProviderFixture.location, window: window)
         }
     }
-}
-
-extension OpenMeteoClientTests {
     @Test("Elapsed local-day hours remain available for an earlier balance projection start")
     func retainsLocalDayForProjection() async throws {
         let start = SolarProviderFixture.date("2026-10-28 00:00:00")
@@ -175,9 +172,6 @@ extension OpenMeteoClientTests {
         #expect(intervals.first?.periodStart == start)
         #expect(intervals.last?.periodEnd == start.addingTimeInterval(48 * 3600))
     }
-}
-
-extension OpenMeteoClientTests {
     @Test("A projection just after local midnight can start in the previous day's final hour")
     func midnightProjectionKeepsPreviousHour() async throws {
         let midnight = SolarProviderFixture.date("2026-10-28 00:00:00")

@@ -179,7 +179,7 @@ enum DashboardPresentation {
         formatter.numberStyle = .currency
         formatter.currencyCode = code
         formatter.locale = locale
-        return formatter.string(from: NSNumber(value: amount)) ?? "\(amount) \(code)"
+        return formatter.string(for: amount) ?? "\(amount) \(code)"
     }
 
     static func loadRate(_ amountPerKwh: Double?, code: String, locale: Locale = .current) -> String {
@@ -249,7 +249,7 @@ enum DashboardPresentation {
                      isUnobserved
                          ? "No bank yet"
                          : liveLoadBalanceAccessibilityLabel(timing.balanceKwh, locale: locale)]
-            .compactMap { $0 }
+            .compactMap(\.self)
             .joined(separator: ", ")
         let isBanked = !isUnobserved && (timing.balanceKwh ?? 0) > 0
         return LoadTimingSummary(title: title, rate: rate, balance: balance,
@@ -273,7 +273,7 @@ enum DashboardPresentation {
         formatter.maximumFractionDigits = 2
         formatter.locale = locale
         let fallback = String(format: "%.1f", locale: locale, cents)
-        return "\(formatter.string(from: NSNumber(value: cents)) ?? fallback)¢/kWh"
+        return "\(formatter.string(for: cents) ?? fallback)¢/kWh"
     }
 
     private static func loadEnergyNumber(_ kWh: Double, locale: Locale = .current) -> String {
@@ -283,7 +283,7 @@ enum DashboardPresentation {
         formatter.maximumFractionDigits = 1
         formatter.roundingMode = .halfUp
         formatter.locale = locale
-        return formatter.string(from: NSNumber(value: kWh)) ?? String(format: "%.1f", locale: locale, kWh)
+        return formatter.string(for: kWh) ?? String(format: "%.1f", locale: locale, kWh)
     }
 
     /// Home stays quiet for ordinary 15–30 minute summary lag. No shared timestamp

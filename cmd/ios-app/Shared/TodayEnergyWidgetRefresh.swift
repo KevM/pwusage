@@ -21,7 +21,7 @@ struct TodayEnergyWidgetRefresh: Sendable {
         await TodayEnergyWidgetRefreshCoordinator.shared.current()
     }
 
-    fileprivate static func fetchCurrent() async -> TodayEnergySnapshot? {
+    static func fetchCurrent() async -> TodayEnergySnapshot? {
         guard let store = TodayEnergySnapshotStore.shared(),
               let configuration = try? AppConfiguration.fromBundle() else { return nil }
         let session = makeSession()
@@ -44,7 +44,7 @@ struct TodayEnergyWidgetRefresh: Sendable {
         let now = date ?? Date()
         guard let selection = store.load() else { return nil }
         let matchingCache = cachedRefresh(for: selection)
-        let fallback = matchingCache.map { $0.snapshot } ?? selection
+        let fallback = matchingCache.map(\.snapshot) ?? selection
         // Several widget kinds can request the same site around the same time.
         if let cached = matchingCache?.snapshot, let fresh = currentSnapshot(cached, at: now) { return fresh }
         if matchingCache == nil, let fresh = currentSnapshot(selection, at: now) { return fresh }

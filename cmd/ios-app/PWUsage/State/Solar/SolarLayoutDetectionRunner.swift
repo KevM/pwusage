@@ -88,7 +88,7 @@ final class SolarLayoutDetectionRunner {
 
         let task = Task { @MainActor [weak self] () -> SolarLayoutRecord? in
             guard let self else { return nil }
-            return await self.performRunIfDue(scope: scope, run: run, force: force)
+            return await performRunIfDue(scope: scope, run: run, force: force)
         }
         inFlightRun = (scope: scope, task: task)
 

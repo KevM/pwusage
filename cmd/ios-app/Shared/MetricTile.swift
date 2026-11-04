@@ -48,7 +48,7 @@ struct MetricTile: View {
             in: RoundedRectangle(cornerRadius: compact ? 10 : 16, style: .continuous)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([title, value, detail, spokenRole].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([title, value, detail, spokenRole].compactMap(\.self).joined(separator: ", "))
     }
 
     @ViewBuilder
