@@ -14,7 +14,9 @@ final class PWUsageAppModel: ObservableObject {
     @Published var screenState: ScreenState = .bootstrapping
     @Published var sites: [MobileSite] = []
     @Published var selectedSiteID: String?
-    @Published var coordinator: DashboardCoordinator?
+    @Published var coordinator: DashboardCoordinator? {
+        didSet { coordinator?.livePowerVisibilityChanged(selectedTab == .home) }
+    }
     @Published var isSigningIn = false
     @Published var isSigningOut = false
     @Published var signInMessage: String?
@@ -22,7 +24,9 @@ final class PWUsageAppModel: ObservableObject {
     @Published var accountScopeID: String?
     /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
     /// launch moves it for one visit, like the saved site.
-    @Published var selectedTab: AppTab
+    @Published var selectedTab: AppTab {
+        didSet { coordinator?.livePowerVisibilityChanged(selectedTab == .home) }
+    }
     /// The Settings tab's stack, so the history accessory can open Site History.
     @Published var settingsPath: [SettingsDestination] = []
 
