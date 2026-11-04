@@ -205,7 +205,8 @@ struct DashboardPresentationTests {
             == "Owed 4.0 kWh")
         #expect(DashboardPresentation.liveLoadBalance(0, locale: Locale(identifier: "en_US"))
             == "Even 0.0 kWh")
-        #expect(DashboardPresentation.liveLoadBalance(nil) == "No bank yet")
+        #expect(DashboardPresentation.liveLoadBalance(nil, locale: Locale(identifier: "en_US"))
+            == "No bank yet")
         #expect(DashboardPresentation.liveLoadBalanceAccessibilityLabel(
             3.25, locale: Locale(identifier: "en_US")
         ) == "Banked 3.3 kilowatt-hours")
