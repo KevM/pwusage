@@ -28,6 +28,24 @@ extension DashboardCoordinator {
         solarForecastPublication?.fetchedAt
     }
 
+    /// The batch that prices the bill at `now`, or empty when none is usable.
+    func pricingForecastIntervals(at now: Date) -> [SolarForecastInterval] {
+        guard LoadTimingForecastPresentation.forecastPrices(
+            state: solarForecastState, fetchedAt: publishedForecastFetchedAt, now: now
+        ) else { return [] }
+        return publishedForecastIntervals ?? []
+    }
+
+    /// Whether the bill should wait rather than show a partial projection: nothing has
+    /// finished loading for this site yet, or a reload is replacing a batch too old to price.
+    func billProjectionIsPending(at now: Date) -> Bool {
+        guard canRequestAccountData else { return false }
+        guard forecastLoadSettled else { return true }
+        return solarForecastState == .loadingWithBasic && !LoadTimingForecastPresentation.forecastPrices(
+            state: solarForecastState, fetchedAt: publishedForecastFetchedAt, now: now
+        )
+    }
+
     /// Shown wherever an automatic forecast is in use.
     var solarForecastAttribution: String? {
         guard let descriptor = solarForecastPublication?.descriptor, descriptor.requirement == .detectedLayout else {
