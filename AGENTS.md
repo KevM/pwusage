@@ -29,7 +29,7 @@ There is deliberately no `CLAUDE.md`: Claude Code reads `AGENTS.md` directly, an
 
 ## Cross-app contracts
 
-- **Mobile ⇄ web API.** `cmd/ios-app/Shared/mobile-live-contract.swift` is the client half of the
+- **Mobile ⇄ web API.** `cmd/ios-app/Shared/MobileLiveContract.swift` is the client half of the
   live dashboard contract and mirrors `cmd/next-app/src/lib/mobile-dashboard-contract.ts`. Changing
   one side requires the matching change on the other, in the same PR.
 - **User-facing copy.** Follow [`docs/voice-and-terms.md`](./docs/voice-and-terms.md) for voice and

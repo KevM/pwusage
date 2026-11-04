@@ -4,7 +4,7 @@
 - `App/` — App entry point, commands, application API, root view, and `PWUsageAppModel`.
 - `Navigation/` — Tab definitions and `AppTabView`.
 - `Views/<Feature>/` — Feature screens, sheets, and feature-specific views.
-- `Views/Shared/` — Cross-feature primitives (`CardContainer`, `SectionTheme`, `portable-modifiers`, `clipboard`, `AvailabilityBanner`, `EmptyCard`, `LoadingCard`, `EmptyStateScreen`).
+- `Views/Shared/` — Cross-feature primitives (`CardContainer`, `SectionTheme`, `View+PortableModifiers`, `Clipboard`, `AvailabilityBanner`, `EmptyCard`, `LoadingCard`, `EmptyStateScreen`).
 - `State/<Feature>/` — Feature coordinators/stores/actors.
 - `Models/<Feature>/` — Feature value types/contracts.
 - `Networking/` — API clients and network policy.
@@ -12,6 +12,13 @@
 - `Shared/` — Cross-target code shared by app and widget.
 - `PWUsageWidgets/` — Widget extension.
 - `PWUsageTests/<Feature>/` — Feature tests; `PWUsageTests/Support/` holds shared doubles/clocks.
+
+## File naming
+- Swift source files are `UpperCamelCase` and match the primary type (`DashboardCoordinator.swift`).
+- Extension-only files use `Type+Feature.swift` (`DashboardCoordinator+Refresh.swift`, `Array+PartitionPoint.swift`).
+- Test files use `SuiteNameTests.swift`; test extensions use `SuiteNameTests+Feature.swift`.
+- Cohesive grouping, fixture, and support files may use a descriptive `UpperCamelCase` name when no single type owns the file.
+- Shell scripts, YAML, Markdown, assets, and JSON fixtures keep their existing kebab-case names.
 
 ## Ownership
 - A file belongs to the feature whose screen or lifecycle consumes it.

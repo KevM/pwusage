@@ -108,7 +108,7 @@ This exits non-zero when a route the app calls is absent from the base ref. A 40
 - A recent last-known battery charge may be shown with its source age; values older than two hours remain unknown (`--`). Source timestamps stay attached to readings. Missing energy data, expired sessions, and temporary server/network failures have separate states.
 - The Load Timing toolbar includes native battery hold controls. Automatic holds restore when charging ends, with an eight-hour safety limit; fixed holds run for 1–24 hours. Starting a hold and restoring the original reserve require explicit confirmation. Stop the Battery Hold resets the original reserve, including changes made in Tesla. Automatic restoration uses the server's reserve-change safeguard and shows a dismissible cancellation notice when that safeguard cancels a hold. There is no background refresh or notification support for Battery Hold.
 
-SwiftUI previews under `PWUsage/Views/DashboardPreviews.swift` use fixed, local sample payloads for normal readings, no energy samples, stale source timestamps, an unavailable server, sign-in, and bill detail. The previews do not contact pwusage or a database.
+SwiftUI previews under `PWUsage/Views/Home/DashboardPreviews.swift` use fixed, local sample payloads for normal readings, no energy samples, stale source timestamps, an unavailable server, sign-in, and bill detail. The previews do not contact pwusage or a database.
 
 The previews compiled as part of the simulator build, but they were not visually inspected in this run because the Mac UI session was locked.
 
@@ -148,7 +148,7 @@ until status is confirmed again. An active hold can be restored even when charge
 or tariff data is unavailable. Reconnecting uses the app's existing Tesla login
 flow to grant Energy Product Commands permission.
 
-Local-only previews in `PWUsage/Views/battery-hold-previews.swift` cover idle,
+Local-only previews in `PWUsage/Views/BatteryHold/BatteryHoldPreview.swift` cover idle,
 reserve choice, active timer, monitored automatic and cancelled holds. The preview tests render the
 native sheet at standard and accessibility text sizes without contacting Tesla.
 Live Tesla commands still require a device check against a deployed server.
@@ -249,8 +249,8 @@ sharing authentication or command handling with this widget. ActivityKit is not 
 
 ### Widget previews in Xcode
 
-For medium/large widgets, open `PWUsageWidgets/today-energy-widget-previews.swift`.
-For small widgets, open `PWUsageWidgets/today-energy-metric-widget-previews.swift`.
+For medium/large widgets, open `PWUsageWidgets/TodayEnergyWidgetPreviews.swift`.
+For small widgets, open `PWUsageWidgets/TodayEnergyMetricWidgetPreviews.swift`.
 Show the Xcode Canvas using a Debug configuration and an iPhone simulator destination.
 The small file starts with an **All four small choices · Layout** board and an individual
 battery layout preview, which render the actual content without WidgetKit/App Intents

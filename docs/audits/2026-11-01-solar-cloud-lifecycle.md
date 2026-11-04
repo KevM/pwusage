@@ -66,7 +66,7 @@ as one ownership model, not per-race flags. Paths are relative to `cmd/ios-app/P
   `SolarCloudEngineToken` (one CloudKit attempt) are UUID-backed and never persisted.
   Sessions come from `SolarCloudSessionIssuer`; ending a session revokes every session
   issued before the end began, so a replacement that raced into the teardown window is
-  also fenced (`solar-cloud-session.swift`).
+  also fenced (`SolarCloudSession.swift`).
 - **Single owner.** `SolarLayoutCloudSync` holds `Phase` (inactive / active / ending
   barrier / cleanupFailed) and `Engine` (offline / starting / running). Every continuation
   after an await re-proves ownership (`owns(_:)`, `session(owning:)`, `isStarting`).

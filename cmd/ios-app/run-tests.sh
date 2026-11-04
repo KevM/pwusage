@@ -115,8 +115,10 @@ detector_changed() {
     echo 1
     return
   }
+  # Match the detector math sources and the suites that pin them by name. Cloud, persistence
+  # and session-cleanup tests deliberately do not trigger the multi-minute parity suite.
   { git diff --name-only "$base" -- . && git ls-files --others --exclude-standard -- .; } 2> /dev/null \
-    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|mobile-solar-layout\.swift|solar-position\.swift)|PWUsageTests/(Fixtures/SolarLayout/|Fixtures/solar-layout-fixture-loader\.swift|SolarLayoutDetectorTests\.swift|SolarLayoutClearDaysTests\.swift))' \
+    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|[^/]*(Layout|Position)[^/]*\.swift)|PWUsageTests/(Fixtures/SolarLayout(/|[^/]*\.swift)|SolarLayout(Detector|ClearDays|SunPOA|Fit|Selection|Readiness|Research)[^/]*Tests\.swift))' \
     && echo 1 || echo 0
 }
 

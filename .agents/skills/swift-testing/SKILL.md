@@ -65,7 +65,7 @@ struct SolarForecastStoreRefreshTests {
 > [!CAUTION]
 > **Never assert after an arbitrary `Task.sleep`.** Fixed sleeps produce flaky tests under simulator load and slow down test suites.
 
-Always use the project's tested bounded-wait helpers from [`PWUsageTests/test-waits.swift`](../../../cmd/ios-app/PWUsageTests/test-waits.swift):
+Always use the project's tested bounded-wait helpers from [`PWUsageTests/TestWaits.swift`](../../../cmd/ios-app/PWUsageTests/TestWaits.swift):
 
 ### A. Waiting for State to Change (`eventually`)
 When waiting for background tasks or published coordinator properties to reflect a new state:

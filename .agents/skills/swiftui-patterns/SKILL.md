@@ -70,16 +70,16 @@ struct LivePowerView: View {
 
 Before inventing custom styles, cards, or banners, leverage the existing primitives in `cmd/ios-app/PWUsage/Views/Shared/`:
 
-- **`CardContainer`** (`card-container.swift`): Wrap content in standardized card surfaces:
+- **`CardContainer`** (`CardContainer.swift`): Wrap content in standardized card surfaces:
   ```swift
   CardContainer {
       VStack(alignment: .leading) { ... }
   }
   ```
-- **`SectionTheme`** (`section-theme.swift`): Use standard section header styles, badges, and tint colors.
-- **`EmptyStateScreen`** (`empty-state-screen.swift`): Use for empty states, missing permissions, or configuration prompts.
-- **`clipboard`** (`clipboard.swift`): Standard copy-to-clipboard interactions.
-- **`portable-modifiers`** (`portable-modifiers.swift`): Adaptive padding and safe-area adjustments.
+- **`SectionTheme`** (`SectionTheme.swift`): Use standard section header styles, badges, and tint colors.
+- **`EmptyStateScreen`** (`EmptyStateScreen.swift`): Use for empty states, missing permissions, or configuration prompts.
+- **`Clipboard`** (`Clipboard.swift`): Standard copy-to-clipboard interactions.
+- **`View+PortableModifiers`** (`View+PortableModifiers.swift`): Adaptive padding and safe-area adjustments.
 
 ---
 
