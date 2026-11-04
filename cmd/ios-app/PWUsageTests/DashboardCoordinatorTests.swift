@@ -9,7 +9,7 @@ struct DashboardCoordinatorTests {
     func fastPowerDoesNotPollHistory() async throws {
         let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         for _ in 1 ..< 60 {
@@ -27,7 +27,7 @@ struct DashboardCoordinatorTests {
     func raiseRefreshesPowerOnly() async throws {
         let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         coordinator.scenePhaseChanged(isActive: false)
@@ -42,7 +42,7 @@ struct DashboardCoordinatorTests {
     func raiseUnsettlesUntilRefreshFinishes() async throws {
         let clock = DashboardTestClock()
         let api = FastDashboardAPISpy(now: { clock.now })
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         #expect(!coordinator.refreshSettled)
         coordinator.scenePhaseChanged(isActive: true)
         try await eventually { coordinator.refreshSettled }
@@ -67,9 +67,37 @@ struct DashboardCoordinatorTests {
 @MainActor
 final class DashboardTestClock {
     private(set) var now = Date(timeIntervalSince1970: 1_800_000_000)
+    /// Wall time and monotonic cadence move together by default, the way they do
+    /// on a running device. `advanceWallClock` bends only the wall clock.
+    private(set) var monotonicNow = ContinuousClock().now
 
     func advance(minutes: Int) {
         now = now.addingTimeInterval(TimeInterval(minutes * 60))
+        monotonicNow = monotonicNow.advanced(by: .seconds(minutes * 60))
+    }
+
+    func advanceWallClock(minutes: Int) {
+        now = now.addingTimeInterval(TimeInterval(minutes * 60))
+    }
+}
+
+extension DashboardCoordinator {
+    /// Builds a coordinator whose wall clock and monotonic cadence both follow the
+    /// test clock, so `advance(minutes:)` moves the same two timelines a device would.
+    convenience init(
+        siteID: String,
+        api: any MobileDashboardDataAPI,
+        planningAPI: (any MobileLoadPlanningDataAPI)? = nil,
+        accountScopeID: String? = nil,
+        clock: DashboardTestClock,
+        timerInterval: Duration? = nil,
+        cache: DashboardCache? = nil
+    ) {
+        self.init(
+            siteID: siteID, api: api, planningAPI: planningAPI, accountScopeID: accountScopeID,
+            now: { clock.now }, cadenceNow: { clock.monotonicNow },
+            timerInterval: timerInterval, cache: cache
+        )
     }
 }
 

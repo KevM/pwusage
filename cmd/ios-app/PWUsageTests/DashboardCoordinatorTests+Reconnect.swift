@@ -7,7 +7,7 @@ extension DashboardCoordinatorTests {
     func teslaReconnectPreservesStoredData() async {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         let stored = coordinator.live.response
@@ -31,7 +31,7 @@ extension DashboardCoordinatorTests {
         let clock = DashboardTestClock()
         let api = DashboardAPISpy()
         api.liveError = PWUsageAPIError.requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED")
-        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: { clock.now }, timerInterval: nil)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
         await coordinator.refreshDue()
         #expect(coordinator.requiresTeslaReconnect)
