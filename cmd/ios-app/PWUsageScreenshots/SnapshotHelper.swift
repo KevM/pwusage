@@ -218,8 +218,12 @@ open class Snapshot: NSObject {
         return chosen ?? XCUIScreen.main.screenshot()
     }
 
+    /// The screen may still be in its native orientation before the image is
+    /// made upright, so compare the window against both orientations.
     private class func distance(_ size: CGSize, to window: CGSize) -> CGFloat {
-        abs(size.width - window.width) + abs(size.height - window.height)
+        let direct = abs(size.width - window.width) + abs(size.height - window.height)
+        let transposed = abs(size.height - window.width) + abs(size.width - window.height)
+        return min(direct, transposed)
     }
 
     class func fixLandscapeOrientation(image: UIImage) -> UIImage {

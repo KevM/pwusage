@@ -196,7 +196,9 @@ platform :ios do
       end
       false
     end
-    UI.user_error!("The Duo never lit its inner display; check baguette and the simulator runtime.") unless inner_lit.call
+    lit = inner_lit.call
+    FileUtils.rm_f(lit_shot)
+    UI.user_error!("The Duo never lit its inner display; check baguette and the simulator runtime.") unless lit
 
     cache = File.expand_path("~/Library/Caches/tools.fastlane")
     shots_cache = File.join(cache, "screenshots")
@@ -225,6 +227,7 @@ platform :ios do
       UI.user_error!("The Duo run wrote no screenshots to #{shots_cache}.") if images.empty?
       images.each { |image| FileUtils.cp(image, output) }
     ensure
+      FileUtils.rm_f(lit_shot)
       begin
         sh("xcrun simctl status_bar #{udid} clear")
       rescue StandardError

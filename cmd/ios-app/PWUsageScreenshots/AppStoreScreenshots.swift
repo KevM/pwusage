@@ -31,6 +31,7 @@ final class AppStoreScreenshots: XCTestCase {
 
     func testIPhoneShots() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "iPhone set only")
+        try XCTSkipIf(isDuo, "iPhone standard set only")
         prepareHome()
         snapshot("01-home")
         scrollToToday()
@@ -48,8 +49,7 @@ final class AppStoreScreenshots: XCTestCase {
     /// The open Duo is regular width, so Home already shows Live, Today and
     /// the summary cards; it needs the iPad-style list, not 02-home-today.
     func testDuoShots() throws {
-        let name = ProcessInfo().environment["SIMULATOR_DEVICE_NAME"] ?? ""
-        try XCTSkipUnless(name.contains("iPhone Duo"), "Duo set only")
+        try XCTSkipUnless(isDuo, "Duo set only")
         prepareHome()
         snapshot("01-home")
         captureTabs()
@@ -105,6 +105,11 @@ final class AppStoreScreenshots: XCTestCase {
             return
         }
         XCTFail("No tab named \(title)")
+    }
+
+    /// The Duo is an iPhone idiom, so the idiom alone cannot separate the sets.
+    private var isDuo: Bool {
+        (ProcessInfo().environment["SIMULATOR_DEVICE_NAME"] ?? "").contains("iPhone Duo")
     }
 
     private func element(_ identifier: String) -> XCUIElement {

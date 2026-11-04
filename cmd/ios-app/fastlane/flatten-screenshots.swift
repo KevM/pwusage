@@ -13,10 +13,14 @@ import UniformTypeIdentifiers
 /// App Store Connect wants exactly 2853x2007 (or 2007x2853) for the open
 /// Duo, but XCUIScreen rounds the fractional point size down by one pixel.
 func appStoreSize(for image: CGImage) -> (width: Int, height: Int)? {
+    // Either axis can truncate independently, so accept both one-pixel cases.
     switch (image.width, image.height) {
-    case (2852, 2006): return (2853, 2007)
-    case (2006, 2852): return (2007, 2853)
-    default: return nil
+    case (2852 ... 2853, 2006 ... 2007) where image.width != 2853 || image.height != 2007:
+        return (2853, 2007)
+    case (2006 ... 2007, 2852 ... 2853) where image.width != 2007 || image.height != 2853:
+        return (2007, 2853)
+    default:
+        return nil
     }
 }
 
