@@ -26,7 +26,7 @@ extension DashboardCoordinator {
         guard canRequestAccountData else { return }
         let operation = beginForecastOperation()
         forecastOperationPending = true
-        defer { if operation == forecastGeneration { forecastOperationPending = false } }
+        defer { if operation == forecastGeneration { finishForecastOperation() } }
         guard accountScopeID != nil else {
             solarForecastState = .basic
             return
@@ -54,6 +54,11 @@ extension DashboardCoordinator {
         forecastOperationPending = false
         forecastGeneration += 1
         return forecastGeneration
+    }
+
+    func finishForecastOperation() {
+        forecastOperationPending = false
+        forecastLoadSettled = true
     }
 
     func resetForecastEnhancement(state: SolarForecastEnhancementState, connection: SolarForecastConnectionState) {

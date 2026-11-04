@@ -101,6 +101,8 @@ final class DashboardCoordinator: ObservableObject {
     var visibleSolarSurfaces: Set<SolarForecastSurface> = []
     var solarSurfaceVisible: Bool { !visibleSolarSurfaces.isEmpty }
     @Published var forecastOperationPending = false
+    /// Whether a forecast load has finished for the selected site, whatever its outcome.
+    @Published var forecastLoadSettled = false
     var cache: DashboardCache?
     var sessionVerified = true
     var canRequestAccountData: Bool { sessionVerified && !requiresSignIn }
@@ -329,6 +331,7 @@ final class DashboardCoordinator: ObservableObject {
         requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
         householdPattern = nil
+        forecastLoadSettled = false
         clearSolarLayoutState()
         historyEnabled = true
         layoutInvalidated = false
@@ -361,6 +364,7 @@ final class DashboardCoordinator: ObservableObject {
         // The pattern belongs to the old site; connecting or disconnecting
         // Solcast leaves it in place.
         householdPattern = nil
+        forecastLoadSettled = false
         guard isForeground, canRequestAccountData else { return }
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the

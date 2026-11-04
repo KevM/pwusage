@@ -1,6 +1,8 @@
 import Foundation
 
 enum BillOutlookPresentation {
+    static let pendingProjection = "Estimating the rest of this cycle…"
+
     static func selection(in points: [BillOutlookPoint], date: Date?) -> BillOutlookPoint? {
         guard let date else { return points.last }
         return points.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }

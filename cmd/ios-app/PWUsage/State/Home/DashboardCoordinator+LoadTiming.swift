@@ -28,7 +28,7 @@ extension DashboardCoordinator {
         let operation = beginForecastOperation()
         forecastOperationPending = true
         defer {
-            if operation == forecastGeneration { forecastOperationPending = false }
+            if operation == forecastGeneration { finishForecastOperation() }
         }
         guard let planningAPI else {
             solarForecastState = .basic
