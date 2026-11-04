@@ -116,7 +116,7 @@ detector_changed() {
     return
   }
   { git diff --name-only "$base" -- . && git ls-files --others --exclude-standard -- .; } 2> /dev/null \
-    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|mobile-solar-layout\.swift|solar-position\.swift)|PWUsageTests/(Fixtures/SolarLayout/|Fixtures/solar-layout-fixture-loader\.swift|SolarLayoutDetectorTests\.swift|SolarLayoutClearDaysTests\.swift))' \
+    | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|MobileSolarLayout\.swift|SolarPosition\.swift)|PWUsageTests/(Fixtures/SolarLayout/|Fixtures/SolarLayoutFixtureLoader\.swift|SolarLayoutDetectorTests\.swift|SolarLayoutClearDaysTests\.swift))' \
     && echo 1 || echo 0
 }
 

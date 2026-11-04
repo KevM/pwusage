@@ -128,7 +128,7 @@ while IFS= read -r skipped || [[ -n "$skipped" ]]; do
     grep -qxF -- "-skip-testing:$skipped" "$PWUSAGE_TEST_ARGS"
   fi
 done < "$script_dir/quick-test-skips.txt"
-PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/layout-fit.swift' "$script_dir/run-tests.sh"
+PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift' "$script_dir/run-tests.sh"
 if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
   echo 'The default run skipped tests on a detector change' >&2
   exit 1
@@ -141,10 +141,10 @@ expect_parity() {
   if grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS"; then local ran=0; else local ran=1; fi
   [[ "$ran" == "$expected" ]] || { echo "Detector parity: $label (ran=$ran, want $expected)" >&2; exit 1; }
 }
-PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/dashboard.swift' "$script_dir/run-tests.sh"
+PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh"
 expect_parity 0 'ran without detector changes'
-for changed in PWUsage/Models/Solar/solar-position.swift PWUsage/Models/Solar/mobile-solar-layout.swift \
-  PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/solar-layout-fixture-loader.swift \
+for changed in PWUsage/Models/Solar/SolarPosition.swift PWUsage/Models/Solar/MobileSolarLayout.swift \
+  PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/SolarLayoutFixtureLoader.swift \
   PWUsageTests/SolarLayoutDetectorTests.swift; do
   PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
   expect_parity 1 "skipped after changing $changed"

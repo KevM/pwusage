@@ -67,9 +67,12 @@ bookkeeping any more: `--strict` must report zero. Never add a baseline entry or
   builds with `-O`, where one oversized SwiftUI expression can fail with
   "the compiler is unable to type-check this expression in reasonable time". Breaking the view up
   is the fix, not adding explicit types until it compiles.
-- **Files are kebab-case** (`smart-shift-presentation.swift`); suite and test *names* stay
-  `UpperCamelCase`. The Xcode project is generated from directory globs in `project.yml`, so a new
-  source file needs no project edit; `run-tests.sh` regenerates it.
+- **File names are `UpperCamelCase`** (`SmartShiftPresentation.swift`) and match the primary type.
+  Extension-only files use `Type+Feature.swift` (`DashboardCoordinator+Refresh.swift`); test files
+  use `SuiteNameTests.swift`, with `SuiteNameTests+Feature.swift` for extensions. Cohesive
+  multi-type files may use a descriptive feature name until they are split. The Xcode project is
+  generated from directory globs in `project.yml`, so a new source file needs no project edit;
+  `run-tests.sh` regenerates it. Shell scripts, YAML, Markdown, and JSON fixtures stay kebab-case.
 
 ## Write lint-clean the first time
 
@@ -93,7 +96,7 @@ Common fixes, in the order agents hit them:
 - **`function_body_length`**: extract a private helper or a `@ViewBuilder` section. If the helper
   needs six parameters, group them into a small struct.
 - **`type_body_length`**: move a cohesive group into an extension in the same file, or split the
-  type into a new kebab-case file.
+  type into a new UpperCamelCase file.
 - **`function_parameter_count`**: pass a small value type instead of a long parameter list.
 - **`force_unwrapping` / `force_try`**: `guard let`, `??`, `#require` in tests, or throw. For a
   genuinely impossible state, `preconditionFailure("why")` is acceptable; a bare `!` is not.
@@ -153,7 +156,7 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 - **Framework**: Swift Testing only — `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`.
   Legacy `XCTest` is prohibited.
 - **Waiting**: never assert after a fixed `Task.sleep`. Use `eventually` for a state that must be
-  reached and `staysTrue` for one that must not change, both in `PWUsageTests/test-waits.swift`.
+  reached and `staysTrue` for one that must not change, both in `PWUsageTests/TestWaits.swift`.
 - **CI**: iOS CI runs on a GitHub-hosted macOS runner for PRs marked ready for review or manually
   via `workflow_dispatch`.
 
