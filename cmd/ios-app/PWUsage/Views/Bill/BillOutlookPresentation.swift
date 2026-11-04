@@ -36,8 +36,19 @@ enum BillOutlookPresentation {
         return balance(total.netGridKwh) + " · "
             + DashboardPresentation.currency(total.cost, code: currency, locale: locale)
     }
-    static func guidance(observed: BillOutlookPoint?, projected: BillOutlookPoint?) -> String? {
+    static func guidance(observed: BillOutlookPoint?, projected: BillOutlookPoint?, remaining: [BillOutlookTariff],
+                         currency: String, locale: Locale = .current) -> String? {
         guard let observed, let projected else { return nil }
+        if let shift = BillOutlook.bestShift(projected: projected, remaining: remaining) {
+            let cushion = DashboardPresentation.tariffPeriodTitle(shift.cushion.periodName)
+            let gap = DashboardPresentation.tariffPeriodTitle(shift.gap.periodName)
+            let credit = DashboardPresentation.loadRate(shift.cushion.sellRate, code: currency, locale: locale)
+            let imports = DashboardPresentation.loadRate(shift.gap.buyRate, code: currency, locale: locale)
+            let savings = DashboardPresentation.currency(shift.savings, code: currency, locale: locale)
+            return "About \(DashboardPresentation.energy(shift.energyKwh)) of your \(cushion) export cushion "
+                + "would only earn \(credit), while \(gap) imports cost \(imports). "
+                + "Shifting heavy energy use like EV charging into \(cushion) could save about \(savings)."
+        }
         if let closing = observed.periods.first(where: { period in
             period.netGridKwh > 0.1 && projected.periods.contains { $0.key == period.key && $0.netGridKwh <= 0 }
         }) {

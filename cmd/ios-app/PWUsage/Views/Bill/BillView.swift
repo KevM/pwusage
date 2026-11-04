@@ -135,20 +135,27 @@ struct BillView: View {
             }
             if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
                 Divider()
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(deadline, systemImage: "calendar").font(.subheadline.weight(.semibold))
-                    if projected.last?.date == bill.cycleEnd,
-                       let guidance = BillOutlookPresentation.guidance(observed: response.outlook?.points.last,
-                                                                       projected: projected.last) {
-                        Text(guidance).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let onOpenSmartShift { Button("Open Smart Shift", action: onOpenSmartShift).font(.subheadline) }
-                }
+                deadlineSection(deadline, response: response, projected: projected)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(17)
         .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func deadlineSection(_ deadline: String, response: MobileBillResponse,
+                                 projected: [BillOutlookPoint]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(deadline, systemImage: "calendar").font(.subheadline.weight(.semibold))
+            if projected.last?.date == response.currentBill.cycleEnd,
+               let guidance = BillOutlookPresentation.guidance(observed: response.outlook?.points.last,
+                                                               projected: projected.last,
+                                                               remaining: response.outlook?.tariffTimeline ?? [],
+                                                               currency: response.currentBill.currency) {
+                Text(guidance).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            }
+            if let onOpenSmartShift { Button("Open Smart Shift", action: onOpenSmartShift).font(.subheadline) }
+        }
     }
 
     private func periodsSection(_ response: MobileBillResponse) -> some View {

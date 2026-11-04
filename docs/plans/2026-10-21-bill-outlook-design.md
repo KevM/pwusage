@@ -24,8 +24,10 @@ actions are follow-ups, not part of this first delivery.
 - In the final seven local calendar days, elevate “Cycle ends in N days” and
   explain a material projected import gap or its likely closure. This threshold
   is an implementation default. Link to Smart Shift for timing heavy energy use.
-  Do not claim credits expire, recommend spending a cushion, or promise savings
-  without settlement-rule support.
+  Do not claim credits expire or promise savings without settlement-rule support.
+  Periods settle separately (DesignDecisions.md section 6), so when a remaining
+  period's cushion earns less than another period's imports cost, say how much to
+  shift and the estimated saving. Never suggest shifting more than the cushion.
 - State whether the outlook uses solar forecasts plus typical home use, recent
   grid history, or both. Do not present a history-only estimate as weather-based.
 

@@ -15,7 +15,7 @@ struct TariffSheetTests {
     @Test func rejectsWrongSiteAndVersion() throws {
         let response = try MobileContractDecoder.make().decode(MobileTariffsResponse.self,
                                                                from: Data(Self.fixture.utf8))
-        #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "other") }
+        #expect(throws: PWUsageAPIError.invalidResponse) { _ = try response.validating(siteID: "other") }
         #expect(throws: PWUsageAPIError.invalidResponse) {
             let version2 = Self.fixture.replacingOccurrences(of: "\"version\":1", with: "\"version\":2")
             _ = try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: Data(version2.utf8))
