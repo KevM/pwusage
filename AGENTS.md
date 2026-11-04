@@ -15,7 +15,8 @@ this root file deliberately stays small so the two guides cannot drift into a th
 | `cmd/next-app/` — Next.js web app, API routes, database | [`cmd/next-app/AGENTS.md`](./cmd/next-app/AGENTS.md) |
 | `cmd/ios-app/` — native iOS app, widget and tests | [`cmd/ios-app/AGENTS.md`](./cmd/ios-app/AGENTS.md) |
 
-`CLAUDE.md` is a short pointer to this file, not a second copy of the rules.
+There is deliberately no `CLAUDE.md`: Claude Code reads `AGENTS.md` directly, and a `CLAUDE.md`
+(or `CLAUDE.local.md`) anywhere in the tree would stop it from loading these guides.
 
 ## Repo layout (important)
 
@@ -50,7 +51,7 @@ this root file deliberately stays small so the two guides cannot drift into a th
 - Always verify builds, lint and tests before finishing a task; never report done on unverified code.
 - Commit verified changes with clear, conventional commit messages.
 - Open pull requests as drafts initially unless the user asks otherwise.
-- Do not duplicate guidance across `AGENTS.md`, `CLAUDE.md`, `.agents/` and `docs/`. Put the rule
+- Do not duplicate guidance across `AGENTS.md`, `.agents/` and `docs/`. Put the rule
   where the work happens and link to it from everywhere else.
 - Be a helpful, competent software engineer pair programmer.
 
