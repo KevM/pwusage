@@ -6,9 +6,11 @@ struct WaitTimeout: Error { let message: String }
 struct InvariantBroken: Error { let message: String }
 
 /// Polls until `condition` is true, failing at the deadline instead of hanging.
+/// The bound only delays a failure: a passing wait returns as soon as the condition
+/// holds. Keep it wide, because a loaded CI simulator can stall past a few seconds.
 @MainActor
 func eventually(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(10),
     _ condition: @MainActor () -> Bool
 ) async throws {
     let clock = ContinuousClock()
