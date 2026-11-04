@@ -1,6 +1,6 @@
 import Foundation
 
-struct LoadTimingEstimator {
+enum LoadTimingEstimator {
     struct CarChargeEstimate: Equatable {
         let batteryKwh: Double
         let wallKwh: Double

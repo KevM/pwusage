@@ -60,7 +60,7 @@ struct SolarLayoutSessionCleanupTests {
         #expect(try await reloadedLedgers.ledger(scope: scope) == nil)
     }
 
-    private nonisolated func cloudSync(store: SolarLayoutRecordStore, folder: URL) throws -> SolarLayoutCloudSync {
+    nonisolated private func cloudSync(store: SolarLayoutRecordStore, folder: URL) throws -> SolarLayoutCloudSync {
         let defaults = try #require(UserDefaults(suiteName: "SolarCleanup.\(UUID().uuidString)"))
         return SolarLayoutCloudSync(
             store: store, userDefaults: defaults,

@@ -34,7 +34,7 @@ extension DashboardPresentation {
 
         func accessibilityLabel(siteName: String) -> String {
             let stats = [battery?.spokenLabel, home.spokenLabel, solar.spokenLabel, grid?.spokenLabel]
-            return "\(siteName). " + stats.compactMap { $0 }.joined(separator: ", ")
+            return "\(siteName). " + stats.compactMap(\.self).joined(separator: ", ")
         }
     }
 

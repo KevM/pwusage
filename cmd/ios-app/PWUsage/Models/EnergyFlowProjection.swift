@@ -1,7 +1,7 @@
 import Foundation
 
 /// Shared household baseline, independent of a Smart Shift job or its pricing rules.
-struct EnergyFlowProjection {
+enum EnergyFlowProjection {
     struct Interval {
         let start: Date
         let end: Date

@@ -178,7 +178,7 @@ extension LoadTimingForecastEstimator {
         guard let nowCandidate = scored.first(where: { $0.start == prepared.now }) else {
             return unavailable(.noFittingRun)
         }
-        guard scored.allSatisfy({ $0.cost.isFinite }) else { return unavailable(.invalidInput) }
+        guard scored.allSatisfy(\.cost.isFinite) else { return unavailable(.invalidInput) }
         let selection = select(scored.map {
             assess($0, baseBalances: prepared.baseBalances, cautiousBalances: prepared.cautiousBalances)
         }, now: prepared.now, minorUnit: prepared.minorUnit)

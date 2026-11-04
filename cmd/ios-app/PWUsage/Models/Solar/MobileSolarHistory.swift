@@ -59,7 +59,7 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
         status = try values.decode(Status.self, forKey: .status)
         fetchedAt = try values.decodeIfPresent(Date.self, forKey: .fetchedAt)
         solarWh = try values.decode([Double?].self, forKey: .solarWh)
-        guard solarWh.compactMap({ $0 }).allSatisfy(\.isFinite) else {
+        guard solarWh.compactMap(\.self).allSatisfy(\.isFinite) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .solarWh, in: values, debugDescription: "Invalid solar slots")
         }

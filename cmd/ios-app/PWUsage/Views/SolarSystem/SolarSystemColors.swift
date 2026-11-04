@@ -31,18 +31,18 @@ enum SolarSystemColors {
     static func color(_ type: SolarDayType?) -> Color {
         switch type {
         case nil: pending
-        case .cloudy?: cloudy
-        case .clear?: clear
-        case .noProduction?: noProduction
+        case .cloudy: cloudy
+        case .clear: clear
+        case .noProduction: noProduction
         }
     }
 
     static func name(_ type: SolarDayType?) -> String {
         switch type {
         case nil: "not sorted yet"
-        case .cloudy?: "cloudy"
-        case .clear?: "clear"
-        case .noProduction?: "no production"
+        case .cloudy: "cloudy"
+        case .clear: "clear"
+        case .noProduction: "no production"
         }
     }
 }

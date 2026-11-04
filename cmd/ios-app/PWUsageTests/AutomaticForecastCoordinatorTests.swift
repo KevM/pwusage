@@ -101,9 +101,6 @@ struct AutomaticForecastCoordinatorTests {
         #expect(source.sameDaySamples > 0)
         #expect(source.dayAheadFactors.values.allSatisfy { abs($0 - 0.8) < 1e-9 })
     }
-}
-
-extension AutomaticForecastCoordinatorTests {
     @Test("Automatic provider failures remain available to diagnostics")
     func failedAutomaticAttemptIsDiagnosable() async throws {
         let harness = await AutomaticForecastHarness()

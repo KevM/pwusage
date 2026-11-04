@@ -345,7 +345,7 @@ struct SolarLayoutCloudSyncTests {
         )
     }
 
-    private nonisolated func isolatedSync(
+    nonisolated private func isolatedSync(
         records: SolarLayoutRecordStore, transport: SolarCloudTransport?
     ) throws -> SolarLayoutCloudSync {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

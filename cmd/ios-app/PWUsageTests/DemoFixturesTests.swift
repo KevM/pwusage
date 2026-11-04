@@ -49,7 +49,7 @@ struct DemoFixturesTests {
     @Test("Waiting for Off-peak is cheaper than now")
     func waitingIsCheaper() throws {
         let loadTiming = try #require(try DemoFixtures.bill(asOf: .now).loadTiming)
-        let activePeriod = loadTiming.periods.first { $0.isActive }
+        let activePeriod = loadTiming.periods.first(where: \.isActive)
         let active = try #require(activePeriod)
         let activeCost = try #require(active.marginalCost)
         let next = try #require(loadTiming.nextCheaper)

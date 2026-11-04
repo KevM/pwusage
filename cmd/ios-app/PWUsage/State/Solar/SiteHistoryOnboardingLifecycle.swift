@@ -206,20 +206,17 @@ final class SiteHistoryOnboardingLifecycle {
     private func prepare(_ scope: SolarForecastSiteScope) async -> Bool {
         guard await isHistoryEnabled(scope), !Task.isCancelled else { return false }
         switch (try? await store.progress(scope: scope))?.phase {
-        case .finished(.historyUnavailable)?:
+        case .finished(.historyUnavailable):
             try? await store.resume(scope: scope)
-        case .finished(.locationNeeded)? where await onboarding.hasLocation(scope: scope):
+        case .finished(.locationNeeded) where await onboarding.hasLocation(scope: scope):
             try? await store.resume(scope: scope)
-        case .finished?:
+        case .finished:
             await onboarding.sortDaysIfUnsorted(scope: scope)
         default:
             break
         }
         return !Task.isCancelled
     }
-}
-
-extension SiteHistoryOnboardingLifecycle {
     /// The app's lifecycle over the shared stores, the layout runner and `api`.
     static func live(
         api: any MobileSolarHistoryFillAPI, runner: SolarLayoutDetectionRunner,

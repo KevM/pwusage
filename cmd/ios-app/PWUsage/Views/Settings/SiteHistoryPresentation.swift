@@ -59,10 +59,10 @@ struct SiteHistoryPresentation: Equatable {
         if case .finished(.historyUnavailable)? = progressPhase { return .unavailable }
         if status.location == .none { return .needsLocation }
         switch progressPhase {
-        case nil, .active?, .finished(.locationNeeded)?:
+        case nil, .active, .finished(.locationNeeded):
             let waitingUntil = [status.throttledUntil, status.progress?.nextAttemptAt].compactMap(\.self).max()
             return (waitingUntil ?? .distantPast) > now ? .waiting : .loading
-        case .finished?, .paused?:
+        case .finished, .paused:
             return .unavailable
         }
     }
@@ -110,9 +110,9 @@ struct SiteHistoryPresentation: Equatable {
 
     private static func unavailable(_ phase: SiteHistoryOnboardingProgress.Phase?) -> (row: String, line: String) {
         switch phase {
-        case .finished(.historyUnavailable)?: ("Unavailable", "History isn’t available for this site yet")
-        case .finished(.noSolarProduction)?: ("Not Found", "No solar production found")
-        case .finished(.detectorNeedsOtherAction)?: ("Not Found", "Couldn’t find a layout from this history")
+        case .finished(.historyUnavailable): ("Unavailable", "History isn’t available for this site yet")
+        case .finished(.noSolarProduction): ("Not Found", "No solar production found")
+        case .finished(.detectorNeedsOtherAction): ("Not Found", "Couldn’t find a layout from this history")
         default: ("Not Found", "Not enough clear days to find a layout yet")
         }
     }
@@ -153,7 +153,7 @@ struct SiteHistoryPresentation: Equatable {
     private static func spelled(_ number: Int) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .spellOut
-        return formatter.string(from: NSNumber(value: number)) ?? number.formatted()
+        return formatter.string(for: number) ?? number.formatted()
     }
 
     static func days(_ count: Int) -> String {

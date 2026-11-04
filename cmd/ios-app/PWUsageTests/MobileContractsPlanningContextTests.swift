@@ -99,7 +99,7 @@ extension MobileContractsTests {
         let response = try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
         let validated = try response.validating(
             siteID: "site-a",
-            now: try #require(ISO8601DateFormatter.parse("2026-10-18T15:01:00Z"))
+            now: try #require(ISO8601DateFormatter().date(from: "2026-10-18T15:01:00Z"))
         )
 
         #expect(validated.slots[0].gridNetExportKw == 2.5)
@@ -119,7 +119,7 @@ extension MobileContractsTests {
         let response = try MobileContractDecoder.make().decode(MobileLoadPlanningContextResponse.self, from: data)
         let validated = try response.validating(
             siteID: "site-a",
-            now: try #require(ISO8601DateFormatter.parse("2026-10-18T15:01:00Z"))
+            now: try #require(ISO8601DateFormatter().date(from: "2026-10-18T15:01:00Z"))
         )
 
         #expect(validated.slots[0].gridNetExportKw == nil)

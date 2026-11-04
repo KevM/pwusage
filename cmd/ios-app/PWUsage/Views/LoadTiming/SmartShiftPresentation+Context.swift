@@ -121,7 +121,7 @@ extension SmartShiftPresentation {
                 let before = timing.tariffTimeline.first { $0.end == date }.map { name($0.periodKey) }
                 let after = timing.tariffTimeline.first { $0.start == date }.map { name($0.periodKey) }
                 let beforeLabel = before.map { "\u{2190} \($0)" }, afterLabel = after.map { "\($0) \u{2192}" }
-                let label = [beforeLabel, afterLabel].compactMap { $0 }.joined(separator: " | ")
+                let label = [beforeLabel, afterLabel].compactMap(\.self).joined(separator: " | ")
                 return SwitchMarker(date: date, label: label, beforeLabel: beforeLabel, afterLabel: afterLabel)
             }
         }

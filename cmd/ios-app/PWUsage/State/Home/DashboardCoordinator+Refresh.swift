@@ -269,8 +269,8 @@ extension DashboardCoordinator {
                 } catch {
                     return
                 }
-                guard let self, self.isForeground, self.canRequestAccountData else { return }
-                await self.refreshDue()
+                guard let self, isForeground, canRequestAccountData else { return }
+                await refreshDue()
             }
         }
     }

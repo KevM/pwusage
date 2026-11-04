@@ -75,8 +75,8 @@ final class PWUsageAPITests {
             == "/api/site/a%2Fb%20%3F%23%25/battery-hold")
         let post = requests[1]
         #expect(post.0.value(forHTTPHeaderField: "Content-Type") == "application/json")
-        let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: NSObject])
-        #expect(body["action"] == "restore" as NSString)
+        let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: Any])
+        #expect(body["action"] as? String == "restore")
         #expect(body["durationHours"] == nil)
     }
 
@@ -101,11 +101,11 @@ final class PWUsageAPITests {
         #expect(post.0.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath }
             == "/api/site/a%2Fb/battery-hold/activities")
         #expect(post.0.value(forHTTPHeaderField: "Content-Type") == "application/json")
-        let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: NSObject])
-        #expect(body["holdId"] == 7 as NSNumber)
-        #expect(body["registrationId"] == "6f1c2e1a-7b4d-4f45-9a0b-1c2d3e4f5a6b" as NSString)
-        #expect(body["pushToken"] == String(repeating: "ab", count: 32) as NSString)
-        #expect(body["apnsEnvironment"] == "sandbox" as NSString)
+        let body = try #require(JSONSerialization.jsonObject(with: post.1) as? [String: Any])
+        #expect(body["holdId"] as? Int == 7)
+        #expect(body["registrationId"] as? String == "6f1c2e1a-7b4d-4f45-9a0b-1c2d3e4f5a6b")
+        #expect(body["pushToken"] as? String == String(repeating: "ab", count: 32))
+        #expect(body["apnsEnvironment"] as? String == "sandbox")
         let delete = requests[1]
         #expect(delete.0.httpMethod == "DELETE")
         #expect(delete.0.url?.query == "registrationId=6f1c2e1a-7b4d-4f45-9a0b-1c2d3e4f5a6b")
@@ -146,11 +146,11 @@ final class PWUsageAPITests {
             siteID: "site-1", command: .park(.init(mode: .timer, durationHours: 6, reserveChoice: 80)))
         #expect(result.hold?.siteID == "site-1")
         #expect(recordedRequest?.value(forHTTPHeaderField: "Cookie") == "site_auth=test-session")
-        let body = try #require(JSONSerialization.jsonObject(with: recordedBody) as? [String: NSObject])
-        #expect(body["action"] == "park" as NSString)
-        #expect(body["mode"] == "timer" as NSString)
-        #expect(body["durationHours"] == 6 as NSNumber)
-        #expect(body["reserveChoice"] == 80 as NSNumber)
+        let body = try #require(JSONSerialization.jsonObject(with: recordedBody) as? [String: Any])
+        #expect(body["action"] as? String == "park")
+        #expect(body["mode"] as? String == "timer")
+        #expect(body["durationHours"] as? Int == 6)
+        #expect(body["reserveChoice"] as? Int == 80)
     }
 
     static func liveFixture(siteID: String) -> String {

@@ -12,7 +12,7 @@ enum TodayEnergyPresentation {
         formatter.locale = locale
         formatter.numberStyle = .currency
         formatter.currencyCode = currency
-        return formatter.string(from: NSNumber(value: amount == 0 ? 0 : amount)) ?? "—"
+        return formatter.string(for: amount == 0 ? 0 : amount) ?? "—"
     }
 
     static func todayCostDetail(_ cost: TodayEnergyCost, locale: Locale = .current) -> String {

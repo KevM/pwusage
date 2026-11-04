@@ -7,19 +7,22 @@ enum BatteryGaugeStyle {
 
     /// A dash vanishes at mini size, so the mini hold mark is a solid tick instead.
     var dashedHoldLine: Bool { self != .mini }
+}
 
-    fileprivate var metrics: BatteryGaugeMetrics {
-        switch self {
-        case .card:
-            .init(insets: .init(top: 8, leading: 8, bottom: 8, trailing: 18), nubGap: 3, nubWidth: 5,
-                  nubHeightFraction: 0.3, cornerRadius: 16, lineWidth: 1.5, holdLineWidth: 2)
-        case .bar:
-            .init(insets: .init(top: 0, leading: 0, bottom: 0, trailing: 4), nubGap: 1.5, nubWidth: 2.5,
-                  nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.8, holdLineWidth: 2)
-        case .mini:
-            .init(insets: .init(top: 3, leading: 0.5, bottom: 3, trailing: 3.5), nubGap: 1, nubWidth: 2,
-                  nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.4, holdLineWidth: 2)
-        }
+/// File-private so both `BatteryGaugeStyle` and `BatteryGaugeGeometry` can use it without
+/// widening either type's access. `private` at file scope is the file-local spelling the
+/// `strict_fileprivate` rule asks for.
+private func batteryGaugeMetrics(for style: BatteryGaugeStyle) -> BatteryGaugeMetrics {
+    switch style {
+    case .card:
+        .init(insets: .init(top: 8, leading: 8, bottom: 8, trailing: 18), nubGap: 3, nubWidth: 5,
+              nubHeightFraction: 0.3, cornerRadius: 16, lineWidth: 1.5, holdLineWidth: 2)
+    case .bar:
+        .init(insets: .init(top: 0, leading: 0, bottom: 0, trailing: 4), nubGap: 1.5, nubWidth: 2.5,
+              nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.8, holdLineWidth: 2)
+    case .mini:
+        .init(insets: .init(top: 3, leading: 0.5, bottom: 3, trailing: 3.5), nubGap: 1, nubWidth: 2,
+              nubHeightFraction: 0.4, cornerRadius: nil, lineWidth: 1.4, holdLineWidth: 2)
     }
 }
 
@@ -51,7 +54,7 @@ struct BatteryGaugeGeometry: Equatable {
     let holdLine: CGRect?
 
     init(style: BatteryGaugeStyle, size: CGSize, charge: Double?, holdLevel: Int?) {
-        let metrics = style.metrics
+        let metrics = batteryGaugeMetrics(for: style)
         let body = CGRect(x: metrics.insets.leading, y: metrics.insets.top,
                           width: max(0, size.width - metrics.insets.leading - metrics.insets.trailing),
                           height: max(0, size.height - metrics.insets.top - metrics.insets.bottom))

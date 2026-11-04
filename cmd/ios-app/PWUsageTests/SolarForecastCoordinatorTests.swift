@@ -244,7 +244,7 @@ private final class ForecastTestClock: @unchecked Sendable {
     func advance(seconds: Double) { now = now.addingTimeInterval(seconds) }
 }
 
-private extension MobileLoadPlanningContextResponse {
+extension MobileLoadPlanningContextResponse {
     static func fixture(
         siteID: String,
         timeZone: String = "UTC",

@@ -157,7 +157,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
                     // pending slot here would identify whichever attempt is current, not the
                     // one this session belongs to — and a session's completion can arrive long
                     // after a newer attempt has claimed the slot.
-                    self.finishAuthentication(callbackURL: callbackURL, error: error, generation: generation)
+                    finishAuthentication(callbackURL: callbackURL, error: error, generation: generation)
                 }
                 session.prefersEphemeralWebBrowserSession = false
                 session.presentationContextProvider = self

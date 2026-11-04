@@ -2,7 +2,7 @@ import Foundation
 
 /// Compares one load against a signed billing-cycle balance using a device-local
 /// solar forecast and the site's historical local-time household/battery profile.
-struct LoadTimingForecastEstimator {
+enum LoadTimingForecastEstimator {
     static let maximumBalanceAge: TimeInterval = 30 * 60
     /// The forecast-free comparison uses a one-hour balance freshness window.
     static let maximumFlatBalanceAge: TimeInterval = 60 * 60

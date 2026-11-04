@@ -20,9 +20,6 @@ enum SectionTheme {
         Self.groupedBackground
             .overlay(accent.opacity(0.05))
     }
-}
-
-extension SectionTheme {
     /// Screen background for grouped content. One token so views don't repeat
     /// a platform colour, and another platform's build can supply its own.
     static var groupedBackground: Color {

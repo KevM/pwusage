@@ -48,42 +48,6 @@ struct OpenMeteoProviderTests {
             SolarLayoutPlane(azimuth: 90.2, tilt: 20.2, dcKwp: 4)]))
         #expect(await provider.configuration(for: first).fingerprint != provider.configuration(for: second).fingerprint)
     }
-}
-
-actor HeldOpenMeteoTransport: OpenMeteoTransport {
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var startedWaiter: CheckedContinuation<Void, Never>?
-    private var started = false
-    private(set) var cancellations = 0
-    let body: Data
-    init(body: Data) { self.body = body }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        started = true
-        startedWaiter?.resume()
-        startedWaiter = nil
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation = $0 }
-        } onCancel: { Task { await self.didCancel() } }
-        let url = try #require(request.url)
-        let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
-        return (body, response)
-    }
-
-    private func didCancel() { cancellations += 1 }
-
-    func waitUntilStarted() async {
-        if started { return }
-        await withCheckedContinuation { startedWaiter = $0 }
-    }
-
-    func release() {
-        continuation?.resume()
-        continuation = nil
-    }
-}
-
-extension OpenMeteoProviderTests {
     @Test("A late weather completion after account change cannot repopulate cache")
     func accountChangeFencesWeather() async throws {
         let now = SolarProviderFixture.date("2026-10-28 09:00:00")
@@ -122,9 +86,6 @@ extension OpenMeteoProviderTests {
         #expect(await fetch.value.outcome == .cancelled)
         #expect(await provider.cachedForecast(for: request) == nil)
     }
-}
-
-extension OpenMeteoProviderTests {
     @MainActor
     private func eventuallyAsync(_ predicate: @escaping @Sendable () async -> Bool) async throws {
         var matched = false
@@ -201,9 +162,6 @@ extension OpenMeteoProviderTests {
         await transport.release()
         #expect(await provider.cachedForecast(for: request) == nil)
     }
-}
-
-extension OpenMeteoProviderTests {
     @Test("Elapsed intervals support projection but cannot become same-day forecast training")
     func retainedElapsedHoursDoNotTrainCorrection() async throws {
         let now = SolarProviderFixture.date("2026-10-28 09:04:00")
@@ -229,5 +187,38 @@ extension OpenMeteoProviderTests {
             to: dayStart.addingTimeInterval(12 * 3600), siteTimeZone: request.siteTimeZone)
         #expect(past[dayStart.addingTimeInterval(9 * 3600)] == nil)
         #expect(past[dayStart.addingTimeInterval(10 * 3600)] != nil)
+    }
+}
+
+actor HeldOpenMeteoTransport: OpenMeteoTransport {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var startedWaiter: CheckedContinuation<Void, Never>?
+    private var started = false
+    private(set) var cancellations = 0
+    let body: Data
+    init(body: Data) { self.body = body }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        started = true
+        startedWaiter?.resume()
+        startedWaiter = nil
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation = $0 }
+        } onCancel: { Task { await self.didCancel() } }
+        let url = try #require(request.url)
+        let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (body, response)
+    }
+
+    private func didCancel() { cancellations += 1 }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { startedWaiter = $0 }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }

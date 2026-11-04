@@ -21,14 +21,6 @@ struct TodayEnergyWidgetRefresh: Sendable {
         await TodayEnergyWidgetRefreshCoordinator.shared.current()
     }
 
-    fileprivate static func fetchCurrent() async -> TodayEnergySnapshot? {
-        guard let store = TodayEnergySnapshotStore.shared(),
-              let configuration = try? AppConfiguration.fromBundle() else { return nil }
-        let session = makeSession()
-        defer { session.finishTasksAndInvalidate() }
-        return await Self(origin: configuration.apiOrigin, session: session, store: store).load()
-    }
-
     static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = SharedWebSession.cookieStorage()
@@ -44,7 +36,7 @@ struct TodayEnergyWidgetRefresh: Sendable {
         let now = date ?? Date()
         guard let selection = store.load() else { return nil }
         let matchingCache = cachedRefresh(for: selection)
-        let fallback = matchingCache.map { $0.snapshot } ?? selection
+        let fallback = matchingCache.map(\.snapshot) ?? selection
         // Several widget kinds can request the same site around the same time.
         if let cached = matchingCache?.snapshot, let fresh = currentSnapshot(cached, at: now) { return fresh }
         if matchingCache == nil, let fresh = currentSnapshot(selection, at: now) { return fresh }
@@ -137,10 +129,21 @@ private actor TodayEnergyWidgetRefreshCoordinator {
 
     func current() async -> TodayEnergySnapshot? {
         if let pending { return await pending.value }
-        let task = Task { await TodayEnergyWidgetRefresh.fetchCurrent() }
+        let task = Task { await Self.fetchCurrent() }
         pending = task
         let value = await task.value
         pending = nil
         return value
+    }
+
+    /// Kept here so every refresh goes through this single in-flight task.
+    private static func fetchCurrent() async -> TodayEnergySnapshot? {
+        guard let store = TodayEnergySnapshotStore.shared(),
+              let configuration = try? AppConfiguration.fromBundle() else { return nil }
+        let session = TodayEnergyWidgetRefresh.makeSession()
+        defer { session.finishTasksAndInvalidate() }
+        return await TodayEnergyWidgetRefresh(
+            origin: configuration.apiOrigin, session: session, store: store
+        ).load()
     }
 }

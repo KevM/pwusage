@@ -27,7 +27,7 @@ struct SolarLayoutDetectionRunnerForceTests {
                                                 detect: { _, _, _, _, _ in
                                                     calls.withLock { $0 += 1 }
                                                     return low
-                                                }, now: { self.attempt })
+                                                }, now: { attempt })
         _ = await runner.runIfDue(scope: scope)
         _ = await runner.runIfDue(scope: scope)
         #expect(calls.withLock { $0 } == 1)
@@ -59,7 +59,7 @@ struct SolarLayoutDetectionRunnerForceTests {
                 return DetectedSolarLayout(status: .lowConfidence, confidence: "low", reasons: [], planes: [],
                                            acClipKw: nil, historyDays: samples.count / 288, clearDays: 0,
                                            firstDay: nil, lastDay: nil)
-            }, now: { self.attempt })
+            }, now: { attempt })
         let ordinary = Task { await runner.runIfDue(scope: scope) }
         try await eventually { gate.callCount == 1 }
         let imported = MobileSolarHistoryDay(
