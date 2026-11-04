@@ -4,8 +4,9 @@
 project("./PWUsage.xcodeproj")
 scheme("PWUsageScreenshots")
 
-# 6.9" iPhone and 13" iPad, the sizes App Store Connect requires. The iPad
-# test turns the device to landscape itself.
+# 6.9" iPhone and 13" iPad. The iPad test turns the device to landscape
+# itself. The Duo is captured separately after being posed open: snapshot
+# boots every device folded, so its inner display would be dark.
 devices([
   "iPhone 18 Pro Max",
   "iPad Pro 13-inch (M5)",

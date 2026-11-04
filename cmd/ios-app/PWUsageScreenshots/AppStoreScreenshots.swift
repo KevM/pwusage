@@ -31,6 +31,7 @@ final class AppStoreScreenshots: XCTestCase {
 
     func testIPhoneShots() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "iPhone set only")
+        try XCTSkipIf(isDuo, "iPhone standard set only")
         prepareHome()
         snapshot("01-home")
         scrollToToday()
@@ -40,6 +41,15 @@ final class AppStoreScreenshots: XCTestCase {
 
     func testIPadShots() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad set only")
+        prepareHome()
+        snapshot("01-home")
+        captureTabs()
+    }
+
+    /// The open Duo is regular width, so Home already shows Live, Today and
+    /// the summary cards; it needs the iPad-style list, not 02-home-today.
+    func testDuoShots() throws {
+        try XCTSkipUnless(isDuo, "Duo set only")
         prepareHome()
         snapshot("01-home")
         captureTabs()
@@ -57,6 +67,17 @@ final class AppStoreScreenshots: XCTestCase {
         open("Settings")
         waitFor(app.staticTexts["Hill Country Electric"])
         snapshot("05-settings")
+        openSolarSystem()
+        snapshot("06-solar-system")
+    }
+
+    /// The Settings row's label carries the found status, so reach it by
+    /// identifier; wait for the details card rather than the screen's title.
+    private func openSolarSystem() {
+        let row = element("settings.solar-system")
+        XCTAssertTrue(row.waitForExistence(timeout: timeout), "No Solar System row")
+        row.tap()
+        waitFor(app.staticTexts["Total size"])
     }
 
     /// Scrolls Home until it stops moving, so Today so far, the bill and Smart
@@ -84,6 +105,11 @@ final class AppStoreScreenshots: XCTestCase {
             return
         }
         XCTFail("No tab named \(title)")
+    }
+
+    /// The Duo is an iPhone idiom, so the idiom alone cannot separate the sets.
+    private var isDuo: Bool {
+        (ProcessInfo().environment["SIMULATOR_DEVICE_NAME"] ?? "").contains("iPhone Duo")
     }
 
     private func element(_ identifier: String) -> XCUIElement {

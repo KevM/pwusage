@@ -52,6 +52,7 @@ struct SettingsView: View {
                         Label("Solar System", systemImage: "sun.max")
                     }
                 }
+                .accessibilityIdentifier("settings.solar-system")
                 NavigationLink(value: SettingsDestination.about) {
                     Label("About", systemImage: "info.circle")
                 }

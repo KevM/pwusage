@@ -167,9 +167,11 @@ open class Snapshot: NSObject {
                 return
             }
 
-            let screenshot = XCUIScreen.main.screenshot()
+            let screenshot = activeScreenScreenshot()
             #if os(iOS) && !targetEnvironment(macCatalyst)
-            let image = XCUIDevice.shared.orientation.isLandscape ?  fixLandscapeOrientation(image: screenshot.image) : screenshot.image
+            let needsUpright = XCUIDevice.shared.orientation.isLandscape
+                || screenshot.image.imageOrientation != .up
+            let image = needsUpright ? fixLandscapeOrientation(image: screenshot.image) : screenshot.image
             #else
             let image = screenshot.image
             #endif
@@ -193,6 +195,35 @@ open class Snapshot: NSObject {
                 NSLog(error.localizedDescription)
             }
         #endif
+    }
+
+    /// iPhone Duo has two active screens. The cover stays `XCUIScreen.main`
+    /// after the inner panel is lit, so pick the screen whose size matches the
+    /// app's window instead of assuming the main screen is the visible one.
+    class func activeScreenScreenshot() -> XCUIScreenshot {
+        let screens = XCUIScreen.screens
+        guard screens.count > 1,
+              let app = self.app,
+              app.windows.firstMatch.exists
+        else { return screens.first?.screenshot() ?? XCUIScreen.main.screenshot() }
+
+        let window = app.windows.firstMatch.frame.size
+        guard window.width > 0, window.height > 0
+        else { return screens.first?.screenshot() ?? XCUIScreen.main.screenshot() }
+
+        let shots = screens.map { $0.screenshot() }
+        let chosen = shots.min { first, second in
+            distance(first.image.size, to: window) < distance(second.image.size, to: window)
+        }
+        return chosen ?? XCUIScreen.main.screenshot()
+    }
+
+    /// The screen may still be in its native orientation before the image is
+    /// made upright, so compare the window against both orientations.
+    private class func distance(_ size: CGSize, to window: CGSize) -> CGFloat {
+        let direct = abs(size.width - window.width) + abs(size.height - window.height)
+        let transposed = abs(size.height - window.width) + abs(size.width - window.height)
+        return min(direct, transposed)
     }
 
     class func fixLandscapeOrientation(image: UIImage) -> UIImage {

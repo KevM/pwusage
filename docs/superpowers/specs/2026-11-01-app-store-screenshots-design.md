@@ -108,3 +108,19 @@ builder's call, matching the card's existing visual weight.
   commands.
 - iOS CI lint rules apply: `swiftformat --lint` and `swiftlint --strict` clean,
   zero compiler warnings, existing tests still pass.
+
+## Update: iPhone Duo and CI
+
+App Store Connect now has an `APP_IPHONE_DUO` screenshot set (2007×2853 or
+2853×2007 for the inner display; 1398×2034 for the folded cover). The Duo needs
+its own capture path because the pose is a Device Hub control with no
+`simctl`/`devicectl` command, and `snapshot` shuts every simulator down and
+boots it folded. The lane uses `baguette hinge --pose open`, which dispatches
+the same vendor HID event from inside the guest and needs no GUI or
+accessibility permission, then runs `testDuoShots` against the lit inner
+display. `SnapshotHelper` picks the screen whose size matches the app window, so
+the capture follows the lit panel; the flatten step removes its alpha and scales
+the one-pixel rounding to the accepted size. A manual
+`.github/workflows/ios-screenshots.yml` workflow runs the lane on GitHub Actions
+and uploads the images as artifacts. This supersedes the original local-only and
+iPhone/iPad-only scope.
