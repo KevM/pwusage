@@ -10,6 +10,9 @@ description: >-
 
 This skill provides patterns for writing reliable asynchronous code, enforcing actor boundaries, and satisfying strict concurrency rules in `cmd/ios-app`.
 
+Canonical project guide: [`cmd/ios-app/AGENTS.md`](../../../cmd/ios-app/AGENTS.md). Read it for the
+Swift idiom rules, lint wrapper and verification commands; this skill goes deeper on concurrency.
+
 ---
 
 ## 1. Actor Isolation & `@MainActor`

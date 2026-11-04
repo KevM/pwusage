@@ -9,6 +9,9 @@ description: >-
 
 This skill provides rules, patterns, and runbook instructions for authoring unit and integration tests in `cmd/ios-app/PWUsageTests`.
 
+Canonical project guide: [`cmd/ios-app/AGENTS.md`](../../../cmd/ios-app/AGENTS.md). Read it for the
+test runner, lint wrapper and verification rules; this skill goes deeper on Swift Testing itself.
+
 ---
 
 ## 1. Strictly Prohibited: Legacy `XCTest`
@@ -62,7 +65,7 @@ struct SolarForecastStoreRefreshTests {
 > [!CAUTION]
 > **Never assert after an arbitrary `Task.sleep`.** Fixed sleeps produce flaky tests under simulator load and slow down test suites.
 
-Always use the project's tested bounded-wait helpers from [`PWUsageTests/test-waits.swift`](file:///Users/kevm/github/pwusage/cmd/ios-app/PWUsageTests/test-waits.swift):
+Always use the project's tested bounded-wait helpers from [`PWUsageTests/test-waits.swift`](../../../cmd/ios-app/PWUsageTests/test-waits.swift):
 
 ### A. Waiting for State to Change (`eventually`)
 When waiting for background tasks or published coordinator properties to reflect a new state:
