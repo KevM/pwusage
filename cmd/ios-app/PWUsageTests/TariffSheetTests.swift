@@ -18,7 +18,7 @@ struct TariffSheetTests {
         #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "other") }
         #expect(throws: PWUsageAPIError.invalidResponse) {
             let version2 = Self.fixture.replacingOccurrences(of: "\"version\":1", with: "\"version\":2")
-            try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: Data(version2.utf8))
+            _ = try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: Data(version2.utf8))
                 .validating(siteID: "a")
         }
     }

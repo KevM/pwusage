@@ -209,3 +209,42 @@ struct AutomaticForecastCoordinatorTests {
         }
     }
 }
+
+@MainActor
+@Suite("Bill forecast during a refresh")
+struct BillForecastRefreshTests {
+    @Test("A fresh forecast keeps pricing the bill while a refresh is in flight")
+    func freshForecastSurvivesRefresh() async throws {
+        let harness = await AutomaticForecastHarness()
+        await harness.coordinator.loadTimingDetailAppeared()
+        let published = try #require(harness.coordinator.publishedForecastIntervals)
+        let now = harness.coordinator.now()
+
+        harness.coordinator.solarForecastState = .loadingWithBasic
+
+        #expect(harness.coordinator.pricingForecastIntervals(at: now) == published)
+    }
+
+    @Test("A stale forecast does not price the bill, whatever the state")
+    func staleForecastIsDropped() async throws {
+        let harness = await AutomaticForecastHarness()
+        await harness.coordinator.loadTimingDetailAppeared()
+        let fetchedAt = try #require(harness.coordinator.publishedForecastFetchedAt)
+        let stale = fetchedAt.addingTimeInterval(LoadTimingForecastPresentation.maximumForecastAge + 1)
+
+        #expect(harness.coordinator.pricingForecastIntervals(at: stale).isEmpty)
+        harness.coordinator.solarForecastState = .loadingWithBasic
+        #expect(harness.coordinator.pricingForecastIntervals(at: stale).isEmpty)
+    }
+
+    @Test("A failed forecast does not price the bill")
+    func failedForecastIsDropped() async throws {
+        let harness = await AutomaticForecastHarness()
+        await harness.coordinator.loadTimingDetailAppeared()
+        let now = harness.coordinator.now()
+
+        harness.coordinator.solarForecastState = .failedWithBasic
+
+        #expect(harness.coordinator.pricingForecastIntervals(at: now).isEmpty)
+    }
+}

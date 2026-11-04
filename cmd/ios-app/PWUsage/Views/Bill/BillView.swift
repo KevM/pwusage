@@ -69,11 +69,7 @@ struct BillView: View {
 
     @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
         let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
-        let fetchedAt = coordinator.publishedForecastFetchedAt
-        let usesSolar = coordinator.solarForecastState == .enhanced && fetchedAt.map {
-            (0 ... LoadTimingForecastPresentation.maximumForecastAge).contains(now.timeIntervalSince($0))
-        } == true
-        let forecast = usesSolar ? coordinator.publishedForecastIntervals ?? [] : []
+        let forecast = coordinator.pricingForecastIntervals(at: now)
         let result: BillOutlook.ProjectionResult = {
             guard let history = response.outlook, let context, context.timeZone == timeZone,
                   !state.isUnavailable else { return .empty }
