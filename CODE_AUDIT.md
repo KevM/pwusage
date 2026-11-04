@@ -1,21 +1,50 @@
 # iOS Code Audit — `cmd/ios-app`
 
-> **This file is the live tracking list for iOS audit work across PRs.** Every finding carries a `Status` bullet. Update it in the same commit that fixes the finding — do not batch the check-offs into a later cleanup. Section and finding numbers (`§N.M`) are stable: never renumber, because other documents and PR descriptions reference them. If a finding is dropped rather than fixed, leave its number in place and write `_REMOVED: <reason>_` as its body.
+> **This file is the live tracking list for iOS audit work across PRs.** Every finding carries a `Status` bullet. Section and finding numbers (`§N.M`) are stable: never renumber, because other documents and PR descriptions reference them. If a finding is dropped rather than fixed, leave its number in place and record it as `REMOVED (<reason>)`.
 
-**Status values:** `OPEN` → `IN PROGRESS (PR #N)` → `FIXED (PR pending)` → `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)`
+> **Reconciled 2026-11-04 against `47011778`.** Every `OPEN` finding was re-checked against the tree after the SwiftLint burndown (#288), the agent-guide rewrite (#289) and the Swift file rename (#290). Statuses below are current; the detailed prose in each entry is the original audit record and its line numbers may predate those refactors. **The live queue below is authoritative for what is still open and where to start.**
 
-*`FIXED (PR pending)` is the form every entry on this branch uses: the finding is fixed and verified in-tree, but the PR number and commit are stamped once the branch merges. Once merged, replace it with `FIXED (PR #N, commit <sha>)`. Do not mix the two forms in one file.*
+**Status values:** `OPEN` · `IN PROGRESS (PR #N)` · `FIXED (PR pending)` · `FIXED (PR #N, commit <sha>)` · `WON'T FIX (<reason>)` · `REMOVED (<reason>)` · `PARTIAL (evidence)`
 
-**Progress:** 83 findings tracked. 30 fixed (§14's six, filed and fixed together on `chore/ios-test-runner-ci`, are included). **Merged onto `main`:** this branch was rebased onto `origin/main` after PR #117 landed, and one collision had to be resolved by hand — see the note above §3.16. Two batches are now closed. The first, on `fix/ios-audit-high-findings`, was the 10 High findings plus 3 coupled Mediums (see `docs/superpowers/specs/2026-09-29-ios-audit-high-findings-design.md`), and §8.18 was filed after that batch's whole-branch review. The second, on `fix/ios-audit-correctness-tail` (see `docs/superpowers/specs/2026-09-30-ios-audit-correctness-tail-design.md`), fixed five more — §5.5, §5.7 parts (a) and (b), §5.8, §5.12, §8.18 — recorded §5.6 as `WON'T FIX` with a condition for revisiting, and filed §3.16 (originally numbered §3.15; renumbered on merge because PR #117 had independently claimed that number) so §5.7's deferred part (c) is not lost behind a `FIXED` status.
+**Progress:** 97 findings tracked — **31 open** (30 `OPEN` plus §16.5 `PARTIAL`), **62 FIXED**, **2 WON'T FIX** (§5.6, §9.4), **2 REMOVED** (§7.5, §8.3). §4.6 is a recorded negative result, not a finding.
 
-**Branch gate, re-run at this reconciliation's own commit** (the ledger commit, `docs(ios): reconcile the audit ledger with the correctness tail`): `cd cmd/ios-app && ./run-tests.sh` exits **0** with **380 tests in 21 suites** passing at the reconciliation commit, and **390 in 21 suites** after the commits the two review passes added, and `xcodebuild … -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` prints **BUILD SUCCEEDED** with `grep -c "warning:"` = **1** on a clean build, and the single hit is the `appintentsmetadataprocessor` "Metadata extraction skipped" line that :28 documents as the sole permitted exemption — the same figure the header claims. **An incremental build may report 0 instead**, because the metadata processor does not re-run when nothing has changed; that is a DerivedData artifact, not a stricter result, so a reader seeing 0 should not read it as "the expected warning is gone". Zero *Swift* compiler warnings is the durable claim and it holds either way; §5.12's earlier `373 tests in 21 suites` figures are time-scoped to that commit and have since grown with the tests later commits added.
+### Live queue
 
-| Status | Count | Findings |
-| --- | --- | --- |
-| OPEN | 52 | all except §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §3.16, §5.1, §5.2, §5.3, §5.4, §5.5, §5.6, §5.7, §5.8, §5.9, §5.10, §5.11, §5.12, §6.1, §6.2, §6.4, §7.1, §7.7, §8.18 |
-| IN PROGRESS | 0 | — |
-| FIXED | 30 | §3.1, §3.2, §3.3, §3.12, §3.13, §3.14, §3.15, §5.1, §5.2, §5.3, §5.4, §5.5, §5.7, §5.8, §5.9, §5.10, §5.11, §5.12, §6.1, §6.2, §6.4, §7.1, §7.7, §8.18, §14.1, §14.2, §14.3, §14.4, §14.5, §14.6 (§4.6 is a recorded negative result, not a finding) |
-| WON'T FIX | 1 | §5.6 |
+Only findings verified still present on 2026-11-04. The detailed entry under the same number has the original reasoning.
+
+| Finding | Severity | What remains | Start at |
+| --- | --- | --- | --- |
+| §3.4 | Medium | A cancelled live/bill fetch is still recorded as "data unavailable"; filter `CancellationError` and `URLError.cancelled` | `DashboardCoordinator+Refresh.swift` (`handle`) |
+| §3.5 | Medium | The timer loop returns without clearing `timerTask` | `DashboardCoordinator+Refresh.swift` (`startTimer`) |
+| §3.6 | Medium | `refreshAll` awaits detached task values, so caller cancellation escapes a non-throwing API | `DashboardCoordinator+Refresh.swift` (`refreshAll`) |
+| §3.7 | Medium | `lastAttempt` is stamped before the request; a failed or cancelled attempt costs a full cadence window | `DashboardCoordinator+Refresh.swift` |
+| §3.9 | Low | `authenticationInvalidated` and `selectSite` leave `planningContextCache` and `planningContextTasks` intact | `DashboardCoordinator.swift`, `DashboardCoordinator+LoadTiming.swift` |
+| §3.10 | Medium | The data protocols are `@MainActor` while the conforming `PWUsageAPI` is not | `Models/DashboardContracts.swift` |
+| §3.11 | Medium | Unstructured `Task {}` sites with no retained handle (still widespread) | `LoadTimingView.swift`, `PWUsageAppModel*`, `MobileAuthService.swift` |
+| §3.16 | Medium | Cadence is measured with `Date`; anchor it to `ContinuousClock` together with §3.7 | `DashboardCoordinator+Refresh.swift` (`isDue`) |
+| §4.1 | Medium | The app's observable types still use Combine `ObservableObject` (six files) | `PWUsageAppModel`, `DashboardCoordinator`, `MobileAuthService`, `LoadProfileStore` |
+| §4.2 | Low | `async` remains on synchronous operations | `PWUsageAPI.clearSiteAuthCookie`, `SolarForecastService.activateAccountScope` |
+| §4.3 | Medium | `async let` plus `billSuccessGeneration` still makes `billSucceeded` ordering-dependent | `DashboardCoordinator+AutomaticForecast.swift`, `DashboardCoordinator+LoadTiming.swift` |
+| §4.4 | Low | `@unchecked Sendable` on `RedirectRejectingDelegate` with no rationale | `Networking/RedirectRejectingDelegate.swift` |
+| §4.5 | Low | `.task` and `.onAppear` both run window/scene setup | `App/PWUsageRootView.swift` |
+| §7.2 | Medium | Formatters are still allocated per call, including on the decode path | `DashboardPresentation.swift`, `MobileContractDecoder.swift` |
+| §7.3 | Medium | `LoadTimingView.init` still builds a `LoadProfileStore()` and reads/writes `UserDefaults` | `Views/LoadTiming/LoadTimingView.swift` |
+| §7.4 | Medium | Two validators must agree: `LoadProfileStore.validate` and `ProfileDraft.isValid` | `LoadProfileStore.swift`, `ProfileDraft.swift` |
+| §8.1 | Medium | The USD accessibility label still strips `¢/kWh` from formatted output | `DashboardPresentation.swift` (`loadRateAccessibilityLabel`) |
+| §8.4 | Low | The delete dialog's button is the fixed "Delete Custom Job" while its title names the Job | `LoadProfilesSheet.swift` |
+| §8.5 | Medium | Staleness windows remain scattered literals across about eight files | `DashboardPresentation.swift` and its call sites |
+| §8.8 | Medium | `AnyView` is used for the two-branch Home grid | `DashboardView.swift` |
+| §8.9 | Medium | Index/offset `ForEach` remains in several lists | `SmartShiftDetailsView`, `EnergyWeatherChart`, `BillView` |
+| §8.11 | Medium | Hand-rolled empty/loading states remain next to the shared primitives | `DashboardView`, `BillView`, `LoadTimingView` |
+| §8.13 | Medium | `onChange(of: isForeground)` still spawns a raw `Task` | `LoadTimingView.swift` |
+| §8.14 | Low | `lineLimit(1)` plus `minimumScaleFactor(0.75)` shrinks values instead of wrapping | `BillView.swift` |
+| §8.15 | Low | `.updatesFrequently` is still on a static sign-in error | `SignInView.swift` |
+| §8.16 | Low | `.hoverEffect()` remains on phone-first controls | `SignInView`, `SitePickerView`, `View+PortableModifiers` |
+| §8.17 | Low | No previews for `SolarForecastSettingsSheet`, `SitePickerView`, or the car-charge section | `Views/Solar`, `Views/Sites`, `ProfileEditorSheet` |
+| §9.7 | Medium | `SolarForecastAutomaticCacheState` has no schema version; `try?` silently discards undecodable state | `SolarForecastAutomaticCache.swift` |
+| §9.12 | Low | `LoadTimingViewTests` still names a view it never touches | `PWUsageTests/LoadTimingViewTests.swift` |
+| §9.14 | Low | Three dashboard spies and two auth fakes remain per-file | `DashboardCoordinatorTests`, `SolarForecastCoordinatorTests`, `PWUsageAppModelTestSupport` |
+| §16.5 | Important | Money and rates are still `Double`; the `Decimal` migration is open | `Models/MobileContracts.swift`, `Models/Bill/MobileTariffs.swift` |
 
 ---
 
@@ -30,6 +59,8 @@
 ---
 
 ## 1. Executive summary
+
+**Historical.** This section records what the 2026-09-29 audit found and ranked; several High findings are now `FIXED`. Use the live queue above for current status.
 
 1. **[High] Cost figures are marginal deltas presented as the cost of a run** — §5.1 — `LoadTimingForecastEstimator.swift:461-474`
 2. **[High] Pull-to-refresh can never recover a missing household profile** — §5.2 — `DashboardCoordinator.swift:379`, `:523-530`
@@ -139,7 +170,8 @@ The build is warning-free, and the generation-counter discipline in `SolarForeca
 - **Why:** A site switch made while inactive (or immediately before backgrounding) issues a full bill + planning-context + Solcast refresh that continues after the scene is no longer active, spending Solcast budget with no user watching. This is the clearest violation of the README's "stops timers in the background" claim.
 - **Action:** Apply the same `isForeground` guard to the enhancement task, or defer it to the next foreground transition.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The foreground/account guard now covers both the refresh and the enhancement task in `selectSite`.
 - **Confidence:** High
 
 ### 3.9 Planning-context cache and in-flight tasks survive sign-out
@@ -506,7 +538,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A `URLSession` retains its delegate until invalidated, so each session is a leaked resource until GC pressure reclaims it. With the daily budget capped at ten attempts the absolute growth is small but unbounded across the app's lifetime.
 - **Action:** Hold one long-lived session per timeout value in the store and reuse it, or invalidate on completion.
 - **Severity:** Low
-- **Status:** OPEN
+- **Status:** REMOVED (Solcast provider deleted in #278)
+- **Reconciled 2026-11-04:** The Solcast client and its per-refresh `URLSession` instances are gone; the Open-Meteo path creates no session per refresh.
 - **Confidence:** Medium
 
 ### 7.6 The estimator's `assumptions` are computed, tested, and never shown
@@ -515,7 +548,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** A test asserts on copy the app never displays, so the guarantee "the estimate states its assumptions" is not enforced for the user, and the two texts can drift silently.
 - **Action:** Have `LoadTimingForecastPresentation` render `comparison.assumptions`, or delete the field and its test.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `SmartShiftDetailsView` now renders `snapshot.comparison?.assumptions`, so the tested copy is the copy the user sees.
 - **Confidence:** High
 
 ### 7.7 `refreshable` is attached inside a `TimelineView` that rebuilds its content every minute
@@ -548,7 +582,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The 9pt badge does not scale at all and is illegible for many users including at default text sizes. The decorative glyphs ignore accessibility sizes (though they are `accessibilityHidden`, so the impact is visual only).
 - **Action:** Use relative text styles (`.caption2.weight(.bold)`) for the badge; `@ScaledMetric` or relative styles for the glyphs.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The 9pt ACTIVE badge and the fixed-size sign-in/hero glyphs are gone or `accessibilityHidden`; remaining fixed sizes are decorative or inside the 3D scene and Canvas.
 - **Confidence:** High
 
 ### 8.3 Third array toggle is silently rejected with feedback the user cannot see
@@ -557,7 +592,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The tap appears to do nothing; the explanation is off-screen in a section the user has likely scrolled past, so the array list looks broken.
 - **Action:** Disable or visually mark the remaining `Toggle`s once two are selected, and/or surface the message adjacent to the list.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** REMOVED (Solcast array picker deleted in #278)
+- **Reconciled 2026-11-04:** The current settings sheet has no array toggle, so the unreachable third selection no longer exists.
 - **Confidence:** High — verified `:168-184` and the `:76-87` call site.
 
 ### 8.4 Destructive dialog's button label ignores the profile it targets
@@ -584,7 +620,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Fragile string coupling: rewording the freshness string silently breaks all three subtitles with no compile error, producing a double-prefixed or empty result.
 - **Action:** Have `freshness` return a small struct (`isStale` + age text) and let callers compose the prefix.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** Callers use the returned string directly; the `Updated ` prefix is no longer stripped outside `freshness`.
 - **Confidence:** High
 
 ### 8.7 Color chosen by string prefix
@@ -593,7 +630,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Color is the only differentiator, and it depends on presentation-layer formatting staying in sync. It also ignores `accessibilityDifferentiateWithoutColor`.
 - **Action:** Return a signed numeric balance alongside its label from `DashboardPresentation`, switch on the number, and add a glyph or text cue so the distinction survives without color.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** Balance tint now uses the numeric `summary.isBanked` rather than a string prefix.
 - **Confidence:** High
 
 ### 8.8 `AnyView` used for a two-branch layout decision
@@ -620,7 +658,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** Decimal separators do not follow the user's locale. The rest of the codebase already uses `.formatted(.number.precision(...))`.
 - **Action:** Use `.formatted(.number.precision(.fractionLength(1)))` consistently.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The quoted `String(format:)` display paths are gone; remaining uses are hashes, ISO day keys, and locale-aware URL parameters.
 - **Confidence:** High
 
 ### 8.11 Hand-rolled empty and loading states instead of `ContentUnavailableView`
@@ -638,7 +677,8 @@ The security posture is genuinely strong and was verified end-to-end: PKCE/state
 - **Why:** The picker binding's `get` returns a fallback ID while `set` writes an explicit ID, so picking the already-defaulted profile makes the view think the user diverged from the suggestion.
 - **Action:** Drive dialogs from a `Bool` plus a separate pending item, or use `confirmationDialog(item:)`; replace the picker binding with a `String` selection state normalized on change.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The dialog and picker `Binding(get:set:)` sites are gone; the only remaining custom binding is `TabView` selection.
 - **Confidence:** High
 
 ### 8.13 Sheet and coordinator work triggered by `onChange` instead of `task(id:)`
@@ -712,7 +752,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** Readers assume these are live, and the associated ~90 lines of `LoadTimingEstimatorTests.swift:165-252` give a false sense of coverage of code the app never runs.
 - **Action:** Delete the cluster and its tests, or move it to a clearly-marked experimental file.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The headroom/verdict cluster and its tests are gone; `LoadTimingEstimator.swift` is 30 lines and exposes only `carChargeEstimate`.
 - **Confidence:** High
 
 ### 9.2 `LoadTimingAffordance` is a whole production file with no production caller
@@ -721,7 +762,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** Two names for one operation invites drift, and the type reads as the app's canonical "one profile's result" wrapper when it is not.
 - **Action:** Delete the file and the two test call sites, or adopt the type in the recommendation path.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `LoadTimingAffordance` no longer exists.
 - **Confidence:** High
 
 ### 9.3 `lastErrorDescription` is written in eleven places and never read by any view
@@ -730,7 +772,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** The most specific diagnostics the store produces — including the storage-failure and quarantine messages, which are exactly what §5.5 needs — can never reach the user. The UI is driven entirely by the coarser `SolarForecastUnavailableCause` enum, so several failure modes present generic text.
 - **Action:** Surface it on the coordinator so the settings sheet can show it, or fold the distinct messages into `SolarForecastUnavailableCause`.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `SolarForecastStore` and its write-only `lastErrorDescription` were removed with Solcast in #278.
 - **Confidence:** High
 
 ### 9.4 Empty coordinator methods called from view bodies as if they did something
@@ -740,7 +783,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Action:** Delete both methods and their call sites, or give them the invalidation the comment at `:504` implies.
 - **Note (this branch):** the call sites are gone — `SolarForecastSettingsSheet.swift` and `LoadTimingView.swift` no longer call either method, and the three now-dangling `.onChange` wrappers were removed with them. **The methods are kept deliberately and this finding stays `OPEN` for the call-site half only.** `SolarForecastCoordinatorTests.swift:573`, `:593` and `:613` call them mid-flight as a synchronization seam, in three tests named for the invariant they protect (*"Profile comparisons and settings edits perform no requests"*, *"Unsaved settings edits do not strand a loading enhancement"*, *"Unsaved settings edits do not supersede a disconnect in progress"*). The emptiness is the contract under test: a future edit that made these methods invalidate a cached forecast would break all three. Do not re-file this as dead code. Remaining question for the method half: if the invalidation described by the comment is ever wanted, it belongs behind these seams, where the tests already hold the mid-flight position.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** WON'T FIX (call sites are gone; the empty methods are deliberate test seams)
+- **Reconciled 2026-11-04:** The five dead call sites were removed in `fcabe56`; the two methods stay because three `SolarForecastCoordinatorTests` use them as mid-flight seams.
 - **Confidence:** High
 
 ### 9.5 Dead coordinator state written on every response but never read
@@ -749,7 +793,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** The tests are asserting on an implementation detail rather than behaviour. `unavailableStatusCode` in particular would genuinely improve the availability banner by distinguishing "server returned 503" from "no network".
 - **Action:** Surface the status code in the banner, or delete both fields and the assertions that only exist to cover them.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `unavailableStatusCode` was write-only outside tests and was deleted in the 2026-11-04 reconciliation; `lastSuccess` is read by the bill cadence. If the 503-versus-no-network distinction is wanted later, derive it from `PWUsageAPIError` at the presentation layer instead of storing it on endpoint state.
 - **Confidence:** High
 
 ### 9.6 Preview-only code in the release target, and a test target that depends on Debug-only sources
@@ -758,7 +803,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** Preview fixture data (a `UserDefaults` suite name, "Workshop heater"/"Garden pump" profiles) is compiled into the release binary, and `xcodebuild test -configuration Release` will fail to build the entire test target.
 - **Action:** Move the `LoadProfilesSheet` previews into a `#if DEBUG`-guarded file alongside the other two; consider moving the preview doubles into a shared test-support target.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The `LoadProfilesSheet` previews moved to `LoadProfilesPreviews.swift` behind `#if DEBUG`; the shipping file has no `#Preview`.
 - **Confidence:** High
 
 ### 9.7 Solar forecast state file has no schema version
@@ -767,7 +813,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** Any future change to `SolarForecastCredential`, `SolarForecastBatch`, or `SolarForecastBudget` makes `loadState` throw, `loadIfNeeded` fails for every call, and the entire Solcast feature silently stops working with no migration path and no user-visible reason — the `try?` at `:166`, `:189`, `:206`, `:276` swallows the cause.
 - **Action:** Add a `version` field and either migrate or discard-and-reconnect explicitly on mismatch, mirroring `LoadProfileStore.loadCollection`.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** OPEN (reconciled 2026-11-04)
+- **Reconciled 2026-11-04:** The Solcast store is gone, but the replacement `SolarForecastAutomaticCacheState` is also unversioned and `try?` silently drops an undecodable cache. The live queue names the current location.
 - **Confidence:** High
 
 ### 9.8 `SolarForecastStore.swift` is a 764-line file whose 626-line actor covers five responsibilities
@@ -776,7 +823,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** `discoverSites` (`:226-284`) and `performRefresh` (`:428-521`) each repeat the same five-step sequence of generation check → budget reserve → persist → re-check generation → catch-and-classify, so any change to the safety protocol must be made twice. **The duplication is also why §5.5's fix was half-applied for a whole commit**: the sequence appears three times once the two budget saves are counted, and the post-fetch persist is a fourth copy of the same "write, and classify a failure" step. The revision before this one asserted: *"The numbers in this line, and the `660` in the heading, are re-derived against the current tree; the audit's `:78-603` had drifted to `:82-685` and the two function ranges to the values above."* **Both halves of that were wrong.** The numbers were correct for the commit that wrote them, and the §5.5 fix that followed moved every line they name — that fix added 24 lines to this file and inserted whole comment blocks above them — but nothing re-derived them, so a claim of a current re-derivation went stale without anybody noticing. The heading failed the same way for a different reason: it read `660-line actor`, naming the file's length as though it were the actor's, and by `cb5e5f7` the file was 740 lines — stale for every commit after the fork, sitting under a paragraph that claimed to have re-derived it. An earlier revision of this paragraph told a *third* story: that the heading had been **softened** to `600+`, and that the de-precision was what made the numbers unverifiable. **That story described a heading that is not in this branch.** The heading chain here has three entries and no `600+`: `660-line actor covering five responsibilities` from the fork point through `cb5e5f7`, then `740-line file whose 602-line actor covers five responsibilities` at `1efd8c8` and `be4e172`, then this one. The `600+` heading existed only in the pre-rebase chain (`aa44771`, `d3111aa`, `7dc4237`, reachable only through the `round2-before-rebase` and `round3-before-rebase` tags), and the rebase that rewrote round 2 replaced it with the precise `740/602` pair — so the narrative came forward describing a heading the tree no longer had. That is a rebase carrying prose across while substituting the value underneath it, the same defect class as a stale citation under a fresh "re-derived" label, and it is why the claim is corrected here rather than quietly dropped. Re-derived against the tree of this commit, the file is 764 lines, the actor runs 82-707, and the two trailing types moved further than the rest. The lesson underneath the discarded story is real and is kept for that reason rather than because the story was, and the lesson this branch started with is the same one: a citation that says it was verified is the reader's signal that it can be trusted, so a wrong one under that label is worse than a stale one without it — and a heading softened to a vaguer number is worse still, because a reader can measure a length but cannot check a range's end without counting.
 - **Action:** Split out the persistence actor and the session-cleanup adapter, and factor the repeated sequence into one private helper.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `SolarForecastStore` was replaced by `SolarForecastService` (175 lines) plus the cache and file actors; the 764-line actor no longer exists.
 - **Confidence:** High
 
 ### 9.9 `LoadTimingView.swift` is an 877-line file mixing four concerns
@@ -785,7 +833,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** The 200-line enum is the most-tested unit in the repo (`LoadTimingViewTests.swift` is 1018 lines) yet is invisible from the filename — which is why the test file is named for a View it never touches.
 - **Action:** Extract each into its own file; rename the test file to match.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `LoadTimingView.swift` is 386 lines; the presentation, sheet, tile and card were split into their own files.
 - **Confidence:** High
 
 ### 9.10 Three near-identical titled card container views
@@ -794,7 +843,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** Three subtly different copies of the app's most-repeated visual pattern; the drift is already visible.
 - **Action:** Promote one shared `CardContainer` and delete the other two.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** All three wrappers now delegate to `CardContainer`; the duplicated visual implementations are gone.
 - **Confidence:** High
 
 ### 9.11 Duplicated per-point validation and double processing in `SolarForecast.combine`
@@ -803,7 +853,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** The two copies must stay in sync or one array will be accepted that the other rejects. The redundant pass is wasted work on the refresh path.
 - **Action:** Extract the guard-and-key into one private helper returning the keyed dictionary, and seed the loop from the first array's result.
 - **Severity:** Medium
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `SolarForecast.combine` no longer exists.
 - **Confidence:** High
 
 ### 9.12 `LoadTimingViewTests.swift` is named for a View it never touches
@@ -821,7 +872,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** These pass on a US-English simulator and fail on any simulator with a different region or currency format — a green local run can hide a red CI run. This is the same locale coupling as §8.1.
 - **Action:** Pass an explicit `Locale(identifier:)` into the presentation calls under test (the parameter already exists on `currency` and `loadRate`) and assert against fixed-locale output.
 - **Severity:** Low
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** `loadTimingSummary` and `liveLoadBalance` take a `locale`; the tests pin `en_US` for every formatted assertion.
 - **Confidence:** High
 
 ### 9.14 Three hand-rolled `MobileDashboardDataAPI` stubs and two auth fakes
@@ -839,7 +891,8 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 - **Why:** The stale comment would mislead anyone reasoning about the 200 kWh cap.
 - **Action:** Update the comment to describe the actual horizon bound; hoist the `250` ceiling to a named constant.
 - **Severity:** Low
-- **Status:** OPEN
+- **Status:** FIXED (PR pending)
+- **Reconciled 2026-11-04:** The comment now describes the validation ceiling, and the legacy 250 kWh migration bound is the named `maximumLegacyCarCapacityKwh`.
 - **Confidence:** High
 
 ---
@@ -1046,9 +1099,9 @@ Verification: Swift Testing coverage checks Home routing/site preservation, equa
 
 5. **Adopt `@Observable` when convenient, not as a sweep.** §4.1 is a Medium, not a High, and the four types are small. Migrate opportunistically rather than as a dedicated change.
 
-6. **Delete the write-only state.** `lastErrorDescription` (§9.3), `lastSuccess`/`unavailableStatusCode` (§9.5), and the dead estimator cluster (§9.1) exist for tests, not for behavior. Some should be surfaced in the UI instead of deleted — but they should not stay in the middle state.
+6. **Delete the write-only state — done for the known cases.** `lastErrorDescription` (§9.3), the dead estimator cluster (§9.1) and `unavailableStatusCode` (§9.5) are gone; `lastSuccess` turned out to be read by the bill cadence and stays. The general rule still applies: a field that only tests read is either surfaced or deleted, never kept in between.
 
-7. **Reconcile `project.yml` with the README.** §6.1 is a two-line fix and the README is currently wrong.
+7. **Keep `project.yml` and the README aligned.** §6.1 is `FIXED`, but only as the deliberate committed `DEVELOPMENT_TEAM` preference; a later reader must not remove it as a signing leak. Keep the README saying so.
 
 8. **Migrate to `swiftui-pro` and `swift-concurrency-pro` as living references.** The idioms they describe (structured `.task`, `@Observable`, `FormatStyle`, `ContentUnavailableView`, `ContinuousClock` for cadence) are the ones behind most of §4, §7, and §8.
 

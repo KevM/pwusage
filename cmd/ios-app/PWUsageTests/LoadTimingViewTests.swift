@@ -5,6 +5,7 @@ import Testing
 @Suite("Load Timing Presentation Tests")
 struct LoadTimingViewTests {
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
+    private static let locale = Locale(identifier: "en_US")
 
     private func forecastAvailability(
         state: SolarForecastEnhancementState,
@@ -25,7 +26,8 @@ struct LoadTimingViewTests {
             .init(periodName: "Off peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.12,
                   basis: "sell", balanceKwh: 10, energyDataThrough: nil),
             hasTariff: true,
-            currencyCode: "USD"
+            currencyCode: "USD",
+            locale: Self.locale
         )
         #expect(summary.title == "Off peak")
         #expect(summary.rate == "12¢/kWh")
@@ -39,7 +41,8 @@ struct LoadTimingViewTests {
             .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: nil,
                   basis: "unobserved", balanceKwh: nil, energyDataThrough: nil),
             hasTariff: true,
-            currencyCode: "USD"
+            currencyCode: "USD",
+            locale: Self.locale
         )
         #expect(summary.rate == "48¢/kWh")
         #expect(summary.balance == "No bank yet")
@@ -54,7 +57,8 @@ struct LoadTimingViewTests {
             .init(periodName: "Peak", buyRate: 0.48, sellRate: 0.12, marginalCost: 0.48,
                   basis: "buy", balanceKwh: -4, energyDataThrough: nil),
             hasTariff: true,
-            currencyCode: "USD"
+            currencyCode: "USD",
+            locale: Self.locale
         )
         #expect(owed.balance == "Owed 4.0 kWh")
         #expect(!owed.isBanked)
@@ -75,7 +79,9 @@ struct LoadTimingViewTests {
         let unlocalized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true)
         #expect(unlocalized.rate == nil)
         #expect(!unlocalized.accessibilityLabel.contains("cents per kilowatt-hour"))
-        let localized = DashboardPresentation.loadTimingSummary(timing, hasTariff: true, currencyCode: "USD")
+        let localized = DashboardPresentation.loadTimingSummary(
+            timing, hasTariff: true, currencyCode: "USD", locale: Self.locale
+        )
         #expect(localized.rate == "48.5¢/kWh")
         #expect(localized.accessibilityLabel.contains("48.5 cents per kilowatt-hour"))
     }

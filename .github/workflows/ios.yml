@@ -27,8 +27,13 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     # GitHub-hosted only. A self-hosted runner would execute fork PR code on a
     # personal machine once the repository is public.
-    runs-on: macos-latest
-    timeout-minutes: 15
+    # The macos-26 arm64 pool is failing hosted-runner acquisition (community
+    # discussion #211885); macos-15 has a separate pool and Xcode 26.3.
+    # TODO: return to macos-latest once the arm64 pool recovers.
+    runs-on: macos-15
+    # The hosted macOS pool can queue longer than the tests themselves; keep the job
+    # alive for that wait. The runner still enforces its own 13-minute test deadline.
+    timeout-minutes: 45
 
     defaults:
       run:
@@ -37,6 +42,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
 
       - name: Install XcodeGen
         run: |

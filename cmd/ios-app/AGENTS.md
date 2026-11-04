@@ -112,7 +112,7 @@ chosen because they have zero violations today; keep them that way. The default 
 `blanket_disable_command`, stay on as well.
 
 Rules deliberately not enabled yet, because they still have existing violations:
-`prefer_key_path`, `redundant_self_in_closure`, `optional_enum_case_matching`, `legacy_objc_type`,
+`prefer_key_path`, `redundant_self`, `optional_enum_case_matching`, `legacy_objc_type`,
 `no_grouping_extension`, `no_extension_access_modifier`, `strict_fileprivate`, `modifier_order` and
 `convenience_type`. Fix those violations as a separate tranche, then add the rule — do not add a
 baseline to hide them.
@@ -172,6 +172,8 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 - `asc` (App Store Connect) CLI: [`ASC.md`](../../ASC.md) — read it before App Store / TestFlight
   work.
 - Architecture and folder contract: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+- Open iOS audit findings and their live queue: [`CODE_AUDIT.md`](../../CODE_AUDIT.md) — start at
+  the queue, not the historical prose below it.
 - Skills at the repo root, under `.agents/skills/`: `swift-craft` (idioms, budgets, formatting),
   `swift-testing`, `swift-concurrency`, `swiftui-patterns`. Load the relevant one before editing
   that area.

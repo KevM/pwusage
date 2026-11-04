@@ -5,6 +5,9 @@ import Foundation
 final class LoadProfileStore: ObservableObject {
     static let storageKey = "pwusage.loadProfiles.v1"
     static let schemaVersion = 2
+    /// Payloads written before the 200 kWh cap could reach this value; clamp those
+    /// into range instead of discarding every profile. Larger values fail validation.
+    private static let maximumLegacyCarCapacityKwh = 250.0
 
     // All seeded example values live here so the defaults remain easy to review and adjust.
     enum Defaults {
@@ -139,7 +142,7 @@ final class LoadProfileStore: ObservableObject {
         for index in profiles.indices where profiles[index].kind == .car {
             guard var settings = profiles[index].carSettings,
                   settings.capacityKwh > LoadProfile.maximumCarCapacityKwh,
-                  settings.capacityKwh <= 250 else { continue }
+                  settings.capacityKwh <= maximumLegacyCarCapacityKwh else { continue }
             settings.capacityKwh = LoadProfile.maximumCarCapacityKwh
             profiles[index].carSettings = settings
         }

@@ -19,7 +19,9 @@ struct CarLoadSettings: Codable, Equatable {
 }
 
 struct LoadProfile: Codable, Equatable, Identifiable {
-    /// A full Level 1 charge at this capacity fits inside the seven-day tariff timeline.
+    /// Validation ceiling for a car battery, set generously so real EVs fit and
+    /// typos are rejected. It is not a forecast-horizon bound: the estimator
+    /// searches to the end of tomorrow and can chart a run that finishes later.
     static let maximumCarCapacityKwh = 200.0
 
     let id: String
