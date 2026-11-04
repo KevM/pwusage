@@ -149,6 +149,11 @@ for changed in PWUsage/Models/Solar/SolarPosition.swift PWUsage/Models/Solar/Mob
   PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
   expect_parity 1 "skipped after changing $changed"
 done
+# Adjacent layout infrastructure tests must not pull in the multi-minute parity suite.
+for changed in PWUsageTests/SolarLayoutCloudSyncTests.swift PWUsageTests/SolarLayoutSessionCleanupTests.swift; do
+  PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
+  expect_parity 0 "ignored $changed"
+done
 PWUSAGE_TEST_NO_BASE=1 "$script_dir/run-tests.sh"
 expect_parity 1 'skipped without a merge base'
 PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh"
