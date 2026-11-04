@@ -63,6 +63,7 @@ rg -q '^id=TEST-UDID$' "$PWUSAGE_TEST_ARGS"
 rg -q '^-parallel-testing-enabled$' "$PWUSAGE_TEST_ARGS"
 rg -q '^-collect-test-diagnostics$' "$PWUSAGE_TEST_ARGS"
 rg -q '^on-failure$' "$PWUSAGE_TEST_ARGS"
+rg -q '^COMPILER_INDEX_STORE_ENABLE=NO$' "$PWUSAGE_TEST_ARGS"
 
 # expect_failure <expected-status> <output-pattern> -- <run-tests.sh args...>
 expect_failure() {
@@ -177,6 +178,42 @@ if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
   echo 'The full run skipped tests' >&2
   exit 1
 fi
+
+# --auto promotes to --full on detector changes and stays default without them.
+PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift' "$script_dir/run-tests.sh" --auto
+rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+if rg -q '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+  echo '--auto with detector changes skipped tests' >&2
+  exit 1
+fi
+
+PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh" --auto
+if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
+  echo '--auto without detector changes built optimized' >&2
+  exit 1
+fi
+rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
+grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
+  echo '--auto without detector changes did not skip parity suites' >&2
+  exit 1
+}
+
+# PWUSAGE_DETECTOR_PARITY overrides --auto as well.
+PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh" --auto
+rg -q '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
+rg -q '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
+
+PWUSAGE_DETECTOR_PARITY=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsageTests/SolarLayoutDetectorTests.swift' \
+  "$script_dir/run-tests.sh" --auto
+if rg -q '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
+  echo 'PWUSAGE_DETECTOR_PARITY=0 with --auto built optimized' >&2
+  exit 1
+fi
+grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
+  echo 'PWUSAGE_DETECTOR_PARITY=0 with --auto did not skip parity suites' >&2
+  exit 1
+}
 "$script_dir/run-tests.sh" --quick AppConfigurationTests
 rg -q '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
 rg -q '^-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests$' "$PWUSAGE_TEST_ARGS"

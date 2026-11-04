@@ -137,9 +137,10 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   suite only when your branch (committed or not) changes the detector or its fixtures, so do not
   run that suite by hand for unrelated work; `PWUSAGE_DETECTOR_PARITY=1` forces it and `=0` skips
   it. Add a suite to the skip file only when it
-  takes more than about 30 s in Debug. CI runs `./run-tests.sh --full`, which builds optimized
-  (`-O`, still `@testable`) and also runs the opt-in year-fixture parity suite; use it locally to
-  reproduce a CI-only failure.
+  takes more than about 30 s in Debug. `./run-tests.sh --full` builds optimized (`-O`, still
+  `@testable`) and runs the opt-in year-fixture parity suite; use it locally to reproduce a
+  failure in the parity suite. CI runs `./run-tests.sh --auto`, which promotes to `--full` when
+  the branch touches the detector or its fixtures, and stays default otherwise.
 - **Targeting**: `./run-tests.sh AppConfigurationTests` runs a suite,
   `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin` a method, and
   `./run-tests.sh PWUsageTests` the whole bundle. The script normalizes the target prefix and method
