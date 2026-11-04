@@ -114,6 +114,78 @@ extension DashboardCoordinatorTests {
         #expect(coordinator.livePowerIsUnavailable)
     }
 
+    @Test("Live power is not polled while no screen shows it")
+    func hiddenLivePowerIsNotPolled() async {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.livePowerVisibilityChanged(false)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+        clock.advance(minutes: 1)
+        await coordinator.refreshDue()
+        #expect(api.powerSiteIDs.isEmpty)
+        #expect(api.summary.liveSiteIDs.count == 1, "The summary keeps its own thirty minute cadence.")
+    }
+
+    @Test("Becoming active with live power hidden does not fetch it")
+    func hiddenLivePowerSkipsForegroundFetch() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.livePowerVisibilityChanged(false)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.powerSiteIDs.isEmpty)
+    }
+
+    @Test("A user refresh still fetches hidden live power")
+    func userRefreshFetchesHiddenLivePower() async {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.livePowerVisibilityChanged(false)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(api.powerSiteIDs.count == 1)
+    }
+
+    @Test("Showing live power fetches a stale reading at once and polling resumes")
+    func showingLivePowerFetchesWhenDue() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.powerSiteIDs.count == 1)
+
+        coordinator.livePowerVisibilityChanged(false)
+        clock.advance(minutes: 1)
+        await coordinator.refreshDue()
+        #expect(api.powerSiteIDs.count == 1)
+
+        coordinator.livePowerVisibilityChanged(true)
+        try await eventually { api.powerSiteIDs.count == 2 }
+        clock.advance(minutes: 1)
+        await coordinator.refreshDue()
+        #expect(api.powerSiteIDs.count == 3)
+    }
+
+    @Test("Showing live power within its cadence, or in the background, makes no request")
+    func showingLivePowerRespectsCadenceAndForeground() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.livePowerVisibilityChanged(false)
+        coordinator.livePowerVisibilityChanged(true)
+        try await staysTrue { api.powerSiteIDs.isEmpty }
+
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        coordinator.livePowerVisibilityChanged(false)
+        coordinator.livePowerVisibilityChanged(true)
+        try await staysTrue { api.powerSiteIDs.count == 1 }
+    }
+
     @Test("Power failures route through the shared endpoint handler")
     func powerFailuresRouteThroughSharedHandler() async {
         let coordinator = DashboardCoordinator(siteID: "site-1", api: DashboardAPISpy(), timerInterval: nil)

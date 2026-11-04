@@ -149,7 +149,7 @@ extension DashboardCoordinator {
             return
         }
         let due = power.cadence.isDue(at: cadenceNow(), interval: .seconds(Self.livePowerInterval))
-        guard force || due else { return }
+        guard force || (due && livePowerIsVisible) else { return }
         let generation = siteGeneration
         let siteID = selectedSiteID
         powerTask = Task {
@@ -167,6 +167,15 @@ extension DashboardCoordinator {
             }
         }
         _ = await waitForRequest(powerTask)
+    }
+
+    /// Live power polls only while a selected screen shows it. Returning to one
+    /// fetches a reading that fell due in the meantime, without waiting for the timer.
+    func livePowerVisibilityChanged(_ isVisible: Bool) {
+        guard isVisible != livePowerIsVisible else { return }
+        livePowerIsVisible = isVisible
+        guard isVisible, isForeground else { return }
+        Task { await refreshPower(force: false) }
     }
 
     private func handlePowerFailure(_ error: Error, generation: Int) {
