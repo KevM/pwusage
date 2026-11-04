@@ -70,25 +70,22 @@ struct BillView: View {
 
     @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
         let context = coordinator.loadPlanningContext ?? coordinator.householdPattern
-        let fetchedAt = coordinator.publishedForecastFetchedAt
-        let usesSolar = coordinator.solarForecastState == .enhanced && fetchedAt.map {
-            (0 ... LoadTimingForecastPresentation.maximumForecastAge).contains(now.timeIntervalSince($0))
-        } == true
-        let forecast = usesSolar ? coordinator.publishedForecastIntervals ?? [] : []
+        let forecast = coordinator.pricingForecastIntervals(at: now)
+        let isPending = !state.isUnavailable && coordinator.billProjectionIsPending(at: now)
         let result: BillOutlook.ProjectionResult = {
             guard let history = response.outlook, let context, context.timeZone == timeZone,
-                  !state.isUnavailable else { return .empty }
+                  !state.isUnavailable, !isPending else { return .empty }
             return projections.result(history: history, context: context, forecast: forecast, now: now,
                                       cycleEnd: response.currentBill.cycleEnd)
         }()
         let projected = result.points
-        estimateCard(response, result: result, now: now)
+        estimateCard(response, result: result, now: now, isPending: isPending)
         if let history = response.outlook, !history.points.isEmpty {
             BillOutlookChart(history: history, projected: projected, cycleStart: response.currentBill.cycleStart,
                              cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone,
                              currency: response.currentBill.currency,
                              totals: response.currentBill.periods)
-            if projected.isEmpty && history.complete {
+            if projected.isEmpty && history.complete && !isPending {
                 Text("Forecast unavailable. Showing recorded energy with its original calculation time.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -98,7 +95,7 @@ struct BillView: View {
     }
 
     private func estimateCard(_ response: MobileBillResponse,
-                              result: BillOutlook.ProjectionResult, now: Date) -> some View {
+                              result: BillOutlook.ProjectionResult, now: Date, isPending: Bool) -> some View {
         let bill = response.currentBill
         let projected = result.points
         return VStack(alignment: .leading, spacing: 10) {
@@ -114,25 +111,7 @@ struct BillView: View {
                     .lineLimit(1)
             }
             .accessibilityElement(children: .combine)
-            if let end = projected.last {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(BillOutlookPresentation.projection(cost: end.estimatedCost, currency: bill.currency,
-                                                            projectedEnd: end.date, timeZone: timeZone))
-                        .font(.headline).monospacedDigit()
-                    Text(result.usesSolar
-                        ? (result.usesHistory
-                            ? "Solar forecast and typical home use, with recent grid history where the forecast ends."
-                            : "Based on the solar forecast and typical home use.")
-                        : "Based on your recent grid history.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let source = coordinator.attributionDescriptor(usesSolar: result.usesSolar) {
-                        SolarForecastAttributionView(descriptor: source)
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityElement(children: .contain)
-            }
+            projectionSummary(result, currency: bill.currency, isPending: isPending)
             if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
                 Divider()
                 deadlineSection(deadline, response: response, projected: projected)
@@ -141,6 +120,32 @@ struct BillView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(17)
         .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    @ViewBuilder private func projectionSummary(_ result: BillOutlook.ProjectionResult, currency: String,
+                                                isPending: Bool) -> some View {
+        if let end = result.points.last {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(BillOutlookPresentation.projection(cost: end.estimatedCost, currency: currency,
+                                                        projectedEnd: end.date, timeZone: timeZone))
+                    .font(.headline).monospacedDigit()
+                Text(result.usesSolar
+                    ? (result.usesHistory
+                        ? "Solar forecast and typical home use, with recent grid history where the forecast ends."
+                        : "Based on the solar forecast and typical home use.")
+                    : "Based on your recent grid history.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let source = coordinator.attributionDescriptor(usesSolar: result.usesSolar) {
+                    SolarForecastAttributionView(descriptor: source)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .contain)
+        } else if isPending {
+            Text(BillOutlookPresentation.pendingProjection)
+                .font(.subheadline).foregroundStyle(.secondary)
+        }
     }
 
     private func deadlineSection(_ deadline: String, response: MobileBillResponse,

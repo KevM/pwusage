@@ -57,6 +57,14 @@ enum LoadTimingForecastPresentation {
         let now: Date
     }
 
+    /// Whether the published batch should price an estimate. A refresh keeps the previous
+    /// batch in memory until it is replaced. While that batch is still fresh it keeps
+    /// pricing, so the answer doesn't flip to the forecast-free one and back on every reload.
+    static func forecastPrices(state: SolarForecastEnhancementState, fetchedAt: Date?, now: Date) -> Bool {
+        guard state == .enhanced || state == .loadingWithBasic, let fetchedAt else { return false }
+        return (0 ... maximumForecastAge).contains(now.timeIntervalSince(fetchedAt))
+    }
+
     /// What the forecast layer can add to the Smart Shift card.
     static func forecastAvailability(
         _ inputs: Inputs,
@@ -73,12 +81,8 @@ enum LoadTimingForecastPresentation {
         case .ready: break
         }
         let age = inputs.forecastFetchedAt.map { inputs.now.timeIntervalSince($0) }
-        let isFresh = age.map { $0 >= 0 && $0 <= maximumForecastAge } ?? false
-        // A refresh keeps the previous batch in memory until it is replaced. While
-        // that batch is still fresh it keeps pricing the card, so the verdict
-        // doesn't flip to the forecast-free answer and back on every pull.
-        if inputs.state == .loadingWithBasic { return isFresh ? .ready : .loading }
-        if inputs.state == .enhanced, isFresh { return .ready }
+        if forecastPrices(state: inputs.state, fetchedAt: inputs.forecastFetchedAt, now: inputs.now) { return .ready }
+        if inputs.state == .loadingWithBasic { return .loading }
         if let reason = inputs.reason { return .unusable(firstSentence(enhancementDetail(reason))) }
         return .unusable(firstSentence(causeDetail(inputs.cause,
                                                    forecastIsFutureDated: age.map { $0 < 0 } ?? false)))
