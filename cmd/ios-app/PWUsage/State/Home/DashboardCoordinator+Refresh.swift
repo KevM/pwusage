@@ -14,7 +14,11 @@ extension DashboardCoordinator {
             guard isForeground else { return }
         }
         let generation = siteGeneration
-        defer { if generation == siteGeneration, canRequestAccountData { refreshSettled = true } }
+        defer {
+            if generation == siteGeneration, canRequestAccountData, !Task.isCancelled {
+                refreshSettled = true
+            }
+        }
         await refreshPower(force: trigger == .userGesture)
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
         let requestTime = now()
@@ -38,7 +42,7 @@ extension DashboardCoordinator {
         guard liveTask == nil else { return }
         let interval = usesLivePowerEndpoint ? Self.summaryInterval : Self.liveInterval
         guard trigger == .userGesture
-            || liveCadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
+            || live.cadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
         let siteID = selectedSiteID
         liveTask = Task { await performLive(siteID: siteID, generation: generation) }
     }
@@ -59,7 +63,10 @@ extension DashboardCoordinator {
             // history, so that bill is stale. Let it finish, then recalculate
             // once, whichever waiting refresh gets here first.
             _ = await waitForRequest(billTask)
-            guard canStillRefresh(trigger: trigger, generation: generation) else { return false }
+            // Cancellation is deliberately not checked here: the waiter already
+            // committed to recalculating the stale bill, and abandoning it would
+            // leave the billed history stale for a full cadence window.
+            guard canStillReconcile(trigger: trigger, generation: generation) else { return false }
             if !latestBillAttemptFollowedLive {
                 launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(),
                                        generation: generation, followsLive: true)
@@ -71,11 +78,18 @@ extension DashboardCoordinator {
         return true
     }
 
+    /// Account, site and foreground still match the refresh that is running.
+    /// Cancellation is deliberately absent: a cancelled waiter still finishes
+    /// work it already committed to, such as a stale-bill recalculation.
+    func canStillReconcile(trigger: RefreshTrigger, generation: Int) -> Bool {
+        guard canRequestAccountData, generation == siteGeneration else { return false }
+        return trigger != .scheduled || isForeground
+    }
+
     func canStillRefresh(trigger: RefreshTrigger, generation: Int) -> Bool {
         // A cancelled caller (a refreshable view going away, a timer loop
         // stopping) must not start the next leg of the refresh.
-        guard canRequestAccountData, generation == siteGeneration, !Task.isCancelled else { return false }
-        return trigger != .scheduled || isForeground
+        canStillReconcile(trigger: trigger, generation: generation) && !Task.isCancelled
     }
 
     /// Refreshes the bill estimate, subject to the trigger's cadence.
@@ -100,11 +114,11 @@ extension DashboardCoordinator {
         switch trigger {
         case .userGesture: due = true
         case .screenAppearance:
-            due = billCadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval))
+            due = bill.cadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval))
         case .scheduled:
-            due = billCadence.isDue(at: cadence, interval: .seconds(Self.billInterval))
+            due = bill.cadence.isDue(at: cadence, interval: .seconds(Self.billInterval))
                 || (energyDataIsAgingForForecast(at: requestTime)
-                    && billCadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval)))
+                    && bill.cadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval)))
         }
         guard due else { return }
         billAttempts += 1
@@ -134,7 +148,7 @@ extension DashboardCoordinator {
             _ = await waitForRequest(powerTask)
             return
         }
-        let due = powerCadence.isDue(at: cadenceNow(), interval: .seconds(Self.livePowerInterval))
+        let due = power.cadence.isDue(at: cadenceNow(), interval: .seconds(Self.livePowerInterval))
         guard force || due else { return }
         let generation = siteGeneration
         let siteID = selectedSiteID
@@ -156,26 +170,18 @@ extension DashboardCoordinator {
     }
 
     private func handlePowerFailure(_ error: Error, generation: Int) {
-        guard !isCancellation(error) else { return }
+        guard !isAbandonedRequest() else { return }
         guard generation == siteGeneration, canRequestAccountData else { return }
         recordAttempt(.power)
-        if error as? PWUsageAPIError == .signInRequired {
-            authenticationInvalidated()
-            isForeground = false
-            stopTimer()
-        } else if let rejected = error as? PWUsageAPIError,
-                  case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
-            // An older server can still serve the combined endpoint.
+        if let rejected = error as? PWUsageAPIError,
+           case .requestRejected(let statusCode, _) = rejected, statusCode == 404 {
+            // The fast route is only a fallback: an older server can still serve
+            // the combined endpoint, so this failure is not an unavailable reading.
             livePowerEndpointAvailable = false
             power.isUnavailable = false
-        } else {
-            if error as? PWUsageAPIError
-                == .requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED") {
-                requiresTeslaReconnect = true
-                batteryHold.failure = .needsReauthentication
-            }
-            power.isUnavailable = true
+            return
         }
+        handle(error, generation: generation, endpoint: .power)
     }
 
     func performLive(siteID: String, generation: Int) async {
@@ -201,9 +207,9 @@ extension DashboardCoordinator {
             live.isUnavailable = false
             teslaConnectionRestored()
         } catch {
-            // A cancelled fetch is not a failed one: an abandoned pull-to-refresh,
-            // a site switch or a background transition must leave live state alone.
-            guard !isCancellation(error) else { return }
+            // This task's own cancellation is not a failure, whatever error the
+            // transport surfaced. A cancellation the app did not cause is real.
+            guard !isAbandonedRequest() else { return }
             guard generation == siteGeneration else { return }
             recordAttempt(.live)
             handle(error, generation: generation, endpoint: .live)
@@ -226,7 +232,7 @@ extension DashboardCoordinator {
             cache?.storeBill(response, at: successTime)
             bill.isUnavailable = false
         } catch {
-            guard !isCancellation(error) else { return }
+            guard !isAbandonedRequest() else { return }
             guard generation == siteGeneration else { return }
             recordAttempt(.bill)
             handle(error, generation: generation, endpoint: .bill)
@@ -268,30 +274,19 @@ extension DashboardCoordinator {
         requiresTeslaReconnect = false
     }
 
-    /// Records a completed attempt against both clocks. The wall-clock stamp is
-    /// kept for diagnostics; `EndpointCadence` is the one that decides due-ness.
-    /// Callers record after a request finishes and never for a cancelled one, so
-    /// an abandoned request cannot consume a retry window.
+    /// Records a completed attempt on the endpoint's monotonic cadence. Callers
+    /// record after a request finishes and never for an abandoned one, so a
+    /// cancelled request cannot consume a retry window.
     private func recordAttempt(_ endpoint: Endpoint) {
-        let attempt = now()
         let cadence = cadenceNow()
         switch endpoint {
         case .live:
-            live.lastAttempt = attempt
-            liveCadence.recordAttempt(at: cadence)
+            live.cadence.recordAttempt(at: cadence)
         case .bill:
-            bill.lastAttempt = attempt
-            billCadence.recordAttempt(at: cadence)
+            bill.cadence.recordAttempt(at: cadence)
         case .power:
-            power.lastAttempt = attempt
-            powerCadence.recordAttempt(at: cadence)
+            power.cadence.recordAttempt(at: cadence)
         }
-    }
-
-    func resetRequestCadence() {
-        liveCadence.reset()
-        powerCadence.reset()
-        billCadence.reset()
     }
 
     /// Awaits an in-flight request and reports whether the caller is still active.
@@ -303,8 +298,11 @@ extension DashboardCoordinator {
         return !Task.isCancelled
     }
 
-    private func isCancellation(_ error: Error) -> Bool {
-        error is CancellationError || (error as? URLError)?.code == .cancelled
+    /// Whether this request was abandoned by the app itself. Only this task's
+    /// cancellation counts: a cancellation error the app did not cause is a real
+    /// failure, and a cancelled task's result is discarded whatever it throws.
+    private func isAbandonedRequest() -> Bool {
+        Task.isCancelled
     }
 
     func startTimer() {

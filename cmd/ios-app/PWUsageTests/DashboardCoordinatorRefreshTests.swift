@@ -49,24 +49,67 @@ extension DashboardCoordinatorTests {
         #expect(api.liveSiteIDs == ["site-1", "site-1"])
     }
 
-    @Test("A cancelled live or bill fetch leaves endpoint state untouched")
-    func cancelledFetchLeavesEndpointStateUntouched() async {
-        for error in [CancellationError(), URLError(.cancelled)] as [any Error] {
-            let api = DashboardAPISpy()
-            api.liveError = error
-            api.billError = error
-            let coordinator = DashboardCoordinator(
-                siteID: "site-1", api: api, now: { Date(timeIntervalSince1970: 0) }, timerInterval: nil
-            )
+    @Test("A transport cancellation the app did not cause is a real failure")
+    func transportCancellationWithoutOurCancellationMarksTheEndpointUnavailable() async {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.liveError = URLError(.cancelled)
+        api.billError = URLError(.cancelled)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
 
-            await coordinator.refreshAll(trigger: .userGesture)
+        await coordinator.refreshAll(trigger: .userGesture)
 
-            #expect(!coordinator.live.isUnavailable)
-            #expect(!coordinator.bill.isUnavailable)
-            #expect(coordinator.live.lastAttempt == nil)
-            #expect(coordinator.bill.lastAttempt == nil)
-            #expect(coordinator.live.lastSuccess == nil)
-        }
+        #expect(coordinator.live.isUnavailable)
+        #expect(coordinator.bill.isUnavailable)
+        #expect(coordinator.live.cadence.lastAttempt == clock.monotonicNow)
+        #expect(coordinator.bill.cadence.lastAttempt == clock.monotonicNow)
+    }
+
+    @Test("A request cancelled by the app is ignored whatever error it returns")
+    func appCancellationIgnoresAnUnrelatedFailure() async {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+
+        let refresh = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        await api.waitUntilLiveRequestStarts()
+        coordinator.liveTask?.cancel()
+        api.failPendingRequests(PWUsageAPIError.recoverableServerError(statusCode: 500))
+        await refresh.value
+
+        #expect(!coordinator.live.isUnavailable)
+        #expect(coordinator.live.cadence.lastAttempt == nil, "An abandoned request must not record an attempt.")
+    }
+
+    @Test("A cancelled waiter still recalculates a bill that followed live from stale history")
+    func cancelledWaiterStillRecalculatesStaleBill() async throws {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        api.holdBill = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.isForeground = true
+
+        let waiting = Task { await coordinator.refreshAll(trigger: .scheduled) }
+        await api.waitUntilLiveRequestStarts()
+        // A bill that starts while live is still importing history is stale.
+        let appearance = Task { await coordinator.refreshBill(trigger: .screenAppearance) }
+        await api.waitUntilBillRequestStarts()
+        #expect(api.billSiteIDs.count == 1)
+
+        // Let the waiting refresh finish its live leg and block on that bill,
+        // then cancel it while the stale bill is still in flight.
+        api.resumeLiveRequests()
+        try await eventually { coordinator.live.response != nil }
+        await Task.yield()
+        waiting.cancel()
+        api.resumeBillRequests()
+        await waiting.value
+        await appearance.value
+
+        #expect(api.billSiteIDs.count == 2, "The cancelled waiter must still request the recalculation.")
+        #expect(!coordinator.refreshSettled, "An aborted refresh must not settle the dashboard.")
     }
 
     @Test("Cadence starts when the request finishes, not when it starts")
@@ -257,7 +300,7 @@ extension DashboardCoordinatorTests {
 
         #expect(coordinator.requiresSignIn)
         #expect(!coordinator.isForeground)
-        #expect(coordinator.live.lastAttempt == Date(timeIntervalSince1970: 0))
+        #expect(coordinator.live.cadence.lastAttempt != nil)
         #expect(coordinator.live.lastSuccess == nil)
         let liveRequestsAfterUnauthorized = api.liveSiteIDs.count
         let billRequestsAfterUnauthorized = api.billSiteIDs.count
@@ -291,7 +334,7 @@ extension DashboardCoordinatorTests {
 
         #expect(coordinator.live.response == priorLive)
         #expect(coordinator.live.lastSuccess == priorSuccess)
-        #expect(coordinator.live.lastAttempt == clock.now)
+        #expect(coordinator.live.cadence.lastAttempt == clock.monotonicNow)
         #expect(coordinator.live.isUnavailable)
         #expect(api.liveSiteIDs.count == 2)
 

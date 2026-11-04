@@ -21,7 +21,7 @@ extension DashboardCoordinatorTests {
         #expect(restored.bill.response == first.bill.response)
         #expect(restored.live.lastSuccess == savedAt)
         #expect(restored.bill.lastSuccess == savedAt)
-        #expect(restored.live.lastAttempt == nil)
+        #expect(restored.live.cadence.lastAttempt == nil)
         #expect(restored.live.isRestored)
         #expect(restored.bill.isRestored)
 

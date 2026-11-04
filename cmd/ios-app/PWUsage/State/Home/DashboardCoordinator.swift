@@ -120,11 +120,6 @@ final class DashboardCoordinator: ObservableObject {
     var livePowerEndpointAvailable = true
     var usesLivePowerEndpoint: Bool { livePowerEndpointAvailable && api is any MobileLivePowerDataAPI }
     var billTask: Task<Void, Never>?
-    /// Monotonic cadence per endpoint. The wall-clock `lastAttempt` on each
-    /// endpoint state is a diagnostic stamp; these decide due-ness.
-    var liveCadence = EndpointCadence()
-    var powerCadence = EndpointCadence()
-    var billCadence = EndpointCadence()
     var siteGeneration = 0
     var forecastGeneration = 0
     var billSuccessGeneration = 0
@@ -303,10 +298,9 @@ final class DashboardCoordinator: ObservableObject {
         sessionVerified = true
         requiresSignIn = false
         cache?.selectWidgetSite(selectedSiteID)
-        live.lastAttempt = nil
-        power.lastAttempt = nil
-        bill.lastAttempt = nil
-        resetRequestCadence()
+        live.resetCadence()
+        power.resetCadence()
+        bill.resetCadence()
         guard sceneIsActive else { return }
         isForeground = true
         refreshSettled = false
@@ -357,7 +351,6 @@ final class DashboardCoordinator: ObservableObject {
         live.reset()
         power.reset()
         bill.reset()
-        resetRequestCadence()
         restoreCachedReadings()
         // Checking, not "not connected": the new site's setup is read next, and
         // until then the card waits rather than showing a forecast-free answer.

@@ -8,7 +8,7 @@ import Foundation
 /// moves forward, and it is recorded when a request *finishes*: time spent on
 /// the wire does not eat into the next interval, and a cancelled request records
 /// nothing at all.
-struct EndpointCadence {
+struct EndpointCadence: Equatable {
     private(set) var lastAttempt: ContinuousClock.Instant?
 
     /// Whether `interval` has elapsed since the last recorded attempt.

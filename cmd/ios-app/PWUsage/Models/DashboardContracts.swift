@@ -85,17 +85,23 @@ enum SolarForecastUnavailableReason: Equatable {
 
 struct DashboardEndpointState<Response: Equatable>: Equatable {
     var response: Response?
-    var lastAttempt: Date?
     var lastSuccess: Date?
     var isRestored = false
     var isUnavailable = false
+    /// Monotonic cadence for this endpoint. It lives with the endpoint so
+    /// `reset()` clears both the data and the retry window together.
+    var cadence = EndpointCadence()
 
     mutating func reset() {
         response = nil
         isRestored = false
-        lastAttempt = nil
         lastSuccess = nil
         isUnavailable = false
+        cadence.reset()
+    }
+
+    mutating func resetCadence() {
+        cadence.reset()
     }
 }
 

@@ -163,8 +163,12 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
     }
 
     func resumeRequests() {
+        resumeLiveRequests()
+        resumeBillRequests()
+    }
+
+    func resumeLiveRequests() {
         holdLive = false
-        holdBill = false
         let livePending = liveContinuations
         liveContinuations.removeAll()
         for (siteID, continuation) in livePending {
@@ -176,6 +180,10 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
                 continuation.resume(throwing: error)
             }
         }
+    }
+
+    func resumeBillRequests() {
+        holdBill = false
         let billPending = billContinuations
         billContinuations.removeAll()
         for (siteID, continuation) in billPending {
@@ -184,6 +192,21 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
             } catch {
                 continuation.resume(throwing: error)
             }
+        }
+    }
+
+    func failPendingRequests(_ error: Error) {
+        holdLive = false
+        holdBill = false
+        let livePending = liveContinuations
+        liveContinuations.removeAll()
+        for (_, continuation) in livePending {
+            continuation.resume(throwing: error)
+        }
+        let billPending = billContinuations
+        billContinuations.removeAll()
+        for (_, continuation) in billPending {
+            continuation.resume(throwing: error)
         }
     }
 

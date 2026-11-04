@@ -113,4 +113,13 @@ extension DashboardCoordinatorTests {
         await coordinator.refreshAll(trigger: .userGesture)
         #expect(coordinator.livePowerIsUnavailable)
     }
+
+    @Test("Power failures route through the shared endpoint handler")
+    func powerFailuresRouteThroughSharedHandler() async {
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: DashboardAPISpy(), timerInterval: nil)
+        coordinator.handle(PWUsageAPIError.recoverableServerError(statusCode: 503),
+                           generation: coordinator.siteGeneration,
+                           endpoint: .power)
+        #expect(coordinator.power.isUnavailable)
+    }
 }
