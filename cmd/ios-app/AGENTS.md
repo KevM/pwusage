@@ -103,9 +103,10 @@ Common fixes, in the order agents hit them:
 200-character lines, and `redundant_discardable_let` emits code that fails inside a `ViewBuilder`.
 Fix by hand or use `./cmd/ios-app/lint.sh --fix`, which only runs SwiftFormat.
 
-SwiftLint's opt-in rules enforce the collection and state idioms above (`toggle_bool`, `first_where`,
-`contains_over_filter_count`, `untyped_error_in_catch`, `blanket_disable_command`, and friends).
-The rules are chosen to be zero-violation today; keep them that way.
+The opt-in rules in `.swiftlint.yml` enforce the collection and state idioms above (`toggle_bool`,
+`first_where`, `contains_over_filter_count`, `untyped_error_in_catch`, and friends). They were
+chosen because they have zero violations today; keep them that way. The default rules, including
+`blanket_disable_command`, stay on as well.
 
 Rules deliberately not enabled yet, because they still have existing violations:
 `prefer_key_path`, `redundant_self_in_closure`, `optional_enum_case_matching`, `legacy_objc_type`,
@@ -118,8 +119,9 @@ baseline to hide them.
 - `./cmd/ios-app/lint.sh` — check SwiftFormat and SwiftLint (recommended).
 - `./cmd/ios-app/lint.sh --fix` — apply SwiftFormat, then run SwiftLint.
 - `./cmd/ios-app/format.sh` — format-only wrapper; `lint.sh --fix` is the better default.
-- CI runs `swiftformat --lint cmd/ios-app --config .swiftformat` and
-  `swiftlint lint cmd/ios-app --strict`; both must be clean.
+- CI runs the same `./cmd/ios-app/lint.sh` (it switches SwiftLint to the GitHub reporter under
+  Actions), so a clean local run is a clean CI lint. The raw SwiftLint equivalent is
+  `swiftlint lint cmd/ios-app --strict --no-cache`; never drop `--no-cache` in a sandbox.
 
 The formatter and linter now agree on trailing commas (`.swiftformat` sets
 `--trailing-commas never`). Do not reintroduce trailing commas in multiline collection literals.
@@ -131,9 +133,11 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   and stops a run after 10 minutes.
 - **Quick vs full**: while iterating use `./run-tests.sh --quick`, the everyday sniff test. It skips
   the multi-minute suites listed in `cmd/ios-app/quick-test-skips.txt` and accepts filters, e.g.
-  `./run-tests.sh --quick AppConfigurationTests`. Plain `./run-tests.sh` runs every default suite as
-  a Debug build — once before opening or updating a PR, and whenever you change code covered by a
-  skipped suite such as `Models/Solar/LayoutDetection`. Add a suite to the skip file only when it
+  `./run-tests.sh --quick AppConfigurationTests`. Plain `./run-tests.sh` runs the default suites as
+  a Debug build — once before opening or updating a PR. It runs the multi-minute detector parity
+  suite only when your branch (committed or not) changes the detector or its fixtures, so do not
+  run that suite by hand for unrelated work; `PWUSAGE_DETECTOR_PARITY=1` forces it and `=0` skips
+  it. Add a suite to the skip file only when it
   takes more than about 30 s in Debug. CI runs `./run-tests.sh --full`, which builds optimized
   (`-O`, still `@testable`) and also runs the opt-in year-fixture parity suite; use it locally to
   reproduce a CI-only failure.

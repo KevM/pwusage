@@ -44,21 +44,16 @@ jobs:
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
           fi
 
-      - name: SwiftFormat
+      - name: Lint (SwiftFormat + SwiftLint)
         working-directory: .
         run: |
-          if ! command -v swiftformat &> /dev/null; then
-            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftformat
-          fi
-          swiftformat --lint cmd/ios-app --config .swiftformat
-
-      - name: SwiftLint
-        working-directory: .
-        run: |
-          if ! command -v swiftlint &> /dev/null; then
-            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install swiftlint
-          fi
-          swiftlint lint cmd/ios-app --strict --no-cache --reporter github-actions-logging
+          for tool in swiftformat swiftlint; do
+            if ! command -v "$tool" &> /dev/null; then
+              HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install "$tool"
+            fi
+          done
+          # Same command agents run locally; it switches to the GitHub reporter under Actions.
+          ./cmd/ios-app/lint.sh
 
       - name: Run iOS Tests
         env:

@@ -9,6 +9,8 @@
 #     ~/Library/Caches and a bare `swiftlint` then exits non-zero after
 #     printing "Found 0 violations".
 #   * SwiftFormat gets --cache ignore for the same reason.
+#   * Under GitHub Actions SwiftLint uses the github-actions-logging reporter,
+#     so CI runs this exact script and the two cannot drift.
 #   * There is no baseline. The burndown is complete; fix violations instead
 #     of adding a baseline entry or a swiftlint:disable comment.
 set -euo pipefail
@@ -27,6 +29,12 @@ Run from the repository root or from cmd/ios-app; paths are resolved
 relative to this script.
 EOF
 }
+
+if (($# > 1)); then
+    echo "expected at most one argument, got $#: $*" >&2
+    usage >&2
+    exit 2
+fi
 
 mode="check"
 case "${1:-}" in
@@ -61,7 +69,11 @@ else
 fi
 
 echo "==> swiftlint"
-swiftlint lint cmd/ios-app --strict --no-cache --quiet || status=1
+swiftlint_args=(lint cmd/ios-app --strict --no-cache --quiet)
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    swiftlint_args+=(--reporter github-actions-logging)
+fi
+swiftlint "${swiftlint_args[@]}" || status=1
 
 if ((status == 0)); then
     echo "iOS lint: clean"

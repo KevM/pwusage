@@ -16,11 +16,10 @@ have read it; do not restate or fork its rules.
 
 **Naming**
 
-- Does the call site read like English? `cache.store(item, for: key)`, not `cache.storeItemWithKey`.
-- Did you omit words already implied by the type? `site.refresh()`, not `site.refreshSite()`.
-- Are booleans assertions? `isEmpty`, `hasData`, `isRefreshing`, not `empty`, `dataFlag`.
-- Are mutating operations imperative (`sort()`) and non-mutating ones `-ed`/`-ing` (`sorted()`)?
-- Did you avoid `get` prefixes and `create...`/`build...` factories (`makeSnapshot()` instead)?
+- Does every new name pass the "Swift API design and naming" section of
+  [`cmd/ios-app/AGENTS.md`](../../../cmd/ios-app/AGENTS.md#swift-api-design-and-naming)? Check call-site
+  clarity, needless words, `get` prefixes, boolean assertions, mutating pairs and `make...`
+  factories.
 
 **Shape**
 
@@ -35,7 +34,9 @@ have read it; do not restate or fork its rules.
 
 - Keep `body` small; extract subviews or `@ViewBuilder` sections before it grows. CI builds with
   `-O`, and one oversized SwiftUI expression can fail to type-check in reasonable time.
-- Line length 120; function body 50/100; type body 350/450; file 400/500; complexity 10/20.
+- Stay inside the budgets in the "Write lint-clean the first time" table of
+  [`cmd/ios-app/AGENTS.md`](../../../cmd/ios-app/AGENTS.md#write-lint-clean-the-first-time); `.swiftlint.yml` is
+  the source of truth for the numbers.
 - Wrap long lines at argument commas; do not rename or shorten copy just to fit.
 - Never add `swiftlint:disable` or a baseline entry to get green.
 

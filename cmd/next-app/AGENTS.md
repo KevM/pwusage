@@ -42,14 +42,14 @@ npm run dev        # dev server on http://localhost:5173
 npm run dev:agent  # port 5174; the user usually keeps 5173
 npm run lint       # ESLint
 npm run typecheck  # tsc --noEmit (faster than a full build)
-npm test -- --run  # Vitest, one shot
+npm test -- --run  # Vitest, one shot (add file paths to narrow it)
 npm run build      # production build and full type check
 npm start          # run the production build locally
 npm run test:fleet # integration tests against the Tesla Fleet API
 ```
 
-`npm test` on its own starts Vitest in watch mode and never exits; always add `--run` (or use
-`npm run test:run`) when you need a command that finishes.
+`npm test` on its own starts Vitest in watch mode and never exits; always add `--run` when you
+need a command that finishes.
 
 ## Verification (before finishing)
 
@@ -72,7 +72,11 @@ npm run build
 - **Scripts**: standalone maintenance scripts in `scripts/`, run with
   `npx tsx scripts/script-name.ts`. They must load `.env` explicitly (for example with `dotenv`) at
   the very start so CLI runs get real configuration.
-- **Cron jobs**: Vercel Cron entries in `vercel.json`, handlers under `src/app/api/cron/*`.
+- **Cron jobs**: handlers live under `src/app/api/cron/*`. Most schedules (for example the
+  15-minute battery-hold restore, Live Activity delivery, history archive and gap healing) are
+  Supabase `pg_cron` + `pg_net` jobs created by migrations in `db-migrations/` (search for
+  `cron.schedule`). `vercel.json` holds only the daily `check-users` cron: the Vercel Hobby plan
+  allows daily crons at most, so anything more frequent must be a `pg_cron` job.
 - **User-facing copy**: follow [`docs/voice-and-terms.md`](../../docs/voice-and-terms.md).
 
 ## Key data models
@@ -165,8 +169,10 @@ record's segment timeline.
 ## TRMNL + Tesla constraints
 
 - **Poll cadence**: assume TRMNL devices poll at most once every 15 minutes.
-- **Cost control**: Tesla Fleet API calls are billable past a threshold. Cache energy data, and
-  never fetch live or history data per request when it is not needed.
+- **Cost control**: the Tesla Energy API calls this app makes are not billed today; the binding
+  limits are the Supabase database quota (500 MB shared by Prod and Dev) and its egress. Keep
+  caching energy data anyway, and never fetch live or history data per request when it is not
+  needed.
 - **Energy history resolution**: Tesla history is 5-minute samples and is easiest to retrieve by
   day; requests for less than a day behave oddly.
 - **Markup** (`/api/trmnl/markup`, `src/lib/trmnl-renderer.ts`):
