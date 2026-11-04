@@ -18,9 +18,6 @@ on:
       - '.swiftformat'
       - '.swiftlint.yml'
       - '.github/workflows/ios.yml'
-  schedule:
-    # Nightly run at 05:00 UTC to verify full -O build and parity suites
-    - cron: '0 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -85,7 +82,7 @@ jobs:
           TMPDIR: /tmp
           # 20 minutes accommodates optimized build time variance under macos-15 runner load.
           PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
-          # Scheduled runs, pushes to main, and manual workflow dispatch force the full -O suite.
+          # Pushes to main and manual workflow dispatch force the full -O suite.
           # Pull requests use change detection via --auto.
           PWUSAGE_DETECTOR_PARITY: ${{ github.event_name != 'pull_request' && '1' || '' }}
         # --auto: promotes to --full (-O + year fixtures) on detector changes; runs default fast suite otherwise.

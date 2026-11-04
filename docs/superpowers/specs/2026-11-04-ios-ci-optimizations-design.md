@@ -17,7 +17,7 @@ Local runs already feature a `detector_changed` git diff check that skips the mu
 ## Goals
 
 1. **Reduce CI runtime for standard PRs to ~3–4 minutes**: Skip speed optimization (`-O`) and year-parity fixtures for PRs that do not touch solar layout detection.
-2. **Preserve full mathematical parity and optimization safety net**: Automatically promote to `--full` (`-O` + year fixtures) on detector/tooling changes, nightly scheduled runs, pushes to `main`, and manual workflow dispatches.
+2. **Preserve full mathematical parity and optimization safety net**: Automatically promote to `--full` (`-O` + year fixtures) on detector/tooling changes, pushes to `main`, and manual workflow dispatches.
 3. **Eliminate compilation index store overhead**: Pass `COMPILER_INDEX_STORE_ENABLE=NO` during test builds.
 4. **Reliable CI diff detection & fail-closed safety**: Ensure `actions/checkout` in GitHub Actions fetches repository history (`fetch-depth: 0`) so `git merge-base` against `origin/main` functions correctly in runner environments, and ensure diff errors fail closed to full parity.
 
@@ -49,7 +49,6 @@ Update the test runner test suite to verify:
 - Add CI test runner self-check step: executes `./test-run-tests.sh` before iOS simulator tests.
 - Update triggers to maintain full optimization backstop:
   - `push: branches: [main]`: runs `--full` on merge to main.
-  - `schedule`: nightly cron at 05:00 UTC runs `--full`.
   - `workflow_dispatch`: manual dispatches run `--full`.
   - `pull_request`: runs `./run-tests.sh --auto` with change detection.
 - Retain the 45-minute workflow timeout and 20-minute test step timeout as a safe upper bound.
