@@ -6,8 +6,8 @@ import Foundation
 /// accumulated per cross-validation fold so the CV reuses one pass over the rows.
 ///
 /// This file holds the data types, the grid search and the Gram accumulation. The continuous
-/// refinement lives in `layout-fit-refine.swift`, the plane-count selection and bootstrap in
-/// `layout-fit-plane-count.swift`.
+/// refinement lives in `LayoutFit+Refine.swift`, the plane-count selection and bootstrap in
+/// `LayoutFit+PlaneCount.swift`.
 enum LayoutFit {
     static let fScale = 0.08
     static let hAzimuth = 0.5

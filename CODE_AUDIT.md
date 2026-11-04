@@ -847,21 +847,21 @@ The first claim in the original bullet — that the e-ink renderer computes `lev
 ## 13. Widgets and Live Activities
 
 ### 13.6 A frozen Live Activity never declares itself stale
-- **Location:** `cmd/ios-app/Shared/battery-hold-activity-attributes.swift` — `ContentState.staleDate`; both `ActivityContent` call sites in `PWUsage/State/battery-hold-activity-host.swift`.
+- **Location:** `cmd/ios-app/Shared/BatteryHoldActivityAttributes.swift` — `ContentState.staleDate`; both `ActivityContent` call sites in `PWUsage/State/BatteryHoldActivityHost.swift`.
 - **What:** `staleDate` was nil until the first monitoring snapshot set `nextCheckAt`, so `context.isStale` never turned true and the Lock Screen could show the first figures for up to eight hours with no "Update overdue".
 - **Why:** The rule mirrored the server's `next_check_at + 10 min` and had no floor for the pre-check state.
 - **Fix:** `staleDate(activityStartedAt:)` keeps `nextCheckAt + 10 min` and otherwise uses activity start + 15 min (the server's check interval, so a first check is always due by then) + the same 10 min grace. Start and update share the function.
 - **Status:** FIXED (PR pending)
 
 ### 13.7 iOS 26's `ActivityState.pending` is reported as `.active`
-- **Location:** `cmd/ios-app/PWUsage/State/battery-hold-activity-host.swift` — `ActivityKitBatteryHoldHandle.lifecycle`; `battery-hold-activity-coordinator.swift` — `BatteryHoldActivityLifecycle`, reconcile.
+- **Location:** `cmd/ios-app/PWUsage/State/BatteryHoldActivityHost.swift` — `ActivityKitBatteryHoldHandle.lifecycle`; `BatteryHoldActivityCoordinator.swift` — `BatteryHoldActivityLifecycle`, reconcile.
 - **What:** `default: .active` tracked and reconciled an activity that had not started as live.
 - **Why:** The switch predated the iOS 26 case.
 - **Fix:** New `.pending` lifecycle (mapped under `#available(iOS 26, *)`; `@unknown default` maps to `.pending` too). Reconcile skips it — no tracking, ending or unregistering — and adopts it on a later pass once active. The app never schedules activities, so this is defensive.
 - **Status:** FIXED (PR pending)
 
 ### 13.8 Live Activity copy disagrees with the voice guide and the app
-- **Location:** `cmd/ios-app/Shared/battery-hold-activity-presentation.swift` — `headline`, `status`.
+- **Location:** `cmd/ios-app/Shared/BatteryHoldActivityPresentation.swift` — `headline`, `status`.
 - **What:** "Saving at 80%" didn't say Battery Saver is about the Powerwall; "Job finished" used bare "job"; "reserve" / "Reserve restored" differed from the app's "backup reserve".
 - **Fix:** "Saving your Powerwall at 80%", "Restoring 20% backup reserve", "Backup reserve restored to 20%", "Home use dropped" (load ended), "Backup reserve set to 45% / changed outside pwusage". Compact and minimal island presentations show no text; the expanded island headline keeps its `lineLimit(1)` + `minimumScaleFactor(0.8)`.
 - **Status:** FIXED (PR pending)
@@ -922,17 +922,17 @@ Verification for §13.6–13.8: `./run-tests.sh` passes (747 tests); new tests c
 - **Severity:** Important
 - **Status:** FIXED (PR pending)
 - **Confidence:** High
-- **Fix:** `PWUsageWidgets/PrivacyInfo.xcprivacy` declares no tracking, no collected data types and **no accessed-API categories**. The review prompt asked for `NSPrivacyAccessedAPICategoryUserDefaults` with reason `1C8F.1`, but that would be a false declaration: the widget and `Shared/` sources never touch `UserDefaults` — they share state through files in the App Group container (`FileManager.containerURL(forSecurityApplicationGroupIdentifier:)` in `Shared/today-energy-snapshot.swift` and `Shared/battery-hold-control-site.swift`) — and a scan of both trees for the other required-reason APIs (file timestamps, system boot time, disk space, active keyboards) found none. Add the category if widget code ever reads `UserDefaults(suiteName:)`. The file needs no explicit `project.yml` entry: the target's existing `path: PWUsageWidgets` source already places it in the widget's Resources phase (checked in the generated `project.pbxproj`). The widget's `info.properties` now sets `CFBundleShortVersionString: "$(MARKETING_VERSION)"` and `CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"`, matching the app; the `Info.plist` files themselves are generated and git-ignored, so `project.yml` is the only place this can be fixed.
+- **Fix:** `PWUsageWidgets/PrivacyInfo.xcprivacy` declares no tracking, no collected data types and **no accessed-API categories**. The review prompt asked for `NSPrivacyAccessedAPICategoryUserDefaults` with reason `1C8F.1`, but that would be a false declaration: the widget and `Shared/` sources never touch `UserDefaults` — they share state through files in the App Group container (`FileManager.containerURL(forSecurityApplicationGroupIdentifier:)` in `Shared/TodayEnergySnapshot.swift` and `Shared/BatteryHoldControlSite.swift`) — and a scan of both trees for the other required-reason APIs (file timestamps, system boot time, disk space, active keyboards) found none. Add the category if widget code ever reads `UserDefaults(suiteName:)`. The file needs no explicit `project.yml` entry: the target's existing `path: PWUsageWidgets` source already places it in the widget's Resources phase (checked in the generated `project.pbxproj`). The widget's `info.properties` now sets `CFBundleShortVersionString: "$(MARKETING_VERSION)"` and `CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"`, matching the app; the `Info.plist` files themselves are generated and git-ignored, so `project.yml` is the only place this can be fixed.
 
 ### 14.6 A test flakes on a fixed sleep
-- **Location:** `cmd/ios-app/PWUsageTests/test-waits.swift` (new); `cmd/ios-app/PWUsageTests/battery-hold-activity-coordinator-tests.swift`
+- **Location:** `cmd/ios-app/PWUsageTests/TestWaits.swift` (new); `cmd/ios-app/PWUsageTests/BatteryHoldActivityCoordinatorTests.swift`
 - **What:** Twelve tests slept 10–30 ms and then asserted state at one instant — sometimes that nothing had changed, sometimes that a state had been reached (`offer == .disabled`). One failed in a full run and passed 3/3 in isolation.
 - **Why:** Under load a 20 ms sleep is neither long enough for a positive result nor a meaningful window for a negative one: the positive checks flake, and the negative ones pass vacuously when the work has not run yet.
 - **Action:** Replace each with a bounded wait — `eventually` for a state that must be reached, an inverted wait for one that must not change — from one shared helper file.
 - **Severity:** Important
 - **Status:** FIXED (PR pending)
 - **Confidence:** Medium — the original failure was not reproduced; the fix removes the timing assumption it depended on.
-- **Fix:** `test-waits.swift` now owns `eventually` (moved out of the coordinator test file; `PWUsageAppModelTests` also uses it) and adds `staysTrue(for:_:)`, which polls through a 100 ms window and throws `InvariantBroken` the moment its condition fails. Each sleep site was split by what it was checking: reached states (`deniedActivities`' two offers, `staleRegistration`'s immediate end) wait with `eventually`; "nothing else happened" checks hold with `staysTrue`. `signOutDrainsRegistration`'s sleep-before-resume became `staysTrue { !done.value }`, which turns an untested pause into an assertion that sign-out does wait for the in-flight registration. The helpers have their own tests (`TestWaitTests`), including that `staysTrue` fails on the first broken poll rather than at the end of its window. Other test files still keep private polling helpers (`waitUntil` in `PWUsageAppModelTests` and `SolarForecastCoordinatorTests`, `waitUpTo` in `MobileAuthServiceTests`); folding them into `test-waits.swift` is left to §9.14-style test cleanup.
+- **Fix:** `TestWaits.swift` now owns `eventually` (moved out of the coordinator test file; `PWUsageAppModelTests` also uses it) and adds `staysTrue(for:_:)`, which polls through a 100 ms window and throws `InvariantBroken` the moment its condition fails. Each sleep site was split by what it was checking: reached states (`deniedActivities`' two offers, `staleRegistration`'s immediate end) wait with `eventually`; "nothing else happened" checks hold with `staysTrue`. `signOutDrainsRegistration`'s sleep-before-resume became `staysTrue { !done.value }`, which turns an untested pause into an assertion that sign-out does wait for the in-flight registration. The helpers have their own tests (`TestWaitTests`), including that `staysTrue` fails on the first broken poll rather than at the end of its window. Other test files still keep private polling helpers (`waitUntil` in `PWUsageAppModelTests` and `SolarForecastCoordinatorTests`, `waitUpTo` in `MobileAuthServiceTests`); folding them into `TestWaits.swift` is left to §9.14-style test cleanup.
 
 ---
 
@@ -946,14 +946,14 @@ Verification for §13.6–13.8: `./run-tests.sh` passes (747 tests); new tests c
 - **Status:** FIXED (PR pending)
 
 ### 15.2 Orphaned Keychain credentials survive app deletion
-- **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/app-launch-maintenance.swift`.
+- **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/AppLaunchMaintenance.swift`.
 - **What:** Reinstall removes forecast metadata but leaves generic-password credentials in Keychain.
 - **Why:** Without the deleted metadata, account-scoped cleanup cannot discover orphaned credentials.
 - **Fix:** Before creating the app model, sweep the app's bundle-identifier service with `kSecAttrSynchronizableAny`, guarded by a sandbox UserDefaults installation flag. On upgrade, existing forecast metadata preserves valid credentials and migrates the flag without sweeping; sandbox read errors fail closed. Mark completion only after success (including item-not-found); a failed sweep prevents startup and retries next launch.
 - **Status:** FIXED (PR pending)
 
 ### 15.3 Control templates rebuilt on every cold launch
-- **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/app-launch-maintenance.swift`.
+- **Location:** `cmd/ios-app/PWUsage/PWUsageApp.swift` — launch initialization; `Authentication/AppLaunchMaintenance.swift`.
 - **What:** `reloadControls(ofKind:)` ran unconditionally despite its update-only comment.
 - **Why:** Every launch unnecessarily rebuilt the user's configured control templates.
 - **Fix:** Compare the stored control build with `CFBundleVersion`, reload once per changed build, and preserve saved control-site configuration.
@@ -966,7 +966,7 @@ Verification for §15: regression tests cover parked exchange responses (success
 ## 16. HTTP and wire-contract boundary
 
 ### 16.1 The app's URLSession has no timeout or cache policy
-- **Location:** `PWUsage/Networking/PWUsageAPI.swift:38-44` (`makeCookieSession`); contrast `Shared/shared-web-session.swift:24-31` (`SharedWebSession.makeSession`)
+- **Location:** `PWUsage/Networking/PWUsageAPI.swift:38-44` (`makeCookieSession`); contrast `Shared/SharedWebSession.swift:24-31` (`SharedWebSession.makeSession`)
 - **What:** The app session was a plain `URLSessionConfiguration.default`: 60 s request timeout, 7-day resource timeout, shared `URLCache`. The widget's session already had 20/25 s and `.reloadIgnoringLocalCacheData`.
 - **Why:** A stalled request held the dashboard for a minute, and an authenticated response could be cached beyond the session that fetched it.
 - **Fix:** `PWUsageAPI` now builds its session with `SharedWebSession.makeSession(cookieStorage:)`, the single policy for app and widget, which also sets `urlCache = nil`. `makeCookieSession` is gone; cookie storage wiring and the legacy-cookie migration are unchanged.
@@ -982,7 +982,7 @@ Verification for §15: regression tests cover parked exchange responses (success
 - **Status:** FIXED (PR pending)
 
 ### 16.3 `MobileLiveResponse` is never validated against the requested site
-- **Location:** `Shared/mobile-live-contract.swift`; `PWUsage/Networking/PWUsageAPI.swift:52-58` (`fetchLive`); `PWUsage/State/DashboardCoordinator.swift:1003-1020` (`performLive`)
+- **Location:** `Shared/MobileLiveContract.swift`; `PWUsage/Networking/PWUsageAPI.swift:52-58` (`fetchLive`); `PWUsage/State/DashboardCoordinator.swift:1003-1020` (`performLive`)
 - **What:** Every other response type has `validating(siteID:)`; the live response was decoded and returned as is.
 - **Why:** A payload for another site was displayed under the current one and cached under the other site's key.
 - **Fix:** Added `MobileLiveResponse.validating(siteID:)`, mirroring `MobileBillResponse.validating`, and call it in `fetchLive`. `ContractError.siteMismatch` passes through the existing contract-error arm rather than becoming `.invalidResponse`. The coordinator's `response.site.id == selectedSiteID` check stays.
@@ -998,7 +998,7 @@ Verification for §15: regression tests cover parked exchange responses (success
 - **Status:** FIXED (PR pending)
 
 ### 16.5 Money and rates are `Double` with no range validation
-- **Location:** `PWUsage/Models/MobileContracts.swift:23`, `:244-245`, `:252-253`; `PWUsage/Models/MobileTariffs.swift:32-33`; `Shared/mobile-live-contract.swift:66`
+- **Location:** `PWUsage/Models/MobileContracts.swift:23`, `:244-245`, `:252-253`; `PWUsage/Models/MobileTariffs.swift:32-33`; `Shared/MobileLiveContract.swift:66`
 - **What:** `estimatedCost`, `cost`, `marginalCost`, `buyRate` and `sellRate` were accepted without checks.
 - **Why:** A non-finite amount would flow into formatting and the load-timing estimators.
 - **Fix (part 1):** The bill, live and tariff `validating(siteID:)` methods reject a non-finite cost, marginal cost or rate (`ContractError.invalidAmount` for bill and live, `.invalidResponse` for tariffs, matching their existing errors). Rates are deliberately **not** bounded below: the server prices negative buy and sell rates (`cmd/next-app/src/lib/bill-calculation.test.ts`, `bill-pricing.test.ts`), so `rate >= 0` would blank a real bill. JSON cannot carry NaN or infinity, so this guards a non-conforming source rather than a wire value.

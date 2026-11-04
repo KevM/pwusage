@@ -145,7 +145,7 @@ PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift'
 expect_parity 0 'ran without detector changes'
 for changed in PWUsage/Models/Solar/SolarPosition.swift PWUsage/Models/Solar/MobileSolarLayout.swift \
   PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/SolarLayoutFixtureLoader.swift \
-  PWUsageTests/SolarLayoutDetectorTests.swift; do
+  PWUsageTests/SolarLayoutDetectorTests.swift PWUsageTests/SolarLayoutSunPOATests.swift; do
   PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
   expect_parity 1 "skipped after changing $changed"
 done

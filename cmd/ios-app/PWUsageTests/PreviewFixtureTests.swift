@@ -19,7 +19,7 @@ struct PreviewFixtureTests {
         await #expect(throws: (any Error).self) { try await api.fetchBill(siteID: "preview-home") }
     }
 
-    /// The multi-site previews in `app-tab-view.swift` start from this model.
+    /// The multi-site previews in `AppTabView.swift` start from this model.
     /// It must come up signed in on the first site, load that site, and load the
     /// next one after a switch, or the canvas has nothing to show.
     @Test("The multi-site preview model loads each site it switches to")
