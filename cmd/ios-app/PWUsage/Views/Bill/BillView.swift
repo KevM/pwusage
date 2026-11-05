@@ -76,15 +76,26 @@ struct BillView: View {
         .inlineNavigationTitle()
         .toolbar {
             if let bill = response?.currentBill, amountBottom > 0, visibleTop >= amountBottom {
-                ToolbarItem(placement: .topBarTrailing) {
-                    let amount = DashboardPresentation.currency(bill.estimatedCost, code: bill.currency)
-                    Text(amount)
-                        .font(.subheadline.weight(.semibold))
-                        .monospacedDigit()
-                        .accessibilityLabel("Current bill estimate, \(amount)")
+                if #available(iOS 26, *) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        toolbarAmount(bill)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        toolbarAmount(bill)
+                    }
                 }
             }
         }
+    }
+
+    private func toolbarAmount(_ bill: MobileBillResponse.Bill) -> some View {
+        let amount = DashboardPresentation.currency(bill.estimatedCost, code: bill.currency)
+        return Text(amount)
+            .font(.subheadline.weight(.semibold))
+            .monospacedDigit()
+            .accessibilityLabel("Current bill estimate, \(amount)")
     }
 
     @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
