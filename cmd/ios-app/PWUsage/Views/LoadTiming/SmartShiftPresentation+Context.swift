@@ -287,11 +287,11 @@ extension SmartShiftPresentation {
         func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {
             let laterEnd = lane.recommended.last?.kwh ?? lane.startKwh
             let nowEnd = lane.startNow.last?.kwh ?? lane.startKwh
-            let endLabels = isNow || signedKwh(laterEnd) == signedKwh(nowEnd)
-                ? [signedKwh(laterEnd)]
-                : [signedKwh(laterEnd), signedKwh(nowEnd)]
+            let endLabels = isNow || endLabel(laterEnd) == endLabel(nowEnd)
+                ? [endLabel(laterEnd)]
+                : [endLabel(laterEnd), endLabel(nowEnd)]
             return LaneDisplay(
-                title: "\(name(lane.periodKey)) bank (kWh)",
+                title: "\(name(lane.periodKey)) (kWh)",
                 startLabel: startLabel(lane.startKwh),
                 recommended: lane.recommended,
                 startNow: isNow ? nil : lane.startNow,
@@ -316,12 +316,12 @@ extension SmartShiftPresentation {
         var accessibilitySummary: String {
             comparison.lanes.map { lane in
                 let period = name(lane.periodKey)
-                let start = "\(spokenBalance(lane.startKwh)) now"
-                let nowEnd = spokenBalance(lane.startNow.last?.kwh ?? lane.startKwh)
+                let start = "\(balanceLabel(lane.startKwh)) now"
+                let nowEnd = balanceLabel(lane.startNow.last?.kwh ?? lane.startKwh)
                 if isNow {
                     return "\(period) bank: \(start); \(nowLabel.lowercased()) leaves \(nowEnd)."
                 }
-                let laterEnd = spokenBalance(lane.recommended.last?.kwh ?? lane.startKwh)
+                let laterEnd = balanceLabel(lane.recommended.last?.kwh ?? lane.startKwh)
                 return "\(period) bank: \(start); \(laterLabel.lowercased()) leaves \(laterEnd), "
                     + "\(nowLabel.lowercased()) leaves \(nowEnd)."
             }.joined(separator: " ")

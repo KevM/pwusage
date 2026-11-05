@@ -28,7 +28,7 @@ extension SmartShiftPresentationTests {
     @Test func periodRowsListEveryPricingPeriod() {
         let rows = SmartShiftPresentation.periodRows(timing: Self.rawKeyTiming(), currencyCode: "USD")
         #expect(rows.map(\.name) == ["Off-Peak", "On-Peak", "Partial-Peak"])
-        #expect(rows.map(\.balance) == ["+18 kWh banked", "\u{2212}6 kWh owed", "0 kWh"])
+        #expect(rows.map(\.balance) == ["18 kWh banked", "6 kWh owed", "0 kWh"])
         #expect(rows[0].buy == DashboardPresentation.loadRate(0.20, code: "USD"))
         #expect(rows[0].sell == DashboardPresentation.loadRate(0.26, code: "USD"))
         let noCycle = SmartShiftPresentation.periodRows(timing: Self.rawKeyTiming(hasCycleData: false),
@@ -45,7 +45,7 @@ extension SmartShiftPresentationTests {
             inputs: .init(timing: Self.rawKeyTiming(), now: Self.now, billingCycleEnd: Self.at(480),
                           currencyCode: "USD", timeZone: "UTC"))
         let verdict = try Self.verdict(screen)
-        #expect(verdict.lanes.map(\.title) == ["On-Peak bank (kWh)", "Off-Peak bank (kWh)"])
+        #expect(verdict.lanes.map(\.title) == ["On-Peak (kWh)", "Off-Peak (kWh)"])
         #expect(verdict.why.hasPrefix("Starting now runs during On-Peak,"))
     }
 

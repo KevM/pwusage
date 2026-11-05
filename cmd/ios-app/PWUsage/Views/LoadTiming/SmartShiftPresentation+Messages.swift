@@ -152,22 +152,23 @@ extension SmartShiftPresentation {
         return "0"
     }
 
-    /// "+18 kWh banked", "−6 kWh owed" or "0 kWh".
+    /// "18 kWh banked", "6 kWh owed" or "0 kWh". Words rather than signs, because the
+    /// charts plot an owed bank above zero, where a minus sign would read backwards.
     static func balanceLabel(_ kwh: Double) -> String {
         let value = roundedKwh(kwh)
-        if value > 0 { return "\(signedKwh(kwh)) kWh banked" }
-        if value < 0 { return "\(signedKwh(kwh)) kWh owed" }
+        if value > 0 { return "\(value) kWh banked" }
+        if value < 0 { return "\(-value) kWh owed" }
         return "0 kWh"
     }
 
     static func startLabel(_ kwh: Double) -> String { "\(balanceLabel(kwh)) now" }
 
-    /// The unsigned spoken form for VoiceOver: "6 kWh owed".
-    static func spokenBalance(_ kwh: Double) -> String {
+    /// A chart line's end: "18 banked", "6 owed" or "0". The lane title carries the unit.
+    static func endLabel(_ kwh: Double) -> String {
         let value = roundedKwh(kwh)
-        if value > 0 { return "\(value) kWh banked" }
-        if value < 0 { return "\(-value) kWh owed" }
-        return "0 kWh"
+        if value > 0 { return "\(value) banked" }
+        if value < 0 { return "\(-value) owed" }
+        return "0"
     }
 
     static func roundedKwh(_ kwh: Double) -> Int {

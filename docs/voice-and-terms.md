@@ -67,8 +67,8 @@ and simplify the sentence.
   body text, captions and VoiceOver hints.
 - **Smart Shift's energy weather uses "bank".** On the Smart Shift screen and
   its dashboard summary, the projected kWh in a rate period is a **bank**:
-  positive is **banked**, negative is **owed** ("+18 kWh banked now",
-  "−6 kWh owed now"), and energy the bank cannot cover is bought at the
+  positive is **banked**, negative is **owed** ("18 kWh banked now",
+  "6 kWh owed now"), and energy the bank cannot cover is bought at the
   **full rate**. These are deliberate Smart Shift terms; do not replace them
   with "export cushion", "import gap" or "grid rate" there. Everywhere else,
   use the word list.
