@@ -37,10 +37,7 @@ struct AutomaticForecastLifecycleTests {
             } else {
                 harness.coordinator.scenePhaseChanged(isActive: false)
             }
-            // Detection normally lands in well under a second; the optimized CI
-            // simulator can stall long enough to miss the default two-second
-            // window, so give this backgrounding path a wider bound.
-            try await eventually(timeout: .seconds(5)) {
+            try await eventually {
                 harness.coordinator.solarForecastSource == .openMeteo
             }
             #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
