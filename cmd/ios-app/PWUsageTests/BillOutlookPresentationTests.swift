@@ -20,10 +20,16 @@ struct BillOutlookPresentationTests {
     }
     @Test func projectionNamesTheDateItReaches() {
         let end = Date(timeIntervalSince1970: 1_800_000_000)
-        let text = BillOutlookPresentation.projection(cost: 18.71, currency: "USD", projectedEnd: end, timeZone: "UTC",
+        let text = BillOutlookPresentation.projection(cost: 18.71, currency: "USD", projectedEnd: end,
+                                                      cycleEnd: end, timeZone: "UTC",
                                                       locale: Locale(identifier: "en_US"))
-        #expect(text.hasPrefix("About $18.71 by "))
+        #expect(text.hasPrefix("Estimated bill at cycle end: $18.71"))
         #expect(text.hasSuffix(DashboardPresentation.date(end, timeZoneIdentifier: "UTC", dateStyle: .short)))
+        let partial = BillOutlookPresentation.projection(cost: 18.71, currency: "USD", projectedEnd: end,
+                                                         cycleEnd: end.addingTimeInterval(86400), timeZone: "UTC",
+                                                         locale: Locale(identifier: "en_US"))
+        #expect(partial.hasPrefix("Estimated bill by "))
+        #expect(partial.hasSuffix(": $18.71"))
     }
     @Test func laneSummaryDefaultsToTheBillTotalSoFar() {
         let totals = [Period(tariffName: "Home", periodName: "Off-Peak", netGridKwh: 97.5, cost: 9.75),
