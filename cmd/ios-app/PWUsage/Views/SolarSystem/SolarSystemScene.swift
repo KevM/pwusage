@@ -26,8 +26,8 @@ struct SolarSystemSceneInput: Equatable {
     var isFound: Bool { !groups.isEmpty }
 }
 
-/// The compass, the house and the calendar strip, with clear days flying between them, on the
-/// reveal prototype's timeline. One clock drives every layer; it stops when nothing moves (and
+/// The compass, the house and, until the house stands, the calendar strip, with clear days flying
+/// between them, on the reveal prototype's timeline. One clock drives every layer; it stops when nothing moves (and
 /// always under Reduce Motion, where every state shows in place).
 struct SolarSystemVisual: View {
     let input: SolarSystemSceneInput
@@ -35,8 +35,6 @@ struct SolarSystemVisual: View {
 
     nonisolated static let sceneHeight: CGFloat = 300
     nonisolated static let stripInset: CGFloat = 16
-    /// How far the strip moves up toward the built house.
-    nonisolated static let stripLift: CGFloat = 34
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var width: CGFloat = 0
@@ -68,15 +66,20 @@ struct SolarSystemVisual: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(summary)
                     .accessibilityAddTraits(.isImage)
-                SolarSystemDayStrip(layout: strip, days: input.days, clocks: motion, now: now)
-                    .padding(.horizontal, Self.stripInset)
-                    .offset(y: -frame.stripLift)
-                    .padding(.bottom, -frame.stripLift)
+                if frame.stripPresence > 0 {
+                    SolarSystemDayStrip(layout: strip, days: input.days, clocks: motion, now: now)
+                        .padding(.horizontal, Self.stripInset)
+                        .opacity(frame.stripPresence)
+                        .frame(height: strip.height * frame.stripPresence, alignment: .top)
+                        .clipped()
+                }
             }
             .overlay(alignment: .topLeading) {
-                SolarSystemFlightCanvas(input: input, strip: strip, clocks: motion, frame: frame, now: now)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                if frame.stripPresence > 0 {
+                    SolarSystemFlightCanvas(input: input, strip: strip, clocks: motion, frame: frame, now: now)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -122,7 +125,7 @@ struct SolarSystemVisual: View {
     }
 }
 
-/// One moment of the scene, shared by its layers: the camera, the wedge and the strip's lift.
+/// One moment of the scene, shared by its layers: the camera, the wedge and the strip's presence.
 struct SceneFrame {
     /// The compass ring's radius in world units; the house is in meters on the same scale.
     static let ringRadius = 9.0
@@ -137,7 +140,8 @@ struct SceneFrame {
     /// The wedge and rays fade out as the house replaces them.
     let wedgeOpacity: Double
     let landedClear: Int
-    let stripLift: CGFloat
+    /// 1 while loading; falls to 0 through the tilt, as a found system has no use for the strip.
+    let stripPresence: Double
 
     init(
         input: SolarSystemSceneInput, clocks: SolarSystemSceneClocks, camera target: SolarSystemCamera, now: Date
@@ -159,7 +163,7 @@ struct SceneFrame {
         }
         wedgeWidth = width
         wedgeOpacity = 1 - min(max((build - 0.35) / 0.3, 0), 1)
-        stripLift = SolarSystemVisual.stripLift * ease((build - 0.3) / 0.7)
+        stripPresence = input.isFound ? 1 - ease((build - 0.3) / 0.7) : 1
     }
 
     /// The canvas point for a world point, with the compass centered in the scene.
@@ -267,7 +271,7 @@ struct SolarSystemFlightCanvas: View {
                     let travel = progress / (1 - melt)
                     let dot = strip.frame(cell)
                     let start = CGPoint(x: dot.midX + SolarSystemVisual.stripInset,
-                                        y: dot.midY + SolarSystemVisual.sceneHeight - frame.stripLift)
+                                        y: dot.midY + SolarSystemVisual.sceneHeight)
                     let control = CGPoint(x: (start.x + rim.x) / 2 + (rim.x - center.x) * 0.4,
                                           y: min(start.y, rim.y) - 60)
                     let point = Self.bezier(start, control, rim, SolarSystemSceneClocks.ease(travel))

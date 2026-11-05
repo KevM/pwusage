@@ -66,4 +66,30 @@ struct SolarSystemSceneClocksTests {
         #expect(SolarSystemSceneClocks.ease(1) == 1)
         #expect(abs(SolarSystemSceneClocks.ease(0.25) - 0.0625) < 1e-12)
     }
+
+    // MARK: - The day strip
+
+    private func stripPresence(_ clocks: SolarSystemSceneClocks, isFound: Bool, at time: Date) -> Double {
+        var input = SolarSystemSceneInput(status: nil, layout: nil, isWaiting: false)
+        if isFound { input.groups = [SolarSystemHouse.Group(azimuth: 180, tilt: 20, kilowatts: 8)] }
+        return SceneFrame(input: input, clocks: clocks, camera: .found, now: time).stripPresence
+    }
+
+    @Test func theStripShowsWhileLoadingAndIsGoneWhenOpeningOnAFoundSystem() {
+        #expect(stripPresence(SolarSystemSceneClocks(), isFound: false, at: now) == 1)
+        var opened = SolarSystemSceneClocks()
+        opened.observe(days: days(["2026-11-01": .clear]), columns: 1, hasLayout: true, now: now)
+        #expect(stripPresence(opened, isFound: true, at: now) == 0)
+    }
+
+    @Test func theStripLeavesDuringTheFindAfterTheLastFlightLands() {
+        var clocks = SolarSystemSceneClocks()
+        clocks.observe(days: days(["2026-11-01": nil]), columns: 1, hasLayout: false, now: now)
+        clocks.observe(days: days(["2026-11-01": .clear]), columns: 1, hasLayout: true, now: now)
+        // The dots fly from the strip, so it stays until the tilt is underway.
+        #expect(stripPresence(clocks, isFound: true, at: now.addingTimeInterval(1)) == 1)
+        let tilted = now.addingTimeInterval(SolarSystemSceneClocks.flightDuration + 0.3
+            + SolarSystemSceneClocks.buildDelay + SolarSystemSceneClocks.buildDuration + 1)
+        #expect(stripPresence(clocks, isFound: true, at: tilted) == 0)
+    }
 }

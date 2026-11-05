@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Solar System in Settings: finding the site's solar system as a picture, then what was found
-/// and the home location it was found from. Merges the former Site History and Solar Forecast.
+/// Solar System in Settings: finding the site's solar system as a picture, which then becomes the
+/// System card with what was found, and the home location it was found from. Merges the former
+/// Site History and Solar Forecast.
 struct SolarSystemView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     /// Nil for a site without the history beta; the screen then shows only what is stored.
@@ -56,17 +57,17 @@ struct SolarSystemView: View {
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
-                    if status != nil { statusRow(presentation) }
+                    if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
+                    if let layout {
+                        SolarSystemDetailsRows(layout: layout, isImproving: presentation.phase == .foundImproving)
+                    }
                 } header: {
-                    Text("Find Your Solar System")
+                    Text(layout == nil ? "Find Your Solar System" : "System")
                 }
             } else if coordinator.solarLayoutStatus == nil {
                 Section { Text("Checking solar forecast availability…") }
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
-            }
-            if let layout {
-                SolarSystemDetailsCard(layout: layout, isImproving: presentation.phase == .foundImproving)
             }
             if stored != nil || status != nil { locationSection }
             #if DEBUG

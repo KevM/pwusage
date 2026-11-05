@@ -42,6 +42,9 @@ struct SiteHistoryPresentationTests {
             acClipKw: nil, historyDays: 120, clearDays: 30, firstDay: nil, lastDay: nil)
     }
 
+    private static let foundSummary = "Solar system: 8.8 kilowatts, two panel groups, "
+        + "main group facing south-southwest, tilted 22 degrees, medium confidence."
+
     private func present(
         _ progress: SiteHistoryOnboardingProgress?, throttle: Date? = nil, result: DetectedSolarLayout? = nil,
         location: SolarHomeLocation? = nil, stored: Int = 96, clear: Int = 21, passed: Bool = true
@@ -106,25 +109,43 @@ struct SiteHistoryPresentationTests {
     @Test func aUsableLayoutStillLoadingIsImproving() {
         let improving = present(progress(), result: Self.result("medium"))
         #expect(improving.phase == .foundImproving)
-        #expect(improving.statusLine == "Usable, still improving")
+        #expect(improving.rowValue == "Improving")
         #expect(!improving.showsBanner)
-        #expect(improving.accessibilitySummary
-            == "Finding your solar system. 96 days downloaded, 21 clear. Usable, still improving.")
+        #expect(improving.accessibilitySummary == Self.foundSummary)
     }
 
     @Test func highConfidenceOrAFinishedSearchIsFinal() {
         let high = present(progress(), result: Self.result("high"))
         #expect(high.phase == .foundFinal)
-        #expect(high.statusLine == "Found with high confidence")
+        #expect(high.rowValue == "Found")
         let finished = present(progress(.finished(.reachedOneYear)), result: Self.result("medium"))
         #expect(finished.phase == .foundFinal)
-        #expect(finished.accessibilitySummary == "Solar system: 8.8 kilowatts, two panel groups, "
-            + "main group facing south-southwest, tilted 22 degrees, medium confidence.")
+        #expect(finished.accessibilitySummary == Self.foundSummary)
     }
 
-    @Test func anEstimatedLocationOffersTheExactOneOnceFound() {
+    /// The System card says all of this, so no status line sits under the render.
+    @Test func aFoundSystemHasNoStatusLineOrAction() {
         let estimated = SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .estimated)
-        #expect(present(progress(), result: Self.result("high"), location: estimated).action == .useExactLocation)
+        let improving = present(progress(), result: Self.result("medium"), location: estimated)
+        let final = present(progress(), result: Self.result("high"), location: estimated)
+        for found in [improving, final] {
+            #expect(found.statusLine.isEmpty)
+            #expect(found.action == nil)
+        }
+    }
+
+    @Test func aFoundSystemWaitingOnReconnectStillAsksForIt() {
+        let paused = present(progress(.paused(.reconnectTesla)), result: Self.result("medium"))
+        #expect(paused.phase == .needsReconnect)
+        #expect(paused.statusLine == "Reconnect Tesla to keep loading history")
+        #expect(paused.action == .reconnectTesla)
+        #expect(paused.accessibilitySummary == Self.foundSummary + " Reconnect Tesla to keep loading history.")
+    }
+
+    @Test func anEstimatedLocationOffersTheExactOneWhenNothingWasFound() {
+        let estimated = SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .estimated)
+        let notFound = present(progress(.finished(.noSolarProduction)), location: estimated)
+        #expect(notFound.action == .useExactLocation)
         #expect(present(progress(), location: estimated).action == nil)
     }
 

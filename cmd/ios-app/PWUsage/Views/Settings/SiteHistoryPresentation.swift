@@ -15,7 +15,7 @@ struct SiteHistoryPresentation: Equatable {
     let phase: Phase
     /// The short value on the Settings row.
     let rowValue: String
-    /// The one line under the visual.
+    /// The one line under the visual; empty once found, when the System card says it all.
     let statusLine: String
     let action: Action?
     let accessibilitySummary: String
@@ -72,9 +72,9 @@ struct SiteHistoryPresentation: Equatable {
         case .needsLocation: return .addLocation
         case .needsReconnect:
             return status?.progress?.phase == .paused(.reconnectTesla) ? .reconnectTesla : nil
-        case .foundImproving, .foundFinal, .unavailable:
+        case .unavailable:
             return status?.location == .estimated ? .useExactLocation : nil
-        case .loading, .waiting: return nil
+        case .loading, .waiting, .foundImproving, .foundFinal: return nil
         }
     }
 
@@ -99,10 +99,9 @@ struct SiteHistoryPresentation: Equatable {
             let line = signIn ? "Sign in again to keep loading history" : "Reconnect Tesla to keep loading history"
             return ("Paused", line)
         case .foundImproving:
-            return ("Improving", "Usable, still improving")
+            return ("Improving", "")
         case .foundFinal:
-            let confidence = status?.layout?.confidence == .high ? "high" : "medium"
-            return ("Found", "Found with \(confidence) confidence")
+            return ("Found", "")
         case .unavailable:
             return unavailable(status?.progress?.phase)
         }
@@ -124,8 +123,8 @@ struct SiteHistoryPresentation: Equatable {
     }
 
     private static func summary(_ phase: Phase, line: String, status: SiteHistoryStatus?) -> String {
-        if phase == .foundFinal, let layout = status?.layout {
-            return describe(layout)
+        if let layout = status?.layout {
+            return line.isEmpty ? describe(layout) : "\(describe(layout)) \(line)."
         }
         let counts = counts(status)
         let parts = [title, counts, line == counts ? "" : line].filter { !$0.isEmpty }
