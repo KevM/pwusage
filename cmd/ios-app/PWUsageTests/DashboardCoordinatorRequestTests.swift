@@ -19,6 +19,7 @@ extension DashboardCoordinatorTests {
 
         #expect(api.liveSiteIDs == ["site-1", "site-1"])
         #expect(api.billSiteIDs == ["site-1", "site-1"])
+        #expect(api.liveRefreshes == [false, true])
     }
 
     @Test("A user-gesture refreshBill bypasses interval checks and fetches only bill")

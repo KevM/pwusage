@@ -212,9 +212,26 @@ describe('site-live-data mobile response', () => {
         const body = await response.json();
 
         expect(response.status).toBe(200);
-        expect(refreshTodayMock).toHaveBeenCalledWith('site-a', { minIntervalMs: 30 * 60 * 1000 });
+        expect(refreshTodayMock).toHaveBeenCalledWith('site-a', { force: false, timeoutMs: undefined });
         expect(bucketedMock).toHaveBeenCalledTimes(2);
         expect(body.sources.energyDataThrough).toBe(newSample.toISOString());
+    });
+
+    it('forces refresh of live status and energy history on pull-to-refresh gesture (?refresh=1)', async () => {
+        const recentSample = new Date(Date.now() - 5 * 60 * 1000);
+        const row = (sample: Date) => ({
+            timestamp: sample, sample_timestamp: sample,
+            site_id: 'site-a', tariff_id: 1, tariff_schedule_id: 3,
+            load_power: 900, solar_power: 1200, grid_power: 200, battery_power: -100,
+            battery_soc: null, sample_count: 1,
+        });
+        bucketedMock.mockResolvedValue([row(recentSample)]);
+        refreshTodayMock.mockResolvedValue({ status: 'no-new-rows' });
+
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&refresh=1'));
+        expect(response.status).toBe(200);
+        expect(refreshMock).toHaveBeenCalledWith('site-a', expect.objectContaining({ force: true }));
+        expect(refreshTodayMock).toHaveBeenCalledWith('site-a', { force: true, timeoutMs: 15000 });
     });
 
     it('does not refresh Tesla history when the mobile energy sample is recent', async () => {

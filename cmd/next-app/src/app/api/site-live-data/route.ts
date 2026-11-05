@@ -47,6 +47,7 @@ async function handleGET(request: Request) {
 
             const now = new Date();
             const mobileView = searchParams.get('view') === 'mobile';
+            const forceRefresh = searchParams.get('refresh') === '1' || searchParams.get('force') === '1';
             const site = await siteRepo.getSite(siteId);
             const scaleWindowHours = parseScaleWindowHours(process.env.SPARKLINE_SCALE_WINDOW_HOURS);
             const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
@@ -57,7 +58,7 @@ async function handleGET(request: Request) {
                 : new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
             const repo = createEnergyRepo(site?.timezone ?? 'UTC');
             const [liveResult, initialHistoryRows] = await Promise.all([
-                refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
+                refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000, force: forceRefresh }),
                 repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
             ]);
 
@@ -76,14 +77,19 @@ async function handleGET(request: Request) {
             let historyRows = initialHistoryRows;
 
             // The website refreshes today's Tesla history before reading its
-            // totals. Do the same for mobile only when the stored sample is old.
+            // totals. Do the same for mobile when requested by pull-to-refresh
+            // or when the stored sample is old.
             // The site import lock caps attempts across instances; a successful
             // import alone warrants a second bucket read.
             const latestEnergySample = maxBucketSampleTimestamp(historyRows);
-            if (mobileView && (!latestEnergySample
-                || now.getTime() - latestEnergySample.getTime() > MOBILE_ENERGY_STALE_AFTER_MS)) {
+            const isStale = !latestEnergySample
+                || now.getTime() - latestEnergySample.getTime() > MOBILE_ENERGY_STALE_AFTER_MS;
+            if (mobileView && (forceRefresh || isStale)) {
                 try {
-                    const refreshed = await refreshTodayData(siteId, { minIntervalMs: MOBILE_ENERGY_STALE_AFTER_MS });
+                    const refreshed = await refreshTodayData(siteId, {
+                        force: forceRefresh,
+                        timeoutMs: forceRefresh ? 15_000 : undefined,
+                    });
                     if (refreshed.status === 'persisted') {
                         historyRows = await repo.getBucketedEnergyData(siteId, sparklineScaleStart, now);
                     } else if (refreshed.status === 'error') {

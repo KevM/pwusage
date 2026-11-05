@@ -146,7 +146,7 @@ extension DashboardCoordinator {
     func loadTimingDetailRefreshed() async {
         guard canRequestAccountData else { return }
         invalidateSolarLayout()
-        await refreshBill(trigger: .userGesture)
+        await refreshAll(trigger: .userGesture)
         await loadTimingDetailAppeared(manual: true, surface: nil)
     }
 

@@ -46,8 +46,15 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     func fetchLive(siteID: String) async throws -> MobileLiveResponse {
-        let url = try makeURL(path: "/api/site-live-data", siteID: siteID,
-                              extra: [URLQueryItem(name: "view", value: "mobile")])
+        try await fetchLive(siteID: siteID, refresh: false)
+    }
+
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        var extra = [URLQueryItem(name: "view", value: "mobile")]
+        if refresh {
+            extra.append(URLQueryItem(name: "refresh", value: "1"))
+        }
+        let url = try makeURL(path: "/api/site-live-data", siteID: siteID, extra: extra)
         let data = try await request(url: url)
         do {
             return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: data)

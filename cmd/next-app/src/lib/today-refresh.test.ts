@@ -307,6 +307,25 @@ describe('refreshTodayData latch', () => {
         expect(importerMock.refreshTodayRecords).toHaveBeenCalledOnce();
     });
 
+    it('lets force callers bypass in-memory throttling and passes force to withImportLock', async () => {
+        await refresh('2026-10-24T15:07:00Z');
+        expect(importerMock.refreshTodayRecords).toHaveBeenCalledTimes(1);
+
+        await expect(refresh('2026-10-24T15:07:10Z')).resolves.toEqual({ status: 'throttled' });
+        expect(importerMock.refreshTodayRecords).toHaveBeenCalledTimes(1);
+
+        await expect(refresh('2026-10-24T15:07:15Z', { force: true })).resolves.toMatchObject({ status: 'no-new-rows' });
+        expect(importerMock.refreshTodayRecords).toHaveBeenCalledTimes(2);
+        expect(importLockMock.withImportLock).toHaveBeenLastCalledWith(
+            siteRepoMock,
+            expect.objectContaining({
+                siteId: 'site-1',
+                force: true,
+            }),
+            expect.any(Function)
+        );
+    });
+
     it('still fetches yesterday\'s last samples across midnight', async () => {
         // Stored up to 23:50 CDT: the 23:55 sample is due 00:02, after midnight.
         const lastEvening = new Date('2026-10-25T04:50:00Z');

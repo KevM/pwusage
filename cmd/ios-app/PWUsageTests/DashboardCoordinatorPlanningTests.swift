@@ -66,6 +66,7 @@ extension DashboardCoordinatorTests {
         #expect(api.contextSiteIDs == ["site-1", "site-1"],
                 "A pull must re-fetch the household profile instead of failing forever.")
         #expect(coordinator.householdPattern != nil)
+        #expect(api.liveRefreshes == [true])
     }
 
     @Test("Regression pin: a non-manual forecast refresh does not re-fetch a missing planning context")

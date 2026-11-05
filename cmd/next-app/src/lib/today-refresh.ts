@@ -131,7 +131,7 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
 
     if (state.inFlight) return { status: 'in-flight' };
     const now = Date.now();
-    if (now - state.lastRefreshAt < minIntervalMs) {
+    if (!options.force && now - state.lastRefreshAt < minIntervalMs) {
         return { status: 'throttled' };
     }
 
@@ -156,6 +156,7 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
         {
             siteId,
             lockDurationMs: 60000,
+            force: options.force,
             minIntervalMs,
             logLabel: 'TodayRefresh',
         },

@@ -44,7 +44,8 @@ extension DashboardCoordinator {
         guard trigger == .userGesture
             || live.cadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
         let siteID = selectedSiteID
-        liveTask = Task { await performLive(siteID: siteID, generation: generation) }
+        let force = trigger == .userGesture
+        liveTask = Task { await performLive(siteID: siteID, generation: generation, force: force) }
     }
 
     /// Reconciles the bill request against the live import that just ran. Returns false
@@ -193,12 +194,12 @@ extension DashboardCoordinator {
         handle(error, generation: generation, endpoint: .power)
     }
 
-    func performLive(siteID: String, generation: Int) async {
+    func performLive(siteID: String, generation: Int, force: Bool = false) async {
         defer {
             if generation == siteGeneration { liveTask = nil }
         }
         do {
-            let response = try await api.fetchLive(siteID: siteID)
+            let response = try await api.fetchLive(siteID: siteID, refresh: force)
             guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
             recordAttempt(.live)
             live.response = response

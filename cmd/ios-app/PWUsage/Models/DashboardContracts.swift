@@ -3,7 +3,15 @@ import Foundation
 @MainActor
 protocol MobileDashboardDataAPI: Sendable {
     func fetchLive(siteID: String) async throws -> MobileLiveResponse
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse
     func fetchBill(siteID: String) async throws -> MobileBillResponse
+}
+
+extension MobileDashboardDataAPI {
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        _ = refresh
+        return try await fetchLive(siteID: siteID)
+    }
 }
 
 /// Optional capability so older servers/preview fixtures retain the combined path.
