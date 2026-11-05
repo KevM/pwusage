@@ -6,7 +6,7 @@ struct SmartShiftCostBars: View {
     let verdict: SmartShiftVerdict
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    static let laterColor = Color.blue
+    static let laterColor = Color.emphasis
     static let barHeight: CGFloat = 16
 
     private var maximum: Double {

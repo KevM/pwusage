@@ -62,7 +62,7 @@ struct SolarLocationInvitationCard: View {
                     Button(kind == .estimated ? "Use My Exact Home Location" : "Use My Home Location") {
                         isConfirming = true
                     }
-                    .buttonStyle(.borderedProminent)
+                    .emphasisProminentButton()
                     Button("Not Now") { dismiss(scope) }
                 }
             }

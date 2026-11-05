@@ -7,6 +7,10 @@ struct BillView: View {
     var onOpenSmartShift: (() -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @State private var projections = BillOutlookProjectionCache()
+    @State private var amountBottom: CGFloat = 0
+    @State private var visibleTop: CGFloat = 0
+    @State private var sheet: BillSheet?
+    private let scrollSpace = "billScrollContent"
 
     private var state: DashboardEndpointState<MobileBillResponse> { coordinator.bill }
     private var response: MobileBillResponse? { coordinator.bill.response }
@@ -26,7 +30,6 @@ struct BillView: View {
                     TimelineView(.periodic(from: .now, by: 60)) { _ in
                         outlook(response, now: .now)
                     }
-                    billMetadata(response)
                 } else if state.isUnavailable {
                     EmptyCard(
                         symbol: "doc.text.magnifyingglass", title: "Bill estimate unavailable",
@@ -45,8 +48,14 @@ struct BillView: View {
                 }
             }
             .padding(20)
+            .coordinateSpace(name: scrollSpace)
             .frame(maxWidth: SectionTheme.maxContentWidth)
             .frame(maxWidth: .infinity)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, top in
+            visibleTop = top
         }
         .refreshable {
             await coordinator.billOutlookRefreshed()
@@ -63,8 +72,38 @@ struct BillView: View {
         }
         .onDisappear { coordinator.solarSurfaceDisappeared(.bill) }
         .background { SectionTheme.bill.screenBackground }
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case let .savings(move, currency):
+                BillSavingsSheet(move: move, currency: currency, onOpenSmartShift: onOpenSmartShift)
+            case let .details(details):
+                BillEstimateDetailsSheet(details: details)
+            }
+        }
         .navigationTitle("Current Bill")
         .inlineNavigationTitle()
+        .toolbar {
+            if let bill = response?.currentBill, amountBottom > 0, visibleTop >= amountBottom {
+                if #available(iOS 26, *) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        toolbarAmount(bill)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        toolbarAmount(bill)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toolbarAmount(_ bill: MobileBillResponse.Bill) -> some View {
+        let amount = DashboardPresentation.currency(bill.estimatedCost, code: bill.currency)
+        return Text(amount)
+            .font(.subheadline.weight(.semibold))
+            .monospacedDigit()
+            .accessibilityLabel("Current bill estimate, \(amount)")
     }
 
     @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
@@ -78,148 +117,59 @@ struct BillView: View {
                                       cycleEnd: response.currentBill.cycleEnd)
         }()
         let projected = result.points
-        estimateCard(response, result: result, now: now, isPending: isPending)
+        let bill = response.currentBill
+        let daysLeft = BillOutlookPresentation.daysLeft(now: now, end: bill.cycleEnd, timeZone: timeZone)
+        estimateHeader(response, result: result, daysLeft: daysLeft, isPending: isPending)
+        if let move = BillOutlookPresentation.savingsMove(projected: projected,
+                                                          remaining: response.outlook?.tariffTimeline ?? [],
+                                                          cycleEnd: bill.cycleEnd, daysLeft: daysLeft) {
+            BillSavingsRow(move: move, currency: bill.currency) {
+                sheet = .savings(move, currency: bill.currency)
+            }
+        }
         if let history = response.outlook, !history.points.isEmpty {
-            BillOutlookChart(history: history, projected: projected, cycleStart: response.currentBill.cycleStart,
-                             cycleEnd: response.currentBill.cycleEnd, now: now, timeZone: timeZone,
-                             currency: response.currentBill.currency,
-                             totals: response.currentBill.periods)
+            BillOutlookChart(history: history, projected: projected, cycleStart: bill.cycleStart,
+                             cycleEnd: bill.cycleEnd, now: now, timeZone: timeZone,
+                             currency: bill.currency,
+                             totals: bill.periods)
             if projected.isEmpty && history.complete && !isPending {
                 Text("Forecast unavailable. Showing recorded energy with its original calculation time.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         } else {
-            periodsSection(response)
+            BillRatePeriodTotals(periods: bill.periods, currency: bill.currency)
         }
+        billMetadata(response, usesSolar: result.usesSolar)
     }
 
-    private func estimateCard(_ response: MobileBillResponse,
-                              result: BillOutlook.ProjectionResult, now: Date, isPending: Bool) -> some View {
+    private func estimateHeader(_ response: MobileBillResponse, result: BillOutlook.ProjectionResult,
+                                daysLeft: Int?, isPending: Bool) -> some View {
         let bill = response.currentBill
-        let projected = result.points
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("So far")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.indigo)
-                Spacer(minLength: 8)
-                Text(DashboardPresentation.currency(bill.estimatedCost, code: bill.currency))
-                    .font(.system(.title, design: .rounded, weight: .bold))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.75)
-                    .lineLimit(1)
-            }
-            .accessibilityElement(children: .combine)
-            projectionSummary(result, currency: bill.currency, isPending: isPending)
-            if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
-                Divider()
-                deadlineSection(deadline, response: response, projected: projected)
-            }
+        let end = result.points.last
+        let projection: BillEstimateHeader.Projection = end.map {
+            .amount($0.estimatedCost, label: BillOutlookPresentation.projectionLabel(
+                projectedEnd: $0.date, cycleEnd: bill.cycleEnd, timeZone: timeZone))
+        } ?? (isPending ? .pending : .none)
+        let fraction: Double? = {
+            if isPending { return 0 }
+            guard let end, let soFar = bill.estimatedCost else { return nil }
+            return BillOutlookPresentation.fillFraction(soFar: soFar, projected: end.estimatedCost)
+        }()
+        let basis = end.map { _ in
+            BillOutlookPresentation.projectionBasis(usesSolar: result.usesSolar, usesHistory: result.usesHistory)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(17)
-        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        return BillEstimateHeader(
+            soFar: bill.estimatedCost, currency: bill.currency, projection: projection, fillFraction: fraction,
+            daysLeft: daysLeft.map(BillOutlookPresentation.daysLeftLabel), isSelected: isSelected,
+            onInfo: {
+                sheet = .details(.init(basis: basis, periods: bill.periods, currency: bill.currency))
+            },
+            scrollSpace: scrollSpace,
+            onAmountBottomChange: { amountBottom = $0 }
+        )
     }
 
-    @ViewBuilder private func projectionSummary(_ result: BillOutlook.ProjectionResult, currency: String,
-                                                isPending: Bool) -> some View {
-        if let end = result.points.last {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(BillOutlookPresentation.projection(cost: end.estimatedCost, currency: currency,
-                                                        projectedEnd: end.date, timeZone: timeZone))
-                    .font(.headline).monospacedDigit()
-                Text(result.usesSolar
-                    ? (result.usesHistory
-                        ? "Solar forecast and typical home use, with recent grid history where the forecast ends."
-                        : "Based on the solar forecast and typical home use.")
-                    : "Based on your recent grid history.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let source = coordinator.attributionDescriptor(usesSolar: result.usesSolar) {
-                    SolarForecastAttributionView(descriptor: source)
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityElement(children: .contain)
-        } else if isPending {
-            Text(BillOutlookPresentation.pendingProjection)
-                .font(.subheadline).foregroundStyle(.secondary)
-        }
-    }
-
-    private func deadlineSection(_ deadline: String, response: MobileBillResponse,
-                                 projected: [BillOutlookPoint]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(deadline, systemImage: "calendar").font(.subheadline.weight(.semibold))
-            if projected.last?.date == response.currentBill.cycleEnd,
-               let guidance = BillOutlookPresentation.guidance(observed: response.outlook?.points.last,
-                                                               projected: projected.last,
-                                                               remaining: response.outlook?.tariffTimeline ?? [],
-                                                               currency: response.currentBill.currency) {
-                Text(guidance).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            }
-            if let onOpenSmartShift { Button("Open Smart Shift", action: onOpenSmartShift).font(.subheadline) }
-        }
-    }
-
-    private func periodsSection(_ response: MobileBillResponse) -> some View {
-        BillInformationCard(title: "Rate period totals", symbol: "chart.bar.fill") {
-            if response.currentBill.periods.isEmpty {
-                Text("No period totals are available for this cycle yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-            } else {
-                let multipleTariffs = Set(response.currentBill.periods.map(\.tariffName)).count > 1
-                VStack(spacing: 0) {
-                    ForEach(Array(response.currentBill.periods.enumerated()), id: \.offset) { index, period in
-                        periodRow(period, multipleTariffs: multipleTariffs,
-                                  currency: response.currentBill.currency)
-                        if index < response.currentBill.periods.count - 1 { Divider() }
-                    }
-                }
-            }
-        }
-    }
-
-    private func periodRow(_ period: Period, multipleTariffs: Bool, currency: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(DashboardPresentation.tariffPeriodTitle(period.periodName))
-                    .font(.subheadline.weight(.semibold))
-                Spacer(minLength: 8)
-                Text(DashboardPresentation.currency(period.cost, code: currency))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .multilineTextAlignment(.trailing)
-            }
-            Text(BillOutlookPresentation.balance(period.netGridKwh))
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(balanceColor(period.netGridKwh))
-            if multipleTariffs {
-                Text(period.tariffName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 11)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(periodLabel(period, multipleTariffs: multipleTariffs, currency: currency))
-    }
-
-    private func periodLabel(_ period: Period, multipleTariffs: Bool, currency: String) -> String {
-        let title = DashboardPresentation.tariffPeriodTitle(period.periodName)
-        let tariff = multipleTariffs ? "\(period.tariffName), " : ""
-        let balance = BillOutlookPresentation.balance(period.netGridKwh)
-        let cost = DashboardPresentation.currency(period.cost, code: currency)
-        return "\(title), \(tariff)\(balance), estimated cost \(cost)"
-    }
-
-    private func billMetadata(_ response: MobileBillResponse) -> some View {
+    private func billMetadata(_ response: MobileBillResponse, usesSolar: Bool) -> some View {
         let cycleStart = DashboardPresentation.date(response.currentBill.cycleStart,
                                                     timeZoneIdentifier: timeZone, dateStyle: .short)
         let cycleEnd = DashboardPresentation.date(response.currentBill.cycleEnd,
@@ -232,28 +182,26 @@ struct BillView: View {
                                                          dateStyle: .short, timeStyle: .short)
                 Text("Energy through \(through)")
             }
+            if let source = coordinator.attributionDescriptor(usesSolar: usesSolar) {
+                SolarForecastAttributionView(descriptor: source)
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-    }
-
-    private func balanceColor(_ netGridKwh: Double) -> Color {
-        if netGridKwh < 0 { return .green }
-        if netGridKwh > 0 { return .red }
-        return .secondary
     }
 }
 
-private struct BillInformationCard<Content: View>: View {
-    let title: String
-    let symbol: String
-    @ViewBuilder let content: Content
+private enum BillSheet: Identifiable {
+    case savings(BillSavingsMove, currency: String)
+    case details(BillEstimateDetails)
 
-    var body: some View {
-        CardContainer(title: title, symbol: symbol) {
-            content
+    var id: String {
+        switch self {
+        case .savings: "savings"
+        case .details: "details"
         }
     }
 }

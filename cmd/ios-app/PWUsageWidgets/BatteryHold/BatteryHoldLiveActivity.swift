@@ -21,7 +21,7 @@ struct BatteryHoldLiveActivity: Widget {
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.emphasis)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(context.attributes.siteName)
@@ -36,7 +36,7 @@ struct BatteryHoldLiveActivity: Widget {
                 }
             } compactLeading: {
                 BatteryHoldGlyph(size: 20)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.emphasis)
                     .accessibilityLabel("Battery Saver")
             } compactTrailing: {
                 BatteryHoldGauge(style: .mini, state: context.state, isStale: context.isStale)

@@ -160,7 +160,7 @@ struct HomeLocationMapStep: View {
                 } label: {
                     Text("Use This Location").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .emphasisProminentButton()
                 .controlSize(.large)
                 .disabled(center == nil)
                 .padding()

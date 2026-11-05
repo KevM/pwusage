@@ -99,7 +99,7 @@ struct BillOutlookChart: View {
     private func legend(_ label: String, dashed: Bool) -> some View {
         HStack(spacing: 5) {
             Path { path in path.move(to: .init(x: 0, y: 4)); path.addLine(to: .init(x: 20, y: 4)) }
-                .stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: dashed ? [4, 3] : []))
+                .stroke(Color.emphasis, style: StrokeStyle(lineWidth: 2, dash: dashed ? [4, 3] : []))
                 .frame(width: 20, height: 8)
             Text(label).font(.caption)
         }
@@ -121,7 +121,7 @@ struct BillOutlookChart: View {
                     tariffName: period.tariffName, periodName: period.periodName, netGridKwh: 0)
         }
         if let summary = BillOutlookPresentation.laneSummary(
-            period: period, totals: totals, selected: selected, currency: currency) {
+            period: period, totals: totals, selected: selected) {
             Text(summary).font(.caption).monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -159,12 +159,12 @@ struct BillOutlookChart: View {
             ForEach(Array(recorded.enumerated()), id: \.offset) { _, point in
                 LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
                          series: .value("Source", "Recorded"))
-                    .foregroundStyle(.indigo).lineStyle(EnergyWeatherChart.laterStroke)
+                    .foregroundStyle(Color.emphasis).lineStyle(EnergyWeatherChart.laterStroke)
             }
             ForEach(Array(projected.enumerated()), id: \.offset) { _, point in
                 LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
                          series: .value("Source", "Estimated"))
-                    .foregroundStyle(.indigo).lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
+                    .foregroundStyle(Color.emphasis).lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
             }
             if now >= cycleStart && now < cycleEnd {
                 RuleMark(x: .value("Now", now)).foregroundStyle(.secondary)
@@ -177,9 +177,9 @@ struct BillOutlookChart: View {
             }
             RuleMark(x: .value("Cycle end", cycleEnd)).foregroundStyle(.secondary)
             if let selectedDate, let selection {
-                RuleMark(x: .value("Selected", selectedDate)).foregroundStyle(.indigo.opacity(0.5))
+                RuleMark(x: .value("Selected", selectedDate)).foregroundStyle(Color.emphasis.opacity(0.5))
                 PointMark(x: .value("Date", selection.date), y: .value("kWh", energy(selection, key: period.key)))
-                    .foregroundStyle(.indigo)
+                    .foregroundStyle(Color.emphasis)
             }
         }
         .chartXScale(domain: timeRange).chartYScale(domain: balanceRange)

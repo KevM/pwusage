@@ -89,6 +89,7 @@ targets:
         # document's basename; XcodeGen supplies the same default, but naming it
         # here keeps the link visible when the icon is moved or renamed.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: Emphasis
       configs:
         Debug:
           PWUSAGE_APP_GROUP: group.fm.rodeo.pwusage.debug
@@ -125,6 +126,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.rodeo.pwusage.widgets
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: Emphasis
         CODE_SIGN_STYLE: Automatic
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES

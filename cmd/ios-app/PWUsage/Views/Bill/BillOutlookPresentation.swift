@@ -1,7 +1,8 @@
 import Foundation
 
 enum BillOutlookPresentation {
-    static let pendingProjection = "Estimating the rest of this cycle…"
+    /// A saving this close to the bill is worth a row above the charts; earlier, the charts can still change.
+    private static let savingsWindowDays = 7
 
     static func selection(in points: [BillOutlookPoint], date: Date?) -> BillOutlookPoint? {
         guard let date else { return points.last }
@@ -13,55 +14,50 @@ enum BillOutlookPresentation {
         return "\(label) · \(DashboardPresentation.energy(abs(netGridKwh)))"
     }
 
-    static func deadline(now: Date, end: Date, timeZone: String) -> String? {
+    static func daysLeft(now: Date, end: Date, timeZone: String) -> Int? {
         guard end > now, let zone = TimeZone(identifier: timeZone) else { return nil }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
-        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
-                                           to: calendar.startOfDay(for: end)).day ?? 0
-        guard days <= 7 else { return nil }
-        if days == 0 { return "Cycle ends today" }
-        return "Cycle ends in \(days) \(days == 1 ? "day" : "days")"
+        return calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                       to: calendar.startOfDay(for: end)).day
     }
-    static func projection(cost: Double, currency: String, projectedEnd: Date, timeZone: String,
-                           locale: Locale = .current) -> String {
-        "About \(DashboardPresentation.currency(cost, code: currency, locale: locale)) by "
-            + DashboardPresentation.date(projectedEnd, timeZoneIdentifier: timeZone, dateStyle: .short)
+    static func daysLeftLabel(_ days: Int) -> String {
+        if days == 0 { return "Ends today" }
+        return "\(days) \(days == 1 ? "day" : "days") left"
+    }
+    static func projectionLabel(projectedEnd: Date, cycleEnd: Date, timeZone: String,
+                                locale: Locale = .current) -> String {
+        guard projectedEnd != cycleEnd else { return "By cycle end" }
+        var style = Date.FormatStyle(locale: locale).month(.abbreviated).day()
+        style.timeZone = TimeZone(identifier: timeZone) ?? .current
+        return "By \(projectedEnd.formatted(style))"
+    }
+    static func projectedAmount(_ cost: Double, currency: String, locale: Locale = .current) -> String {
+        "about \(cost.formatted(.currency(code: currency).locale(locale).precision(.fractionLength(0))))"
+    }
+    /// How far the bar fills, or nil when a credit or a falling bill means a bar would mislead.
+    static func fillFraction(soFar: Double, projected: Double) -> Double? {
+        guard projected > 0, soFar >= 0, soFar <= projected else { return nil }
+        return soFar / projected
+    }
+    static func projectionBasis(usesSolar: Bool, usesHistory: Bool) -> String {
+        guard usesSolar else { return "Based on your recent grid history." }
+        return usesHistory
+            ? "Based on the solar forecast and typical home use, with recent grid history where the forecast ends."
+            : "Based on the solar forecast and typical home use."
     }
     /// Lane header: the bill's total so far, or the selected day's running balance while exploring.
-    static func laneSummary(period: BillOutlookPeriod, totals: [Period], selected: BillOutlookPeriod?,
-                            currency: String, locale: Locale = .current) -> String? {
+    static func laneSummary(period: BillOutlookPeriod, totals: [Period], selected: BillOutlookPeriod?) -> String? {
         if let selected { return balance(selected.netGridKwh) }
-        guard let total = totals.first(where: {
+        return totals.first {
             $0.tariffName == period.tariffName && $0.periodName == period.periodName
-        }) else { return nil }
-        return balance(total.netGridKwh) + " · "
-            + DashboardPresentation.currency(total.cost, code: currency, locale: locale)
+        }.map { balance($0.netGridKwh) }
     }
-    static func guidance(observed: BillOutlookPoint?, projected: BillOutlookPoint?, remaining: [BillOutlookTariff],
-                         currency: String, locale: Locale = .current) -> String? {
-        guard let observed, let projected else { return nil }
-        if let shift = BillOutlook.bestShift(projected: projected, remaining: remaining) {
-            let cushion = DashboardPresentation.tariffPeriodTitle(shift.cushion.periodName)
-            let gap = DashboardPresentation.tariffPeriodTitle(shift.gap.periodName)
-            let credit = DashboardPresentation.loadRate(shift.cushion.sellRate, code: currency, locale: locale)
-            let imports = DashboardPresentation.loadRate(shift.gap.buyRate, code: currency, locale: locale)
-            let savings = DashboardPresentation.currency(shift.savings, code: currency, locale: locale)
-            return "About \(DashboardPresentation.energy(shift.energyKwh)) of your \(cushion) export cushion "
-                + "would only earn \(credit), while \(gap) imports cost \(imports). "
-                + "Shifting heavy energy use like EV charging into \(cushion) could save about \(savings)."
-        }
-        if let closing = observed.periods.first(where: { period in
-            period.netGridKwh > 0.1 && projected.periods.contains { $0.key == period.key && $0.netGridKwh <= 0 }
-        }) {
-            return "Expected exports may close your "
-                + "\(DashboardPresentation.tariffPeriodTitle(closing.periodName)) import gap."
-        }
-        if let gap = projected.periods.filter({ $0.netGridKwh > 0.1 }).max(by: { $0.netGridKwh < $1.netGridKwh }) {
-            return "An import gap is expected in "
-                + "\(DashboardPresentation.tariffPeriodTitle(gap.periodName)). "
-                + "Smart Shift can help time your heavy energy use."
-        }
-        return "An export cushion is expected to remain. Check Smart Shift before starting heavy energy use."
+    /// The saving still possible by the bill date, once the projection reaches it and the bill is close.
+    static func savingsMove(projected: [BillOutlookPoint], remaining: [BillOutlookTariff], cycleEnd: Date,
+                            daysLeft: Int?) -> BillSavingsMove? {
+        guard let daysLeft, daysLeft <= savingsWindowDays, let end = projected.last, end.date == cycleEnd,
+              let shift = BillOutlook.bestShift(projected: end, remaining: remaining) else { return nil }
+        return BillSavingsMove.make(from: shift)
     }
 }
