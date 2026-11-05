@@ -9,7 +9,9 @@ private final class OnboardingAppAPI: PWUsageApplicationAPI {
         MobileSite(id: "site-b", name: "Cabin", utility: "Test")]
 
     func fetchSites() async throws -> [MobileSite] { Self.sites }
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
         throw PWUsageAPIError.invalidResponse

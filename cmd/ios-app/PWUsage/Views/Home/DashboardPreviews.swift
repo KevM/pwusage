@@ -43,7 +43,7 @@
         }
 
         func fetchSites() async throws -> [MobileSite] { sites }
-        func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+        func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
             try await fixture(for: siteID).fetchLive(siteID: siteID)
         }
         func fetchBill(siteID: String) async throws -> MobileBillResponse {

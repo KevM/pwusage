@@ -76,6 +76,8 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
         return try MobileContractDecoder.make().decode(MobileTariffsResponse.self,
                                                        from: Data(TariffSheetTests.fixture.utf8))
     }
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
 }

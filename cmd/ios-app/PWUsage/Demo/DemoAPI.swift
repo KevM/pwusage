@@ -35,7 +35,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
 
     func fetchSites() async throws -> [MobileSite] { [DemoFixtures.site] }
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         try DemoFixtures.live(asOf: currentSource())
     }
 

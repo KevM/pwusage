@@ -19,8 +19,12 @@ extension DashboardCoordinator {
                 refreshSettled = true
             }
         }
-        await refreshPower(force: trigger == .userGesture)
+        await refreshPower(force: trigger.skipsCadence)
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
+        if trigger == .userGesture {
+            await waitForLiveTaskWithoutImport(generation: generation)
+            guard canStillRefresh(trigger: trigger, generation: generation) else { return }
+        }
         let requestTime = now()
 
         startLiveTaskIfNeeded(trigger: trigger, generation: generation)
@@ -38,13 +42,23 @@ extension DashboardCoordinator {
         _ = await waitForRequest(billTask)
     }
 
+    /// A poll already running may answer from cache without importing history. A
+    /// pull must not settle for that, so it lets the poll finish and sends its own.
+    private func waitForLiveTaskWithoutImport(generation: Int) async {
+        while generation == siteGeneration, !liveTaskImportsHistory, let liveTask {
+            guard await waitForRequest(liveTask) else { return }
+        }
+    }
+
     private func startLiveTaskIfNeeded(trigger: RefreshTrigger, generation: Int) {
         guard liveTask == nil else { return }
         let interval = usesLivePowerEndpoint ? Self.summaryInterval : Self.liveInterval
-        guard trigger == .userGesture
+        guard trigger.skipsCadence
             || live.cadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
         let siteID = selectedSiteID
-        liveTask = Task { await performLive(siteID: siteID, generation: generation) }
+        let importsHistory = trigger == .userGesture
+        liveTaskImportsHistory = importsHistory
+        liveTask = Task { await performLive(siteID: siteID, generation: generation, importsHistory: importsHistory) }
     }
 
     /// Reconciles the bill request against the live import that just ran. Returns false
@@ -112,7 +126,7 @@ extension DashboardCoordinator {
         let cadence = cadenceNow()
         let due: Bool
         switch trigger {
-        case .userGesture: due = true
+        case .userGesture, .automaticRecovery: due = true
         case .screenAppearance:
             due = bill.cadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval))
         case .scheduled:
@@ -193,12 +207,15 @@ extension DashboardCoordinator {
         handle(error, generation: generation, endpoint: .power)
     }
 
-    func performLive(siteID: String, generation: Int) async {
+    func performLive(siteID: String, generation: Int, importsHistory: Bool = false) async {
         defer {
-            if generation == siteGeneration { liveTask = nil }
+            if generation == siteGeneration {
+                liveTask = nil
+                liveTaskImportsHistory = false
+            }
         }
         do {
-            let response = try await api.fetchLive(siteID: siteID)
+            let response = try await api.fetchLive(siteID: siteID, refresh: importsHistory)
             guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
             recordAttempt(.live)
             live.response = response
@@ -355,6 +372,7 @@ extension DashboardCoordinator {
         powerTask?.cancel()
         billTask?.cancel()
         liveTask = nil
+        liveTaskImportsHistory = false
         powerTask = nil
         billTask = nil
     }

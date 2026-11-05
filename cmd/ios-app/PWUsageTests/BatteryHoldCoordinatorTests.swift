@@ -247,7 +247,7 @@ private final class BatteryHoldAPISpy: MobileDashboardDataAPI, MobileBatteryHold
     private var continuation: CheckedContinuation<Void, Never>?
     private var started: CheckedContinuation<Void, Never>?
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw URLError(.unsupportedURL) }
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse { throw URLError(.unsupportedURL) }
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw URLError(.unsupportedURL) }
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {
         readCount += 1

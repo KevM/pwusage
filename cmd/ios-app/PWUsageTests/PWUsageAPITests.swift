@@ -55,6 +55,34 @@ final class PWUsageAPITests {
         #expect(throws: MobileLiveResponse.ContractError.self) { try reading.validating(siteID: "site-2") }
     }
 
+    @Test("fetchLive appends refresh=1 query item only when refresh is true")
+    func liveRefreshQueryItem() async throws {
+        var observedQueries: [[URLQueryItem]?] = []
+        StubURLProtocol.requestHandler = { request in
+            let url = try #require(request.url)
+            let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            observedQueries.append(components.queryItems)
+            let stamp = ISO8601DateFormatter().string(from: Date())
+            let json = """
+            {"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC","localDate":"2026-11-04"},
+             "live":{"solarPower":1000,"loadPower":500,"batteryPower":-500,"gridPower":0},
+             "today":{"homeKwh":10,"solarKwh":5,"gridNetKwh":2,"batteryNetKwh":-1},"todayComplete":true,
+             "stateOfCharge":70,"sources":{"liveStatusAt":"\(stamp)","stateOfChargeAt":"\(stamp)"}}
+            """
+            return (try Self.response(request, status: 200), Data(json.utf8))
+        }
+
+        _ = try await api.fetchLive(siteID: "site-1")
+        #expect(observedQueries.count == 1)
+        #expect(observedQueries[0]?.contains(URLQueryItem(name: "refresh", value: "1")) == false)
+        #expect(observedQueries[0]?.contains(URLQueryItem(name: "view", value: "mobile")) == true)
+
+        _ = try await api.fetchLive(siteID: "site-1", refresh: true)
+        #expect(observedQueries.count == 2)
+        #expect(observedQueries[1]?.contains(URLQueryItem(name: "refresh", value: "1")) == true)
+        #expect(observedQueries[1]?.contains(URLQueryItem(name: "view", value: "mobile")) == true)
+    }
+
     @Test("Battery hold reads and commands use an encoded site path and typed JSON")
     func batteryHoldTransport() async throws {
         var requests: [(URLRequest, Data)] = []

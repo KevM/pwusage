@@ -41,7 +41,13 @@ they wanted anyway.
   caller. Tests pin this ("does not report in-flight or lock out cold cache
   retries after a failed fetch").
 - Making `force` go through the claim. `force: true` intentionally bypasses it —
-  the caller explicitly wants a fresh fetch.
+  the caller explicitly wants a fresh fetch. This is about the live-status claim:
+  a forced `refreshTodayData` still takes the import lock normally and only swaps
+  the caller's interval for a 15-second floor, because passing `force` to
+  `acquireImportLock` overwrites a running import's lock and then clears it.
+- Dropping `restoreLastImportOn` from `refreshTodayData`. `acquireImportLock` stamps
+  `last_import_at` before the fetch, so without the restore one failed attempt
+  throttles every caller for its own interval (14 minutes for TRMNL).
 
 **Known, accepted edge:** the claim advances `last_live_refresh_at` a few seconds
 before the fetch completes, so the SoC-age/staleness display can look slightly

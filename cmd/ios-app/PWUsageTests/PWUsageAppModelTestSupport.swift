@@ -70,7 +70,7 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         }
     }
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         liveSiteIDs.append(siteID)
         if holdLive {
             return try await withCheckedThrowingContinuation { liveContinuations.append((siteID, $0)) }

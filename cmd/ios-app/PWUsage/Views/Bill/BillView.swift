@@ -49,8 +49,7 @@ struct BillView: View {
             .frame(maxWidth: .infinity)
         }
         .refreshable {
-            await coordinator.refreshBill(trigger: .userGesture)
-            await coordinator.billOutlookAppeared(markVisible: false)
+            await coordinator.billOutlookRefreshed()
         }
         .task(id: "\(site.id)-\(isSelected)") {
             if isSelected { await coordinator.billOutlookAppeared() } else {

@@ -186,7 +186,9 @@ private final class BackgroundForecastAPI: PWUsageApplicationAPI {
     private var planningContinuations: [CheckedContinuation<Void, Never>] = []
 
     func fetchSites() async throws -> [MobileSite] { siteFetches += 1; return sites }
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
         planningContextFetches += 1

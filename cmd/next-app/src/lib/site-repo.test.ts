@@ -612,3 +612,24 @@ describe('SiteRepo history migration status', () => {
         );
     });
 });
+
+describe('SiteRepo releaseImportLock', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('leaves last_import_at alone on a plain release', async () => {
+        queryMock.mockResolvedValue({ rowCount: 1 });
+        await new SiteRepo().releaseImportLock('site-1', 'lock-1');
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).not.toContain('last_import_at');
+        expect(params).toEqual(['site-1', 'lock-1']);
+    });
+
+    it('restores last_import_at only while this lock is still held', async () => {
+        queryMock.mockResolvedValue({ rowCount: 1 });
+        await new SiteRepo().releaseImportLock('site-1', 'lock-1', null);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('last_import_at = $3');
+        expect(sql).toContain('import_lock_id = $2');
+        expect(params).toEqual(['site-1', 'lock-1', null]);
+    });
+});

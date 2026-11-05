@@ -301,7 +301,7 @@ private final class ForecastDashboardAPISpy: MobileDashboardDataAPI, MobileLoadP
 
     init(now: Date = Date(timeIntervalSince1970: 1_800_000_000)) { self.now = now }
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         liveSiteIDs.append(siteID)
         throw PWUsageAPIError.invalidResponse
     }

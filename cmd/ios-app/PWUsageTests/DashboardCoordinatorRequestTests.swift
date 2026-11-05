@@ -19,6 +19,80 @@ extension DashboardCoordinatorTests {
 
         #expect(api.liveSiteIDs == ["site-1", "site-1"])
         #expect(api.billSiteIDs == ["site-1", "site-1"])
+        #expect(api.liveRefreshes == [false, true])
+    }
+
+    @Test("A pull during an unforced live request still sends its own forced request")
+    func pullDuringUnforcedLiveRequestSendsForcedRequest() async throws {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+
+        let poll = Task { await coordinator.refreshDue() }
+        await api.waitUntilLiveRequestStarts()
+        let pull = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        #expect(api.liveRefreshes == [false], "The pull waits for the running request first.")
+
+        api.resumeRequests()
+        await poll.value
+        await pull.value
+
+        #expect(api.liveRefreshes == [false, true])
+    }
+
+    @Test("A second pull joins a forced live request already running")
+    func pullDuringForcedLiveRequestJoinsIt() async {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+
+        let first = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        await api.waitUntilLiveRequestStarts()
+        let second = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        api.resumeRequests()
+        await first.value
+        await second.value
+
+        #expect(api.liveRefreshes == [false, true], "The scene's poll, then one forced request.")
+    }
+
+    @Test("Automatic recovery skips the live cadence without forcing a history import")
+    func automaticRecoverySkipsCadenceWithoutForcingImport() async {
+        let clock = DashboardTestClock()
+        let api = DashboardAPISpy()
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshDue()
+
+        clock.advance(minutes: 1)
+        await coordinator.refreshAll(trigger: .automaticRecovery)
+
+        #expect(api.liveRefreshes == [false, false])
+    }
+
+    @Test("A Bill pull imports history, then recalculates the bill from it")
+    func billPullImportsHistoryWithoutWaitingToShowABill() async throws {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+
+        let pull = Task { await coordinator.billOutlookRefreshed() }
+        try await eventually { api.billSiteIDs.count == 1 }
+
+        api.resumeRequests()
+        await pull.value
+
+        #expect(api.liveRefreshes == [false, true], "The scene's poll, then the pull's history import.")
+        #expect(api.billSiteIDs.count == 2, "The bill must also follow the imported history.")
     }
 
     @Test("A user-gesture refreshBill bypasses interval checks and fetches only bill")

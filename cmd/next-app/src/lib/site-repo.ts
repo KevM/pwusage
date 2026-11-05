@@ -386,7 +386,20 @@ export class SiteRepo {
         return (result.rowCount ?? 0) > 0;
     }
 
-    async releaseImportLock(siteId: string, lockId: string): Promise<boolean> {
+    /**
+     * Pass `restoreLastImportAt` to undo this attempt's stamp as well. The lock id
+     * guards it: an attempt that lost its lock leaves the new holder's stamp alone.
+     */
+    async releaseImportLock(siteId: string, lockId: string, restoreLastImportAt?: number | null): Promise<boolean> {
+        if (restoreLastImportAt !== undefined) {
+            const restored = await pool.query(`
+                UPDATE "Site"
+                SET import_lock_id = NULL, import_lock_expires = 0, last_import_at = $3
+                WHERE id = $1 AND import_lock_id = $2
+            `, [siteId, lockId, restoreLastImportAt]);
+            return (restored.rowCount ?? 0) > 0;
+        }
+
         const result = await pool.query(`
             UPDATE "Site"
             SET import_lock_id = NULL, import_lock_expires = 0

@@ -140,14 +140,26 @@ extension DashboardCoordinator {
         return .requestFailed
     }
 
+    /// Pull to refresh on the Bill screen. Like Smart Shift's pull below, it shows a
+    /// new bill at once and recalculates it once the history import has finished.
+    func billOutlookRefreshed() async {
+        async let fullRefresh: Void = refreshAll(trigger: .userGesture)
+        await refreshBill(trigger: .userGesture)
+        await billOutlookAppeared(markVisible: false)
+        await fullRefresh
+    }
+
     /// Pull to refresh on the Load timing screen. This is the only place a person
     /// can ask for a new forecast, so it must genuinely do that rather than
-    /// refreshing bill data alone.
+    /// refreshing bill data alone. The forecast does not wait for the history
+    /// import, which can take many seconds and would be cancelled along with it.
     func loadTimingDetailRefreshed() async {
         guard canRequestAccountData else { return }
         invalidateSolarLayout()
+        async let fullRefresh: Void = refreshAll(trigger: .userGesture)
         await refreshBill(trigger: .userGesture)
         await loadTimingDetailAppeared(manual: true, surface: nil)
+        await fullRefresh
     }
 
     /// Map the server's wire reason onto our own vocabulary so the note can be

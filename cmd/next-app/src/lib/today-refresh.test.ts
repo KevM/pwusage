@@ -307,6 +307,58 @@ describe('refreshTodayData latch', () => {
         expect(importerMock.refreshTodayRecords).toHaveBeenCalledOnce();
     });
 
+    it('holds force callers to a 15-second floor instead of the caller interval', async () => {
+        await refresh('2026-10-24T15:07:00Z');
+        await expect(refresh('2026-10-24T15:07:14Z', { force: true })).resolves.toEqual({ status: 'throttled' });
+        expect(importerMock.refreshTodayRecords).toHaveBeenCalledTimes(1);
+
+        await expect(refresh('2026-10-24T15:07:15Z', { force: true })).resolves.toMatchObject({ status: 'no-new-rows' });
+        expect(importerMock.refreshTodayRecords).toHaveBeenCalledTimes(2);
+    });
+
+    it('never takes the import lock from a running import, even when forced', async () => {
+        await refresh('2026-10-24T15:07:00Z', { force: true });
+
+        const options = importLockMock.withImportLock.mock.lastCall?.[1];
+        expect(options?.force).toBeUndefined();
+        expect(options?.minIntervalMs).toBe(15_000);
+    });
+
+    it('reports a forced refresh as in-flight when another import holds the lock', async () => {
+        siteRepoMock.acquireImportLock.mockResolvedValue(false);
+        siteRepoMock.getImportStatus.mockResolvedValue({ isImporting: true, lastImportAt: 0 });
+
+        await expect(refresh('2026-10-24T15:07:00Z', { force: true })).resolves.toEqual({ status: 'in-flight' });
+        expect(importerMock.refreshTodayRecords).not.toHaveBeenCalled();
+    });
+
+    it('asks the lock to restore the import stamp only after a failed attempt', async () => {
+        await refresh('2026-10-24T15:07:00Z');
+
+        const restoreOn = importLockMock.withImportLock.mock.lastCall?.[1].restoreLastImportOn;
+        expect(restoreOn?.({ status: 'error' })).toBe(true);
+        expect(restoreOn?.({ status: 'connection-required' })).toBe(true);
+        expect(restoreOn?.({ status: 'no-new-rows' })).toBe(false);
+        expect(restoreOn?.({ status: 'persisted' })).toBe(false);
+    });
+
+    it('does not hold a long-interval caller to its full interval after a failure', async () => {
+        importerMock.refreshTodayRecords.mockRejectedValueOnce(new Error('tesla down'));
+        const trmnl = { minIntervalMs: 14 * 60 * 1000 };
+        await expect(refresh('2026-10-24T15:07:00Z', trmnl)).resolves.toMatchObject({ status: 'error' });
+
+        await expect(refresh('2026-10-24T15:11:59Z', trmnl)).resolves.toEqual({ status: 'throttled' });
+        await expect(refresh('2026-10-24T15:12:00Z', trmnl)).resolves.toMatchObject({ status: 'no-new-rows' });
+    });
+
+    it('keeps a failure backoff no longer than the caller interval', async () => {
+        importerMock.refreshTodayRecords.mockRejectedValueOnce(new Error('tesla down'));
+        await expect(refresh('2026-10-24T15:07:00Z')).resolves.toMatchObject({ status: 'error' });
+
+        await expect(refresh('2026-10-24T15:07:59Z')).resolves.toEqual({ status: 'throttled' });
+        await expect(refresh('2026-10-24T15:08:00Z')).resolves.toMatchObject({ status: 'no-new-rows' });
+    });
+
     it('still fetches yesterday\'s last samples across midnight', async () => {
         // Stored up to 23:50 CDT: the 23:55 sample is due 00:02, after midnight.
         const lastEvening = new Date('2026-10-25T04:50:00Z');

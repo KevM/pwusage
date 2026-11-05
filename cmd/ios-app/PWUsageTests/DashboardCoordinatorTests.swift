@@ -104,6 +104,7 @@ extension DashboardCoordinator {
 @MainActor
 final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
     private(set) var liveSiteIDs: [String] = []
+    private(set) var liveRefreshes: [Bool] = []
     private(set) var billSiteIDs: [String] = []
     private(set) var contextSiteIDs: [String] = []
     var liveError: Error?
@@ -117,7 +118,8 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
     private var liveStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var billStartWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        liveRefreshes.append(refresh)
         liveSiteIDs.append(siteID)
         let waiters = liveStartWaiters
         liveStartWaiters.removeAll()
@@ -274,8 +276,8 @@ final class FastDashboardAPISpy: MobileDashboardDataAPI, MobileLivePowerDataAPI 
 
     init(now: @escaping () -> Date) { self.now = now }
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
-        try await summary.fetchLive(siteID: siteID)
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        try await summary.fetchLive(siteID: siteID, refresh: refresh)
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {

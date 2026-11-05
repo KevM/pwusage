@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ioSignal, withIoDeadline } from './io-deadline';
 import { withImportLock } from './import-lock';
 
 describe('withImportLock', () => {
     const siteRepo = {
         acquireImportLock: vi.fn(),
         releaseImportLock: vi.fn(),
+        getImportStatus: vi.fn(),
     };
 
     beforeEach(() => {
         vi.clearAllMocks();
         siteRepo.acquireImportLock.mockResolvedValue(true);
         siteRepo.releaseImportLock.mockResolvedValue(true);
+        siteRepo.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 1234 });
     });
 
     it('runs the callback after acquiring the lock and releases afterward', async () => {
@@ -54,5 +57,57 @@ describe('withImportLock', () => {
         )).rejects.toThrow('boom');
 
         expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String));
+    });
+
+    describe('restoreLastImportOn', () => {
+        const options = {
+            siteId: 'site-1',
+            logLabel: 'Test',
+            restoreLastImportOn: (value: unknown) => value === 'failed',
+        };
+
+        it('restores the previous stamp when the result counts as a failure', async () => {
+            await withImportLock(siteRepo, options, async () => 'failed');
+            expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String), 1234);
+        });
+
+        it('restores a never-imported site to null', async () => {
+            siteRepo.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
+            await withImportLock(siteRepo, options, async () => 'failed');
+            expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String), null);
+        });
+
+        it('restores the previous stamp when the callback throws', async () => {
+            await expect(withImportLock(siteRepo, options, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+            expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String), 1234);
+        });
+
+        it('keeps the new stamp after success', async () => {
+            await withImportLock(siteRepo, options, async () => 'ok');
+            expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String));
+        });
+
+        it('does not read the stamp for callers that keep it', async () => {
+            await withImportLock(siteRepo, { siteId: 'site-1', logLabel: 'Test' }, async () => 'failed');
+            expect(siteRepo.getImportStatus).not.toHaveBeenCalled();
+        });
+    });
+
+    it('releases outside an expired request deadline, which would otherwise reject the query', async () => {
+        let releaseAborted: boolean | undefined;
+        siteRepo.releaseImportLock.mockImplementation(async () => {
+            releaseAborted = ioSignal()?.aborted;
+            return true;
+        });
+        const controller = new AbortController();
+
+        await withIoDeadline(1000, () => withImportLock(
+            siteRepo,
+            { siteId: 'site-1', logLabel: 'Test' },
+            async () => { controller.abort(new Error('deadline')); return 'done'; }
+        ), controller.signal).catch(() => undefined);
+        await vi.waitFor(() => expect(siteRepo.releaseImportLock).toHaveBeenCalled());
+
+        expect(releaseAborted).toBe(false);
     });
 });

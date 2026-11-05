@@ -153,7 +153,7 @@ struct BatteryHoldSheet: View {
             if force, coordinator.batteryHold.response != nil,
                coordinator.batteryHold.response?.hold == nil,
                coordinator.batteryHoldStateOfCharge(at: .now) == nil {
-                await coordinator.refreshAll(trigger: .userGesture)
+                await coordinator.refreshAll(trigger: .automaticRecovery)
             }
             force = false
             do { try await Task.sleep(for: .seconds(60)) } catch { return }

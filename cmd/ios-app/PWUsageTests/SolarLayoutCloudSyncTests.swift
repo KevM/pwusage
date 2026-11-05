@@ -379,11 +379,12 @@ private actor CleanupForecastService: SolarForecastServing {
 @MainActor
 private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     let historyAPI: AutomaticForecastAPISpy
-
     init(historyAPI: AutomaticForecastAPISpy) { self.historyAPI = historyAPI }
 
     func fetchSites() async throws -> [MobileSite] { [MobileSite(id: "site-a", name: "Home", utility: "Test")] }
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
         try await historyAPI.fetchLoadPlanningContext(siteID: siteID)

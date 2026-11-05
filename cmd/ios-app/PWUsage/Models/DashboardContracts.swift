@@ -2,8 +2,15 @@ import Foundation
 
 @MainActor
 protocol MobileDashboardDataAPI: Sendable {
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse
+    /// `refresh` asks the server to import today's history before answering.
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse
     func fetchBill(siteID: String) async throws -> MobileBillResponse
+}
+
+extension MobileDashboardDataAPI {
+    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+        try await fetchLive(siteID: siteID, refresh: false)
+    }
 }
 
 /// Optional capability so older servers/preview fixtures retain the combined path.

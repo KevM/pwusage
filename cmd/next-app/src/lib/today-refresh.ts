@@ -20,11 +20,14 @@ import { nextSampleDueAt } from './tesla-sample-timing';
 interface RefreshState {
     inFlight: boolean;
     lastRefreshAt: number;
+    lastFailedAt: number;
     liveInFlight: boolean;
     lastLiveRefreshAt: number;
 }
 
 export const REFRESH_MIN_INTERVAL_MS = 60 * 1000; // 1 minute: matches Tesla's 5-min data rate, leaves headroom.
+const FORCED_REFRESH_MIN_INTERVAL_MS = 15 * 1000; // Repeated pulls may not fetch Tesla's history without limit.
+const REFRESH_FAILURE_BACKOFF_MS = 5 * 60 * 1000; // Longest wait after a failure; a shorter caller interval wins.
 const TESLA_FETCH_TIMEOUT_MS = 8 * 1000;   // bound the await so the page never hangs on a slow Tesla.
 const LIVE_STATUS_CACHE_TTL_MS = 16 * 60 * 1000;
 const LIVE_STATUS_REFRESH_MIN_INTERVAL_MS = 14 * 60 * 1000;
@@ -39,7 +42,7 @@ function getState(siteId: string): RefreshState {
     const map = getStateMap();
     let state = map.get(siteId);
     if (!state) {
-        state = { inFlight: false, lastRefreshAt: 0, liveInFlight: false, lastLiveRefreshAt: 0 };
+        state = { inFlight: false, lastRefreshAt: 0, lastFailedAt: 0, liveInFlight: false, lastLiveRefreshAt: 0 };
         map.set(siteId, state);
     }
     return state;
@@ -60,7 +63,11 @@ export interface RefreshTodayOptions {
     signal?: AbortSignal;
     minIntervalMs?: number;
     timeoutMs?: number;
-    /** Fetch even when the next 5-minute sample is not due yet (see `nextSampleDueAt`). */
+    /**
+     * A person asked: fetch even when the next 5-minute sample is not due yet (see
+     * `nextSampleDueAt`) and replace `minIntervalMs` with a short floor. A running
+     * import still wins: the import lock is never taken from its holder.
+     */
     force?: boolean;
 }
 
@@ -127,11 +134,16 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
     checkIoDeadline();
     const state = getState(siteId);
 
-    const minIntervalMs = options.minIntervalMs ?? REFRESH_MIN_INTERVAL_MS;
+    const callerIntervalMs = options.minIntervalMs ?? REFRESH_MIN_INTERVAL_MS;
+    const minIntervalMs = options.force ? FORCED_REFRESH_MIN_INTERVAL_MS : callerIntervalMs;
 
     if (state.inFlight) return { status: 'in-flight' };
     const now = Date.now();
-    if (now - state.lastRefreshAt < minIntervalMs) {
+    const throttled = options.force
+        ? now - Math.max(state.lastRefreshAt, state.lastFailedAt) < minIntervalMs
+        : now - state.lastRefreshAt < minIntervalMs
+            || now - state.lastFailedAt < Math.min(minIntervalMs, REFRESH_FAILURE_BACKOFF_MS);
+    if (throttled) {
         return { status: 'throttled' };
     }
 
@@ -158,8 +170,10 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
             lockDurationMs: 60000,
             minIntervalMs,
             logLabel: 'TodayRefresh',
+            restoreLastImportOn: ({ status }) => status === 'error' || status === 'connection-required',
         },
         async (): Promise<RefreshTodayResult> => {
+            const previousRefreshAt = state.lastRefreshAt;
             state.inFlight = true;
             state.lastRefreshAt = Date.now();
 
@@ -171,6 +185,8 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
                 if (rowsPersisted === 0 || !rows.some(r => r.timestamp.getTime() > latestMs)) return { status: 'no-new-rows' };
                 return { status: 'persisted', rowsPersisted };
             } catch (error) {
+                state.lastRefreshAt = previousRefreshAt;
+                state.lastFailedAt = Date.now();
                 return {
                     status: isTeslaConnectionRequired(error) ? 'connection-required' : 'error',
                     errorMessage: error instanceof Error ? error.message : String(error)
