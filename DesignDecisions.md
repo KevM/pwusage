@@ -42,12 +42,22 @@ they wanted anyway.
   retries after a failed fetch").
 - Making `force` go through the claim. `force: true` intentionally bypasses it —
   the caller explicitly wants a fresh fetch. This is about the live-status claim:
-  a forced `refreshTodayData` still takes the import lock normally and only swaps
-  the caller's interval for a 15-second floor, because passing `force` to
-  `acquireImportLock` overwrites a running import's lock and then clears it.
+  a manual `refreshTodayData` still takes the import lock normally to serialize
+  day-record writes. Passing `force` to `acquireImportLock` would take over an
+  active import's lock. The manual mobile cooldown defaults to 15 seconds.
+  `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true` removes that interval on the mobile
+  gesture path while retaining the lease and deadline. Leave it unset in
+  production until hosted database egress has been measured.
 - Dropping `restoreLastImportOn` from `refreshTodayData`. `acquireImportLock` stamps
   `last_import_at` before the fetch, so without the restore one failed attempt
   throttles every caller for its own interval (14 minutes for TRMNL).
+
+Mobile refresh policy prioritizes database egress. The energy summary and
+bill routes can validate a saved revision with scalar reads before loading
+archive detail. The import lease protects stored history and remains necessary
+when extra Tesla requests are acceptable. See the
+[refresh plan](docs/plans/2026-11-05-ios-refresh-and-database-egress.md) for
+measurement and rollout criteria.
 
 **Known, accepted edge:** the claim advances `last_live_refresh_at` a few seconds
 before the fetch completes, so the SoC-age/staleness display can look slightly

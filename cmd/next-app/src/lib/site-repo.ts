@@ -38,6 +38,14 @@ const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 /** A site gap-heal checks, with its owner's last auth outage window. */
 export type GapHealSite = { id: string; timezone: string; installed: Date; auth_lost_at: Date | null; auth_restored_at: Date | null };
 
+interface ImportLockClaim {
+    siteId: string;
+    lockId: string;
+    lockDurationMs?: number;
+    force?: boolean;
+    minIntervalMs?: number;
+}
+
 export class SiteRepo {
     // === Queries ===
     /** One narrow row for the fast foreground path; no tariff tree or site JSON. */
@@ -356,13 +364,7 @@ export class SiteRepo {
     }
 
 
-    async acquireImportLock(params: {
-        siteId: string;
-        lockId: string;
-        lockDurationMs?: number;
-        force?: boolean;
-        minIntervalMs?: number;
-    }): Promise<boolean> {
+    async acquireImportLock(params: ImportLockClaim): Promise<boolean> {
         const { siteId, lockId, lockDurationMs = 60000, force = false, minIntervalMs = 0 } = params;
         const now = Date.now();
         const expires = now + lockDurationMs;
@@ -384,6 +386,30 @@ export class SiteRepo {
               AND (last_import_at IS NULL OR $5 - last_import_at >= $6)
         `, [lockId, expires, now, siteId, now, minIntervalMs]);
         return (result.rowCount ?? 0) > 0;
+    }
+
+    /** Capture the previous stamp while acquiring the same row, so restoring it cannot erase another import's success. */
+    async acquireImportLockWithPrevious(params: ImportLockClaim): Promise<{ previousImportAt: number | null } | null> {
+        const { siteId, lockId, lockDurationMs = 60000, force = false, minIntervalMs = 0 } = params;
+        const now = Date.now();
+        const { rows } = await pool.query<{ last_import_at: string | null }>(`
+            WITH previous AS MATERIALIZED (
+                SELECT id, last_import_at
+                FROM "Site"
+                WHERE id = $4
+                  AND ($5::boolean OR (
+                      (import_lock_id IS NULL OR import_lock_expires < $3)
+                      AND (last_import_at IS NULL OR $3 - last_import_at >= $6)
+                  ))
+                FOR UPDATE
+            )
+            UPDATE "Site" AS s
+            SET import_lock_id = $1, import_lock_expires = $2, last_import_at = $3
+            FROM previous p WHERE s.id = p.id
+            RETURNING p.last_import_at
+        `, [lockId, now + lockDurationMs, now, siteId, force, minIntervalMs]);
+        const previous = rows[0];
+        return previous ? { previousImportAt: previous.last_import_at === null ? null : Number(previous.last_import_at) } : null;
     }
 
     /**

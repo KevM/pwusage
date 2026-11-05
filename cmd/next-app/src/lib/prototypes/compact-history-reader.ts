@@ -1,6 +1,7 @@
 import {IncompleteTariffAttributionError} from '../billing-availability';
 /** Reads measurements and billing projections from versioned energy day records. */
 import type { EnergyData } from '../db-types';
+import { bucketEnergyRows, energyMeasurements } from '../energy-buckets';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow, CycleAggregatesAndCoverage, DailyCoverageStat, EnergyHistoryReader } from '../energy-repo';
 import { addDaysInSiteTimezone, formatSiteDate, getSiteMidnight } from '../date-utils';
 import { verifyDayMetadata,type SummarizedHistoryDay } from './compact-day-metadata';
@@ -32,7 +33,6 @@ export interface HistorySnapshotStore {
     hasData?(siteId: string): Promise<boolean>;
     readAggregateSnapshot?(siteId:string,start:Date,end:Date):Promise<AggregateHistorySnapshot>;
 }
-const measurements = ['load_power', 'solar_power', 'grid_power', 'battery_power'] as const;
 
 interface ValidatedAggregateSnapshot {fullDays:SummarizedHistoryDay[];detail:{rows:EnergyData[];days:FinalizedHistoryDay[]}}
 export class CompactHistoryReader implements EnergyHistoryReader {
@@ -100,7 +100,7 @@ export class CompactHistoryReader implements EnergyHistoryReader {
             const key=JSON.stringify([+row.day,row.tariff_id,row.tariff_schedule_id]);
             if(ids.has(key) || +row.day!==+getSiteMidnight(row.day,this.timezone) || row.day<start || addDaysInSiteTimezone(row.day,1,this.timezone)>end
                 || !Number.isSafeInteger(row.tariff_id) || (row.tariff_schedule_id===null ? snapshot.attributionComplete!==false : !Number.isSafeInteger(row.tariff_schedule_id))
-                || measurements.some(field=>!Number.isFinite(row[field]))) throw new Error('Invalid scalar history');
+                || energyMeasurements.some(field=>!Number.isFinite(row[field]))) throw new Error('Invalid scalar history');
             ids.add(key);
         }
         const coverageKeys=new Set<string>();
@@ -253,24 +253,6 @@ export class CompactHistoryReader implements EnergyHistoryReader {
 
     async getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
         const rows = await this.getRawEnergyData(siteId, start, end);
-        const buckets = new Map<string, EnergyData>();
-        for (const row of rows) {
-            const timestamp = Math.floor(+row.timestamp / 900000) * 900000;
-            const key = JSON.stringify([timestamp, row.tariff_id, row.tariff_schedule_id]);
-            let bucket = buckets.get(key);
-            if (!bucket) {
-                bucket = { timestamp: new Date(timestamp), sample_timestamp: row.timestamp, site_id: siteId,
-                    tariff_id: row.tariff_id, tariff_schedule_id: row.tariff_schedule_id, sample_count: 0,
-                    load_power: 0, solar_power: 0, grid_power: 0, battery_power: 0, battery_soc: null };
-                buckets.set(key, bucket);
-            }
-            bucket.sample_count = (bucket.sample_count ?? 0) + 1;
-            bucket.sample_timestamp = row.timestamp;
-            for (const field of measurements) bucket[field] += row[field];
-        }
-        return [...buckets.values()].sort((a, b) => +a.timestamp - +b.timestamp).map((bucket, index) => {
-            for (const field of measurements) bucket[field] /= bucket.sample_count ?? 1;
-            return { ...bucket, id: index + 1 };
-        });
+        return bucketEnergyRows(rows);
     }
 }

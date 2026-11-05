@@ -10,6 +10,8 @@ export const MOBILE_DASHBOARD_CONTRACT_VERSION = 1;
 export const MOBILE_SOC_STALE_AFTER_MS = 20 * 60 * 1000;
 export const MOBILE_SOC_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
+export type MobileHistoryRefreshStatus = 'changed' | 'current' | 'awaiting-data' | 'pending' | 'failed' | 'throttled';
+
 export interface MobileDashboardContractInput {
     site: { id: string; name: string; timezone: string };
     live: Pick<EnergySiteLiveStatus, 'solar_power' | 'load_power' | 'battery_power' | 'grid_power' | 'timestamp'> & { percentage_charged: number | null };
@@ -61,6 +63,7 @@ export interface MobileBillOutlook extends BillOutlookHistory {
 
 export interface MobileBillSummary {
     version: number;
+    revision?: string;
     site: { id: string; name: string; timezone: string };
     currentBill: MobileCurrentBill;
     outlook?: MobileBillOutlook | null;
@@ -93,6 +96,8 @@ export function withMobileBillSummary(
 
 export interface MobileDashboardContract {
     version: number;
+    historyRefresh?: { status: MobileHistoryRefreshStatus };
+    historyRevision?: string;
     site: { id: string; name: string; timezone: string; localDate: string };
     live: { solarPower: number; loadPower: number; batteryPower: number; gridPower: number };
     stateOfCharge: number | null;

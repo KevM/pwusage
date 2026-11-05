@@ -66,7 +66,7 @@ function detailDay(a:DetailArchiveRecord,summaries:SummaryRecord[]):FinalizedHis
  * `checked-empty`: Tesla answered with no samples for a day with nothing stored; recorded as an `empty` day record.
  * `empty`: Tesla answered with no samples for a day that has a record, which were kept.
  */
-export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
+export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'unchanged'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
 type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
     latest:{data:LatestMetadata;checksum:string};record:{attribution:DayAttribution;status:DayStatus;fetchedAt:Date}};
 
@@ -284,8 +284,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      * Write one site-local day, today included, straight from a Tesla fetch as the
      * only copy (format 2: samples, plus a segment timeline from the site's current
      * tariff). No raw rows are written or read back, so it costs no read egress.
-     * Tesla is the source of truth, so the record is replaced, but only by a newer
-     * fetch: an older, slower response is `superseded` and changes nothing.
+     * A newer fetch replaces changed content. An identical answer updates
+     * finality without replacing samples, and an older answer is superseded.
      */
     async writeDay(siteId:string,start:Date,samples:EnergySample[],fetchedAt:Date,now=new Date()):Promise<DayWriteResult> {
         const client=await this.pool.connect();
@@ -326,6 +326,11 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             const sorted=samples.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
             const {tariffs}=await this.tariffs(client,siteId,true);
             const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now,site.auth_restored_at);
+            if (stored && await this.updateUnchangedDay(client, siteId, start, prepared)) {
+                await client.query('COMMIT');
+                return {status:'unchanged',revision:stored.revision,attributionComplete:prepared.attributionComplete,
+                    dayStatus:prepared.record.status};
+            }
             const revision=await this.replaceDay(client,siteId,start,end,sorted.length,prepared);
             await client.query('COMMIT');
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record.status};
@@ -392,6 +397,30 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         const payloadChecksum=createHash('sha256').update(archive.data).digest('hex');
         const latest=buildLatestMetadata(recovered,{siteId,start,end,archiveChecksum:archive.sha256});
         return {archive,summaries:metadata.summaries,attributionComplete:metadata.attributionComplete,metadata,payloadChecksum,latest,record:{attribution,status,fetchedAt}};
+    }
+
+    /** Preserve the revision only when the persisted data itself verifies against the new content. */
+    private async updateUnchangedDay(client: PoolClient, siteId: string, start: Date, day: PreparedDay): Promise<boolean> {
+        const { archive, metadata, latest, payloadChecksum, record } = day;
+        await client.query('SAVEPOINT compare_day');
+        try {
+            const result = await client.query(`
+                UPDATE "EnergyDayArchive" SET fetched_at=$3,status=$4
+                WHERE site_id=$1 AND day_start=$2 AND format_version=2 AND metadata_version=3
+                    AND checksum=$5 AND metadata_checksum=$6 AND latest_checksum=$7
+                    AND payload_checksum=$8 AND encode(sha256(payload),'hex')=$8
+                    AND attribution=$9::jsonb
+                    AND public.verify_compact_day_metadata(site_id,day_start,false)
+                    AND public.verify_compact_latest_metadata(site_id,day_start)
+            `, [siteId,start,record.fetchedAt,record.status,archive.sha256,metadata.checksum,
+                latest.checksum,payloadChecksum,JSON.stringify(record.attribution)]);
+            return result.rowCount === 1;
+        } catch (error) {
+            if (!(error instanceof Error) || !/^(Day|Latest) metadata mismatch$/.test(error.message)) throw error;
+            // A fresh Tesla snapshot can repair corrupt stored metadata or summary rows.
+            await client.query('ROLLBACK TO SAVEPOINT compare_day');
+            return false;
+        }
     }
 
     /** Replace the sample payload and summaries with a new format-2 day revision. */

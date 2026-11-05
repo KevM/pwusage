@@ -3,9 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock, outlookMock } = vi.hoisted(() => ({
     verifyAccessMock: vi.fn(), siteMock: vi.fn(), currencyMock: vi.fn(), usageMock: vi.fn(), latestMock: vi.fn(), outlookMock: vi.fn(),
 }));
+const { configQuery, historyRevision, invalidateSite } = vi.hoisted(() => ({
+    configQuery: vi.fn(), historyRevision: vi.fn(), invalidateSite: vi.fn(),
+}));
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
-vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getSiteCurrencyCode = currencyMock; } }));
+vi.mock('@/lib/site-repo', () => ({ SiteRepo: class {
+    getSite = siteMock;
+    getSiteCurrencyCode = currencyMock;
+    invalidateCache = invalidateSite;
+} }));
+vi.mock('@/lib/db', async importOriginal => ({
+    ...await importOriginal<typeof import('@/lib/db')>(),
+    pool: { query: configQuery },
+}));
+vi.mock('@/lib/mobile-history-revision', () => ({ readMobileHistoryRevision: historyRevision }));
 vi.mock('@/lib/energy-repo', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/lib/energy-repo')>();
     return { ...actual, EnergyRepo: class extends actual.EnergyRepo {
@@ -47,6 +59,12 @@ function tariff(name = 'Seasonal utility'): TariffFixture {
     };
 }
 
+const conditionalURL = 'https://example.test/api/mobile/bill-summary?siteId=site-a&outlook=1&knownRevision=';
+const billConfiguration = {
+    name: 'Home', timezone: 'America/Los_Angeles', billing_start_day: 15, currency: 'EUR', tariff_ids: [],
+};
+const stableHistory = { revision: 'archive-v1', latest: new Date('2026-09-19T01:55:00Z'), hasFutureSamples: false };
+
 describe('mobile bill summary route', () => {
     afterEach(() => {
         vi.useRealTimers();
@@ -65,6 +83,96 @@ describe('mobile bill summary route', () => {
             { cost: -0.1, gridUsage: -2000, tariff: { name: 'Current utility' }, touName: 'Off peak' },
         ]);
         latestMock.mockResolvedValue(new Date('2026-09-19T01:55:00Z'));
+        configQuery.mockResolvedValue({ rows: [billConfiguration] });
+        historyRevision.mockResolvedValue(stableHistory);
+    });
+
+    it('revalidates an unchanged bill without reading history detail or calculating the bill', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        const first = await GET(new Request(conditionalURL));
+        expect(first.status).toBe(200);
+        const { revision } = await first.json();
+        expect(revision).toMatch(/^[a-f0-9]{64}$/);
+
+        const unchanged = await GET(new Request(conditionalURL + revision));
+
+        expect(unchanged.status).toBe(304);
+        expect(await unchanged.text()).toBe('');
+        expect(unchanged.headers.get('cache-control')).toBe('private, no-store');
+        expect(outlookMock).toHaveBeenCalledTimes(1);
+        expect(latestMock).toHaveBeenCalledTimes(1);
+        expect(currencyMock).not.toHaveBeenCalled();
+    });
+
+    it('recalculates after a same-timestamp correction or configuration change', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        const first = await GET(new Request(conditionalURL));
+        const { revision } = await first.json();
+        historyRevision.mockResolvedValue({ ...stableHistory, revision: 'archive-corrected' });
+        const corrected = await GET(new Request(conditionalURL + revision));
+        expect(corrected.status).toBe(200);
+        const correctedBody = await corrected.json();
+        expect(correctedBody.revision).not.toBe(revision);
+        configQuery.mockResolvedValue({ rows: [{ ...billConfiguration, currency: 'USD' }] });
+        const repriced = await GET(new Request(conditionalURL + correctedBody.revision));
+        expect(repriced.status).toBe(200);
+        expect(await repriced.json()).toMatchObject({ currentBill: { currency: 'USD' } });
+        expect(outlookMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not give a reusable validator to a bill calculated across an archive write', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        historyRevision.mockResolvedValueOnce(stableHistory)
+            .mockResolvedValueOnce({ ...stableHistory, revision: 'archive-corrected' });
+        const response = await GET(new Request(conditionalURL));
+        expect(response.status).toBe(200);
+        expect(await response.json()).not.toHaveProperty('revision');
+    });
+
+    it('refreshes cached site settings when another instance changed them', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        const first = await GET(new Request(conditionalURL));
+        const { revision } = await first.json();
+        const edited = { ...billConfiguration, name: 'New site name', billing_start_day: 16 };
+        configQuery.mockResolvedValue({ rows: [edited] });
+        siteMock.mockResolvedValueOnce({ ...billConfiguration, id: 'site-a', tariffs: [] })
+            .mockResolvedValueOnce({ ...edited, id: 'site-a', tariffs: [] });
+        const response = await GET(new Request(conditionalURL + revision));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ site: { name: 'New site name' } });
+        expect(invalidateSite).toHaveBeenCalledWith('site-a');
+    });
+
+    it('keeps the bill valid across minutes and refreshes timing when the site hour changes', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:45Z'));
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        const first = await GET(new Request(conditionalURL));
+        const { revision } = await first.json();
+        vi.setSystemTime(new Date('2026-09-19T02:01:00Z'));
+        const unchanged = await GET(new Request(conditionalURL + revision));
+        expect(unchanged.status).toBe(304);
+        vi.setSystemTime(new Date('2026-09-19T03:00:00Z'));
+        const response = await GET(new Request(conditionalURL + revision));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ sources: { calculatedAt: '2026-09-19T03:00:00.000Z' } });
+    });
+
+    it('rechecks minute-based tariff schedules as the clock advances', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        const minuteSchedule = tariff();
+        minuteSchedule.seasons[0].schedules[0].to_minute = 30;
+        configQuery.mockResolvedValue({ rows: [{ ...billConfiguration, tariff_ids: [minuteSchedule.id] }] });
+        siteMock.mockResolvedValue({ ...billConfiguration, id: 'site-a', tariffs: [minuteSchedule] });
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        const first = await GET(new Request(conditionalURL));
+        const { revision } = await first.json();
+        vi.setSystemTime(new Date('2026-09-19T02:01:00Z'));
+        const response = await GET(new Request(conditionalURL + revision));
+        expect(response.status).toBe(200);
     });
 
     it('uses the canonical billing-cycle aggregator and returns only a compact summary', async () => {
@@ -131,11 +239,13 @@ describe('mobile bill summary route', () => {
     it('does not read site or billing data for an unauthorized site', async () => {
         verifyAccessMock.mockResolvedValue(false);
 
-        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-b'));
+        const response = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-b&outlook=1&knownRevision=any'));
 
         expect(response.status).toBe(401);
         expect(siteMock).not.toHaveBeenCalled();
         expect(usageMock).not.toHaveBeenCalled();
+        expect(configQuery).not.toHaveBeenCalled();
+        expect(historyRevision).not.toHaveBeenCalled();
     });
 
     it('leaves the estimate unknown when the billing aggregation has no rows', async () => {

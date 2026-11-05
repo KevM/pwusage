@@ -1,7 +1,7 @@
 import { withIoDeadline } from './io-deadline';
 import type { SiteRepo } from './site-repo';
 
-type ImportLockRepo = Pick<SiteRepo, 'acquireImportLock' | 'releaseImportLock' | 'getImportStatus'>;
+type ImportLockRepo = Pick<SiteRepo, 'acquireImportLock' | 'acquireImportLockWithPrevious' | 'releaseImportLock'>;
 
 /** Bounds the release, which must outlive the request deadline that ended the import. */
 const LOCK_RELEASE_TIMEOUT_MS = 3000;
@@ -31,17 +31,16 @@ export async function withImportLock<T>(
 ): Promise<ImportLockResult<T>> {
     const lockId = crypto.randomUUID();
     const { restoreLastImportOn } = options;
-    const previousImportAt = restoreLastImportOn
-        ? (await siteRepo.getImportStatus(options.siteId)).lastImportAt
-        : 0;
-    const acquired = await siteRepo.acquireImportLock({
+    const claim = {
         siteId: options.siteId,
         lockId,
         lockDurationMs: options.lockDurationMs,
         force: options.force,
         minIntervalMs: options.minIntervalMs,
-    });
-
+    };
+    const acquired = restoreLastImportOn
+        ? await siteRepo.acquireImportLockWithPrevious(claim)
+        : await siteRepo.acquireImportLock(claim) ? { previousImportAt: null } : null;
     if (!acquired) {
         return { status: 'not-acquired' };
     }
@@ -54,7 +53,7 @@ export async function withImportLock<T>(
     } finally {
         try {
             await withIoDeadline(LOCK_RELEASE_TIMEOUT_MS, () => restoreImportAt
-                ? siteRepo.releaseImportLock(options.siteId, lockId, previousImportAt || null)
+                ? siteRepo.releaseImportLock(options.siteId, lockId, acquired.previousImportAt)
                 : siteRepo.releaseImportLock(options.siteId, lockId), null);
         } catch (error) {
             console.error(`[${options.logLabel}] Failed to release DB import lock for site ${options.siteId}:`, error);

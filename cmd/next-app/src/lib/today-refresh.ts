@@ -69,6 +69,8 @@ export interface RefreshTodayOptions {
      * import still wins: the import lock is never taken from its holder.
      */
     force?: boolean;
+    /** Explicit mobile refresh can drop the timing floor while still using the lease. */
+    skipCooldown?: boolean;
 }
 
 export interface RefreshTodayResult {
@@ -135,7 +137,9 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
     const state = getState(siteId);
 
     const callerIntervalMs = options.minIntervalMs ?? REFRESH_MIN_INTERVAL_MS;
-    const minIntervalMs = options.force ? FORCED_REFRESH_MIN_INTERVAL_MS : callerIntervalMs;
+    const minIntervalMs = options.force
+        ? options.skipCooldown ? 0 : FORCED_REFRESH_MIN_INTERVAL_MS
+        : callerIntervalMs;
 
     if (state.inFlight) return { status: 'in-flight' };
     const now = Date.now();
@@ -179,10 +183,8 @@ async function refreshTodayDataWithinDeadline(siteId: string, options: RefreshTo
 
             try {
                 const importer = new Importer(client);
-                const latestMs = latest?.timestamp?.getTime() ?? 0;
-
-                const { rows, rowsPersisted } = await importer.refreshTodayRecords(siteId, latest?.timestamp ?? null);
-                if (rowsPersisted === 0 || !rows.some(r => r.timestamp.getTime() > latestMs)) return { status: 'no-new-rows' };
+                const { rowsPersisted } = await importer.refreshTodayRecords(siteId, latest?.timestamp ?? null);
+                if (rowsPersisted === 0) return { status: 'no-new-rows' };
                 return { status: 'persisted', rowsPersisted };
             } catch (error) {
                 state.lastRefreshAt = previousRefreshAt;
