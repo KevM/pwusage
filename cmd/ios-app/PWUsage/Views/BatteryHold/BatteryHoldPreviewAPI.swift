@@ -26,7 +26,7 @@
                              notice: mode == .notice ? hold : nil)
         }
 
-        func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+        func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
             let live = try await dashboard.fetchLive(siteID: siteID)
             guard mode == .ambiguous else { return live }
             let encoder = JSONEncoder()

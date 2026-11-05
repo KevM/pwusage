@@ -18,7 +18,9 @@ final class AutomaticForecastAPISpy: MobileDashboardDataAPI, MobileLoadPlanningD
     private(set) var historyFetches: [HistoryFetch] = []
     private var historyContinuations: [CheckedContinuation<Void, Never>] = []
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse { throw PWUsageAPIError.invalidResponse }
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         let json = #"{"version":1,"site":{"id":"\#(siteID)","name":"Home","timezone":"UTC"},"#

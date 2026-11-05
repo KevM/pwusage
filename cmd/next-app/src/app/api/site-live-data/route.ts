@@ -27,6 +27,10 @@ export const dynamic = 'force-dynamic';
 // Token refresh, today's import, and an uncached cycle rollup can exceed 10s.
 export const maxDuration = 60;
 const MOBILE_ENERGY_STALE_AFTER_MS = 30 * 60 * 1000;
+// One attempt per Tesla sample while history stays stale, including through an outage.
+const MOBILE_STALE_RETRY_INTERVAL_MS = 5 * 60 * 1000;
+// Leaves room for the rest of the route inside the app's 20-second request timeout.
+const MOBILE_FORCED_IMPORT_TIMEOUT_MS = 10 * 1000;
 
 async function handleGET(request: Request) {
     return withRequestContext(async () => {
@@ -47,7 +51,7 @@ async function handleGET(request: Request) {
 
             const now = new Date();
             const mobileView = searchParams.get('view') === 'mobile';
-            const forceRefresh = searchParams.get('refresh') === '1' || searchParams.get('force') === '1';
+            const forceRefresh = searchParams.get('refresh') === '1';
             const site = await siteRepo.getSite(siteId);
             const scaleWindowHours = parseScaleWindowHours(process.env.SPARKLINE_SCALE_WINDOW_HOURS);
             const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
@@ -58,7 +62,8 @@ async function handleGET(request: Request) {
                 : new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
             const repo = createEnergyRepo(site?.timezone ?? 'UTC');
             const [liveResult, initialHistoryRows] = await Promise.all([
-                refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000, force: forceRefresh }),
+                // A pull forces live-power first, so this cache already holds its reading.
+                refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
                 repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
             ]);
 
@@ -86,10 +91,9 @@ async function handleGET(request: Request) {
                 || now.getTime() - latestEnergySample.getTime() > MOBILE_ENERGY_STALE_AFTER_MS;
             if (mobileView && (forceRefresh || isStale)) {
                 try {
-                    const refreshed = await refreshTodayData(siteId, {
-                        force: forceRefresh,
-                        timeoutMs: forceRefresh ? 15_000 : undefined,
-                    });
+                    const refreshed = await refreshTodayData(siteId, forceRefresh
+                        ? { force: true, timeoutMs: MOBILE_FORCED_IMPORT_TIMEOUT_MS }
+                        : { minIntervalMs: MOBILE_STALE_RETRY_INTERVAL_MS });
                     if (refreshed.status === 'persisted') {
                         historyRows = await repo.getBucketedEnergyData(siteId, sparklineScaleStart, now);
                     } else if (refreshed.status === 'error') {
@@ -194,22 +198,24 @@ async function handleGET(request: Request) {
                 }
             }
 
+            // `now` predates the Tesla fetch above; a reading newer than it is not from the future.
+            const readingsCheckedAt = new Date();
             const liveSourceMs = new Date(liveStatus.timestamp).getTime();
             const stateOfCharge = Number.isFinite(liveSourceMs)
-                && now.getTime() - liveSourceMs >= 0
-                && now.getTime() - liveSourceMs <= MOBILE_SOC_STALE_AFTER_MS
+                && readingsCheckedAt.getTime() - liveSourceMs >= 0
+                && readingsCheckedAt.getTime() - liveSourceMs <= MOBILE_SOC_STALE_AFTER_MS
                 ? liveStatus.percentage_charged
                 : null;
             const liveSocUsable = typeof liveStatus.percentage_charged === 'number'
                 && Number.isFinite(liveStatus.percentage_charged)
                 && liveStatus.percentage_charged >= 0 && liveStatus.percentage_charged <= 100
                 && Number.isFinite(liveSourceMs)
-                && now.getTime() - liveSourceMs >= 0
-                && now.getTime() - liveSourceMs <= MOBILE_SOC_MAX_AGE_MS;
+                && readingsCheckedAt.getTime() - liveSourceMs >= 0
+                && readingsCheckedAt.getTime() - liveSourceMs <= MOBILE_SOC_MAX_AGE_MS;
             // Most responses use the already-fetched live cache. Only a missing
             // value incurs one small, indexed DB read; never fetch Tesla again.
             const fallbackSoc = mobileView && !liveSocUsable
-                ? await repo.getLatestBatterySoc(siteId, new Date(now.getTime() - MOBILE_SOC_MAX_AGE_MS))
+                ? await repo.getLatestBatterySoc(siteId, new Date(readingsCheckedAt.getTime() - MOBILE_SOC_MAX_AGE_MS))
                 : null;
             // Use canonical daily TOU netting, never bucket averages or the current rate.
             // Only the mobile response needs this; it adds no Tesla requests.
@@ -237,7 +243,7 @@ async function handleGET(request: Request) {
                 live: liveStatus,
                 fallbackSoc,
                 energyTimestamp: maxBucketSampleTimestamp(historyRows),
-                now,
+                now: readingsCheckedAt,
                 activeTariff: currentTariff,
                 activeLoadTiming,
                 today: sumBucketedTodayRows(todayRows, siteMidnight),

@@ -26,7 +26,7 @@
             self.billJSON = billJSON ?? fixture.billJSON
         }
 
-        func fetchLive(siteID: String) async throws -> MobileLiveResponse {
+        func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
             if mode == .error { throw URLError(.notConnectedToInternet) }
             return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(liveJSON.utf8))
         }

@@ -4,10 +4,16 @@ import Foundation
 @MainActor
 final class DashboardCoordinator: ObservableObject {
     /// What asked for a refresh, for both endpoints. Every call site must state
-    /// which one it is, because only an explicit gesture bypasses the
-    /// elapsed-time cadences: `.userGesture` also skips the live cadence, not
-    /// just the bill's.
-    enum RefreshTrigger { case userGesture, screenAppearance, scheduled }
+    /// which one it is, because only an explicit request bypasses the
+    /// elapsed-time cadences: both of the first two also skip the live cadence,
+    /// not just the bill's. Only `.userGesture`, a person asking, also makes the
+    /// server import today's history; the app asking for itself uses
+    /// `.automaticRecovery`.
+    enum RefreshTrigger {
+        case userGesture, automaticRecovery, screenAppearance, scheduled
+
+        var skipsCadence: Bool { self == .userGesture || self == .automaticRecovery }
+    }
 
     static let liveInterval: TimeInterval = 5 * 60
     static let livePowerInterval: TimeInterval = 60
@@ -118,6 +124,8 @@ final class DashboardCoordinator: ObservableObject {
     /// own handle without clobbering a newer loop started in the meantime.
     var timerTaskToken: UUID?
     var liveTask: Task<Void, Never>?
+    /// Whether `liveTask` asked the server to import today's history.
+    var liveTaskImportsHistory = false
     var powerTask: Task<Void, Never>?
     var livePowerEndpointAvailable = true
     /// Whether a selected screen shows live power. Not published: nothing draws from it.

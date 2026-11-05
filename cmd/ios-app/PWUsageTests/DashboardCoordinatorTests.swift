@@ -120,10 +120,6 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
 
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         liveRefreshes.append(refresh)
-        return try await fetchLive(siteID: siteID)
-    }
-
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
         liveSiteIDs.append(siteID)
         let waiters = liveStartWaiters
         liveStartWaiters.removeAll()
@@ -280,8 +276,8 @@ final class FastDashboardAPISpy: MobileDashboardDataAPI, MobileLivePowerDataAPI 
 
     init(now: @escaping () -> Date) { self.now = now }
 
-    func fetchLive(siteID: String) async throws -> MobileLiveResponse {
-        try await summary.fetchLive(siteID: siteID)
+    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        try await summary.fetchLive(siteID: siteID, refresh: refresh)
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {

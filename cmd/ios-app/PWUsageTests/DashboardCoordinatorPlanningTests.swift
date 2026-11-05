@@ -66,7 +66,26 @@ extension DashboardCoordinatorTests {
         #expect(api.contextSiteIDs == ["site-1", "site-1"],
                 "A pull must re-fetch the household profile instead of failing forever.")
         #expect(coordinator.householdPattern != nil)
-        #expect(api.liveRefreshes == [true])
+        #expect(api.liveRefreshes == [false, true], "The scene's poll, then the pull's history import.")
+    }
+
+    @Test("A Smart Shift pull asks for the forecast without waiting for the history import")
+    func smartShiftPullDoesNotHoldForecastBehindHistoryImport() async throws {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(
+            siteID: "site-1", api: api, planningAPI: api,
+            accountScopeID: "local-account", now: Date.init, timerInterval: nil
+        )
+        coordinator.scenePhaseChanged(isActive: true)
+
+        let pull = Task { await coordinator.loadTimingDetailRefreshed() }
+        try await eventually { !api.contextSiteIDs.isEmpty }
+
+        api.resumeRequests()
+        await pull.value
+
+        #expect(api.liveRefreshes == [false, true], "The scene's poll, then the pull's history import.")
     }
 
     @Test("Regression pin: a non-manual forecast refresh does not re-fetch a missing planning context")
