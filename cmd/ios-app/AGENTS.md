@@ -113,6 +113,13 @@ the code rather than removing the rule or adding a baseline. `swiftlint --fix` r
 repo-wide, but the narrow form (`swiftlint lint --fix --only-rule <rule>`) is how the mechanical
 tranche fixes were applied.
 
+## Color
+
+`Color.emphasis` (Cerulean, `Shared/Color+Emphasis.swift`) is the one emphasis color, and the app's
+and widgets' accent color. Use it for the thing to look at: a recommendation, a projection, a primary
+action. Do not add another tint for emphasis, and do not use purple or indigo. Data colors keep their
+meaning: solar is orange, Home is blue, battery and banked energy are green, owed energy is orange.
+
 ## Formatting and linting
 
 - `./cmd/ios-app/lint.sh` — check SwiftFormat and SwiftLint (recommended).

@@ -4,12 +4,7 @@ enum SectionTheme {
     case bill
     case loadTiming
 
-    var accent: Color {
-        switch self {
-        case .bill: .indigo
-        case .loadTiming: .teal
-        }
-    }
+    var accent: Color { .emphasis }
 
     var cardBackground: some View {
         Self.secondaryGroupedBackground
