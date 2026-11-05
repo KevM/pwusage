@@ -9,7 +9,7 @@ When starting fresh work in this repo, check this file. If a session begins some
 ## iOS refresh rollout gates (2026-11-05, branch `codex/ios-refresh-egress`)
 
 - [ ] **Measure hosted egress before removing the manual cooldown:** run `mobile-route-egress-trace.test.ts` against a database with the Dev marker, record the headroom in [the plan](docs/plans/2026-11-05-ios-refresh-and-database-egress.md), and only then consider `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true` in production. Until then the 15-second floor stays.
-- [ ] **Verify launch recovery on a phone:** on the same API origin, a cold launch with current Tesla history recovers Home without a pull, and a pending or failed import explains itself and clears. If the warning recurs, the `mobile.history.checked` log has the import outcome and source times.
+- [ ] **Finish phone checks on the refresh states:** on beta (2026-11-05), a cold launch recovered Home without a pull, repeat pulls showed no warning, and a long return looked fine. Still unobserved: a pending or failed import explaining itself and clearing, and the empty day before Tesla's first sample after midnight. If the warning recurs, the `mobile.history.checked` log has the import outcome and source times.
 
 ## iOS demo mode v2 (2026-11-01, branch `ios-demo-mode-impl`)
 
