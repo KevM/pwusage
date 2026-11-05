@@ -1,17 +1,29 @@
 import Charts
 import SwiftUI
 
-/// Shared zero line and export-cushion/import-gap bands for Billing and Smart Shift.
+/// Where a balance sits on the Billing and Smart Shift charts. They read like a bill: using more
+/// grid energy moves the line up toward cost, an export cushion sits below zero, and zero is the goal.
+enum EnergyBalanceAxis {
+    /// Net grid energy is already positive for an import gap.
+    static func position(forNetGrid netGridKwh: Double) -> Double { netGridKwh }
+    /// A bank is positive when banked, so it plots below zero.
+    static func position(forBank bankKwh: Double) -> Double { -bankKwh }
+    static func plotsHigher(bank: Double, than other: Double) -> Bool {
+        position(forBank: bank) >= position(forBank: other)
+    }
+}
+
+/// Shared zero line with the import-gap band above it and the export-cushion band below it.
 struct EnergyBalanceBackdrop: ChartContent {
     let timeRange: ClosedRange<Date>
     let balanceRange: ClosedRange<Double>
     var body: some ChartContent {
         RectangleMark(xStart: .value("Start", timeRange.lowerBound), xEnd: .value("End", timeRange.upperBound),
                       yStart: .value("Zero", 0), yEnd: .value("Top", balanceRange.upperBound))
-            .foregroundStyle(EnergyWeatherChart.bankedColor.opacity(0.12))
+            .foregroundStyle(EnergyWeatherChart.owedColor.opacity(0.14))
         RectangleMark(xStart: .value("Start", timeRange.lowerBound), xEnd: .value("End", timeRange.upperBound),
                       yStart: .value("Bottom", balanceRange.lowerBound), yEnd: .value("Zero", 0))
-            .foregroundStyle(EnergyWeatherChart.owedColor.opacity(0.14))
+            .foregroundStyle(EnergyWeatherChart.bankedColor.opacity(0.12))
         RuleMark(y: .value("Zero", 0))
             .foregroundStyle(EnergyWeatherChart.ruleColor)
             .lineStyle(StrokeStyle(lineWidth: 1))
@@ -44,7 +56,7 @@ struct BillOutlookChart: View {
         return values.values.sorted { $0.key < $1.key }
     }
     private func energy(_ point: BillOutlookPoint, key: String) -> Double {
-        -(point.periods.first { $0.key == key }?.netGridKwh ?? 0)
+        EnergyBalanceAxis.position(forNetGrid: point.periods.first { $0.key == key }?.netGridKwh ?? 0)
     }
     private func date(_ value: Date) -> String {
         DashboardPresentation.date(value, timeZoneIdentifier: timeZone, dateStyle: .short)

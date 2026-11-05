@@ -53,11 +53,11 @@ extension SmartShiftPresentationTests {
         ]
         let verdict = try Self.verdict(
             Self.make(result: .init(comparison: Self.comparison(lanes: lanes), unavailableReason: nil)))
-        #expect(verdict.lanes.map(\.title) == ["Off-Peak bank (kWh)", "Peak bank (kWh)", "Mid bank (kWh)"])
-        #expect(verdict.lanes.map(\.startLabel) == ["+18 kWh banked now", "\u{2212}6 kWh owed now", "0 kWh now"])
-        #expect(verdict.lanes[0].endLabels == ["+4", "+18"])
-        #expect(verdict.lanes[1].endLabels == ["+10"])
-        #expect(verdict.lanes[2].endLabels == ["0", "\u{2212}3"])
+        #expect(verdict.lanes.map(\.title) == ["Off-Peak (kWh)", "Peak (kWh)", "Mid (kWh)"])
+        #expect(verdict.lanes.map(\.startLabel) == ["18 kWh banked now", "6 kWh owed now", "0 kWh now"])
+        #expect(verdict.lanes[0].endLabels == ["4 banked", "18 banked"])
+        #expect(verdict.lanes[1].endLabels == ["10 banked"])
+        #expect(verdict.lanes[2].endLabels == ["0", "3 owed"])
         #expect(verdict.lanes[0].switches == [
             SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}",
                          beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),

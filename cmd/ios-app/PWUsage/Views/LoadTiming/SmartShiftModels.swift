@@ -30,9 +30,9 @@ struct SwitchMarker: Equatable {
 
 /// One rate period's "energy weather" lane, from now to the end of the comparison.
 struct LaneDisplay: Equatable {
-    /// "Off-Peak bank (kWh)"
+    /// "Off-Peak (kWh)"
     let title: String
-    /// "+18 kWh banked now", "−6 kWh owed now" or "0 kWh now"
+    /// "18 kWh banked now", "6 kWh owed now" or "0 kWh now"
     let startLabel: String
     let recommended: [LoadTimingForecastEstimator.BalancePoint]
     /// `nil` when the recommended start is now, so there is only one line.
@@ -74,7 +74,7 @@ struct PeriodRow: Equatable {
     let name: String
     let buy: String
     let sell: String
-    /// "+18 kWh banked", "−6 kWh owed", "0 kWh" or "No balance yet".
+    /// "18 kWh banked", "6 kWh owed", "0 kWh" or "No bank yet".
     let balance: String
 }
 

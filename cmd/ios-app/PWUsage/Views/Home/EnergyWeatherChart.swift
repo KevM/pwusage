@@ -35,8 +35,8 @@ struct EnergyWeatherLegend: View {
 }
 
 /// One lane per rate period: that period's bank from now to the end of the
-/// comparison, green when banked and orange when owed, with the recommended run
-/// drawn thick and starting now drawn faint.
+/// comparison, green below zero when banked and orange above zero when owed, with
+/// the recommended run drawn thick and starting now drawn faint.
 struct EnergyWeatherChart: View {
     let verdict: SmartShiftVerdict
     let timeZone: String
@@ -114,7 +114,7 @@ private struct LaneChart: View {
     /// Always includes zero so the banked/owed split is visible, with headroom for
     /// end labels, and for the switch labels along the top of the first lane.
     private var yDomain: ClosedRange<Double> {
-        let values = allPoints.map(\.kwh) + [0]
+        let values = allPoints.map { EnergyBalanceAxis.position(forBank: $0.kwh) } + [0]
         let low = values.min() ?? 0, high = values.max() ?? 0
         // Room above and below the lines for the end labels, so they clear the
         // lines and the axis labels; more on top of the first lane for switch labels.
@@ -205,27 +205,33 @@ private struct LaneChart: View {
 
             if let startNow = lane.startNow {
                 ForEach(Array(startNow.enumerated()), id: \.offset) { _, point in
-                    LineMark(x: .value("Time", point.date), y: .value("kWh", point.kwh), series: .value("Plan", "now"))
+                    LineMark(x: .value("Time", point.date), y: .value("kWh", position(of: point)),
+                             series: .value("Plan", "now"))
                         .interpolationMethod(.linear)
                         .foregroundStyle(EnergyWeatherChart.nowColor)
                         .lineStyle(EnergyWeatherChart.nowStroke)
                 }
             }
             ForEach(Array(lane.recommended.enumerated()), id: \.offset) { _, point in
-                LineMark(x: .value("Time", point.date), y: .value("kWh", point.kwh), series: .value("Plan", "later"))
+                LineMark(x: .value("Time", point.date), y: .value("kWh", position(of: point)),
+                         series: .value("Plan", "later"))
                     .interpolationMethod(.linear)
                     .foregroundStyle(SmartShiftCostBars.laterColor)
                     .lineStyle(EnergyWeatherChart.laterStroke)
             }
 
             ForEach(Array(endPoints.enumerated()), id: \.offset) { _, end in
-                PointMark(x: .value("Time", end.point.date), y: .value("kWh", end.point.kwh))
+                PointMark(x: .value("Time", end.point.date), y: .value("kWh", position(of: end.point)))
                     .symbolSize(0)
                     .annotation(position: end.isAbove ? .topLeading : .bottomLeading, spacing: 6,
                                 overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
                         Text(end.label)
                             .font(.caption2.weight(end.isRecommended ? .bold : .regular))
                             .foregroundStyle(end.isRecommended ? SmartShiftCostBars.laterColor : .secondary)
+                            .fixedSize()
+                            .padding(.horizontal, 3)
+                            // Keeps a switch line from running through the words.
+                            .background(.background.opacity(0.8))
                     }
             }
         }
@@ -245,6 +251,10 @@ private struct LaneChart: View {
         .chartLegend(.hidden)
     }
 
+    private func position(of point: LoadTimingForecastEstimator.BalancePoint) -> Double {
+        EnergyBalanceAxis.position(forBank: point.kwh)
+    }
+
     private struct EndPoint {
         let point: LoadTimingForecastEstimator.BalancePoint
         let label: String
@@ -259,7 +269,7 @@ private struct LaneChart: View {
         guard lane.endLabels.count > 1, let now = lane.startNow?.last else {
             return [EndPoint(point: later, label: laterLabel, isRecommended: true, isAbove: true)]
         }
-        let laterIsHigher = later.kwh >= now.kwh
+        let laterIsHigher = EnergyBalanceAxis.plotsHigher(bank: later.kwh, than: now.kwh)
         return [EndPoint(point: later, label: laterLabel, isRecommended: true, isAbove: laterIsHigher),
                 EndPoint(point: now, label: lane.endLabels[1], isRecommended: false, isAbove: !laterIsHigher)]
     }
