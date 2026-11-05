@@ -253,11 +253,8 @@ struct LoadTimingView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 jobRows(hint: nil)
             case .loading:
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text(SmartShiftPresentation.checkingSolarNote).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+                SmartShiftCheckingSolarRow()
+                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
             case .noJobs:
                 Text("Add a Job").font(.headline)
                 Text("Add a job to see when it's cheapest to run.").foregroundStyle(.secondary)

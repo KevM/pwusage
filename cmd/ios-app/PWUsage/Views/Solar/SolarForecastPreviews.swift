@@ -365,7 +365,7 @@
                     case .blocked(let message):
                         Text(message)
                     case .loading:
-                        ProgressView(SmartShiftPresentation.checkingSolarNote)
+                        SmartShiftCheckingSolarRow()
                     case .noJobs:
                         Text("Add a Job")
                     }
