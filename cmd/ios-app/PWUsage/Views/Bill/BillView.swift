@@ -7,6 +7,9 @@ struct BillView: View {
     var onOpenSmartShift: (() -> Void)?
     @Environment(\.scenePhase) private var scenePhase
     @State private var projections = BillOutlookProjectionCache()
+    @State private var amountBottom: CGFloat = 0
+    @State private var visibleTop: CGFloat = 0
+    private let scrollSpace = "billScrollContent"
 
     private var state: DashboardEndpointState<MobileBillResponse> { coordinator.bill }
     private var response: MobileBillResponse? { coordinator.bill.response }
@@ -45,8 +48,14 @@ struct BillView: View {
                 }
             }
             .padding(20)
+            .coordinateSpace(name: scrollSpace)
             .frame(maxWidth: SectionTheme.maxContentWidth)
             .frame(maxWidth: .infinity)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, top in
+            visibleTop = top
         }
         .refreshable {
             await coordinator.billOutlookRefreshed()
@@ -65,6 +74,17 @@ struct BillView: View {
         .background { SectionTheme.bill.screenBackground }
         .navigationTitle("Current Bill")
         .inlineNavigationTitle()
+        .toolbar {
+            if let bill = response?.currentBill, amountBottom > 0, visibleTop >= amountBottom {
+                ToolbarItem(placement: .topBarTrailing) {
+                    let amount = DashboardPresentation.currency(bill.estimatedCost, code: bill.currency)
+                    Text(amount)
+                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                        .accessibilityLabel("Current bill estimate, \(amount)")
+                }
+            }
+        }
     }
 
     @ViewBuilder private func outlook(_ response: MobileBillResponse, now: Date) -> some View {
@@ -99,9 +119,9 @@ struct BillView: View {
         let projected = result.points
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("So far")
+                Text("Estimated so far")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.indigo)
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Text(DashboardPresentation.currency(bill.estimatedCost, code: bill.currency))
                     .font(.system(.title, design: .rounded, weight: .bold))
@@ -110,7 +130,10 @@ struct BillView: View {
                     .lineLimit(1)
             }
             .accessibilityElement(children: .combine)
-            projectionSummary(result, currency: bill.currency, isPending: isPending)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .named(scrollSpace)).maxY
+            } action: { amountBottom = $0 }
+            projectionSummary(result, currency: bill.currency, cycleEnd: bill.cycleEnd, isPending: isPending)
             if let deadline = BillOutlookPresentation.deadline(now: now, end: bill.cycleEnd, timeZone: timeZone) {
                 Divider()
                 deadlineSection(deadline, response: response, projected: projected)
@@ -122,11 +145,11 @@ struct BillView: View {
     }
 
     @ViewBuilder private func projectionSummary(_ result: BillOutlook.ProjectionResult, currency: String,
-                                                isPending: Bool) -> some View {
+                                                cycleEnd: Date, isPending: Bool) -> some View {
         if let end = result.points.last {
             VStack(alignment: .leading, spacing: 3) {
                 Text(BillOutlookPresentation.projection(cost: end.estimatedCost, currency: currency,
-                                                        projectedEnd: end.date, timeZone: timeZone))
+                                                        projectedEnd: end.date, cycleEnd: cycleEnd, timeZone: timeZone))
                     .font(.headline).monospacedDigit()
                 Text(result.usesSolar
                     ? (result.usesHistory

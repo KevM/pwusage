@@ -23,10 +23,13 @@ enum BillOutlookPresentation {
         if days == 0 { return "Cycle ends today" }
         return "Cycle ends in \(days) \(days == 1 ? "day" : "days")"
     }
-    static func projection(cost: Double, currency: String, projectedEnd: Date, timeZone: String,
+    static func projection(cost: Double, currency: String, projectedEnd: Date, cycleEnd: Date, timeZone: String,
                            locale: Locale = .current) -> String {
-        "About \(DashboardPresentation.currency(cost, code: currency, locale: locale)) by "
-            + DashboardPresentation.date(projectedEnd, timeZoneIdentifier: timeZone, dateStyle: .short)
+        let amount = DashboardPresentation.currency(cost, code: currency, locale: locale)
+        let date = DashboardPresentation.date(projectedEnd, timeZoneIdentifier: timeZone, dateStyle: .short)
+        return projectedEnd == cycleEnd
+            ? "Estimated bill at cycle end: \(amount) · \(date)"
+            : "Estimated bill by \(date): \(amount)"
     }
     /// Lane header: the bill's total so far, or the selected day's running balance while exploring.
     static func laneSummary(period: BillOutlookPeriod, totals: [Period], selected: BillOutlookPeriod?,
