@@ -42,7 +42,7 @@
 2. **When a layout is found:**
    - The wedge closes to a single direction and the camera tilts down.
    - The house rises, the roof pitches to the detected tilt, and panels drop in face by face.
-   - The strip moves up toward the house. The house sways gently and can be dragged to rotate.
+   - The strip fades away as the camera tilts. The house sways gently and can be dragged to rotate.
 3. **Below the visual:**
    - A one-line status, with an action button only when one is needed: Add Location, Reconnect Tesla, or Use My Exact Home Location. Add Location opens the home location sheet (Task 8).
    - A system details card: total size, then each panel group's size, direction, tilt and confidence.
