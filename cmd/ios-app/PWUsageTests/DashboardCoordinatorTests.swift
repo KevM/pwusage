@@ -171,6 +171,11 @@ final class DashboardAPISpy: MobileDashboardDataAPI, MobileLoadPlanningDataAPI {
 
     func resumeLiveRequests() {
         holdLive = false
+        resumeHeldLiveRequests()
+    }
+
+    /// Answers the live requests held so far; later ones are still held.
+    func resumeHeldLiveRequests() {
         let livePending = liveContinuations
         liveContinuations.removeAll()
         for (siteID, continuation) in livePending {

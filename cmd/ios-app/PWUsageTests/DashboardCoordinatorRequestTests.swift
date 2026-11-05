@@ -32,9 +32,7 @@ extension DashboardCoordinatorTests {
         let poll = Task { await coordinator.refreshDue() }
         await api.waitUntilLiveRequestStarts()
         let pull = Task { await coordinator.refreshAll(trigger: .userGesture) }
-        for _ in 0 ..< 10 {
-            await Task.yield()
-        }
+        try await eventually { coordinator.manualRefreshCount == 1 }
         #expect(api.liveRefreshes == [false], "The pull waits for the running request first.")
 
         api.resumeRequests()
@@ -45,23 +43,45 @@ extension DashboardCoordinatorTests {
     }
 
     @Test("A second pull joins a forced live request already running")
-    func pullDuringForcedLiveRequestJoinsIt() async {
+    func pullDuringForcedLiveRequestJoinsIt() async throws {
+        let api = DashboardAPISpy()
+        api.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
+
+        let first = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        await api.waitUntilLiveRequestStarts()
+        let second = Task { await coordinator.refreshAll(trigger: .userGesture) }
+        // refreshAll does not suspend between counting this pull and waiting on the
+        // running request, so the test can only observe the count once it has joined.
+        try await eventually { coordinator.manualRefreshCount == 2 }
+        api.resumeRequests()
+        await first.value
+        await second.value
+
+        #expect(api.liveRefreshes == [true], "Both pulls share one forced request.")
+    }
+
+    @Test("Pulls waiting on a poll never send two forced requests at once")
+    func pullsWaitingOnPollShareForcedRequest() async throws {
         let api = DashboardAPISpy()
         api.holdLive = true
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, now: Date.init, timerInterval: nil)
         coordinator.scenePhaseChanged(isActive: true)
 
         let first = Task { await coordinator.refreshAll(trigger: .userGesture) }
-        await api.waitUntilLiveRequestStarts()
         let second = Task { await coordinator.refreshAll(trigger: .userGesture) }
-        for _ in 0 ..< 10 {
-            await Task.yield()
-        }
+        try await eventually { coordinator.manualRefreshCount == 2 && api.liveRefreshes == [false] }
+
+        // Only the poll is released. The forced request stays held because each pull
+        // wakes independently: once that request finishes, a pull still waking may
+        // legitimately send a new one, so the count is only meaningful while it runs.
+        api.resumeHeldLiveRequests()
+        try await eventually { api.liveRefreshes == [false, true] }
+        try await staysTrue { api.liveRefreshes == [false, true] }
+
         api.resumeRequests()
         await first.value
         await second.value
-
-        #expect(api.liveRefreshes == [false, true], "The scene's poll, then one forced request.")
     }
 
     @Test("Automatic recovery skips the live cadence without forcing a history import")
