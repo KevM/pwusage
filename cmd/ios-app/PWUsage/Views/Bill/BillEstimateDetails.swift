@@ -62,22 +62,27 @@ struct BillRatePeriodTotals: View {
 
     private var multipleTariffs: Bool { Set(periods.map(\.tariffName)).count > 1 }
 
+    /// Dollars lead here, since the charts already show the energy. The dot matches the charts' bands.
     private func row(_ period: Period) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(DashboardPresentation.tariffPeriodTitle(period.periodName))
                     .font(.subheadline.weight(.semibold))
                 Spacer(minLength: 8)
                 Text(DashboardPresentation.currency(period.cost, code: currency))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .font(.headline)
                     .monospacedDigit()
                     .multilineTextAlignment(.trailing)
             }
-            Text(BillOutlookPresentation.balance(period.netGridKwh))
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(balanceColor(period.netGridKwh))
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(balanceColor(period.netGridKwh))
+                    .frame(width: 8, height: 8)
+                Text(BillOutlookPresentation.balance(period.netGridKwh))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
             if multipleTariffs {
                 Text(period.tariffName)
                     .font(.caption)
@@ -99,8 +104,8 @@ struct BillRatePeriodTotals: View {
     }
 
     private func balanceColor(_ netGridKwh: Double) -> Color {
-        if netGridKwh < 0 { return .green }
-        if netGridKwh > 0 { return .red }
+        if netGridKwh < 0 { return EnergyWeatherChart.bankedColor }
+        if netGridKwh > 0 { return EnergyWeatherChart.owedColor }
         return .secondary
     }
 }

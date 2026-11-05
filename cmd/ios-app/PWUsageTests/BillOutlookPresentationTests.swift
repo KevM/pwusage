@@ -237,6 +237,15 @@ struct BillOutlookRenderTests {
         }
     }
 
+    @Test func renderRatePeriodTotals() throws {
+        let periods = [Period(tariffName: "Home", periodName: "Off-Peak", netGridKwh: 180.9, cost: 18.09),
+                       Period(tariffName: "Home", periodName: "On-Peak", netGridKwh: -13.1, cost: -0.52)]
+        for scheme in [ColorScheme.light, .dark] {
+            let totals = BillRatePeriodTotals(periods: periods, currency: "USD").environment(\.colorScheme, scheme)
+            try render(totals, named: "totals-\(scheme == .dark ? "dark" : "light")")
+        }
+    }
+
     @Test func renderSavingsFlowAtStandardAndAccessibilitySizes() throws {
         let move = BillSavingsMove(source: .init(periodName: "Off-Peak", rate: 0.10, role: .pay),
                                    destination: .init(periodName: "On-Peak", rate: 0.04, role: .onlyEarn),
