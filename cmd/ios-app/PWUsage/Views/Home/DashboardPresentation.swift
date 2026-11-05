@@ -288,11 +288,31 @@ enum DashboardPresentation {
 
     /// Home stays quiet for ordinary 15–30 minute summary lag. No shared timestamp
     /// implies that independently sampled power, charge, energy and bill are equally fresh.
-    static func homeNeedsRefresh(_ sources: [Date?], now: Date = .now) -> Bool {
-        sources.contains { source in
-            guard let source else { return true }
-            let age = now.timeIntervalSince(source)
-            return age < 0 || age > 60 * 60
+    static func homeNeedsRefresh(
+        _ sources: [Date?], energySources: [Date?] = [], awaitingEnergy: Bool = false, now: Date = .now
+    ) -> Bool {
+        let readings = sources + (awaitingEnergy ? energySources.filter { $0 != nil } : energySources)
+        return readings.contains { isOverAnHourOld($0, now: now) }
+    }
+
+    private static func isOverAnHourOld(_ source: Date?, now: Date) -> Bool {
+        guard let source else { return true }
+        let age = now.timeIntervalSince(source)
+        return age < 0 || age > 60 * 60
+    }
+
+    /// An import outcome matters only while energy is missing or over an hour old,
+    /// so a repeated pull or a brief failure leaves recent readings unannotated.
+    static func historyRefreshMessage(
+        _ status: MobileLiveResponse.HistoryRefreshStatus?,
+        isUnavailable: Bool, energySources: [Date?], now: Date = .now
+    ) -> String? {
+        guard energySources.contains(where: { isOverAnHourOld($0, now: now) }) else { return nil }
+        switch isUnavailable ? .failed : status {
+        case .pending: return "Today’s energy is still updating."
+        case .failed: return "Today’s energy could not be refreshed. Pull down to try again."
+        case .throttled: return "Today’s energy was checked recently. Try again in a moment."
+        default: return nil
         }
     }
 

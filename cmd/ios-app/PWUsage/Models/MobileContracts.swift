@@ -13,6 +13,7 @@ struct MobileBillResponse: Codable, Equatable {
     let loadTiming: LoadTiming?
     let sources: Sources
     var outlook: BillOutlookHistory?
+    let revision: String?
 
     struct Site: Codable, Equatable {
         let id: String
@@ -43,7 +44,9 @@ struct MobileBillResponse: Codable, Equatable {
         case invalidAmount
     }
 
-    private enum CodingKeys: String, CodingKey { case version, site, currentBill, loadTiming, sources, outlook }
+    private enum CodingKeys: String, CodingKey {
+        case version, site, currentBill, loadTiming, sources, outlook, revision
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -54,6 +57,7 @@ struct MobileBillResponse: Codable, Equatable {
         currentBill = try container.decode(Bill.self, forKey: .currentBill)
         loadTiming = try container.decodeIfPresent(LoadTiming.self, forKey: .loadTiming)
         sources = try container.decode(Sources.self, forKey: .sources)
+        revision = try container.decodeIfPresent(String.self, forKey: .revision)
         // An optional outlook must never hide a usable recorded bill.
         outlook = try? container.decodeIfPresent(BillOutlookHistory.self, forKey: .outlook)
     }

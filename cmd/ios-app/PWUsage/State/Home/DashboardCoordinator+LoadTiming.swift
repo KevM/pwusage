@@ -140,12 +140,10 @@ extension DashboardCoordinator {
         return .requestFailed
     }
 
-    /// Pull to refresh on the Bill screen. Like Smart Shift's pull below, it shows a
-    /// new bill at once and recalculates it once the history import has finished.
+    /// Keep the recorded bill visible while checking for new history.
     func billOutlookRefreshed() async {
-        async let fullRefresh: Void = refreshAll(trigger: .userGesture)
-        await refreshBill(trigger: .userGesture)
-        await billOutlookAppeared(markVisible: false)
+        async let fullRefresh: Void = refreshAll(trigger: .userGesture, showingBillEarly: true)
+        await loadTimingDetailAppeared(surface: nil)
         await fullRefresh
     }
 
@@ -156,8 +154,7 @@ extension DashboardCoordinator {
     func loadTimingDetailRefreshed() async {
         guard canRequestAccountData else { return }
         invalidateSolarLayout()
-        async let fullRefresh: Void = refreshAll(trigger: .userGesture)
-        await refreshBill(trigger: .userGesture)
+        async let fullRefresh: Void = refreshAll(trigger: .userGesture, showingBillEarly: true)
         await loadTimingDetailAppeared(manual: true, surface: nil)
         await fullRefresh
     }
