@@ -218,7 +218,7 @@ struct DashboardView: View {
                             Image(systemName: AppTab.bill.systemImage)
                                 .symbolVariant(.fill)
                                 .font(.title2.weight(.semibold))
-                                .foregroundStyle(.indigo)
+                                .foregroundStyle(Color.emphasis)
                                 .frame(width: 48, height: 48)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 4) {
@@ -278,7 +278,7 @@ struct DashboardView: View {
                         Image(systemName: AppTab.smartShift.systemImage)
                             .symbolVariant(.fill)
                             .font(.title2.weight(.semibold))
-                            .foregroundStyle(.teal)
+                            .foregroundStyle(Color.emphasis)
                             .frame(width: 48, height: 48)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {

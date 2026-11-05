@@ -52,7 +52,7 @@ struct BatteryHoldLockScreenView: View {
             // the wallpaper, where accent-colored text over the gauge fill loses contrast.
             HStack(spacing: 6) {
                 BatteryHoldGlyph(size: 17)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.emphasis)
                 Text(attributes.siteName)
                     .foregroundStyle(.secondary)
             }
@@ -105,7 +105,7 @@ struct BatteryHoldSmallView: View {
             if showingLabel {
                 HStack(spacing: 5) {
                     BatteryHoldGlyph(size: 13)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.emphasis)
                     Text("Battery Saver")
                     Spacer(minLength: 4)
                     Text(attributes.siteName)

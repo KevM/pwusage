@@ -91,11 +91,11 @@ struct SolarSystemView: View {
         case .reconnectTesla:
             if let reconnectTesla {
                 Button("Reconnect Tesla") { Task { await reconnectTesla.perform() } }
-                    .buttonStyle(.borderedProminent)
+                    .emphasisProminentButton()
             }
         case .addLocation:
             Button("Add Location") { isConfirmingLocation = true }
-                .buttonStyle(.borderedProminent)
+                .emphasisProminentButton()
         case .useExactLocation:
             Button("Use My Exact Home Location") { isConfirmingLocation = true }
         }

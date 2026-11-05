@@ -9,12 +9,12 @@ struct DemoModeBar: View {
         Button(action: onTap) {
             Text("In Demo Mode")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.onEmphasis)
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color.accentColor.ignoresSafeArea(edges: .bottom))
+        .background(Color.emphasis.ignoresSafeArea(edges: .bottom))
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Shows options for leaving the demo")
     }
@@ -41,7 +41,7 @@ struct DemoModeSheet: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
+                .emphasisProminentButton()
                 Button(action: onKeepExploring) {
                     Text("Keep exploring")
                         .font(.headline)
