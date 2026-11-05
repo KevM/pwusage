@@ -52,14 +52,14 @@ function dayStore(state: { status: DayRecordStatus | null; fetchedAt: Date | nul
 
 beforeEach(() => {
     vi.clearAllMocks();
+    // The fixtures are fixed dates, and a short day stops being retried 14 days after it ends.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-23T12:00:00Z'));
     // One open day planned: 100 of 288 samples.
     mocks.coverage.mockResolvedValue([{ localDayKey: '2026-10-20', count: 100, first: day, last: new Date(+day + 99 * 300000), maxInteriorGapMs: 300000 }]);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
-afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-});
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('range imports', () => {
     it('writes one v2 day record per fetched day', async () => {

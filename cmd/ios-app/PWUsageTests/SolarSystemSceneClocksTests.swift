@@ -66,4 +66,63 @@ struct SolarSystemSceneClocksTests {
         #expect(SolarSystemSceneClocks.ease(1) == 1)
         #expect(abs(SolarSystemSceneClocks.ease(0.25) - 0.0625) < 1e-12)
     }
+
+    // MARK: - The day strip
+
+    private func stripPresence(_ clocks: SolarSystemSceneClocks, isFound: Bool, at time: Date) -> Double {
+        var input = SolarSystemSceneInput(status: nil, layout: nil, isWaiting: false)
+        if isFound { input.groups = [SolarSystemHouse.Group(azimuth: 180, tilt: 20, kilowatts: 8)] }
+        return SceneFrame(input: input, clocks: clocks, camera: .found, now: time).stripPresence
+    }
+
+    @Test func theStripShowsWhileLoadingAndIsGoneWhenOpeningOnAFoundSystem() {
+        #expect(stripPresence(SolarSystemSceneClocks(), isFound: false, at: now) == 1)
+        var opened = SolarSystemSceneClocks()
+        opened.observe(days: days(["2026-11-01": .clear]), columns: 1, hasLayout: true, now: now)
+        #expect(stripPresence(opened, isFound: true, at: now) == 0)
+    }
+
+    @Test func theStripLeavesDuringTheFindAfterTheLastFlightLands() {
+        var clocks = SolarSystemSceneClocks()
+        clocks.observe(days: days(["2026-11-01": nil]), columns: 1, hasLayout: false, now: now)
+        clocks.observe(days: days(["2026-11-01": .clear]), columns: 1, hasLayout: true, now: now)
+        // The dots fly from the strip, so it stays until the tilt is underway.
+        #expect(stripPresence(clocks, isFound: true, at: now.addingTimeInterval(1)) == 1)
+        let tilted = now.addingTimeInterval(SolarSystemSceneClocks.flightDuration + 0.3
+            + SolarSystemSceneClocks.buildDelay + SolarSystemSceneClocks.buildDuration + 1)
+        #expect(stripPresence(clocks, isFound: true, at: tilted) == 0)
+    }
+
+    // MARK: - The scene's height
+
+    private func frame(
+        _ clocks: SolarSystemSceneClocks, isFound: Bool, camera: SolarSystemCamera = .found
+    ) -> SceneFrame {
+        var input = SolarSystemSceneInput(status: nil, layout: nil, isWaiting: false)
+        if isFound { input.groups = [SolarSystemHouse.Group(azimuth: 180, tilt: 20, kilowatts: 8)] }
+        return SceneFrame(input: input, clocks: clocks, camera: camera, now: now)
+    }
+
+    @Test func theSceneTightensAroundAFoundHouse() {
+        #expect(frame(SolarSystemSceneClocks(), isFound: false).sceneHeight == SolarSystemVisual.sceneHeight)
+        #expect(frame(SolarSystemSceneClocks(), isFound: true).sceneHeight == SolarSystemVisual.foundSceneHeight)
+    }
+
+    @Test func theCompassLettersStayInsideAtEveryDragAngle() {
+        for elevation in stride(from: 8.0, through: 75, by: 1) {
+            let camera = SolarSystemCamera(yaw: 180, elevation: elevation)
+            let frame = frame(SolarSystemSceneClocks(), isFound: true, camera: camera)
+            let projection = frame.projection(width: 370)
+            for azimuth in [0.0, 180] {
+                let letter = projection.point(azimuth: azimuth, distance: SceneFrame.letterRadius)
+                #expect(letter.y >= 7 && letter.y <= frame.sceneHeight - 7)
+            }
+        }
+    }
+
+    @Test func theFoundHouseKeepsItsFullSizeAtTheRestingAngle() {
+        let resting = frame(SolarSystemSceneClocks(), isFound: true).projection(width: 370)
+        let loading = frame(SolarSystemSceneClocks(), isFound: false).projection(width: 370)
+        #expect(resting.scale == loading.scale)
+    }
 }
