@@ -109,7 +109,7 @@ struct BillEstimateHeader: View {
         HStack {
             if let onInfo {
                 Button(action: onInfo) {
-                    Image(systemName: "info.circle")
+                    Image(systemName: "info.circle").font(.subheadline)
                 }
                 .accessibilityLabel("About this estimate")
             }

@@ -49,7 +49,7 @@ struct BatteryHoldSetupSection: View {
                                 Text("\(duration) h").frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .buttonStyle(.bordered)
-                            .tint(hours == duration ? .accentColor : .secondary)
+                            .tint(hours == duration ? Color.emphasis : .secondary)
                             .accessibilityLabel("\(duration) hours")
                             .accessibilityAddTraits(hours == duration ? .isSelected : [])
                         }

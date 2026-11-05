@@ -79,7 +79,7 @@ struct BillSavingsSheet: View {
                 } label: {
                     Text("Time a Job in Smart Shift").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .emphasisProminentButton()
                 .controlSize(.large)
                 Text("Smart Shift finds the cheapest start for one job.")
                     .font(.caption).foregroundStyle(.secondary)

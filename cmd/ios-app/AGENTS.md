@@ -117,7 +117,9 @@ tranche fixes were applied.
 
 `Color.emphasis` (Cerulean, `Shared/Color+Emphasis.swift`) is the one emphasis color, and the app's
 and widgets' accent color. Use it for the thing to look at: a recommendation, a projection, a primary
-action. Do not add another tint for emphasis, and do not use purple or indigo. Data colors keep their
+action. Do not add another tint for emphasis, and do not use purple or indigo. Put `Color.onEmphasis`
+on an emphasis fill, and use `.emphasisProminentButton()` for primary buttons, because white is unreadable on
+the dark mode fill. Data colors keep their
 meaning: solar is orange, Home is blue, battery and banked energy are green, owed energy is orange.
 
 ## Formatting and linting

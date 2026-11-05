@@ -189,6 +189,7 @@ struct BillView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 }

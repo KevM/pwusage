@@ -4,8 +4,8 @@ import Testing
 import UIKit
 
 struct EmphasisColorTests {
-    private func hex(_ style: UIUserInterfaceStyle) throws -> String {
-        let color = try #require(UIColor(named: "Emphasis"))
+    private func hex(_ name: String, _ style: UIUserInterfaceStyle) throws -> String {
+        let color = try #require(UIColor(named: name))
             .resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
         var red: CGFloat = 0
         var green: CGFloat = 0
@@ -16,8 +16,13 @@ struct EmphasisColorTests {
     }
 
     @Test func emphasisIsCeruleanInBothAppearances() throws {
-        #expect(try hex(.light) == "0077B6")
-        #expect(try hex(.dark) == "4CC2F1")
+        #expect(try hex("Emphasis", .light) == "0077B6")
+        #expect(try hex("Emphasis", .dark) == "4CC2F1")
+    }
+
+    @Test func labelsOnEmphasisStayReadableInBothAppearances() throws {
+        #expect(try hex("OnEmphasis", .light) == "FFFFFF")
+        #expect(try hex("OnEmphasis", .dark) == "00222F")
     }
 
     @Test func sectionsShareTheEmphasisColor() {

@@ -139,11 +139,11 @@ struct BatteryGaugeView: View {
                             path.addLine(to: CGPoint(x: line.midX, y: line.maxY))
                         }
                         .stroke(
-                            Color.accentColor,
+                            Color.emphasis,
                             style: StrokeStyle(lineWidth: line.width, dash: style == .card ? [5, 4] : [3, 2.5]))
                     } else {
                         Path(roundedRect: line, cornerRadius: line.width / 2)
-                            .fill(Color.accentColor)
+                            .fill(Color.emphasis)
                     }
                 }
             }

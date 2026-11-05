@@ -110,6 +110,7 @@ struct PWUsageApp: App {
             case .ready(let model):
                 let active = demo.model ?? model
                 PWUsageRootView()
+                    .tint(.emphasis)
                     // A fresh view tree per model, so no tab state crosses into or out of the demo.
                     .id(ObjectIdentifier(active))
                     .environmentObject(active)
