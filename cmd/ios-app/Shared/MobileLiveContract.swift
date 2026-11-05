@@ -28,7 +28,7 @@ struct MobileLiveResponse: Codable, Equatable {
     }
 
     enum HistoryRefreshStatus: String, Codable {
-        case changed, current, pending, failed, throttled
+        case changed, current, overdue, pending, failed, throttled
         case awaitingData = "awaiting-data"
     }
 

@@ -3,20 +3,55 @@ import Foundation
 import Testing
 
 extension DashboardCoordinatorTests {
-    @Test("An import pending on launch gets one read-only follow-up")
-    func pendingHistoryGetsOneFollowUp() async throws {
+    @Test("An import still pending gets bounded read-only follow-ups")
+    func pendingHistoryGetsBoundedFollowUps() async throws {
         let api = HistoryDashboardAPISpy(status: .pending)
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.pendingHistoryCheckDelays = [.milliseconds(1), .milliseconds(1)]
         coordinator.scenePhaseChanged(isActive: true)
 
         try await eventually { coordinator.refreshSettled }
 
         #expect(api.powerRequests == 1)
         #expect(coordinator.power.response?.sources.liveStatusAt != nil)
-        #expect(api.base.liveRefreshes == [false, false])
-        #expect(api.historyChecks == [false, true])
+        #expect(api.base.liveRefreshes == [false, false, false])
+        #expect(api.historyChecks == [false, true, true])
         #expect(coordinator.live.response?.historyRefresh?.status == .pending)
         #expect(api.base.billSiteIDs.count == 1)
+    }
+
+    @Test("Follow-ups stop once the import is no longer pending")
+    func pendingHistoryStopsWhenSettled() async throws {
+        let api = HistoryDashboardAPISpy(status: .pending)
+        api.followUpStatuses = [.pending, .current]
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.pendingHistoryCheckDelays = [.milliseconds(1), .milliseconds(1), .milliseconds(1)]
+        coordinator.scenePhaseChanged(isActive: true)
+
+        try await eventually { coordinator.refreshSettled }
+
+        #expect(api.historyChecks == [false, true, true])
+        #expect(coordinator.live.response?.historyRefresh?.status == .current)
+    }
+
+    @Test("A summary left pending is rechecked on the short cadence")
+    func pendingHistoryUsesShortCadence() async throws {
+        let clock = DashboardTestClock()
+        let api = HistoryDashboardAPISpy(status: .pending)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.pendingHistoryCheckDelays = []
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.historyChecks == [false])
+
+        clock.advance(minutes: 6)
+        api.status = .current
+        await coordinator.refreshDue()
+        #expect(api.historyChecks == [false, false])
+
+        clock.advance(minutes: 6)
+        await coordinator.refreshDue()
+        #expect(api.historyChecks == [false, false])
     }
 
     @Test("The pending check preserves the summary on transient failure and respects sign-in")
@@ -24,6 +59,7 @@ extension DashboardCoordinatorTests {
         let api = HistoryDashboardAPISpy(status: .pending)
         api.followUpError = .recoverableServerError(statusCode: 503)
         let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.pendingHistoryCheckDelays = [.milliseconds(1), .milliseconds(1)]
         coordinator.scenePhaseChanged(isActive: true)
         try await eventually { coordinator.refreshSettled }
 
@@ -113,6 +149,7 @@ private final class HistoryDashboardAPISpy: MobileDashboardDataAPI,
     let base = DashboardAPISpy()
     var status: MobileLiveResponse.HistoryRefreshStatus
     var followUpError: PWUsageAPIError?
+    var followUpStatuses: [MobileLiveResponse.HistoryRefreshStatus] = []
     private(set) var historyChecks: [Bool] = []
     private let power = FastDashboardAPISpy(now: Date.init)
     var powerRequests: Int { power.powerSiteIDs.count }
@@ -131,7 +168,8 @@ private final class HistoryDashboardAPISpy: MobileDashboardDataAPI,
         historyChecks.append(historyCheck)
         if historyCheck, let followUpError { throw followUpError }
         var response = try await base.fetchLive(siteID: siteID, refresh: refresh)
-        response.historyRefresh = .init(status: status)
+        let followUpStatus = historyCheck && !followUpStatuses.isEmpty ? followUpStatuses.removeFirst() : nil
+        response.historyRefresh = .init(status: followUpStatus ?? status)
         return response
     }
 

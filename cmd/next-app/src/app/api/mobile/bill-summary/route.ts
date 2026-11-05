@@ -3,14 +3,14 @@ import { NextResponse } from 'next/server';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
 import { verifySiteAccess } from '@/lib/auth-checks';
-import { getRequestContext, withRequestContext } from '@/lib/request-context';
+import { withRequestContext } from '@/lib/request-context';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { MOBILE_DASHBOARD_CONTRACT_VERSION, type MobileBillPeriod } from '@/lib/mobile-dashboard-contract';
 import { wattsToKilowatts } from '@/lib/energy-utils';
 import { Schedule } from '@/lib/schedule';
 import { computeLoadTiming } from '@/lib/load-timing';
 import { buildLoadTimingTimeline } from '@/lib/load-timing-timeline';
-import { matchesMobileBillConfiguration, readMobileBillConfiguration, readMobileBillRevision } from '@/lib/mobile-bill-revision';
+import { matchesMobileBillConfiguration, readCurrentMobileSite, readMobileBillConfiguration, readMobileBillRevision } from '@/lib/mobile-bill-revision';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,26 +38,16 @@ export async function GET(request: Request) {
             }
 
             const siteRepo = new SiteRepo();
-            let site = await siteRepo.getSite(siteId);
+            const { site, config: currentConfig } = knownRevision !== null
+                ? await readCurrentMobileSite(siteRepo, siteId)
+                : { site: await siteRepo.getSite(siteId), config: null };
             if (!site) return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-            const config = knownRevision !== null ? await readMobileBillConfiguration(siteId) : undefined;
-            if (knownRevision !== null && !config) {
-                return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-            }
-            if (config && !matchesMobileBillConfiguration(site, config)) {
-                // A tariff or billing edit may have happened on another instance.
-                getRequestContext().siteCache.delete(siteId);
-                siteRepo.invalidateCache(siteId);
-                site = await siteRepo.getSite(siteId);
-                if (!site) return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-            }
 
             const now = new Date();
             const billingDay = site.billing_start_day || 1;
             const cycleStart = getCurrentCycleStart(billingDay, now, site.timezone);
             const cycleEnd = getNextCycleStart(billingDay, cycleStart, site.timezone);
             const schedule = new Schedule(site.tariffs, site.timezone);
-            const currentConfig = config && matchesMobileBillConfiguration(site, config) ? config : undefined;
             const before = currentConfig
                 ? await readMobileBillRevision(site, currentConfig, schedule, cycleStart, cycleEnd, now, includeOutlook)
                 : null;
@@ -75,13 +65,18 @@ export async function GET(request: Request) {
             ]);
             let revision: string | undefined;
             if (before && billing.status === 'complete') {
-                const afterConfig = await readMobileBillConfiguration(siteId);
-                const after = afterConfig && matchesMobileBillConfiguration(site, afterConfig)
-                    ? await readMobileBillRevision(site, afterConfig, schedule, cycleStart, cycleEnd, now, includeOutlook)
-                    : null;
-                // A writer may commit between the validator read and billing.
-                // In that case the response must not authorize later reuse.
-                if (before === after) revision = before;
+                try {
+                    const afterConfig = await readMobileBillConfiguration(siteId);
+                    const after = afterConfig && matchesMobileBillConfiguration(site, afterConfig)
+                        ? await readMobileBillRevision(site, afterConfig, schedule, cycleStart, cycleEnd, now, includeOutlook)
+                        : null;
+                    // A writer may commit between the validator read and billing.
+                    // In that case the response must not authorize later reuse.
+                    if (before === after) revision = before;
+                } catch (error) {
+                    // The bill is still usable; only its later reuse is lost.
+                    console.warn('[mobile-bill-summary] revision check failed:', error);
+                }
             }
             const usage = billing.value.usage;
             const estimatedCost = usage.length > 0

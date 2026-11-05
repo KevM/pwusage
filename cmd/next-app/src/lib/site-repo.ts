@@ -365,27 +365,7 @@ export class SiteRepo {
 
 
     async acquireImportLock(params: ImportLockClaim): Promise<boolean> {
-        const { siteId, lockId, lockDurationMs = 60000, force = false, minIntervalMs = 0 } = params;
-        const now = Date.now();
-        const expires = now + lockDurationMs;
-
-        if (force) {
-            const result = await pool.query(`
-                UPDATE "Site"
-                SET import_lock_id = $1, import_lock_expires = $2, last_import_at = $3
-                WHERE id = $4
-            `, [lockId, expires, now, siteId]);
-            return (result.rowCount ?? 0) > 0;
-        }
-
-        const result = await pool.query(`
-            UPDATE "Site"
-            SET import_lock_id = $1, import_lock_expires = $2, last_import_at = $3
-            WHERE id = $4 
-              AND (import_lock_id IS NULL OR import_lock_expires < $5)
-              AND (last_import_at IS NULL OR $5 - last_import_at >= $6)
-        `, [lockId, expires, now, siteId, now, minIntervalMs]);
-        return (result.rowCount ?? 0) > 0;
+        return await this.acquireImportLockWithPrevious(params) !== null;
     }
 
     /** Capture the previous stamp while acquiring the same row, so restoring it cannot erase another import's success. */

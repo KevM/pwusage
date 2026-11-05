@@ -10,11 +10,12 @@ export interface MobileHistoryRevision {
 
 /** A single row of archive metadata. Keep bulk history off unchanged mobile requests. */
 export async function readMobileHistoryRevision(
-    siteId: string, start: Date, end: Date, today = start
+    siteId: string, start: Date, end: Date, today = start, db: Pick<typeof pool, 'query'> = pool
 ): Promise<MobileHistoryRevision> {
-    const { rows } = await pool.query<MobileHistoryRevision>(`
+    const { rows } = await db.query<MobileHistoryRevision>(`
         SELECT md5(coalesce(string_agg(version, ',' ORDER BY day_start), '')) AS revision,
-            max(last_timestamp) FILTER (WHERE last_timestamp < $3) AS latest,
+            -- A record ending past the boundary still holds samples up to it.
+            max(least(last_timestamp, $3::timestamptz)) AS latest,
             coalesce(bool_or(last_timestamp IS NULL OR last_timestamp >= $3), false) AS "hasFutureSamples",
             md5(coalesce(string_agg(version, ',' ORDER BY day_start)
                 FILTER (WHERE day_end <= $4), '')) AS "priorRevision"

@@ -24,7 +24,9 @@ vi.mock('@/lib/site-repo', () => ({
 }));
 vi.mock('@/lib/mobile-bill-revision', () => ({
     readMobileBillConfiguration: async () => ({ currency: 'EUR' }),
-    matchesMobileBillConfiguration: () => true,
+    readCurrentMobileSite: async (repo: { getSite: (id: string) => Promise<unknown> }, id: string) => ({
+        site: await repo.getSite(id), config: { currency: 'EUR' },
+    }),
 }));
 vi.mock('@/lib/mobile-history-revision', () => ({ readMobileHistoryRevision: historyRevisionMock }));
 vi.mock('@/lib/energy-repo', () => ({
@@ -316,13 +318,72 @@ describe('site-live-data mobile response', () => {
     it.each([
         ['in-flight', 'pending'],
         ['throttled', 'throttled'],
-        ['no-new-rows', 'awaiting-data'],
+        ['no-new-rows', 'overdue'],
         ['error', 'failed'],
     ])('reports %s to a client opening without stored energy', async (result, status) => {
         refreshTodayMock.mockResolvedValue({ status: result });
         const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
         expect(response.status).toBe(200);
         expect((await response.json()).historyRefresh).toEqual({ status });
+    });
+
+    it('expects an empty day only during the first hour after site midnight', async () => {
+        vi.setSystemTime(new Date('2026-09-24T00:30:00.000Z'));
+        const early = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect((await early.json()).historyRefresh).toEqual({ status: 'awaiting-data' });
+
+        vi.setSystemTime(new Date('2026-09-24T01:30:00.000Z'));
+        const late = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect((await late.json()).historyRefresh).toEqual({ status: 'overdue' });
+    });
+
+    it('reports a followed import as failed when it released without recording success', async () => {
+        importStatusMock.mockResolvedValue({ isImporting: false, lastImportAt: Date.now() - 10 * 60 * 1000 });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect((await response.json()).historyRefresh).toEqual({ status: 'failed' });
+        expect(refreshTodayMock).not.toHaveBeenCalled();
+    });
+
+    it('does not report failure when the followed import recorded its attempt', async () => {
+        importStatusMock.mockResolvedValue({ isImporting: false, lastImportAt: Date.now() - 20 * 1000 });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect((await response.json()).historyRefresh).toEqual({ status: 'overdue' });
+    });
+
+    it('reads the import status before history and history only once on a follow-up', async () => {
+        const order: string[] = [];
+        importStatusMock.mockImplementation(async () => { order.push('status'); return { isImporting: false, lastImportAt: Date.now() }; });
+        historyRevisionMock.mockImplementation(async () => { order.push('history'); return { revision: 'r1', priorRevision: 'p', latest: null, hasFutureSamples: false }; });
+        rawMock.mockImplementation(async () => { order.push('detail'); return []; });
+        await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect(order.slice(0, 3)).toEqual(['status', 'history', 'detail']);
+    });
+
+    it('keeps a usable summary when the post-import history read fails', async () => {
+        refreshTodayMock.mockResolvedValue({ status: 'persisted', rowsPersisted: 12 });
+        historyRevisionMock.mockReset();
+        historyRevisionMock
+            .mockResolvedValueOnce({ revision: 'r1', priorRevision: 'p', latest: null, hasFutureSamples: false })
+            .mockRejectedValue(new Error('pooler timeout'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.historyRefresh).toEqual({ status: 'changed' });
+        expect(body.historyRevision).toBeUndefined();
+        warn.mockRestore();
+    });
+
+    it('keeps a usable summary without a revision when the stability read fails', async () => {
+        historyRevisionMock.mockReset();
+        historyRevisionMock
+            .mockResolvedValueOnce({ revision: 'r1', priorRevision: 'p', latest: recentEnergyRow().sample_timestamp, hasFutureSamples: false })
+            .mockRejectedValue(new Error('pooler timeout'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).historyRevision).toBeUndefined();
+        warn.mockRestore();
     });
 
     it('logs why a mobile history import failed', async () => {

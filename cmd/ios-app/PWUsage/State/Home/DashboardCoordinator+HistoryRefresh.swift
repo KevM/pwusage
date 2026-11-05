@@ -29,7 +29,7 @@ extension DashboardCoordinator {
         } catch {
             // This task's own cancellation is not a failure, whatever error the
             // transport surfaced. A cancellation the app did not cause is real.
-            guard !Task.isCancelled else { return }
+            guard !isAbandonedRequest() else { return }
             guard generation == siteGeneration else { return }
             recordAttempt(.live)
             handle(error, generation: generation, endpoint: .live)
@@ -48,25 +48,33 @@ extension DashboardCoordinator {
     private func checkPendingHistory(
         using api: any MobileConditionalDashboardDataAPI, siteID: String, generation: Int
     ) async {
-        guard isForeground else { return }
-        do {
-            // Give the active writer time to finish, then make one read-only check.
-            try await Task.sleep(for: .seconds(2))
-            guard isForeground, canPublishLive(generation: generation) else { return }
-            let response = try await api.fetchLive(
-                siteID: siteID, refresh: false, historyCheck: true, reusing: reusableLiveSummary
-            )
-            guard isForeground, canPublishLive(generation: generation) else { return }
-            publishLive(response)
-        } catch {
-            guard isForeground, canPublishLive(generation: generation),
-                  let failure = error as? PWUsageAPIError else { return }
-            // The original pending response is still usable on transient failure.
-            switch failure {
-            case .signInRequired, .requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED"):
-                handle(failure, generation: generation, endpoint: .live)
-            default: break
+        for delay in pendingHistoryCheckDelays {
+            guard isForeground else { return }
+            do {
+                // Give the active writer time to finish, then make a read-only check.
+                try await Task.sleep(for: delay)
+                guard isForeground, canPublishLive(generation: generation) else { return }
+                let response = try await api.fetchLive(
+                    siteID: siteID, refresh: false, historyCheck: true, reusing: reusableLiveSummary
+                )
+                guard isForeground, canPublishLive(generation: generation) else { return }
+                publishLive(response)
+                guard response.historyRefresh?.status == .pending else { return }
+            } catch {
+                handlePendingCheckFailure(error, generation: generation)
+                return
             }
+        }
+    }
+
+    private func handlePendingCheckFailure(_ error: any Error, generation: Int) {
+        guard isForeground, canPublishLive(generation: generation),
+              let failure = error as? PWUsageAPIError else { return }
+        // The pending response is still usable on transient failure.
+        switch failure {
+        case .signInRequired, .requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED"):
+            handle(failure, generation: generation, endpoint: .live)
+        default: break
         }
     }
 

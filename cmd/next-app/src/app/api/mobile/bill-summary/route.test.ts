@@ -132,6 +132,16 @@ describe('mobile bill summary route', () => {
         expect(await response.json()).not.toHaveProperty('revision');
     });
 
+    it('returns the bill without a validator when the stability read fails', async () => {
+        vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
+        outlookMock.mockResolvedValue({ usage: [], outlook: null });
+        historyRevision.mockReset();
+        historyRevision.mockResolvedValueOnce(stableHistory).mockRejectedValue(new Error('pooler timeout'));
+        const response = await GET(new Request(conditionalURL));
+        expect(response.status).toBe(200);
+        expect((await response.json()).revision).toBeUndefined();
+    });
+
     it('refreshes cached site settings when another instance changed them', async () => {
         vi.setSystemTime(new Date('2026-09-19T02:00:00Z'));
         outlookMock.mockResolvedValue({ usage: [], outlook: null });

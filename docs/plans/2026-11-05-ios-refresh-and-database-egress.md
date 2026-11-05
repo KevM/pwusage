@@ -47,6 +47,10 @@ On November 5 the user reproduced the warning on launch after building and deplo
 - Extend `site-live-data/route.test.ts`, `today-refresh.test.ts`, and `import-lock.test.ts`. Cover new and unchanged data, corrected content with the same latest timestamp, two-instance contention, lease release after timeout, and preservation of automatic caller policies. Verify correct pricing and invalidation across tariff edits, billing-cycle boundaries, and DST. Re-run the database-byte trace from Step 1. For repeated unchanged pulls, require no repeated day archive or bill-cycle detail reads and no second bill calculation. For changed history, require at most one bill calculation from the new revision per refresh and no increase in automatic polling frequency. Record the measured headroom before removing the manual floor in production.
 - Run `./cmd/ios-app/lint.sh` and `./cmd/ios-app/run-tests.sh` from the root. From `cmd/next-app`, run `npm run lint`, `npm test -- --run`, and `npm run build`. Update `cmd/ios-app/README.md` and `DesignDecisions.md` with the final cadence and the data-integrity purpose of the shared lease. Roll out the backward-compatible server response before distributing an app build that uses it.
 
+## Review changes to this plan
+
+Review of the implementation changed two details. One follow-up at two seconds often ran before the import finished, so a pending import now gets up to three read-only checks over about 10 seconds, then the five-minute summary interval. `awaiting-data` now applies only in the first hour after site-local midnight. Later, an empty day reports `overdue` and Home shows the general refresh prompt.
+
 ## Local egress results and rollout gate
 
 Run `bash scripts/test-mobile-route-egress.sh` from `cmd/next-app`. It starts isolated PostgreSQL, seeds archived and open days, and sends deterministic Tesla responses through the real import service. The fixture opts into `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true`. It verifies that consecutive manual pulls reach Tesla within 15 seconds, the import lease still excludes other writers, and unchanged responses skip archive detail.

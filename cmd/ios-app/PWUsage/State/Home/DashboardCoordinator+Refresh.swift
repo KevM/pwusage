@@ -70,7 +70,8 @@ extension DashboardCoordinator {
            live.response?.historyRefresh?.status == .changed { return }
         let through = live.response?.sources.energyDataThrough
         let historyIsStale = through.map { now().timeIntervalSince($0) > 60 * 60 } ?? true
-        let usesShortInterval = !usesLivePowerEndpoint || (revalidatingHistory && historyIsStale)
+        let importIsPending = live.response?.historyRefresh?.status == .pending
+        let usesShortInterval = !usesLivePowerEndpoint || (revalidatingHistory && historyIsStale) || importIsPending
         let interval = usesShortInterval ? Self.liveInterval : Self.summaryInterval
         guard trigger.skipsCadence
             || live.cadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
@@ -328,7 +329,7 @@ extension DashboardCoordinator {
     /// Whether this request was abandoned by the app itself. Only this task's
     /// cancellation counts: a cancellation error the app did not cause is a real
     /// failure, and a cancelled task's result is discarded whatever it throws.
-    private func isAbandonedRequest() -> Bool {
+    func isAbandonedRequest() -> Bool {
         Task.isCancelled
     }
 

@@ -42,6 +42,21 @@ struct DashboardPresentationTests {
         ) == nil)
     }
 
+    @Test("An overdue day uses the general prompt instead of the empty-day exception")
+    func overdueEnergyPromptsRefresh() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let decoded = try JSONDecoder().decode(
+            MobileLiveResponse.HistoryRefresh.self, from: Data(#"{"status":"overdue"}"#.utf8)
+        )
+        #expect(decoded.status == .overdue)
+        #expect(DashboardPresentation.historyRefreshMessage(
+            decoded.status, isUnavailable: false, energySources: [nil], now: now
+        ) == nil)
+        #expect(DashboardPresentation.homeNeedsRefresh(
+            [now], energySources: [nil], awaitingEnergy: decoded.status == .awaitingData, now: now
+        ))
+    }
+
     @Test("Home stays quiet for ordinary summary lag and prompts only beyond an hour")
     func homeRefreshPromptThreshold() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

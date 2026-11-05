@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { Temporal } from '@js-temporal/polyfill';
 import { pool, type SiteWithTariffs } from './db';
 import { readMobileHistoryRevision } from './mobile-history-revision';
+import { getRequestContext } from './request-context';
+import type { SiteRepo } from './site-repo';
 import type { Schedule } from './schedule';
 
 const HOUR_NS = 3_600_000_000_000;
@@ -30,6 +32,23 @@ export function matchesMobileBillConfiguration(site: SiteWithTariffs, config: Mo
     return config.name === site.name && config.timezone === site.timezone
         && (config.billing_start_day || 1) === (site.billing_start_day || 1)
         && tariffIDs.length === config.tariff_ids.length && tariffIDs.every((id, index) => id === config.tariff_ids[index]);
+}
+
+/**
+ * Load a site that matches current configuration, which another instance may
+ * have edited. `config` is set only when it describes the returned site.
+ */
+export async function readCurrentMobileSite(
+    siteRepo: Pick<SiteRepo, 'getSite' | 'invalidateCache'>, siteId: string
+): Promise<{ site?: SiteWithTariffs; config: MobileBillConfiguration | null }> {
+    const site = await siteRepo.getSite(siteId);
+    const config = site && await readMobileBillConfiguration(siteId);
+    if (!site || !config) return { config: null };
+    if (matchesMobileBillConfiguration(site, config)) return { site, config };
+    getRequestContext().siteCache.delete(siteId);
+    siteRepo.invalidateCache(siteId);
+    const reloaded = await siteRepo.getSite(siteId);
+    return { site: reloaded, config: reloaded && matchesMobileBillConfiguration(reloaded, config) ? config : null };
 }
 
 function timingWindow(now: Date, schedule: Schedule): string | number {

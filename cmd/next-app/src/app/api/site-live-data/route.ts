@@ -12,8 +12,7 @@ import { withRequestContext } from '@/lib/request-context';
 import { formatSiteDate } from '@/lib/date-utils';
 import { refreshLiveStatus, refreshTodayData, type RefreshTodayResult } from '@/lib/today-refresh';
 import { readMobileHistoryRevision, type MobileHistoryRevision } from '@/lib/mobile-history-revision';
-import { getRequestContext } from '@/lib/request-context';
-import { readMobileBillConfiguration, matchesMobileBillConfiguration } from '@/lib/mobile-bill-revision';
+import { readCurrentMobileSite, readMobileBillConfiguration } from '@/lib/mobile-bill-revision';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { getCachedCycleRollup } from '@/lib/cycle-rollup-cache';
 import { activePeriodSurplusKwh, missingTodayInterval, todayNetExportByPeriod } from '@/lib/headroom-from-bins';
@@ -35,14 +34,18 @@ const MOBILE_ENERGY_STALE_AFTER_MS = 30 * 60 * 1000;
 const MOBILE_STALE_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 // Leaves room for the rest of the route inside the app's 20-second request timeout.
 const MOBILE_FORCED_IMPORT_TIMEOUT_MS = 10 * 1000;
-
+// Tesla can take a while to publish the day's first sample. Past this, an empty day is overdue.
+const MOBILE_EMPTY_DAY_GRACE_MS = 60 * 60 * 1000;
+// The 60-second lease plus the client's short checks. A successful import keeps
+// its claim stamp, and a failed one restores the earlier stamp.
+const MOBILE_FOLLOWED_IMPORT_WINDOW_MS = 90 * 1000;
 
 function latestToday(history: MobileHistoryRevision, midnight: Date) {
     return history.latest && history.latest >= midnight ? history.latest : null;
 }
 
 function refreshStatus(
-    result: RefreshTodayResult['status'] | undefined, latest: Date | null, now: Date
+    result: RefreshTodayResult['status'] | undefined, latest: Date | null, now: Date, midnight: Date
 ): MobileHistoryRefreshStatus {
     switch (result) {
         case 'persisted': return 'changed';
@@ -51,7 +54,9 @@ function refreshStatus(
         case 'error':
         case 'connection-required':
         case 'no-tokens': return 'failed';
-        default: return latest && +now - +latest <= MOBILE_ENERGY_STALE_AFTER_MS ? 'current' : 'awaiting-data';
+        default:
+            if (latest && +now - +latest <= MOBILE_ENERGY_STALE_AFTER_MS) return 'current';
+            return !latest && +now - +midnight > MOBILE_EMPTY_DAY_GRACE_MS ? 'overdue' : 'awaiting-data';
     }
 }
 
@@ -93,14 +98,9 @@ async function handleGET(request: Request) {
             const mobileView = searchParams.get('view') === 'mobile';
             const historyCheck = mobileView && searchParams.get('historyCheck') === '1';
             const forceRefresh = mobileView && !historyCheck && searchParams.get('refresh') === '1';
-            let site = await siteRepo.getSite(siteId);
-            const config = mobileView && site ? await readMobileBillConfiguration(siteId) : null;
-            if (site && config && !matchesMobileBillConfiguration(site, config)) {
-                siteRepo.invalidateCache(siteId);
-                getRequestContext().siteCache.delete(siteId);
-                site = await siteRepo.getSite(siteId);
-            }
-            const validConfig = site && config && matchesMobileBillConfiguration(site, config) ? config : null;
+            const { site, config: validConfig } = mobileView
+                ? await readCurrentMobileSite(siteRepo, siteId)
+                : { site: await siteRepo.getSite(siteId), config: null };
             const siteTimezone = site?.timezone ?? 'UTC';
             const siteMidnight = EnergyRepo.getSiteMidnight(now, siteTimezone);
             const cycleStart = getCurrentCycleStart(site?.billing_start_day || 1, now, siteTimezone);
@@ -111,10 +111,12 @@ async function handleGET(request: Request) {
                 : new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
             const repo = createEnergyRepo(siteTimezone);
             const readRevision = (end: Date) => readMobileHistoryRevision(siteId, cycleStart, end, siteMidnight);
+            // Read the lease before history, so a finished import's commit is visible.
+            const followedImport = historyCheck ? siteRepo.getImportStatus(siteId) : null;
             const [liveResult, initialHistory, webHistoryRows] = await Promise.all([
                 // A pull forces live-power first, so this cache already holds its reading.
                 refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
-                mobileView ? readRevision(now) : Promise.resolve(null),
+                mobileView ? Promise.resolve(followedImport).then(() => readRevision(now)) : Promise.resolve(null),
                 mobileView ? Promise.resolve(null) : repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
             ]);
 
@@ -134,12 +136,18 @@ async function handleGET(request: Request) {
             let importDurationMs: number | undefined;
             let importError: string | undefined;
             let history = initialHistory;
+            let historyIsCurrent = true;
             let historyEnd = now;
             if (initialHistory) {
                 const isStale = !latestBefore || +now - +latestBefore > MOBILE_ENERGY_STALE_AFTER_MS;
-                if (historyCheck) {
-                    if ((await siteRepo.getImportStatus(siteId)).isImporting) result = 'in-flight';
-                    else history = await readRevision(now);
+                const followed = await followedImport;
+                if (followed) {
+                    if (followed.isImporting) {
+                        result = 'in-flight';
+                    } else if (isStale && +now - followed.lastImportAt > MOBILE_FOLLOWED_IMPORT_WINDOW_MS) {
+                        result = 'error';
+                        importError = 'The followed import released without recording success.';
+                    }
                 } else if (forceRefresh || isStale) {
                     const startedAt = Date.now();
                     try {
@@ -164,11 +172,17 @@ async function handleGET(request: Request) {
                     if (+EnergyRepo.getSiteMidnight(completedAt, siteTimezone) === +siteMidnight) {
                         historyEnd = completedAt;
                     }
-                    history = await readRevision(historyEnd);
+                    try {
+                        history = await readRevision(historyEnd);
+                    } catch (error) {
+                        // The stored history is still usable, but its revision may predate the import.
+                        historyIsCurrent = false;
+                        console.warn('[site-live-data] history revision reread failed:', error);
+                    }
                 }
             }
             const latestAfter = history && latestToday(history, siteMidnight);
-            const historyStatus = refreshStatus(result, latestAfter, historyEnd);
+            const historyStatus = refreshStatus(result, latestAfter, historyEnd, siteMidnight);
             if (mobileView) {
                 logEvent(result === 'error' ? 'warn' : 'info', 'mobile.history.checked', {
                     manual: forceRefresh, followUp: historyCheck, outcome: historyStatus,
@@ -178,7 +192,7 @@ async function handleGET(request: Request) {
                     energyAfter: latestAfter?.toISOString() ?? null,
                 });
             }
-            const revision = site && history && !history.hasFutureSamples && validConfig
+            const revision = site && history && historyIsCurrent && !history.hasFutureSamples && validConfig
                 ? summaryRevision(site, history, siteMidnight, cycleStart, now, validConfig.currency)
                 : undefined;
             if (revision && revision === searchParams.get('knownHistoryRevision')) {
@@ -350,11 +364,16 @@ async function handleGET(request: Request) {
                 // make the computed fields a mix of snapshots. Do not tag that result.
                 let stableRevision: string | undefined;
                 if (revision && history && calculationsComplete) {
-                    const [currentHistory, currentConfig] = await Promise.all([
-                        readRevision(historyEnd), readMobileBillConfiguration(siteId),
-                    ]);
-                    if (currentHistory.revision === history.revision
-                        && JSON.stringify(currentConfig) === JSON.stringify(config)) stableRevision = revision;
+                    try {
+                        const [currentHistory, currentConfig] = await Promise.all([
+                            readRevision(historyEnd), readMobileBillConfiguration(siteId),
+                        ]);
+                        if (currentHistory.revision === history.revision
+                            && JSON.stringify(currentConfig) === JSON.stringify(validConfig)) stableRevision = revision;
+                    } catch (error) {
+                        // The summary is still usable; only its later reuse is lost.
+                        console.warn('[site-live-data] revision check failed:', error);
+                    }
                 }
                 return NextResponse.json({
                     ...mobileContract,

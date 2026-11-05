@@ -127,6 +127,8 @@ final class DashboardCoordinator: ObservableObject {
     /// Whether `liveTask` asked the server to import today's history.
     var liveTaskImportsHistory = false
     var manualRefreshCount = 0
+    /// Waits before each read-only check on another request's import.
+    var pendingHistoryCheckDelays: [Duration] = [.seconds(2), .seconds(3), .seconds(5)]
     var powerTask: Task<Void, Never>?
     var livePowerEndpointAvailable = true
     /// Whether a selected screen shows live power. Not published: nothing draws from it.

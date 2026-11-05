@@ -10,6 +10,7 @@ import { buildDayMetadataV3 } from './compact-day-metadata';
 import type { DayAttribution } from './day-attribution';
 import {latestStoredSampleSql} from '../latest-stored-sample-sql';
 import { CompactHistoryReader } from './compact-history-reader';
+import { readMobileHistoryRevision } from '../mobile-history-revision';
 
 const socket = process.env.COMPACT_HISTORY_TEST_SOCKET;
 const start = new Date('2026-01-01T06:00:00Z');
@@ -103,6 +104,13 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         const changed = await store.writeDay('site', start, daySamples(4), new Date(+newer + 1), jobOptions.now);
         expect(changed.status).toBe('written');
         expect(changed.revision).not.toBe(first.revision);
+    });
+    it('keeps today\'s samples visible when a day record ends after the read boundary', async () => {
+        await store.writeDay('site', start, daySamples(), fetched, jobOptions.now);
+        const midday = new Date(+start + 12 * 60 * 60 * 1000);
+        const revision = await readMobileHistoryRevision('site', start, midday, start, pool);
+        expect(revision.hasFutureSamples).toBe(true);
+        expect(revision.latest).toEqual(midday);
     });
     it('repairs a corrupt summary even when the next fetch returns identical samples', async () => {
         const samples = daySamples();

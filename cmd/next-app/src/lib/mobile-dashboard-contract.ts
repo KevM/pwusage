@@ -10,7 +10,7 @@ export const MOBILE_DASHBOARD_CONTRACT_VERSION = 1;
 export const MOBILE_SOC_STALE_AFTER_MS = 20 * 60 * 1000;
 export const MOBILE_SOC_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
-export type MobileHistoryRefreshStatus = 'changed' | 'current' | 'awaiting-data' | 'pending' | 'failed' | 'throttled';
+export type MobileHistoryRefreshStatus = 'changed' | 'current' | 'awaiting-data' | 'overdue' | 'pending' | 'failed' | 'throttled';
 
 export interface MobileDashboardContractInput {
     site: { id: string; name: string; timezone: string };
