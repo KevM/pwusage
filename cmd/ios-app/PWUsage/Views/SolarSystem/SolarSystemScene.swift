@@ -34,6 +34,8 @@ struct SolarSystemVisual: View {
     let summary: String
 
     nonisolated static let sceneHeight: CGFloat = 300
+    /// Once the house stands: about a quarter of its height in gutter above and below.
+    nonisolated static let foundSceneHeight: CGFloat = 196
     nonisolated static let stripInset: CGFloat = 16
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -55,13 +57,13 @@ struct SolarSystemVisual: View {
             let strip = settled.widening(to: motion.widenedColumns(at: now))
             VStack(spacing: 0) {
                 SolarSystemSceneCanvas(input: input, clocks: motion, frame: frame, now: now)
-                    .frame(height: Self.sceneHeight)
+                    .frame(height: frame.sceneHeight)
                     .overlay {
                         // Only the square around the model turns it, so the gutters still scroll.
                         Color.clear
-                            .frame(width: min(width, Self.sceneHeight), height: Self.sceneHeight)
+                            .frame(width: min(width, Self.sceneHeight), height: frame.sceneHeight)
                             .contentShape(Rectangle())
-                            .gesture(drag)
+                            .gesture(drag(sceneHeight: frame.sceneHeight))
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(summary)
@@ -108,7 +110,7 @@ struct SolarSystemVisual: View {
         return swayed
     }
 
-    private var drag: some Gesture {
+    private func drag(sceneHeight: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
                 guard input.isFound else { return }
@@ -116,7 +118,7 @@ struct SolarSystemVisual: View {
                 dragStart = start
                 // Like a turntable: the half under the finger follows it, so the near side turns the
                 // other way from the far side.
-                let side: Double = value.startLocation.y > Self.sceneHeight / 2 ? 1 : -1
+                let side: Double = value.startLocation.y > sceneHeight / 2 ? 1 : -1
                 camera = start.dragged(
                     yawBy: side * Double(value.translation.width) * 0.4,
                     elevationBy: Double(value.translation.height) * 0.25)
@@ -142,6 +144,8 @@ struct SceneFrame {
     let landedClear: Int
     /// 1 while loading; falls to 0 through the tilt, as a found system has no use for the strip.
     let stripPresence: Double
+    /// Tightens with the strip leaving, from the loading height to the found one.
+    let sceneHeight: CGFloat
 
     init(
         input: SolarSystemSceneInput, clocks: SolarSystemSceneClocks, camera target: SolarSystemCamera, now: Date
@@ -164,14 +168,21 @@ struct SceneFrame {
         wedgeWidth = width
         wedgeOpacity = 1 - min(max((build - 0.35) / 0.3, 0), 1)
         stripPresence = input.isFound ? 1 - ease((build - 0.3) / 0.7) : 1
+        sceneHeight = SolarSystemVisual.foundSceneHeight
+            + (SolarSystemVisual.sceneHeight - SolarSystemVisual.foundSceneHeight) * stripPresence
     }
 
-    /// The canvas point for a world point, with the compass centered in the scene.
-    static func projection(camera: SolarSystemCamera, size: CGSize) -> SceneProjection {
+    /// The canvas point for a world point, with the compass centered in the scene. Steep drag angles
+    /// stand the ring up, so the model scales down just enough to keep its letters inside.
+    func projection(width: CGFloat) -> SceneProjection {
         // The letters sit outside the ring; keep them well clear of the strip below.
-        let radius = min(size.width * 0.3, SolarSystemVisual.sceneHeight * 0.36)
-        let center = CGPoint(x: size.width / 2, y: SolarSystemVisual.sceneHeight * 0.5)
-        return SceneProjection(camera: camera, center: center, scale: radius / ringRadius)
+        let radius = min(width * 0.3, SolarSystemVisual.sceneHeight * 0.36)
+        let letterMargin: CGFloat = 8
+        let rise = Self.letterRadius * sin(camera.elevation * .pi / 180)
+        let fitted = (sceneHeight / 2 - letterMargin) / rise
+        return SceneProjection(
+            camera: camera, center: CGPoint(x: width / 2, y: sceneHeight / 2),
+            scale: min(radius / Self.ringRadius, fitted))
     }
 
     /// Where a clear day's ray sits within the wedge.
@@ -190,7 +201,7 @@ struct SolarSystemSceneCanvas: View {
 
     var body: some View {
         Canvas { context, size in
-            let ground = SceneFrame.projection(camera: frame.camera, size: size)
+            let ground = frame.projection(width: size.width)
             drawCompass(context, ground)
             if input.isFound, clocks.houseTime(at: now) >= 0 {
                 SolarSystemHouseDrawing(groups: input.groups, time: clocks.houseTime(at: now))
@@ -260,7 +271,7 @@ struct SolarSystemFlightCanvas: View {
 
     var body: some View {
         Canvas { context, size in
-            let ground = SceneFrame.projection(camera: frame.camera, size: size)
+            let ground = frame.projection(width: size.width)
             let center = ground.point(azimuth: 0, distance: 0, height: 0.03)
             let melt = SolarSystemSceneClocks.melt
             for cell in strip.cells {
@@ -271,7 +282,7 @@ struct SolarSystemFlightCanvas: View {
                     let travel = progress / (1 - melt)
                     let dot = strip.frame(cell)
                     let start = CGPoint(x: dot.midX + SolarSystemVisual.stripInset,
-                                        y: dot.midY + SolarSystemVisual.sceneHeight)
+                                        y: dot.midY + frame.sceneHeight)
                     let control = CGPoint(x: (start.x + rim.x) / 2 + (rim.x - center.x) * 0.4,
                                           y: min(start.y, rim.y) - 60)
                     let point = Self.bezier(start, control, rim, SolarSystemSceneClocks.ease(travel))
@@ -291,7 +302,7 @@ struct SolarSystemFlightCanvas: View {
                 }
             }
         }
-        .frame(height: SolarSystemVisual.sceneHeight + strip.height)
+        .frame(height: frame.sceneHeight + strip.height)
     }
 
     static func bezier(_ start: CGPoint, _ control: CGPoint, _ end: CGPoint, _ time: Double) -> CGPoint {

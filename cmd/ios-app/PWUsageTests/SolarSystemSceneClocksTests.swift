@@ -92,4 +92,37 @@ struct SolarSystemSceneClocksTests {
             + SolarSystemSceneClocks.buildDelay + SolarSystemSceneClocks.buildDuration + 1)
         #expect(stripPresence(clocks, isFound: true, at: tilted) == 0)
     }
+
+    // MARK: - The scene's height
+
+    private func frame(
+        _ clocks: SolarSystemSceneClocks, isFound: Bool, camera: SolarSystemCamera = .found
+    ) -> SceneFrame {
+        var input = SolarSystemSceneInput(status: nil, layout: nil, isWaiting: false)
+        if isFound { input.groups = [SolarSystemHouse.Group(azimuth: 180, tilt: 20, kilowatts: 8)] }
+        return SceneFrame(input: input, clocks: clocks, camera: camera, now: now)
+    }
+
+    @Test func theSceneTightensAroundAFoundHouse() {
+        #expect(frame(SolarSystemSceneClocks(), isFound: false).sceneHeight == SolarSystemVisual.sceneHeight)
+        #expect(frame(SolarSystemSceneClocks(), isFound: true).sceneHeight == SolarSystemVisual.foundSceneHeight)
+    }
+
+    @Test func theCompassLettersStayInsideAtEveryDragAngle() {
+        for elevation in stride(from: 8.0, through: 75, by: 1) {
+            let camera = SolarSystemCamera(yaw: 180, elevation: elevation)
+            let frame = frame(SolarSystemSceneClocks(), isFound: true, camera: camera)
+            let projection = frame.projection(width: 370)
+            for azimuth in [0.0, 180] {
+                let letter = projection.point(azimuth: azimuth, distance: SceneFrame.letterRadius)
+                #expect(letter.y >= 7 && letter.y <= frame.sceneHeight - 7)
+            }
+        }
+    }
+
+    @Test func theFoundHouseKeepsItsFullSizeAtTheRestingAngle() {
+        let resting = frame(SolarSystemSceneClocks(), isFound: true).projection(width: 370)
+        let loading = frame(SolarSystemSceneClocks(), isFound: false).projection(width: 370)
+        #expect(resting.scale == loading.scale)
+    }
 }
