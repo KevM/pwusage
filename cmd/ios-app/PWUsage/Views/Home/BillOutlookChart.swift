@@ -121,7 +121,7 @@ struct BillOutlookChart: View {
                     tariffName: period.tariffName, periodName: period.periodName, netGridKwh: 0)
         }
         if let summary = BillOutlookPresentation.laneSummary(
-            period: period, totals: totals, selected: selected, currency: currency) {
+            period: period, totals: totals, selected: selected) {
             Text(summary).font(.caption).monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
         }
