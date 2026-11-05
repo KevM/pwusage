@@ -75,6 +75,8 @@ describe('range imports', () => {
     });
 
     it('serves a capped run\'s missing days before retrying open records', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
         // The older day has no samples; the newer one is an open record with a sub-threshold gap.
         mocks.coverage.mockResolvedValue([{ localDayKey: '2026-10-21', count: 287, first: nextDay, last: new Date(+nextDay + 287 * 300000),
             maxInteriorGapMs: 600000, open: true }]);

@@ -10,6 +10,7 @@ import { buildDayMetadataV3 } from './compact-day-metadata';
 import type { DayAttribution } from './day-attribution';
 import {latestStoredSampleSql} from '../latest-stored-sample-sql';
 import { CompactHistoryReader } from './compact-history-reader';
+import { readMobileHistoryRevision } from '../mobile-history-revision';
 
 const socket = process.env.COMPACT_HISTORY_TEST_SOCKET;
 const start = new Date('2026-01-01T06:00:00Z');
@@ -90,6 +91,36 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         expect(await reader.getRawEnergyData('site',start,end)).toEqual(samples);
         expect((await reader.getDailyCoverage('site',start,end,'America/Chicago'))[0]).toMatchObject({count:288,archived:true});
         expect((await pool.query('SELECT count(*)::int AS n FROM "EnergyDaySummary"')).rows[0].n).toBeGreaterThan(0);
+    });
+    it('advances finality on an identical day without replacing its energy revision', async () => {
+        const samples = daySamples();
+        const first = await store.writeDay('site', start, samples, fetched, jobOptions.now);
+        const newer = new Date(+fetched + 1);
+        expect(await store.writeDay('site', start, samples, newer, jobOptions.now))
+            .toMatchObject({ status: 'unchanged', revision: first.revision });
+        expect((await pool.query('SELECT revision, fetched_at FROM "EnergyDayArchive"')).rows)
+            .toEqual([{ revision: first.revision, fetched_at: newer }]);
+
+        const changed = await store.writeDay('site', start, daySamples(4), new Date(+newer + 1), jobOptions.now);
+        expect(changed.status).toBe('written');
+        expect(changed.revision).not.toBe(first.revision);
+    });
+    it('keeps today\'s samples visible when a day record ends after the read boundary', async () => {
+        await store.writeDay('site', start, daySamples(), fetched, jobOptions.now);
+        const midday = new Date(+start + 12 * 60 * 60 * 1000);
+        const revision = await readMobileHistoryRevision('site', start, midday, start, pool);
+        expect(revision.hasFutureSamples).toBe(true);
+        expect(revision.latest).toEqual(midday);
+    });
+    it('repairs a corrupt summary even when the next fetch returns identical samples', async () => {
+        const samples = daySamples();
+        const first = await store.writeDay('site', start, samples, fetched, jobOptions.now);
+        await pool.query('UPDATE "EnergyDaySummary" SET load_power = load_power + 1');
+        const repaired = await store.writeDay('site', start, samples, new Date(+fetched + 1), jobOptions.now);
+        expect(repaired.status).toBe('written');
+        expect(repaired.revision).not.toBe(first.revision);
+        await expect(new CompactHistoryReader(store, 'America/Chicago').getRawEnergyData('site', start, end))
+            .resolves.toEqual(samples);
     });
     it('counts an open day written straight from Tesla by its stored samples for the gap-heal pre-check',async()=>{
         // 100 of 288 slots, ended 8 days ago: open, so not settled.

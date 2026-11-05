@@ -1,5 +1,6 @@
-import { observeRoute, setLogContext } from '@/lib/observability';
-import type { MobileTodayCost } from '@/lib/mobile-dashboard-contract';
+import { createHash } from 'node:crypto';
+import { logEvent, observeRoute, setLogContext } from '@/lib/observability';
+import type { MobileHistoryRefreshStatus, MobileTodayCost } from '@/lib/mobile-dashboard-contract';
 import { NextResponse } from 'next/server';
 import { isTeslaAuthError } from '@/lib/tesla-client';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
@@ -9,7 +10,9 @@ import { Schedule, getCurrentTariffLabel } from '@/lib/schedule';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import { formatSiteDate } from '@/lib/date-utils';
-import { refreshLiveStatus, refreshTodayData } from '@/lib/today-refresh';
+import { refreshLiveStatus, refreshTodayData, type RefreshTodayResult } from '@/lib/today-refresh';
+import { readMobileHistoryRevision, type MobileHistoryRevision } from '@/lib/mobile-history-revision';
+import { readCurrentMobileSite, readMobileBillConfiguration } from '@/lib/mobile-bill-revision';
 import { getCurrentCycleStart } from '@/lib/billing-cycle';
 import { getCachedCycleRollup } from '@/lib/cycle-rollup-cache';
 import { activePeriodSurplusKwh, missingTodayInterval, todayNetExportByPeriod } from '@/lib/headroom-from-bins';
@@ -31,6 +34,48 @@ const MOBILE_ENERGY_STALE_AFTER_MS = 30 * 60 * 1000;
 const MOBILE_STALE_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 // Leaves room for the rest of the route inside the app's 20-second request timeout.
 const MOBILE_FORCED_IMPORT_TIMEOUT_MS = 10 * 1000;
+// Tesla can take a while to publish the day's first sample. Past this, an empty day is overdue.
+const MOBILE_EMPTY_DAY_GRACE_MS = 60 * 60 * 1000;
+// The 60-second lease plus the client's short checks. A successful import keeps
+// its claim stamp, and a failed one restores the earlier stamp.
+const MOBILE_FOLLOWED_IMPORT_WINDOW_MS = 90 * 1000;
+
+function latestToday(history: MobileHistoryRevision, midnight: Date) {
+    return history.latest && history.latest >= midnight ? history.latest : null;
+}
+
+function refreshStatus(
+    result: RefreshTodayResult['status'] | undefined, latest: Date | null, now: Date, midnight: Date
+): MobileHistoryRefreshStatus {
+    switch (result) {
+        case 'persisted': return 'changed';
+        case 'in-flight': return 'pending';
+        case 'throttled': return 'throttled';
+        case 'error':
+        case 'connection-required':
+        case 'no-tokens': return 'failed';
+        default:
+            if (latest && +now - +latest <= MOBILE_ENERGY_STALE_AFTER_MS) return 'current';
+            return !latest && +now - +midnight > MOBILE_EMPTY_DAY_GRACE_MS ? 'overdue' : 'awaiting-data';
+    }
+}
+
+function summaryRevision(
+    site: NonNullable<Awaited<ReturnType<SiteRepo['getSite']>>>,
+    history: MobileHistoryRevision,
+    midnight: Date,
+    cycleStart: Date,
+    now: Date,
+    currency: string | null
+) {
+    // The tariff period can advance without a new sample. Day and cycle
+    // identity also change across midnight and billing boundaries.
+    const active = new Schedule(site.tariffs, site.timezone).getTariffPeriod(now);
+    return createHash('sha256').update(JSON.stringify([
+        'mobile-summary-v1', site.id, site.name, site.timezone, +midnight, +cycleStart,
+        history.revision, site.tariffs.map(tariff => tariff.id), active?.schedule.id, currency
+    ])).digest('hex');
+}
 
 async function handleGET(request: Request) {
     return withRequestContext(async () => {
@@ -51,65 +96,120 @@ async function handleGET(request: Request) {
 
             const now = new Date();
             const mobileView = searchParams.get('view') === 'mobile';
-            const forceRefresh = searchParams.get('refresh') === '1';
-            const site = await siteRepo.getSite(siteId);
+            const historyCheck = mobileView && searchParams.get('historyCheck') === '1';
+            const forceRefresh = mobileView && !historyCheck && searchParams.get('refresh') === '1';
+            const { site, config: validConfig } = mobileView
+                ? await readCurrentMobileSite(siteRepo, siteId)
+                : { site: await siteRepo.getSite(siteId), config: null };
+            const siteTimezone = site?.timezone ?? 'UTC';
+            const siteMidnight = EnergyRepo.getSiteMidnight(now, siteTimezone);
+            const cycleStart = getCurrentCycleStart(site?.billing_start_day || 1, now, siteTimezone);
             const scaleWindowHours = parseScaleWindowHours(process.env.SPARKLINE_SCALE_WINDOW_HOURS);
             const sparklineWindowStart = new Date(now.getTime() - (SPARKLINE_DISPLAY_WINDOW_HOURS * 60 * 60 * 1000));
-            // Home and widgets do not render sparklines. Only read the current
-            // site-local day for their 30-minute summary, including DST days.
             const sparklineScaleStart = mobileView
-                ? EnergyRepo.getSiteMidnight(now, site?.timezone ?? 'UTC')
+                ? siteMidnight
                 : new Date(now.getTime() - (scaleWindowHours * 60 * 60 * 1000));
-            const repo = createEnergyRepo(site?.timezone ?? 'UTC');
-            const [liveResult, initialHistoryRows] = await Promise.all([
+            const repo = createEnergyRepo(siteTimezone);
+            const readRevision = (end: Date) => readMobileHistoryRevision(siteId, cycleStart, end, siteMidnight);
+            // Read the lease before history, so a finished import's commit is visible.
+            const followedImport = historyCheck ? siteRepo.getImportStatus(siteId) : null;
+            const [liveResult, initialHistory, webHistoryRows] = await Promise.all([
                 // A pull forces live-power first, so this cache already holds its reading.
                 refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000 }),
-                repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
+                mobileView ? Promise.resolve(followedImport).then(() => readRevision(now)) : Promise.resolve(null),
+                mobileView ? Promise.resolve(null) : repo.getBucketedEnergyData(siteId, sparklineScaleStart, now),
             ]);
 
-        if (liveResult.status === 'connection-required' || liveResult.status === 'no-tokens') {
-            return NextResponse.json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, { status: 409, headers: { 'Cache-Control': 'private, no-store' } });
-        }
+            if (liveResult.status === 'connection-required' || liveResult.status === 'no-tokens') {
+                return NextResponse.json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, { status: 409, headers: { 'Cache-Control': 'private, no-store' } });
+            }
             if (liveResult.status === 'site-not-found') {
                 return NextResponse.json({ error: 'Site not found' }, { status: 404 });
             }
-
             if (!liveResult.liveStatus) {
                 return NextResponse.json({ error: liveResult.errorMessage || 'Failed to fetch live status' }, { status: 500 });
             }
 
             const liveStatus = liveResult.liveStatus;
-            let historyRows = initialHistoryRows;
-
-            // The website refreshes today's Tesla history before reading its
-            // totals. Do the same for mobile when requested by pull-to-refresh
-            // or when the stored sample is old.
-            // The site import lock caps attempts across instances; a successful
-            // import alone warrants a second bucket read.
-            const latestEnergySample = maxBucketSampleTimestamp(historyRows);
-            const isStale = !latestEnergySample
-                || now.getTime() - latestEnergySample.getTime() > MOBILE_ENERGY_STALE_AFTER_MS;
-            if (mobileView && (forceRefresh || isStale)) {
-                try {
-                    const refreshed = await refreshTodayData(siteId, forceRefresh
-                        ? { force: true, timeoutMs: MOBILE_FORCED_IMPORT_TIMEOUT_MS }
-                        : { minIntervalMs: MOBILE_STALE_RETRY_INTERVAL_MS });
-                    if (refreshed.status === 'persisted') {
-                        historyRows = await repo.getBucketedEnergyData(siteId, sparklineScaleStart, now);
-                    } else if (refreshed.status === 'error') {
-                        console.warn('[site-live-data] mobile today refresh failed:', refreshed.errorMessage);
+            const latestBefore = initialHistory && latestToday(initialHistory, siteMidnight);
+            let result: RefreshTodayResult['status'] | undefined;
+            let importDurationMs: number | undefined;
+            let importError: string | undefined;
+            let history = initialHistory;
+            let historyIsCurrent = true;
+            let historyEnd = now;
+            if (initialHistory) {
+                const isStale = !latestBefore || +now - +latestBefore > MOBILE_ENERGY_STALE_AFTER_MS;
+                const followed = await followedImport;
+                if (followed) {
+                    if (followed.isImporting) {
+                        result = 'in-flight';
+                    } else if (isStale && +now - followed.lastImportAt > MOBILE_FOLLOWED_IMPORT_WINDOW_MS) {
+                        result = 'error';
+                        importError = 'The followed import released without recording success.';
                     }
-                } catch (refreshError) {
-                    console.warn('[site-live-data] mobile today refresh unavailable:', refreshError);
+                } else if (forceRefresh || isStale) {
+                    const startedAt = Date.now();
+                    try {
+                        const refreshed = await refreshTodayData(siteId, forceRefresh
+                            ? {
+                                force: true,
+                                timeoutMs: MOBILE_FORCED_IMPORT_TIMEOUT_MS,
+                                ...(process.env.MOBILE_MANUAL_IMPORT_NO_COOLDOWN === 'true' ? { skipCooldown: true } : {}),
+                            }
+                            : { minIntervalMs: MOBILE_STALE_RETRY_INTERVAL_MS });
+                        result = refreshed.status;
+                        importError = refreshed.errorMessage;
+                    } catch (error) {
+                        result = 'error';
+                        importError = error instanceof Error ? error.message : String(error);
+                    } finally {
+                        importDurationMs = Date.now() - startedAt;
+                    }
+                    // The import may have committed immediately before returning an
+                    // error or while a concurrent caller was acquiring the lease.
+                    const completedAt = new Date();
+                    if (+EnergyRepo.getSiteMidnight(completedAt, siteTimezone) === +siteMidnight) {
+                        historyEnd = completedAt;
+                    }
+                    try {
+                        history = await readRevision(historyEnd);
+                    } catch (error) {
+                        // The stored history is still usable, but its revision may predate the import.
+                        historyIsCurrent = false;
+                        console.warn('[site-live-data] history revision reread failed:', error);
+                    }
                 }
             }
+            const latestAfter = history && latestToday(history, siteMidnight);
+            const historyStatus = refreshStatus(result, latestAfter, historyEnd, siteMidnight);
+            if (mobileView) {
+                logEvent(result === 'error' ? 'warn' : 'info', 'mobile.history.checked', {
+                    manual: forceRefresh, followUp: historyCheck, outcome: historyStatus,
+                    importResult: result ?? 'not-requested', importDurationMs, importError,
+                    liveStatusAt: liveStatus.timestamp,
+                    energyBefore: latestBefore?.toISOString() ?? null,
+                    energyAfter: latestAfter?.toISOString() ?? null,
+                });
+            }
+            const revision = site && history && historyIsCurrent && !history.hasFutureSamples && validConfig
+                ? summaryRevision(site, history, siteMidnight, cycleStart, now, validConfig.currency)
+                : undefined;
+            if (revision && revision === searchParams.get('knownHistoryRevision')) {
+                return new NextResponse(null, {
+                    status: 304,
+                    headers: { 'Cache-Control': 'private, no-store', 'X-PWUsage-History-Refresh': historyStatus },
+                });
+            }
 
-            const currentTariff = getCurrentTariffLabel(site);
-            const siteTimezone = site?.timezone ?? 'UTC';
-            const siteMidnight = EnergyRepo.getSiteMidnight(now, siteTimezone);
+            const todayDetail = mobileView ? await repo.getRawEnergyData(siteId, siteMidnight, historyEnd) : undefined;
+            const historyRows = webHistoryRows
+                ?? await repo.getBucketedEnergyData(siteId, sparklineScaleStart, historyEnd, todayDetail);
+            const currentTariff = getCurrentTariffLabel(site, now);
             let todayRows = historyRows;
             let todayComplete = true;
             let todayGapFetched = false;
+            let calculationsComplete = true;
 
             // Headroom for the active TOU period. Today's contribution comes
             // from `historyRows`, already fetched above for the sparklines —
@@ -128,7 +228,10 @@ async function handleGET(request: Request) {
                     if (activeName) {
                         const siteMidnight = EnergyRepo.getSiteMidnight(now, site!.timezone);
                         const cycleStart = getCurrentCycleStart(site!.billing_start_day, now, site!.timezone);
-                        const tariffVersionKey = site!.tariffs.map(t => `${t.id}:${new Date(t.updated).getTime()}`).join(',');
+                        const tariffVersionKey = [
+                            site!.tariffs.map(t => `${t.id}:${new Date(t.updated).getTime()}`).join(','),
+                            history?.priorRevision ?? '',
+                        ].join(':');
 
                         // On a DST fallback evening the local day is longer than
                         // the rolling sparkline window, so the head of today sits
@@ -137,7 +240,7 @@ async function handleGET(request: Request) {
 
                         const [priorCycle, gapRows] = await Promise.all([
                             getCachedCycleRollup(
-                                siteId, cycleStart, siteMidnight,
+                                mobileView ? `mobile:${siteId}` : siteId, cycleStart, siteMidnight,
                                 () => repo.getUsageByTOU(siteId, cycleStart, siteMidnight),
                                 tariffVersionKey
                             ),
@@ -178,6 +281,7 @@ async function handleGET(request: Request) {
                     }
                 }
             } catch (headroomError) {
+                calculationsComplete = false;
                 // Never fail the live strip over the glyph.
                 console.warn('[site-live-data] headroom unavailable:', headroomError);
             }
@@ -194,6 +298,7 @@ async function handleGET(request: Request) {
                     todayComplete = true;
                 } catch (gapError) {
                     todayComplete = false;
+                    calculationsComplete = false;
                     console.warn('[site-live-data] today totals are incomplete:', gapError);
                 }
             }
@@ -223,8 +328,8 @@ async function handleGET(request: Request) {
             if (mobileView && (site?.tariffs?.length ?? 0) > 0) {
                 try {
                     const [usage, currency] = await Promise.all([
-                        repo.getUsageByTOU(siteId, siteMidnight, now),
-                        siteRepo.getSiteCurrencyCode(siteId),
+                        repo.getUsageByTOU(siteId, siteMidnight, historyEnd, todayDetail),
+                        validConfig ? Promise.resolve(validConfig.currency) : siteRepo.getSiteCurrencyCode(siteId),
                     ]);
                     if (usage.length > 0 && usage.every(item => item.touName !== 'Unknown'
                         && typeof item.cost === 'number' && Number.isFinite(item.cost))) {
@@ -235,6 +340,7 @@ async function handleGET(request: Request) {
                         }
                     }
                 } catch (error) {
+                    calculationsComplete = false;
                     console.warn('[site-live-data] daily cost unavailable:', error);
                 }
             }
@@ -254,7 +360,26 @@ async function handleGET(request: Request) {
             });
 
             if (mobileView) {
-                return NextResponse.json(mobileContract);
+                // A concurrent import or configuration edit during detail reads can
+                // make the computed fields a mix of snapshots. Do not tag that result.
+                let stableRevision: string | undefined;
+                if (revision && history && calculationsComplete) {
+                    try {
+                        const [currentHistory, currentConfig] = await Promise.all([
+                            readRevision(historyEnd), readMobileBillConfiguration(siteId),
+                        ]);
+                        if (currentHistory.revision === history.revision
+                            && JSON.stringify(currentConfig) === JSON.stringify(validConfig)) stableRevision = revision;
+                    } catch (error) {
+                        // The summary is still usable; only its later reuse is lost.
+                        console.warn('[site-live-data] revision check failed:', error);
+                    }
+                }
+                return NextResponse.json({
+                    ...mobileContract,
+                    historyRefresh: { status: historyStatus },
+                    ...(stableRevision ? { historyRevision: stableRevision } : {}),
+                } satisfies typeof mobileContract, { headers: { 'Cache-Control': 'private, no-store' } });
             }
 
             const { series: sparklines, scales: sparklineScales } = toSparklinePayload(historyRows, now, {

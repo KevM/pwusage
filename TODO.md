@@ -6,6 +6,11 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## iOS refresh rollout gates (2026-11-05, branch `codex/ios-refresh-egress`)
+
+- [ ] **Measure hosted egress before removing the manual cooldown:** run `mobile-route-egress-trace.test.ts` against a database with the Dev marker, record the headroom in [the plan](docs/plans/2026-11-05-ios-refresh-and-database-egress.md), and only then consider `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true` in production. Until then the 15-second floor stays.
+- [ ] **Finish phone checks on the refresh states:** on beta (2026-11-05), a cold launch recovered Home without a pull, repeat pulls showed no warning, and a long return looked fine. Still unobserved: a pending or failed import explaining itself and clearing, and the empty day before Tesla's first sample after midnight. If the warning recurs, the `mobile.history.checked` log has the import outcome and source times.
+
 ## iOS demo mode v2 (2026-11-01, branch `ios-demo-mode-impl`)
 
 v1 ships the read-only demo (see `cmd/ios-app/README.md#demo-mode`); these were deferred:

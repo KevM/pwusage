@@ -382,9 +382,17 @@ describe('refreshTodayData latch', () => {
         expect(importerMock.refreshTodayRecords).toHaveBeenCalledWith('site-1', latest);
     });
 
-    it('reports no new rows when Tesla had nothing newer', async () => {
+    it('reports corrected content written at the same latest timestamp', async () => {
         importerMock.refreshTodayRecords.mockResolvedValue({ rows: [{ timestamp: latest }], rowsPersisted: 121 });
-        await expect(refresh('2026-10-24T15:07:00Z')).resolves.toEqual({ status: 'no-new-rows' });
+        await expect(refresh('2026-10-24T15:07:00Z')).resolves.toEqual({ status: 'persisted', rowsPersisted: 121 });
+    });
+
+    it('skips the cooldown only for explicitly opted-in force callers', async () => {
+        await refresh('2026-10-24T15:07:00Z');
+        await expect(refresh('2026-10-24T15:07:01Z', { force: true, skipCooldown: true }))
+            .resolves.toEqual({ status: 'no-new-rows' });
+        expect(importLockMock.withImportLock.mock.lastCall?.[1]).toMatchObject({ minIntervalMs: 0 });
+        expect(importLockMock.withImportLock.mock.lastCall?.[1].force).toBeUndefined();
     });
 });
 

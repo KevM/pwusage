@@ -1,3 +1,4 @@
+import { bucketEnergyRows } from './energy-buckets';
 import { buildBillOutlookHistory, type BillOutlookHistory, type BillOutlookDay } from './bill-outlook-history';
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
@@ -234,7 +235,8 @@ FROM w`,
         return {siteId,timezone:site.timezone,schedule,tariffMap,scheduleMap};
     }
 
-    async getUsageByTOU(siteId: string, start: Date, end: Date): Promise<UsageData[]> {
+    /** Pass the already-read site-day samples to share a snapshot with mobile totals. */
+    async getUsageByTOU(siteId: string, start: Date, end: Date, todayRows?: EnergyData[]): Promise<UsageData[]> {
         const context=await this.usageContext(siteId);
         if(!context)return [];
         // Calculate site-local "today" boundary and split point, clamped to
@@ -242,7 +244,7 @@ FROM w`,
         // starts in the future fetches raw rows from today's midnight up to
         // `end` — rows that precede the requested range.
         const now = new Date();
-        const todayStart = EnergyRepo.getSiteMidnight(now, context.timezone);
+        const todayStart = todayRows ? start : EnergyRepo.getSiteMidnight(now, context.timezone);
         const splitPoint = new Date(
             Math.max(start.getTime(), Math.min(todayStart.getTime(), end.getTime()))
         );
@@ -250,7 +252,7 @@ FROM w`,
         // Fetch prior aggregates and today's raw data in parallel
         const [priorAggregates, todayRaw] = await Promise.all([
             this.getCycleAggregates(siteId, start, splitPoint),
-            this.getRawEnergyData(siteId, splitPoint, end)
+            todayRows ?? this.getRawEnergyData(siteId, splitPoint, end)
         ]);
 
         return EnergyRepo.aggregateUsageByTOU({
@@ -508,7 +510,7 @@ FROM w`,
         return this.historyReader.getRawEnergyData(siteId, start, end);
     }
 
-    async getBucketedEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]> {
-        return this.historyReader.getBucketedEnergyData(siteId, start, end);
+    async getBucketedEnergyData(siteId: string, start: Date, end: Date, rows?: EnergyData[]): Promise<EnergyData[]> {
+        return rows ? bucketEnergyRows(rows) : this.historyReader.getBucketedEnergyData(siteId, start, end);
     }
 }

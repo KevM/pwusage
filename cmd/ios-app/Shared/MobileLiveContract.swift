@@ -20,6 +20,17 @@ struct MobileLiveResponse: Codable, Equatable {
     let todayComplete: Bool
     let currentBill: Bill?
     let sources: Sources
+    let historyRevision: String?
+    var historyRefresh: HistoryRefresh?
+
+    struct HistoryRefresh: Codable, Equatable {
+        let status: HistoryRefreshStatus
+    }
+
+    enum HistoryRefreshStatus: String, Codable {
+        case changed, current, overdue, pending, failed, throttled
+        case awaitingData = "awaiting-data"
+    }
 
     struct Site: Codable, Equatable {
         let id: String
@@ -95,7 +106,7 @@ struct MobileLiveResponse: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case version, site, live, stateOfCharge, activeTariff, activeLoadTiming,
-             today, todayCost, todayComplete, currentBill, sources
+             today, todayCost, todayComplete, currentBill, sources, historyRevision, historyRefresh
     }
 
     init(from decoder: Decoder) throws {
@@ -119,6 +130,9 @@ struct MobileLiveResponse: Codable, Equatable {
         todayComplete = try container.decode(Bool.self, forKey: .todayComplete)
         currentBill = try container.decodeIfPresent(Bill.self, forKey: .currentBill)
         self.sources = sources
+        historyRevision = try container.decodeIfPresent(String.self, forKey: .historyRevision)
+        // A newer server may add outcomes. An unknown outcome still carries usable readings.
+        historyRefresh = try? container.decodeIfPresent(HistoryRefresh.self, forKey: .historyRefresh)
     }
 
     /// Replace just the fast readings; history and bill source times stay unchanged.
@@ -133,6 +147,8 @@ struct MobileLiveResponse: Codable, Equatable {
         todayCost = snapshot.todayCost
         todayComplete = snapshot.todayComplete
         currentBill = snapshot.currentBill
+        historyRevision = snapshot.historyRevision
+        historyRefresh = snapshot.historyRefresh
         sources = Sources(liveStatusAt: power.sources.liveStatusAt,
                           energyDataThrough: snapshot.sources.energyDataThrough,
                           stateOfChargeAt: power.sources.stateOfChargeAt)

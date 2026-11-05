@@ -4,6 +4,59 @@ import Testing
 
 @Suite("Dashboard Presentation Tests")
 struct DashboardPresentationTests {
+    @Test("Awaiting a first energy sample allows missing energy dates while still checking power")
+    func awaitingEnergyIsNotARefreshFailure() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let energy = [Date?](repeating: nil, count: 3)
+        #expect(!DashboardPresentation.homeNeedsRefresh([now, now], energySources: energy,
+                                                        awaitingEnergy: true, now: now))
+        #expect(DashboardPresentation.homeNeedsRefresh([nil, now], energySources: energy,
+                                                       awaitingEnergy: true, now: now))
+    }
+
+    @Test("History outcomes speak up only when energy is missing or over an hour old")
+    func historyOutcomeNeedsStaleEnergy() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let recent = [Date?]([now.addingTimeInterval(-1800)])
+        let old = [Date?]([now.addingTimeInterval(-3601)])
+        let outcomes: [MobileLiveResponse.HistoryRefreshStatus] = [.throttled, .pending, .failed]
+        for outcome in outcomes {
+            #expect(DashboardPresentation.historyRefreshMessage(
+                outcome, isUnavailable: false, energySources: recent, now: now
+            ) == nil)
+            #expect(DashboardPresentation.historyRefreshMessage(
+                outcome, isUnavailable: false, energySources: old, now: now
+            ) != nil)
+            #expect(DashboardPresentation.historyRefreshMessage(
+                outcome, isUnavailable: false, energySources: [nil], now: now
+            ) != nil)
+        }
+        #expect(DashboardPresentation.historyRefreshMessage(
+            .current, isUnavailable: true, energySources: recent, now: now
+        ) == nil)
+        #expect(DashboardPresentation.historyRefreshMessage(
+            .current, isUnavailable: true, energySources: old, now: now
+        ) != nil)
+        #expect(DashboardPresentation.historyRefreshMessage(
+            .current, isUnavailable: false, energySources: old, now: now
+        ) == nil)
+    }
+
+    @Test("An overdue day uses the general prompt instead of the empty-day exception")
+    func overdueEnergyPromptsRefresh() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let decoded = try JSONDecoder().decode(
+            MobileLiveResponse.HistoryRefresh.self, from: Data(#"{"status":"overdue"}"#.utf8)
+        )
+        #expect(decoded.status == .overdue)
+        #expect(DashboardPresentation.historyRefreshMessage(
+            decoded.status, isUnavailable: false, energySources: [nil], now: now
+        ) == nil)
+        #expect(DashboardPresentation.homeNeedsRefresh(
+            [now], energySources: [nil], awaitingEnergy: decoded.status == .awaitingData, now: now
+        ))
+    }
+
     @Test("Home stays quiet for ordinary summary lag and prompts only beyond an hour")
     func homeRefreshPromptThreshold() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

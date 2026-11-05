@@ -126,6 +126,9 @@ final class DashboardCoordinator: ObservableObject {
     var liveTask: Task<Void, Never>?
     /// Whether `liveTask` asked the server to import today's history.
     var liveTaskImportsHistory = false
+    var manualRefreshCount = 0
+    /// Waits before each read-only check on another request's import.
+    var pendingHistoryCheckDelays: [Duration] = [.seconds(2), .seconds(3), .seconds(5)]
     var powerTask: Task<Void, Never>?
     var livePowerEndpointAvailable = true
     /// Whether a selected screen shows live power. Not published: nothing draws from it.
@@ -138,9 +141,9 @@ final class DashboardCoordinator: ObservableObject {
     /// Counts bill launches so a refresh can tell whether another caller
     /// attempted the bill while it waited on live.
     var billAttempts = 0
-    /// Whether the latest bill launch started with no live request pending, so
-    /// it calculated from the history live imports.
-    var latestBillAttemptFollowedLive = true
+    /// The local history generation available when the latest bill request began.
+    var latestBillHistoryGeneration = 0
+    var historyGeneration = 0
     var planningContextCache: [String: PlanningContextCacheEntry] = [:]
     var planningContextTasks: [String: PlanningContextTask] = [:]
 
@@ -266,7 +269,7 @@ final class DashboardCoordinator: ObservableObject {
             Task {
                 guard isForeground else { return }
                 await refreshPower(force: livePowerIsVisible)
-                await refreshDue()
+                await refreshAll(trigger: .scheduled, revalidatingHistory: true)
             }
         } else {
             sceneIsActive = false

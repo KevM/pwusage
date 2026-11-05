@@ -125,12 +125,26 @@ struct DashboardView: View {
     @ViewBuilder private var staleNotice: some View {
         // Reads `clock` only to redraw each minute: it pauses in the background, so
         // after a raise it lags, and fresh readings would look like future ones.
-        if coordinator.refreshSettled, DashboardPresentation.homeNeedsRefresh(readingTimes, now: max(clock, .now)) {
-            AvailabilityBanner(
-                message: "Some readings are over an hour old or unavailable. Pull down to refresh.",
-                symbol: "clock.badge.exclamationmark"
-            )
+        if coordinator.refreshSettled, let message = refreshNoticeMessage {
+            AvailabilityBanner(message: message, symbol: "clock.badge.exclamationmark")
         }
+    }
+
+    private var historyRefreshStatus: MobileLiveResponse.HistoryRefreshStatus? {
+        coordinator.live.isRestored ? nil : live?.historyRefresh?.status
+    }
+
+    private var refreshNoticeMessage: String? {
+        if let message = historyOutcomeMessage {
+            return message
+        }
+        if DashboardPresentation.homeNeedsRefresh(
+            readingTimes, energySources: energyReadingTimes, awaitingEnergy: historyRefreshStatus == .awaitingData,
+            now: max(clock, .now)
+        ) {
+            return "Some readings are over an hour old or unavailable. Pull down to refresh."
+        }
+        return nil
     }
 
     private var readingTimes: [Date?] {
@@ -139,6 +153,15 @@ struct DashboardView: View {
             dates.append(power.sources.liveStatusAt)
             dates.append(power.sources.stateOfChargeAt)
         }
+        // A failed request with nothing cached shows as unavailable, so it counts as stale too.
+        if power == nil, coordinator.livePowerIsUnavailable { dates.append(nil) }
+        if live == nil, coordinator.live.isUnavailable { dates.append(nil) }
+        if bill == nil, coordinator.bill.isUnavailable { dates.append(nil) }
+        return dates
+    }
+
+    private var energyReadingTimes: [Date?] {
+        var dates: [Date?] = []
         if let live {
             dates.append(live.sources.energyDataThrough)
             if let timing = live.activeLoadTiming {
@@ -146,11 +169,18 @@ struct DashboardView: View {
             }
         }
         if let bill { dates.append(bill.sources.energyDataThrough) }
-        // A failed request with nothing cached shows as unavailable, so it counts as stale too.
-        if power == nil, coordinator.livePowerIsUnavailable { dates.append(nil) }
-        if live == nil, coordinator.live.isUnavailable { dates.append(nil) }
-        if bill == nil, coordinator.bill.isUnavailable { dates.append(nil) }
         return dates
+    }
+
+    private var historyOutcomeMessage: String? {
+        DashboardPresentation.historyRefreshMessage(
+            historyRefreshStatus, isUnavailable: coordinator.live.isUnavailable,
+            energySources: energyReadingTimes, now: max(clock, .now)
+        )
+    }
+
+    private var missingEnergyMessage: String {
+        historyOutcomeMessage ?? "Today’s totals will appear after the first energy sample is recorded."
     }
 
     private var todaySection: some View {
@@ -159,8 +189,7 @@ struct DashboardView: View {
                 coordinator.live.isRestored ? "Energy · \(live?.site.localDate ?? "Last visit")" : "Today so far"
             )
             if let live, live.sources.energyDataThrough == nil {
-                EmptyCard(symbol: "chart.bar", title: "No energy data yet",
-                          message: "Today’s totals will appear after the first energy sample is recorded.")
+                EmptyCard(symbol: "chart.bar", title: "No energy data yet", message: missingEnergyMessage)
             } else if let today = live?.today {
                 StatusCard {
                     VStack(alignment: .leading, spacing: 16) {

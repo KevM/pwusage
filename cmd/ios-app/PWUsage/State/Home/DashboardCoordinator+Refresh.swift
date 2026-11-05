@@ -8,16 +8,18 @@ extension DashboardCoordinator {
     }
 
     /// Refreshes live power readings followed by bill estimates.
-    func refreshAll(trigger: RefreshTrigger) async {
-        guard canRequestAccountData else { return }
-        if trigger == .scheduled {
-            guard isForeground else { return }
-        }
+    func refreshAll(
+        trigger: RefreshTrigger, revalidatingHistory: Bool = false, showingBillEarly: Bool = false
+    ) async {
         let generation = siteGeneration
-        defer {
-            if generation == siteGeneration, canRequestAccountData, !Task.isCancelled {
-                refreshSettled = true
-            }
+        guard canStillRefresh(trigger: trigger, generation: generation) else { return }
+        let historyAtStart = historyGeneration
+        let billAttemptsAtStart = billAttempts
+        if trigger == .userGesture { manualRefreshCount += 1 }
+        defer { finishRefresh(trigger: trigger, generation: generation) }
+        let billWasFetching = billTask != nil
+        if showingBillEarly, bill.response == nil {
+            launchBillTaskIfNeeded(trigger: trigger, requestTime: now(), generation: generation)
         }
         await refreshPower(force: trigger.skipsCadence)
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
@@ -27,19 +29,29 @@ extension DashboardCoordinator {
         }
         let requestTime = now()
 
-        startLiveTaskIfNeeded(trigger: trigger, generation: generation)
-        // The live endpoint may first import stale energy history. Wait for it
-        // before asking the bill endpoint to calculate from that history.
-        let billAttemptsBeforeWait = billAttempts
+        startLiveTaskIfNeeded(
+            trigger: trigger, generation: generation,
+            revalidatingHistory: revalidatingHistory, historyAtStart: historyAtStart
+        )
         guard await waitForRequest(liveTask) else { return }
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
 
         let waitsForBill = await reconcileBillAfterLive(
             trigger: trigger, requestTime: requestTime,
-            billAttemptsBeforeWait: billAttemptsBeforeWait, generation: generation
+            billStartedDuringRefresh: billWasFetching || billAttempts > billAttemptsAtStart,
+            billNeedsRecovery: revalidatingHistory && hasNewBillInputs(since: historyAtStart),
+            generation: generation
         )
         guard waitsForBill else { return }
         _ = await waitForRequest(billTask)
+    }
+
+    private func finishRefresh(trigger: RefreshTrigger, generation: Int) {
+        guard generation == siteGeneration else { return }
+        if trigger == .userGesture { manualRefreshCount -= 1 }
+        if canRequestAccountData, manualRefreshCount == 0, liveTask == nil, billTask == nil, !Task.isCancelled {
+            refreshSettled = true
+        }
     }
 
     /// A poll already running may answer from cache without importing history. A
@@ -50,15 +62,32 @@ extension DashboardCoordinator {
         }
     }
 
-    private func startLiveTaskIfNeeded(trigger: RefreshTrigger, generation: Int) {
+    private func startLiveTaskIfNeeded(
+        trigger: RefreshTrigger, generation: Int, revalidatingHistory: Bool, historyAtStart: Int
+    ) {
         guard liveTask == nil else { return }
-        let interval = usesLivePowerEndpoint ? Self.summaryInterval : Self.liveInterval
+        if trigger == .userGesture, historyGeneration > historyAtStart,
+           live.response?.historyRefresh?.status == .changed { return }
+        let through = live.response?.sources.energyDataThrough
+        let historyIsStale = through.map { now().timeIntervalSince($0) > 60 * 60 } ?? true
+        let importIsPending = live.response?.historyRefresh?.status == .pending
+        let usesShortInterval = !usesLivePowerEndpoint || (revalidatingHistory && historyIsStale) || importIsPending
+        let interval = usesShortInterval ? Self.liveInterval : Self.summaryInterval
         guard trigger.skipsCadence
             || live.cadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
+        refreshSettled = false
         let siteID = selectedSiteID
         let importsHistory = trigger == .userGesture
         liveTaskImportsHistory = importsHistory
         liveTask = Task { await performLive(siteID: siteID, generation: generation, importsHistory: importsHistory) }
+    }
+
+    private func hasNewBillInputs(since historyAtStart: Int) -> Bool {
+        guard historyGeneration > historyAtStart, latestBillHistoryGeneration < historyGeneration,
+              !live.isUnavailable, let response = live.response else { return false }
+        if response.historyRefresh?.status == .changed { return true }
+        guard let liveThrough = response.sources.energyDataThrough else { return false }
+        return liveThrough > (bill.response?.sources.energyDataThrough ?? .distantPast)
     }
 
     /// Reconciles the bill request against the live import that just ran. Returns false
@@ -66,13 +95,17 @@ extension DashboardCoordinator {
     private func reconcileBillAfterLive(
         trigger: RefreshTrigger,
         requestTime: Date,
-        billAttemptsBeforeWait: Int,
+        billStartedDuringRefresh: Bool,
+        billNeedsRecovery: Bool,
         generation: Int
     ) async -> Bool {
-        if billAttempts == billAttemptsBeforeWait {
-            launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime,
-                                   generation: generation, followsLive: true)
-        } else if !latestBillAttemptFollowedLive {
+        // A pull waiting for the scheduled summary owns the bill check that
+        // follows it. Recalculating here could bill both sides of that import.
+        guard trigger != .scheduled || manualRefreshCount == 0 else { return false }
+        if !billStartedDuringRefresh {
+            let billTrigger = billNeedsRecovery ? .automaticRecovery : trigger
+            launchBillTaskIfNeeded(trigger: billTrigger, requestTime: requestTime, generation: generation)
+        } else if latestBillHistoryGeneration < historyGeneration {
             // Another caller attempted the bill while live was still importing
             // history, so that bill is stale. Let it finish, then recalculate
             // once, whichever waiting refresh gets here first.
@@ -80,10 +113,10 @@ extension DashboardCoordinator {
             // Cancellation is deliberately not checked here: the waiter already
             // committed to recalculating the stale bill, and abandoning it would
             // leave the billed history stale for a full cadence window.
-            guard canStillReconcile(trigger: trigger, generation: generation) else { return false }
-            if !latestBillAttemptFollowedLive {
-                launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(),
-                                       generation: generation, followsLive: true)
+            guard canStillReconcile(trigger: trigger, generation: generation),
+                  trigger != .scheduled || manualRefreshCount == 0 else { return false }
+            if latestBillHistoryGeneration < historyGeneration {
+                launchBillTaskIfNeeded(trigger: .userGesture, requestTime: now(), generation: generation)
             }
         }
         // Otherwise a bill already followed this live request. Comparing its
@@ -115,13 +148,12 @@ extension DashboardCoordinator {
         let requestTime = now()
         let generation = siteGeneration
 
-        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime,
-                               generation: generation, followsLive: liveTask == nil)
+        launchBillTaskIfNeeded(trigger: trigger, requestTime: requestTime, generation: generation)
 
         _ = await waitForRequest(billTask)
     }
 
-    func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int, followsLive: Bool) {
+    private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {
         guard billTask == nil else { return }
         let cadence = cadenceNow()
         let due: Bool
@@ -136,7 +168,7 @@ extension DashboardCoordinator {
         }
         guard due else { return }
         billAttempts += 1
-        latestBillAttemptFollowedLive = followsLive
+        latestBillHistoryGeneration = historyGeneration
         let siteID = selectedSiteID
         billTask = Task { await performBill(siteID: siteID, generation: generation) }
     }
@@ -207,47 +239,17 @@ extension DashboardCoordinator {
         handle(error, generation: generation, endpoint: .power)
     }
 
-    func performLive(siteID: String, generation: Int, importsHistory: Bool = false) async {
-        defer {
-            if generation == siteGeneration {
-                liveTask = nil
-                liveTaskImportsHistory = false
-            }
-        }
-        do {
-            let response = try await api.fetchLive(siteID: siteID, refresh: importsHistory)
-            guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
-            recordAttempt(.live)
-            live.response = response
-            let successTime = now()
-            live.lastSuccess = successTime
-            live.isRestored = false
-            if api is any MobileLivePowerDataAPI,
-               let source = response.sources.liveStatusAt,
-               source >= (power.response?.sources.liveStatusAt ?? .distantPast) {
-                power.response = MobileLivePowerResponse(snapshot: response)
-                power.isUnavailable = false
-            }
-            let snapshot = power.response.map { MobileLiveResponse(snapshot: response, power: $0) } ?? response
-            cache?.storeLive(snapshot, at: successTime)
-            live.isUnavailable = false
-            teslaConnectionRestored()
-        } catch {
-            // This task's own cancellation is not a failure, whatever error the
-            // transport surfaced. A cancellation the app did not cause is real.
-            guard !isAbandonedRequest() else { return }
-            guard generation == siteGeneration else { return }
-            recordAttempt(.live)
-            handle(error, generation: generation, endpoint: .live)
-        }
-    }
-
     func performBill(siteID: String, generation: Int) async {
         defer {
             if generation == siteGeneration { billTask = nil }
         }
         do {
-            let response = try await api.fetchBill(siteID: siteID)
+            let response: MobileBillResponse
+            if let conditionalAPI = api as? any MobileConditionalDashboardDataAPI {
+                response = try await conditionalAPI.fetchBill(siteID: siteID, reusing: bill.response)
+            } else {
+                response = try await api.fetchBill(siteID: siteID)
+            }
             guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
             recordAttempt(.bill)
             bill.response = response
@@ -292,7 +294,7 @@ extension DashboardCoordinator {
         }
     }
 
-    private func teslaConnectionRestored() {
+    func teslaConnectionRestored() {
         guard !requiresTeslaCommandReauthorization else { return }
         if requiresTeslaReconnect, batteryHold.failure == .needsReauthentication {
             batteryHold.failure = nil
@@ -303,7 +305,7 @@ extension DashboardCoordinator {
     /// Records a completed attempt on the endpoint's monotonic cadence. Callers
     /// record after a request finishes and never for an abandoned one, so a
     /// cancelled request cannot consume a retry window.
-    private func recordAttempt(_ endpoint: Endpoint) {
+    func recordAttempt(_ endpoint: Endpoint) {
         let cadence = cadenceNow()
         switch endpoint {
         case .live:
@@ -327,7 +329,7 @@ extension DashboardCoordinator {
     /// Whether this request was abandoned by the app itself. Only this task's
     /// cancellation counts: a cancellation error the app did not cause is a real
     /// failure, and a cancelled task's result is discarded whatever it throws.
-    private func isAbandonedRequest() -> Bool {
+    func isAbandonedRequest() -> Bool {
         Task.isCancelled
     }
 
@@ -373,6 +375,7 @@ extension DashboardCoordinator {
         billTask?.cancel()
         liveTask = nil
         liveTaskImportsHistory = false
+        manualRefreshCount = 0
         powerTask = nil
         billTask = nil
     }

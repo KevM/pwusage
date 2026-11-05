@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyAccessMock, refreshMock, refreshTodayMock, siteMock, bucketedMock, usageMock, rawMock, latestSocMock } = vi.hoisted(() => ({
+const { verifyAccessMock, refreshMock, refreshTodayMock, siteMock, bucketedMock, usageMock, rawMock, latestSocMock, historyRevisionMock, importStatusMock } = vi.hoisted(() => ({
     verifyAccessMock: vi.fn(),
     refreshMock: vi.fn(),
     refreshTodayMock: vi.fn(),
@@ -9,11 +9,26 @@ const { verifyAccessMock, refreshMock, refreshTodayMock, siteMock, bucketedMock,
     usageMock: vi.fn(),
     rawMock: vi.fn(),
     latestSocMock: vi.fn(),
+    historyRevisionMock: vi.fn(),
+    importStatusMock: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
 vi.mock('@/lib/today-refresh', () => ({ refreshLiveStatus: refreshMock, refreshTodayData: refreshTodayMock }));
-vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getSiteCurrencyCode = async () => 'EUR'; } }));
+vi.mock('@/lib/site-repo', () => ({
+    SiteRepo: class {
+        getSite = siteMock;
+        getImportStatus = importStatusMock;
+        getSiteCurrencyCode = async () => 'EUR';
+    },
+}));
+vi.mock('@/lib/mobile-bill-revision', () => ({
+    readMobileBillConfiguration: async () => ({ currency: 'EUR' }),
+    readCurrentMobileSite: async (repo: { getSite: (id: string) => Promise<unknown> }, id: string) => ({
+        site: await repo.getSite(id), config: { currency: 'EUR' },
+    }),
+}));
+vi.mock('@/lib/mobile-history-revision', () => ({ readMobileHistoryRevision: historyRevisionMock }));
 vi.mock('@/lib/energy-repo', () => ({
     sumTodayRows: () => ({
         homeKwh: 0, solarKwh: 0, gridNetKwh: 0, importKwh: 0, exportKwh: 0,
@@ -72,14 +87,17 @@ describe('site-live-data mobile response', () => {
             },
         });
         bucketedMock.mockResolvedValue([]);
+        rawMock.mockResolvedValue([]);
         usageMock.mockResolvedValue([]);
         refreshTodayMock.mockResolvedValue({ status: 'no-new-rows' });
         latestSocMock.mockResolvedValue(null);
+        historyRevisionMock.mockResolvedValue({ revision: 'r1', priorRevision: 'prior1', latest: null, hasFutureSamples: false });
+        importStatusMock.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
     });
 
     it('limits mobile summary history to the site-local day instead of the sparkline scale window', async () => {
         await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
-        expect(bucketedMock).toHaveBeenCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date());
+        expect(bucketedMock).toHaveBeenCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date(), []);
         bucketedMock.mockClear();
         await GET(new Request('https://example.test/api/site-live-data?siteId=site-a'));
         const [, start] = bucketedMock.mock.calls[0] as [string, Date, Date];
@@ -91,7 +109,7 @@ describe('site-live-data mobile response', () => {
             ? [{ cost: 3.12, touName: 'Peak' }, { cost: -0.65, touName: 'Off peak' }] : []);
         const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
         expect((await response.json()).todayCost).toEqual({ netCost: 2.47, importCharges: 3.12, exportCredits: 0.65, currency: 'EUR' });
-        expect(usageMock).toHaveBeenCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date());
+        expect(usageMock).toHaveBeenCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date(), []);
     });
 
     it('keeps energy available when daily pricing fails', async () => {
@@ -117,7 +135,7 @@ describe('site-live-data mobile response', () => {
         }
     });
 
-    it('returns the compact mobile contract with last-known SoC without raw-day reads', async () => {
+    it('returns the compact mobile contract with last-known SoC from one today read', async () => {
         const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
         const body = await response.json();
 
@@ -135,7 +153,7 @@ describe('site-live-data mobile response', () => {
         expect(usageMock).toHaveBeenCalledTimes(2);
         const [, , rollupEnd] = usageMock.mock.calls[0] as [string, Date, Date];
         expect(rollupEnd.getTime()).toBeLessThan(Date.now());
-        expect(rawMock).not.toHaveBeenCalled();
+        expect(rawMock).toHaveBeenCalledTimes(1);
         expect(latestSocMock).not.toHaveBeenCalled();
     });
 
@@ -193,7 +211,7 @@ describe('site-live-data mobile response', () => {
         expect(body.stateOfCharge).toBe(68);
         expect(body.sources.stateOfChargeAt).toBeTruthy();
         expect(latestSocMock).toHaveBeenCalledTimes(1);
-        expect(rawMock).not.toHaveBeenCalled();
+        expect(rawMock).toHaveBeenCalledTimes(1);
     });
 
     it('refreshes stale mobile energy history and returns the new sample in the same response', async () => {
@@ -205,7 +223,9 @@ describe('site-live-data mobile response', () => {
             load_power: 900, solar_power: 1200, grid_power: 200, battery_power: -100,
             battery_soc: null, sample_count: 1,
         });
-        bucketedMock.mockResolvedValueOnce([row(oldSample)]).mockResolvedValueOnce([row(oldSample), row(newSample)]);
+        historyRevisionMock.mockResolvedValueOnce({ revision: 'r1', latest: oldSample, hasFutureSamples: false })
+            .mockResolvedValue({ revision: 'r2', latest: newSample, hasFutureSamples: false });
+        bucketedMock.mockResolvedValue([row(oldSample), row(newSample)]);
         refreshTodayMock.mockResolvedValue({ status: 'persisted', rowsPersisted: 1 });
 
         const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
@@ -213,7 +233,8 @@ describe('site-live-data mobile response', () => {
 
         expect(response.status).toBe(200);
         expect(refreshTodayMock).toHaveBeenCalledWith('site-a', { minIntervalMs: 5 * 60 * 1000 });
-        expect(bucketedMock).toHaveBeenCalledTimes(2);
+        expect(bucketedMock).toHaveBeenCalledTimes(1);
+        expect(body.historyRefresh).toEqual({ status: 'changed' });
         expect(body.sources.energyDataThrough).toBe(newSample.toISOString());
     });
 
@@ -239,7 +260,9 @@ describe('site-live-data mobile response', () => {
     });
 
     it('has no force=1 alias for refresh=1', async () => {
-        bucketedMock.mockResolvedValue([recentEnergyRow()]);
+        const sample = recentEnergyRow();
+        bucketedMock.mockResolvedValue([sample]);
+        historyRevisionMock.mockResolvedValue({ revision: 'r1', latest: sample.sample_timestamp, hasFutureSamples: false });
 
         await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&force=1'));
 
@@ -266,6 +289,7 @@ describe('site-live-data mobile response', () => {
 
     it('does not refresh Tesla history when the mobile energy sample is recent', async () => {
         const sample = new Date(Date.now() - 5 * 60 * 1000);
+        historyRevisionMock.mockResolvedValue({ revision: 'r1', latest: sample, hasFutureSamples: false });
         bucketedMock.mockResolvedValue([{
             timestamp: sample, sample_timestamp: sample,
             site_id: 'site-a', tariff_id: 1, tariff_schedule_id: 3,
@@ -289,6 +313,143 @@ describe('site-live-data mobile response', () => {
         expect(body.sources.energyDataThrough).toBeNull();
         expect(refreshTodayMock).toHaveBeenCalledTimes(1);
         expect(bucketedMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['in-flight', 'pending'],
+        ['throttled', 'throttled'],
+        ['no-new-rows', 'overdue'],
+        ['error', 'failed'],
+    ])('reports %s to a client opening without stored energy', async (result, status) => {
+        refreshTodayMock.mockResolvedValue({ status: result });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).historyRefresh).toEqual({ status });
+    });
+
+    it('expects an empty day only during the first hour after site midnight', async () => {
+        vi.setSystemTime(new Date('2026-09-24T00:30:00.000Z'));
+        const early = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect((await early.json()).historyRefresh).toEqual({ status: 'awaiting-data' });
+
+        vi.setSystemTime(new Date('2026-09-24T01:30:00.000Z'));
+        const late = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect((await late.json()).historyRefresh).toEqual({ status: 'overdue' });
+    });
+
+    it('reports a followed import as failed when it released without recording success', async () => {
+        importStatusMock.mockResolvedValue({ isImporting: false, lastImportAt: Date.now() - 10 * 60 * 1000 });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect((await response.json()).historyRefresh).toEqual({ status: 'failed' });
+        expect(refreshTodayMock).not.toHaveBeenCalled();
+    });
+
+    it('does not report failure when the followed import recorded its attempt', async () => {
+        importStatusMock.mockResolvedValue({ isImporting: false, lastImportAt: Date.now() - 20 * 1000 });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect((await response.json()).historyRefresh).toEqual({ status: 'overdue' });
+    });
+
+    it('reads the import status before history and history only once on a follow-up', async () => {
+        const order: string[] = [];
+        importStatusMock.mockImplementation(async () => { order.push('status'); return { isImporting: false, lastImportAt: Date.now() }; });
+        historyRevisionMock.mockImplementation(async () => { order.push('history'); return { revision: 'r1', priorRevision: 'p', latest: null, hasFutureSamples: false }; });
+        rawMock.mockImplementation(async () => { order.push('detail'); return []; });
+        await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect(order.slice(0, 3)).toEqual(['status', 'history', 'detail']);
+    });
+
+    it('keeps a usable summary when the post-import history read fails', async () => {
+        refreshTodayMock.mockResolvedValue({ status: 'persisted', rowsPersisted: 12 });
+        historyRevisionMock.mockReset();
+        historyRevisionMock
+            .mockResolvedValueOnce({ revision: 'r1', priorRevision: 'p', latest: null, hasFutureSamples: false })
+            .mockRejectedValue(new Error('pooler timeout'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.historyRefresh).toEqual({ status: 'changed' });
+        expect(body.historyRevision).toBeUndefined();
+        warn.mockRestore();
+    });
+
+    it('keeps a usable summary without a revision when the stability read fails', async () => {
+        historyRevisionMock.mockReset();
+        historyRevisionMock
+            .mockResolvedValueOnce({ revision: 'r1', priorRevision: 'p', latest: recentEnergyRow().sample_timestamp, hasFutureSamples: false })
+            .mockRejectedValue(new Error('pooler timeout'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).historyRevision).toBeUndefined();
+        warn.mockRestore();
+    });
+
+    it('logs why a mobile history import failed', async () => {
+        refreshTodayMock.mockResolvedValue({ status: 'error', errorMessage: 'Tesla history timed out' });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(warn).toHaveBeenCalledWith('mobile.history.checked', expect.objectContaining({
+            importResult: 'error', importError: 'Tesla history timed out',
+        }));
+        warn.mockRestore();
+    });
+
+    it('checks a pending import without kicking off another import', async () => {
+        importStatusMock.mockResolvedValue({ isImporting: true, lastImportAt: Date.now() });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile&historyCheck=1'));
+        expect(refreshTodayMock).not.toHaveBeenCalled();
+        expect((await response.json()).historyRefresh).toEqual({ status: 'pending' });
+    });
+
+    it('returns an unchanged mobile summary without reading history details', async () => {
+        const sample = recentEnergyRow();
+        historyRevisionMock.mockResolvedValue({ revision: 'r1', latest: sample.sample_timestamp, hasFutureSamples: false });
+        bucketedMock.mockResolvedValue([sample]);
+        const url = 'https://example.test/api/site-live-data?siteId=site-a&view=mobile';
+        const first = await GET(new Request(url));
+        const { historyRevision } = await first.json();
+        expect(historyRevision).toEqual(expect.any(String));
+
+        bucketedMock.mockClear();
+        rawMock.mockClear();
+        usageMock.mockClear();
+        const repeat = await GET(new Request(`${url}&knownHistoryRevision=${historyRevision}&refresh=1`));
+        expect(repeat.status).toBe(304);
+        expect(repeat.headers.get('X-PWUsage-History-Refresh')).toBe('current');
+        expect(refreshTodayMock).toHaveBeenLastCalledWith('site-a', { force: true, timeoutMs: 10_000 });
+        expect(bucketedMock).not.toHaveBeenCalled();
+        expect(rawMock).not.toHaveBeenCalled();
+        expect(usageMock).not.toHaveBeenCalled();
+    });
+
+    it('does not issue a reusable revision for a summary missing pricing after a failure', async () => {
+        usageMock.mockRejectedValue(new Error('pricing unavailable'));
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).historyRevision).toBeUndefined();
+    });
+
+    it('does not reuse a summary after a same-time history correction', async () => {
+        const sample = recentEnergyRow();
+        historyRevisionMock.mockResolvedValue({ revision: 'r1', latest: sample.sample_timestamp, hasFutureSamples: false });
+        const url = 'https://example.test/api/site-live-data?siteId=site-a&view=mobile';
+        const { historyRevision } = await (await GET(new Request(url))).json();
+
+        historyRevisionMock.mockResolvedValue({ revision: 'r2', latest: sample.sample_timestamp, hasFutureSamples: false });
+        const response = await GET(new Request(`${url}&knownHistoryRevision=${historyRevision}`));
+        expect(response.status).toBe(200);
+        expect((await response.json()).historyRevision).not.toBe(historyRevision);
+    });
+
+    it('does not issue a reusable revision if history changes during calculation', async () => {
+        const sample = recentEnergyRow();
+        historyRevisionMock.mockResolvedValueOnce({ revision: 'r1', latest: sample.sample_timestamp, hasFutureSamples: false })
+            .mockResolvedValue({ revision: 'r2', latest: sample.sample_timestamp, hasFutureSamples: false });
+        const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=mobile'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).historyRevision).toBeUndefined();
     });
 
     it('keeps site isolation in effect for the mobile view', async () => {
@@ -329,7 +490,7 @@ describe('site-live-data mobile response', () => {
         expect(body.sources.energyDataThrough).not.toBe(bucketStart.toISOString());
     });
 
-    it('adds only daily tariff pricing for mobile and keeps web queries unchanged', async () => {
+    it('reuses one today detail read for mobile pricing and keeps web queries unchanged', async () => {
         const webResponse = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a'));
         expect(webResponse.status).toBe(200);
         expect(usageMock).toHaveBeenCalledTimes(1);
@@ -343,7 +504,8 @@ describe('site-live-data mobile response', () => {
         expect(mobileResponse.status).toBe(200);
         expect(usageMock).toHaveBeenCalledTimes(2);
         expect(bucketedMock).toHaveBeenCalledTimes(1);
-        expect(rawMock).not.toHaveBeenCalled();
+        expect(rawMock).toHaveBeenCalledTimes(1);
+        expect(usageMock).toHaveBeenLastCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date(), []);
     });
 
 });

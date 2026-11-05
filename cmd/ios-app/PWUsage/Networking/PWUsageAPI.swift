@@ -50,12 +50,26 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
+        try await fetchLive(siteID: siteID, refresh: refresh, historyCheck: false, reusing: nil)
+    }
+
+    func fetchLive(
+        siteID: String, refresh: Bool, historyCheck: Bool, reusing cached: MobileLiveResponse?
+    ) async throws -> MobileLiveResponse {
         var extra = [URLQueryItem(name: "view", value: "mobile")]
-        if refresh {
-            extra.append(URLQueryItem(name: "refresh", value: "1"))
-        }
+        if refresh { extra.append(URLQueryItem(name: "refresh", value: "1")) }
+        if historyCheck { extra.append(URLQueryItem(name: "historyCheck", value: "1")) }
+        let revision = cached?.site.id == siteID ? cached?.historyRevision : nil
+        if let revision { extra.append(URLQueryItem(name: "knownHistoryRevision", value: revision)) }
         let url = try makeURL(path: "/api/site-live-data", siteID: siteID, extra: extra)
-        let data = try await request(url: url)
+        let (body, http) = try await send(URLRequest(url: url))
+        if http.statusCode == 304, revision != nil, var cached {
+            let header = http.value(forHTTPHeaderField: "X-PWUsage-History-Refresh")
+            cached.historyRefresh = header.flatMap(MobileLiveResponse.HistoryRefreshStatus.init(rawValue:))
+                .map { .init(status: $0) }
+            return try cached.validating(siteID: siteID)
+        }
+        let data = try check(http, data: body)
         do {
             return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: data)
                 .validating(siteID: siteID)
@@ -78,9 +92,19 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
-        let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID,
-                              extra: [URLQueryItem(name: "outlook", value: "1")])
-        let data = try await request(url: url)
+        try await fetchBill(siteID: siteID, reusing: nil)
+    }
+
+    func fetchBill(siteID: String, reusing cached: MobileBillResponse?) async throws -> MobileBillResponse {
+        let revision = cached?.site.id == siteID ? cached?.revision : nil
+        let extra = [URLQueryItem(name: "outlook", value: "1"),
+                     URLQueryItem(name: "knownRevision", value: revision ?? "")]
+        let url = try makeURL(path: "/api/mobile/bill-summary", siteID: siteID, extra: extra)
+        let (body, http) = try await send(URLRequest(url: url))
+        if http.statusCode == 304, revision != nil, let cached {
+            return try cached.validating(siteID: siteID)
+        }
+        let data = try check(http, data: body)
         do {
             return try MobileContractDecoder.make().decode(MobileBillResponse.self, from: data)
                 .validating(siteID: siteID)

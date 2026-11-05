@@ -3,6 +3,27 @@ import Foundation
 import Testing
 
 extension DashboardCoordinatorTests {
+    @Test("Returning retries missing energy once without forcing an import")
+    func foregroundRevalidatesMissingEnergy() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.summary.liveRefreshes == [false])
+
+        coordinator.scenePhaseChanged(isActive: false)
+        clock.advance(minutes: 6)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.summary.liveRefreshes == [false, false])
+
+        coordinator.scenePhaseChanged(isActive: false)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.summary.liveRefreshes == [false, false])
+    }
+
     @Test("A failed refresh still settles; a site switch unsettles until the new site refreshes")
     func failureSettlesAndSiteSwitchUnsettles() async throws {
         let clock = DashboardTestClock()

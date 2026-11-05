@@ -13,6 +13,15 @@ extension MobileDashboardDataAPI {
     }
 }
 
+/// A response can be reused only when the server confirms its revision.
+@MainActor
+protocol MobileConditionalDashboardDataAPI: Sendable {
+    func fetchLive(
+        siteID: String, refresh: Bool, historyCheck: Bool, reusing cached: MobileLiveResponse?
+    ) async throws -> MobileLiveResponse
+    func fetchBill(siteID: String, reusing cached: MobileBillResponse?) async throws -> MobileBillResponse
+}
+
 /// Optional capability so older servers/preview fixtures retain the combined path.
 @MainActor
 protocol MobileLivePowerDataAPI: Sendable {

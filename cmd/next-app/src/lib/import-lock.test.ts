@@ -5,6 +5,7 @@ import { withImportLock } from './import-lock';
 describe('withImportLock', () => {
     const siteRepo = {
         acquireImportLock: vi.fn(),
+        acquireImportLockWithPrevious: vi.fn(),
         releaseImportLock: vi.fn(),
         getImportStatus: vi.fn(),
     };
@@ -12,6 +13,7 @@ describe('withImportLock', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         siteRepo.acquireImportLock.mockResolvedValue(true);
+        siteRepo.acquireImportLockWithPrevious.mockResolvedValue({ previousImportAt: 1234 });
         siteRepo.releaseImportLock.mockResolvedValue(true);
         siteRepo.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 1234 });
     });
@@ -71,8 +73,16 @@ describe('withImportLock', () => {
             expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String), 1234);
         });
 
+        it('restores the stamp captured when acquiring the lock, after any earlier import', async () => {
+            siteRepo.acquireImportLockWithPrevious.mockResolvedValue({ previousImportAt: 2345 });
+            await withImportLock(siteRepo, options, async () => 'failed');
+            expect(siteRepo.getImportStatus).not.toHaveBeenCalled();
+            expect(siteRepo.acquireImportLock).not.toHaveBeenCalled();
+            expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String), 2345);
+        });
+
         it('restores a never-imported site to null', async () => {
-            siteRepo.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
+            siteRepo.acquireImportLockWithPrevious.mockResolvedValue({ previousImportAt: null });
             await withImportLock(siteRepo, options, async () => 'failed');
             expect(siteRepo.releaseImportLock).toHaveBeenCalledWith('site-1', expect.any(String), null);
         });
@@ -89,7 +99,7 @@ describe('withImportLock', () => {
 
         it('does not read the stamp for callers that keep it', async () => {
             await withImportLock(siteRepo, { siteId: 'site-1', logLabel: 'Test' }, async () => 'failed');
-            expect(siteRepo.getImportStatus).not.toHaveBeenCalled();
+            expect(siteRepo.acquireImportLockWithPrevious).not.toHaveBeenCalled();
         });
     });
 
