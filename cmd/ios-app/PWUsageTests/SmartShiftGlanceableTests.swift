@@ -15,7 +15,7 @@ extension SmartShiftPresentationTests {
         #expect(verdict.choices[1].price == Self.money(5.27))
         #expect(verdict.choices[1].caption == "All Peak")
         #expect(verdict.chartTitle == "Distance to net zero")
-        #expect(verdict.chartSubtitle.hasPrefix("kWh by "))
+        #expect(verdict.chartSubtitle.hasPrefix("kWh owed or banked by "))
     }
     @Test func tomorrowStartSaysSoOnItsTile() throws {
         let comparison = Self.comparison(recommendedStart: Self.at(40.5))
@@ -95,6 +95,36 @@ extension SmartShiftPresentationTests {
         #expect(offPeak.recommended.badge == .cheapest)
         #expect(offPeak.recommended.badgeLabel == "Least expensive")
         #expect(peak.recommended.badge == nil)
+    }
+
+    @Test func eachBarExplainsItselfForTheSelectedTime() throws {
+        let verdict = try Self.verdict(Self.make(profile: Self.pump))
+        let peak = try #require(verdict.rateBars.first { $0.name == "Peak" })
+        let offPeak = try #require(verdict.rateBars.first { $0.name == "Off-Peak" })
+        #expect(peak.now.explanation == "Peak: 6 owed without this job, 20 owed with it. It's bought at 38¢/kWh.")
+        #expect(peak.recommended.explanation == "Peak: 6 owed. This job adds nothing here.")
+        #expect(offPeak.recommended.explanation == "Off-Peak: 18 banked without this job, 4 banked with it. "
+            + "It uses the bank, which costs only the 26¢/kWh credit.")
+    }
+
+    @Test func aRunThatOutgrowsItsBankSaysItBuysTheRest() throws {
+        let lanes = [Self.lane("Peak", start: -6, later: -6, startNow: -6),
+                     Self.lane("Off-Peak", start: 4, later: -10, startNow: 4)]
+        let verdict = try Self.verdict(Self.make(profile: Self.pump,
+                                                 result: .init(comparison: Self.comparison(lanes: lanes),
+                                                               unavailableReason: nil)))
+        let offPeak = try #require(verdict.rateBars.first { $0.name == "Off-Peak" })
+        #expect(offPeak.recommended.explanation == "Off-Peak: 4 banked without this job, 10 owed with it. "
+            + "It uses the bank, then buys the rest at 20¢/kWh.")
+    }
+
+    @Test func theDetailsLeadWithTheSelectedTime() {
+        let later = CostBreakdown(title: "Later", total: "$1", lines: [], notes: [])
+        let now = CostBreakdown(title: "Now", total: "$2", lines: [], notes: [])
+        let lead = SmartShiftPresentation.breakdowns
+        #expect(lead([later, now], .recommended).map(\.title) == ["Later", "Now"])
+        #expect(lead([later, now], .now).map(\.title) == ["Now", "Later"])
+        #expect(lead([now], .now).map(\.title) == ["Now"])
     }
 
     @Test func unsafeStatesShowNoGuidance() throws {

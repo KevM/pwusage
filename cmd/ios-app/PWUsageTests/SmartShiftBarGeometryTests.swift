@@ -126,6 +126,25 @@ struct SmartShiftBarGeometryTests {
         }
     }
 
+    @Test func eachNameSitsDirectlyUnderItsOwnBar() {
+        let geometry = SmartShiftBarGeometry(bars: [nearZero, farOwed], slot: saving, plotHeight: 240)
+        let gap = SmartShiftBarGeometry.nameGap
+        #expect(geometry.nameTop(of: farOwed) == geometry.zeroY + gap)
+        #expect(geometry.nameTop(of: nearZero) == geometry.y(-11, on: nearZero) + gap)
+        #expect(geometry.nameTop(of: nearZero) + SmartShiftBarGeometry.nameRoom <= geometry.totalHeight)
+    }
+
+    @Test func aFarBanksNameSitsUnderItsLowestPoint() {
+        let banked = bar("banked", baseline: -300, now: 40, later: 10)
+        let geometry = SmartShiftBarGeometry(bars: [banked], slot: nil, plotHeight: 240)
+        #expect(geometry.nameTop(of: banked) == geometry.base(of: banked).upperBound + SmartShiftBarGeometry.nameGap)
+    }
+
+    @Test func theNetZeroLabelOnlyShowsBesideABarWhenItFits() {
+        #expect(SmartShiftBarGeometry.fitsNetZeroLabel(count: 2, width: 330))
+        #expect(!SmartShiftBarGeometry.fitsNetZeroLabel(count: 3, width: 330))
+    }
+
     @Test func totalsSitAboveTheSlotAndBanksAboveTheZeroLine() throws {
         let geometry = SmartShiftBarGeometry(bars: [nearZero, farOwed], slot: saving, plotHeight: 240)
         let slot = try #require(geometry.slot(on: farOwed))

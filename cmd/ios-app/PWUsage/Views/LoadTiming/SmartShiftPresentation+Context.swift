@@ -76,7 +76,7 @@ extension SmartShiftPresentation {
                 subtitle: subtitle,
                 choices: choices,
                 chartTitle: "Distance to net zero",
-                chartSubtitle: "kWh by \(shortDate(comparison.projectionEnd))",
+                chartSubtitle: "kWh owed or banked by \(shortDate(comparison.projectionEnd))",
                 rateBars: guidedBars,
                 slot: slot,
                 why: why,

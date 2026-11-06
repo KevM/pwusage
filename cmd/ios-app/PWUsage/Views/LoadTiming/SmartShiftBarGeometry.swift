@@ -19,6 +19,12 @@ struct SmartShiftBarGeometry {
     static let tornLift: CGFloat = 46
     /// Room above the tallest bar for a slot's minimum height and the total above it.
     static let headroom: CGFloat = minimumSlotHeight + totalLabelRoom
+    /// Space between a bar's lowest point and its name.
+    static let nameGap: CGFloat = 5
+    /// Room for a name, its rate and a badge label.
+    static let nameRoom: CGFloat = 58
+    /// The first bar must leave this much of the zero line clear to label it.
+    private static let netZeroLabelWidth: CGFloat = 46
     private static let totalLabelRoom: CGFloat = 20
     private static let bottomInset: CGFloat = 2
 
@@ -78,6 +84,9 @@ struct SmartShiftBarGeometry {
         return max(bar.now.runKwh, bar.recommended.runKwh, slotTop)
     }
 
+    /// The whole chart: the plot and the names under its bars.
+    var totalHeight: CGFloat { height + Self.nameGap + Self.nameRoom }
+
     func isTorn(_ bar: SmartShiftBar) -> Bool { tornKeys.contains(bar.periodKey) }
 
     func y(_ position: Double, on bar: SmartShiftBar) -> CGFloat {
@@ -126,6 +135,17 @@ struct SmartShiftBarGeometry {
     func totalLabelCenter(of bar: SmartShiftBar, for id: SmartShiftChoiceID, showsSlot: Bool) -> CGFloat {
         let slotTop = showsSlot ? slot(on: bar)?.lowerBound : nil
         return min(zeroY, block(of: bar, for: id).lowerBound, slotTop ?? .infinity) - Self.totalLabelRoom / 2
+    }
+
+    /// Under the bar's lowest point, which doesn't change with the selection, so names stay still.
+    func nameTop(of bar: SmartShiftBar) -> CGFloat {
+        max(zeroY, base(of: bar).upperBound, y(bar.baselinePosition, on: bar)) + Self.nameGap
+    }
+
+    static func fitsNetZeroLabel(count: Int, width: CGFloat) -> Bool {
+        guard count > 0 else { return false }
+        let column = width / CGFloat(count)
+        return (column - barWidth(count: count, in: width)) / 2 >= netZeroLabelWidth
     }
 
     static func barWidth(count: Int, in width: CGFloat) -> CGFloat {

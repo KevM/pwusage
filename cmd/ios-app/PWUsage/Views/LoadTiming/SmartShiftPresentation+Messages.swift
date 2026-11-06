@@ -51,6 +51,11 @@ extension SmartShiftPresentation {
                 timeZone: inputs.timeZone).costBreakdowns
     }
 
+    /// The selected time's arithmetic first, so the sheet opens on what the screen was showing.
+    static func breakdowns(_ breakdowns: [CostBreakdown], leading id: SmartShiftChoiceID) -> [CostBreakdown] {
+        id == .now && breakdowns.count > 1 ? breakdowns.reversed() : breakdowns
+    }
+
     /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
     /// safety rule turned down a cheaper start; otherwise `nil`.
     static func ruledOutNote(

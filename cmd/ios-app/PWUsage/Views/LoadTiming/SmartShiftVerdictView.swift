@@ -5,18 +5,22 @@ struct SmartShiftVerdictView: View {
     let verdict: SmartShiftVerdict
     let timeZone: String
     var isSelected = true
+    var onOpenDetails: (SmartShiftChoiceID) -> Void = { _ in }
     var onOpenSolarSettings: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: SmartShiftSelection
     @State private var landingCount = 0
     @State private var isPopping = false
+    @State private var tappedBarKey: String?
 
     init(verdict: SmartShiftVerdict, timeZone: String, isSelected: Bool = true,
+         onOpenDetails: @escaping (SmartShiftChoiceID) -> Void = { _ in },
          onOpenSolarSettings: @escaping () -> Void = {}) {
         self.verdict = verdict
         self.timeZone = timeZone
         self.isSelected = isSelected
+        self.onOpenDetails = onOpenDetails
         self.onOpenSolarSettings = onOpenSolarSettings
         _selection = State(initialValue: SmartShiftSelection(choices: verdict.choices))
     }
@@ -27,15 +31,26 @@ struct SmartShiftVerdictView: View {
             Text(verdict.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.emphasis)
             choiceTiles
             VStack(alignment: .leading, spacing: 2) {
-                Text(verdict.chartTitle).font(.headline)
+                HStack(spacing: 6) {
+                    Text(verdict.chartTitle).font(.headline)
+                    Button { onOpenDetails(selection.selected) } label: {
+                        Image(systemName: "info.circle").foregroundStyle(Color.emphasis)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(SmartShiftPresentation.detailsTitle)
+                }
                 Text(verdict.chartSubtitle).font(.caption).foregroundStyle(.secondary)
             }
             bankChart
+            barPanel
             ForEach(Array(verdict.notes.enumerated()), id: \.offset) { _, note in noteView(note) }
         }
         .onChange(of: verdict) { _, updated in selection.reconcile(with: updated.choices) }
         .onChange(of: isSelected) { _, active in
-            if active { selection = SmartShiftSelection(choices: verdict.choices) }
+            if active {
+                selection = SmartShiftSelection(choices: verdict.choices)
+                tappedBarKey = nil
+            }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: landingCount)
     }
@@ -62,7 +77,34 @@ struct SmartShiftVerdictView: View {
     private var chart: some View {
         SmartShiftBankChart(bars: verdict.rateBars, slot: verdict.slot, selection: selection.selected,
                             marks: selection.marks, isSlotHeld: selection.isReturning, isPopping: isPopping,
-                            onTapSlot: returnToSuggested)
+                            onTapSlot: returnToSuggested, tappedBarKey: tappedBarKey, onTapBar: tapBar)
+    }
+
+    /// What a tapped bar means for the selected time, above the way into the full arithmetic.
+    private var barPanel: some View {
+        let tapped = verdict.rateBars.first { $0.periodKey == tappedBarKey }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(tapped?.state(for: selection.selected).explanation ?? SmartShiftPresentation.barHint)
+                .font(.footnote)
+                .foregroundStyle(tapped == nil ? .secondary : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { onOpenDetails(selection.selected) } label: {
+                HStack(spacing: 4) {
+                    Text(SmartShiftPresentation.detailsTitle)
+                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.emphasis)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func tapBar(_ key: String) {
+        withAnimation(reduceMotion ? nil : .snappy) { tappedBarKey = tappedBarKey == key ? nil : key }
     }
 
     private func select(_ id: SmartShiftChoiceID) {

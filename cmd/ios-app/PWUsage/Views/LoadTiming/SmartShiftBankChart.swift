@@ -8,37 +8,42 @@ struct SmartShiftBankChart: View {
     let isSlotHeld: Bool
     var isPopping = false
     let onTapSlot: () -> Void
+    var tappedBarKey: String?
+    var onTapBar: (String) -> Void = { _ in }
 
     private let plotHeight: CGFloat = 240
     private var showsSlot: Bool { selection == .now || isSlotHeld }
 
     var body: some View {
         let geometry = SmartShiftBarGeometry(bars: bars, slot: slot, plotHeight: plotHeight)
-        VStack(spacing: 6) {
-            ZStack(alignment: .top) {
-                Rectangle().fill(.primary).frame(height: 1.5).offset(y: geometry.zeroY - 0.75)
-                    .accessibilityHidden(true)
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(bars, id: \.periodKey) { bar in
-                        column(bar, geometry: geometry)
-                    }
-                }
-            }
-            .frame(height: geometry.height)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(bars.map { "\($0.name), \($0.state(for: marks).total)" }.joined(separator: ". "))
+        ZStack(alignment: .top) {
+            Rectangle().fill(.primary).frame(height: 1.5).offset(y: geometry.zeroY - 0.75)
+                .accessibilityHidden(true)
+            netZeroLabel(geometry)
             HStack(alignment: .top, spacing: 0) {
                 ForEach(bars, id: \.periodKey) { bar in
-                    nameLabel(bar)
+                    column(bar, geometry: geometry)
                 }
             }
         }
+        .frame(height: geometry.totalHeight)
+        .accessibilityElement(children: .contain)
         .frame(maxWidth: 500)
+    }
+
+    private func netZeroLabel(_ geometry: SmartShiftBarGeometry) -> some View {
+        GeometryReader { proxy in
+            if SmartShiftBarGeometry.fitsNetZeroLabel(count: bars.count, width: proxy.size.width) {
+                Text("Net zero").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    .offset(y: geometry.zeroY - 16)
+            }
+        }
     }
 
     private func nameLabel(_ bar: SmartShiftBar) -> some View {
         VStack(spacing: 2) {
             Text(bar.name).font(.caption.weight(.semibold))
+                .foregroundStyle(bar.periodKey == tappedBarKey ? Color.emphasis : Color.primary)
             Text(bar.rate).font(.caption2).foregroundStyle(.secondary)
             let state = bar.state(for: marks)
             if let label = state.badgeLabel, let badge = state.badge {
@@ -48,7 +53,11 @@ struct SmartShiftBankChart: View {
                     .background(Self.color(for: badge), in: Capsule())
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 56, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(bar.state(for: selection).explanation)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onTapBar(bar.periodKey) }
     }
 
     private func column(_ bar: SmartShiftBar, geometry: SmartShiftBarGeometry) -> some View {
@@ -62,7 +71,11 @@ struct SmartShiftBankChart: View {
                     .position(x: center, y: geometry.totalLabelCenter(of: bar, for: selection, showsSlot: showsSlot))
                 badge(bar, geometry: geometry, width: width, center: center)
                 saving(bar, geometry: geometry, width: width, center: center)
+                nameLabel(bar).offset(y: geometry.nameTop(of: bar))
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture { onTapBar(bar.periodKey) }
         }
     }
 
@@ -86,11 +99,14 @@ struct SmartShiftBankChart: View {
                      width: CGFloat, center: CGFloat) -> some View {
         let block = geometry.block(of: bar, for: selection)
         let middle = (block.lowerBound + block.upperBound) / 2
+        // The badge straddles the block's right edge, so the label keeps clear of it.
+        let badgeRoom: CGFloat = bar.state(for: marks).badge == nil ? 0 : 10
         RoundedRectangle(cornerRadius: 4).fill(Color.emphasis).placedOnBar(block, width: width, center: center)
         if let label = bar.state(for: selection).runLabel {
             if geometry.labelFitsInside(bar, for: selection) {
-                Text(label).font(.caption.weight(.bold)).foregroundStyle(Color.onEmphasis)
-                    .position(x: center, y: middle)
+                Text("\(label) kWh").font(.caption.weight(.bold)).foregroundStyle(Color.onEmphasis)
+                    .lineLimit(1).minimumScaleFactor(0.8).frame(width: width - 8 - badgeRoom)
+                    .position(x: center - badgeRoom / 2, y: middle)
             } else {
                 Text(label).font(.caption.weight(.bold)).foregroundStyle(Color.emphasis).fixedSize()
                     .position(x: center - width / 2 - 16, y: middle)

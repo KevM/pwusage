@@ -29,6 +29,8 @@ struct SmartShiftBarState: Equatable {
     let total: String
     var badge: SmartShiftBadge?
     var badgeLabel: String?
+    /// What tapping this bar says for this time.
+    var explanation = ""
 }
 
 struct SmartShiftBar: Equatable {

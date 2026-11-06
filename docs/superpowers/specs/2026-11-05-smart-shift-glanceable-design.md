@@ -52,7 +52,11 @@ Nothing starts.
 Section title `Distance to net zero`, with `kWh by Nov 15` beneath it. The date follows the existing projection end
 rule: bill date, or the rate-change date when the projection stops there (see `projectionEndPhrase`).
 
-- One vertical bar per rate period, **highest buy rate first**, left to right. Under each bar: period name and buy rate.
+- One vertical bar per rate period, **highest buy rate first**, left to right. Directly under each bar's lowest point: period name and buy rate.
+  A bar's lowest point doesn't change with the selection, so names stay still.
+- Tapping a bar says what it means for the selected time, in a panel under the chart that also holds
+  `How this is worked out`. An info button beside the chart title opens the same sheet, which leads with the selected
+  time's arithmetic.
 - A zero line. Owed rises above it and banked falls below it, matching the Bill tab, where up means more cost.
 - Each bar has two parts:
   - **Gray:** the bank without this run. It doesn't change with the selection.

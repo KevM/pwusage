@@ -25,6 +25,27 @@ extension SmartShiftPresentation.Context {
         let rounded = SmartShiftPresentation.roundedKwh(energy)
         return SmartShiftBarState(runKwh: energy, totalPosition: EnergyBalanceAxis.position(forBank: end),
                                   runLabel: rounded > 0 ? "+\(rounded)" : nil,
-                                  total: SmartShiftPresentation.endLabel(end))
+                                  total: SmartShiftPresentation.endLabel(end),
+                                  explanation: explanation(lane, for: id, energy: rounded,
+                                                           total: SmartShiftPresentation.endLabel(end)))
+    }
+
+    private func explanation(_ lane: LoadTimingForecastEstimator.BalanceLane, for id: SmartShiftChoiceID,
+                             energy: Int, total: String) -> String {
+        let period = name(lane.periodKey)
+        guard energy > 0 else { return "\(period): \(total). This job adds nothing here." }
+        let without = SmartShiftPresentation.endLabel(lane.projectedKwh)
+        let opening = "\(period): \(without) without this job, \(total) with it."
+        let draws = id == .now ? nowDraws : laterDraws
+        guard let draw = draws.first(where: { $0.key == lane.periodKey }) else { return opening }
+        return "\(opening) \(reason(draw))"
+    }
+
+    private func reason(_ draw: SmartShiftPresentation.Draw) -> String {
+        let usesBank = draw.fromBank >= 0.05
+        let buys = draw.kwh - draw.fromBank >= 0.05
+        if usesBank, buys { return "It uses the bank, then buys the rest at \(rate(draw.key, sell: false))." }
+        if usesBank { return "It uses the bank, which costs only the \(rate(draw.key, sell: true)) credit." }
+        return "It's bought at \(rate(draw.key, sell: false))."
     }
 }
