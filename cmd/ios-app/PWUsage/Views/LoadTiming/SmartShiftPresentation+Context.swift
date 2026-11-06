@@ -102,6 +102,11 @@ extension SmartShiftPresentation {
                            isRecommended: true), nowBar]
             let lanes = comparison.lanes.map(lane)
             return SmartShiftVerdict(
+                title: title,
+                subtitle: subtitle,
+                choices: choices,
+                chartTitle: "Distance to net zero",
+                chartSubtitle: "kWh by \(shortDate(comparison.projectionEnd))",
                 headline: headline,
                 barsCaption: claimsSaving ? "Added to your bill (shorter is better)" : "Added to your bill",
                 bars: bars,

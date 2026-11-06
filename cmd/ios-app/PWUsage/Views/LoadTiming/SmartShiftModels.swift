@@ -42,6 +42,15 @@ struct LaneDisplay: Equatable {
     let switches: [SwitchMarker]
 }
 
+enum SmartShiftChoiceID: Equatable, Hashable { case recommended, now }
+
+struct SmartShiftChoice: Equatable {
+    let id: SmartShiftChoiceID
+    let label: String
+    let price: String
+    let caption: String
+}
+
 struct SmartShiftVerdict: Equatable {
     enum Note: Equatable {
         /// `usesHistory`: banks followed the site's last four weeks rather than holding still.
@@ -51,6 +60,11 @@ struct SmartShiftVerdict: Equatable {
         case unobservedBalance
     }
 
+    let title: String
+    let subtitle: String
+    let choices: [SmartShiftChoice]
+    let chartTitle: String
+    let chartSubtitle: String
     let headline: String
     let barsCaption: String
     /// Recommended first; a single bar when the recommended start is now.
