@@ -1,130 +1,157 @@
 {
-  "fill": {
-    "solid": "srgb:1.00000,0.96471,0.90588,1.00000"
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:1.00000,0.96471,0.90588,1.00000",
+      "display-p3:0.94908,0.89726,0.77287,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 1
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0
+      }
+    }
   },
-  "groups": [
+  "groups" : [
     {
-      "name": "Powerwall",
-      "layers": [
+      "blur-material" : null,
+      "layers" : [
         {
-          "image-name": "07-powerwall-bezel.svg",
-          "name": "Powerwall bezel",
-          "glass": true,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:0.90000,1.00000"
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.90000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "07-powerwall-bezel.svg",
+          "name" : "Powerwall bezel"
         },
         {
-          "image-name": "06-bolt.svg",
-          "name": "Bolt",
-          "glass": true,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:1.00000,1.00000"
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:1.00000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : true,
+          "image-name" : "06-bolt.svg",
+          "name" : "Bolt"
         },
         {
-          "image-name": "05-powerwall-body.svg",
-          "name": "Powerwall body",
-          "glass": true,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:0.10000,1.00000"
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.69047,1.00000,0.99797,0.90000",
+                  "extended-srgb:0.00000,0.53333,1.00000,0.90000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.10000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : true,
+          "image-name" : "05-powerwall-body.svg",
+          "name" : "Powerwall body"
         }
       ],
-      "specular": true,
-      "shadow": {
-        "kind": "layer-color",
-        "opacity": 0.5
+      "name" : "Powerwall",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
       },
-      "blur-material": null,
-      "translucency": {
-        "enabled": false,
-        "value": 0.0
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
       }
     },
     {
-      "name": "Sun",
-      "layers": [
+      "blur-material" : null,
+      "layers" : [
         {
-          "image-name": "04-sun-core.svg",
-          "name": "Sun core",
-          "glass": false,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:0.50000,1.00000"
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.50000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : false,
+          "image-name" : "04-sun-core.svg",
+          "name" : "Sun core"
         },
         {
-          "image-name": "03-sun-rays-short.svg",
-          "name": "Sun rays short",
-          "glass": false,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:0.56000,1.00000"
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.56000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : false,
+          "image-name" : "03-sun-rays-short.svg",
+          "name" : "Sun rays short"
         },
         {
-          "image-name": "02-sun-rays-long.svg",
-          "name": "Sun rays long",
-          "glass": false,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:0.64000,1.00000"
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.64000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : false,
+          "image-name" : "02-sun-rays-long.svg",
+          "name" : "Sun rays long"
         },
         {
-          "image-name": "01-sun-body.svg",
-          "name": "Sun body",
-          "glass": false,
-          "fill-specializations": [
+          "fill-specializations" : [
             {
-              "appearance": "tinted",
-              "value": {
-                "solid": "extended-gray:0.32000,1.00000"
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "extended-gray:0.32000,1.00000"
               }
             }
-          ]
+          ],
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "01-sun-body.svg",
+          "name" : "Sun body"
         }
       ],
-      "specular": false,
-      "shadow": {
-        "kind": "none",
-        "opacity": 0.0
+      "name" : "Sun",
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0
       },
-      "blur-material": null
+      "specular" : false,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
     }
   ],
-  "supported-platforms": {
-    "squares": "shared",
-    "circles": [
+  "supported-platforms" : {
+    "circles" : [
       "watchOS"
-    ]
+    ],
+    "squares" : "shared"
   }
 }
