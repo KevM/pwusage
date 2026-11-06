@@ -13,11 +13,19 @@ extension SmartShiftPresentation.Context {
     var checkKey: String? {
         let draws = isNow ? nowDraws : laterDraws
         guard showsGuidance, let largest = draws.max(by: { $0.kwh < $1.kwh }),
-              draws.filter({ abs(costPerKwh($0) - costPerKwh(largest)) < 0.000_001 }).count == 1,
-              draws.allSatisfy({ costPerKwh(largest) <= costPerKwh($0) }),
+              Self.isUniquelyLowest(largest, among: draws, by: costPerKwh)
+              || Self.isUniquelyLowest(largest, among: draws, by: { rateValue($0.key, sell: false) ?? 0 }),
               timing.pricingPeriods.contains(where: { $0.buyRate > (rateValue(largest.key, sell: false) ?? 0) })
         else { return nil }
         return largest.key
+    }
+
+    /// Banked energy can undercut the lowest buy rate, so the bar a run mostly buys from earns its check on
+    /// either measure: it's where the run costs least per kWh, or the lowest rate period it touches.
+    private static func isUniquelyLowest(_ draw: SmartShiftPresentation.Draw,
+                                         among draws: [SmartShiftPresentation.Draw],
+                                         by value: (SmartShiftPresentation.Draw) -> Double) -> Bool {
+        draws.allSatisfy { $0.key == draw.key || value($0) > value(draw) + 0.000_001 }
     }
 
     var warningKey: String? {

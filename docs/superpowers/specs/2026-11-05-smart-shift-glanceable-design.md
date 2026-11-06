@@ -59,9 +59,15 @@ rule: bill date, or the rate-change date when the projection stops there (see `p
   - **Emphasis color:** this run, labelled `+24`. A run always moves a bar upward, toward owed. The block spans from the
     gray's end to the total, drawn over the gray. So a run that uses part of a bank sits inside the gray, and one that
     uses all of it crosses the zero line (bank 10, run 24: the block spans 10 below zero to 14 above it).
-- Above an owed bar, or below a banked one, is its total: `86 owed` or `12 banked`. The total's sign decides the side.
+- Above each bar is its total: `86 owed`. A banked total, `12 banked`, sits just above the zero line, so it can't run
+  into the names under the plot.
   The badge stays centered on the block's end of the bar.
 - The scale stays fixed across both selections, so only the run moves.
+- The scale fits the job, not the largest bank, so a bar close to zero stays readable beside one hundreds of kWh away.
+  Every bar shares it, so runs compare across bars, and it's capped at 8 pt per kWh so a small job isn't blown up.
+- A bar more than 1.5 jobs from zero is **torn**: a short stump stays on the zero line, a zigzag gap follows, and the
+  part around the run keeps the shared scale. Its printed total carries the true distance. A far bank tears the same
+  way below zero and never appears to reach zero after the run.
 - There is no time axis, rate strip, switch line, legend or second series.
 
 ### Badges, labels and the slot
@@ -180,6 +186,9 @@ My calls that the prototype does not show:
   - Middle-priced periods get no badge. Without a clear winner, show no badge.
 - **Where a label could mislead.** Energy from a bank can be cheaper than the lowest buy rate, so a check could land on
   a bar showing a higher buy rate. In that case, show the check without `Least expensive`.
+- **When a little banked energy undercuts the main run.** A run mostly bought Off-Peak with a little from an On-Peak bank
+  keeps its check and `Least expensive`, because Off-Peak is the lowest rate period it touches. The largest draw earns
+  the check by being the cheapest per kWh or by having the lowest buy rate.
 - The rate under each bar is the buy rate, even for a banked bar. Equal buy rates keep the existing tariff order.
 - "Net zero" is a new on-screen Smart Shift term, so add it to `docs/voice-and-terms.md`.
 

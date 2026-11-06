@@ -84,6 +84,19 @@ extension SmartShiftPresentationTests {
         #expect(slot.extraKwh == 14)
         #expect(slot.label == "Save \(Self.money(1.89))")
     }
+    @Test func cheaperBankedEnergyDoesNotCostTheLowestRateItsCheck() throws {
+        let lanes = [Self.lane("Peak", start: 4, later: 1, startNow: -10),
+                     Self.lane("Off-Peak", start: -371, later: -382, startNow: -371)]
+        let verdict = try Self.verdict(Self.make(profile: Self.pump,
+                                                 result: .init(comparison: Self.comparison(lanes: lanes),
+                                                               unavailableReason: nil)))
+        let offPeak = try #require(verdict.rateBars.first { $0.name == "Off-Peak" })
+        let peak = try #require(verdict.rateBars.first { $0.name == "Peak" })
+        #expect(offPeak.recommended.badge == .cheapest)
+        #expect(offPeak.recommended.badgeLabel == "Least expensive")
+        #expect(peak.recommended.badge == nil)
+    }
+
     @Test func unsafeStatesShowNoGuidance() throws {
         let (unsafe, now) = Self.unsafeNow()
         let (risky, otherNow) = Self.morningDip(safety: .noSafeStart(periodKey: "ON_PEAK"))
