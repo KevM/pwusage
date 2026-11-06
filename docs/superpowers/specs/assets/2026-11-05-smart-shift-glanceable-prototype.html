@@ -1,0 +1,198 @@
+<style>
+  .wrap { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+  .phone { --d: .6s; --e: cubic-bezier(.3,.9,.3,1); width: 340px; box-sizing: border-box; background: #E4EAF2; border-radius: 26px; padding: 12px; color: #111; font: 14px -apple-system, system-ui, sans-serif; flex: 0 0 340px; }
+  .phone.nudging { --d: 1.15s; --e: cubic-bezier(.6,.02,.8,.25); pointer-events: none; }
+  .pcard { background: #fff; border-radius: 18px; padding: 15px; }
+  .hl { font-size: 21px; font-weight: 700; line-height: 1.16; letter-spacing: -.2px; }
+  .sv { font-size: 15px; font-weight: 600; color: #0077B6; margin-top: 3px; }
+  .tiles { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; }
+  .tiles.one { grid-template-columns: 1fr; }
+  .tile { all: unset; box-sizing: border-box; display: block; cursor: pointer; border-radius: 12px; background: #F2F2F5; padding: 10px 11px; color: #111; font: 14px -apple-system, system-ui, sans-serif; transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+  .tiles.one .tile { cursor: default; }
+  .tile .w { font-size: 12px; color: #666; font-weight: 500; transition: color .2s; }
+  .tile.on .w, .tile.on .m { color: #0077B6; font-weight: 600; }
+  .tile .m { font-size: 27px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; transition: color .2s; }
+  .tile .r { font-size: 12px; color: #666; }
+  .tile.pop { transform: scale(1.05); }
+  .sel { position: absolute; top: 0; bottom: 0; left: 0; width: calc(50% - 4px); border-radius: 12px; background: #0077B615; box-shadow: inset 0 0 0 1.5px #0077B6; pointer-events: none; transition: left var(--d) var(--e); }
+  .tiles.now .sel { left: calc(50% + 4px); }
+  .tiles.one .sel { width: 100%; left: 0; }
+  .sec { margin-top: 18px; font-size: 15px; font-weight: 600; }
+  .note { font-size: 12.5px; color: #666; margin-top: 1px; }
+  .plot { position: relative; height: 316px; margin-top: 2px; }
+  .bar { position: absolute; top: 0; bottom: 0; width: 92px; }
+  .seg { position: absolute; left: 0; right: 0; border-radius: 3px; transition: top var(--d) var(--e), height var(--d) var(--e); }
+  .base { background: #C9CDD4; }
+  .job { background: #0077B6; color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .out { position: absolute; left: -26px; width: 22px; text-align: right; color: #0077B6; font-size: 11.5px; font-weight: 700; line-height: 14px; transition: top var(--d) var(--e); }
+  .val { position: absolute; left: -10px; right: -10px; text-align: center; font-size: 19px; font-weight: 700; line-height: 22px; font-variant-numeric: tabular-nums; transition: top var(--d) var(--e); }
+  .val small { font-size: 11px; font-weight: 500; color: #666; margin-left: 2px; }
+  .zero { position: absolute; left: 0; right: 0; height: 1.6px; background: #111; }
+  .nm { position: absolute; left: -14px; right: -14px; bottom: 0; text-align: center; font-weight: 600; font-size: 14px; line-height: 17px; height: 56px; }
+  .nm .rate { display: block; font-weight: 400; font-size: 12px; color: #666; }
+  .tag { display: inline-block; border-radius: 9px; font-size: 10.5px; font-weight: 600; padding: 1px 7px; margin-top: 2px; color: #fff; }
+  .badge { position: absolute; width: 20px; height: 20px; border-radius: 50%; color: #fff; font-size: 13px; font-weight: 800; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px #fff; right: -8px; transition: top var(--d) var(--e), opacity .25s, transform .28s cubic-bezier(.3,1.8,.5,1); }
+  .badge.pop { transform: scale(1.5); }
+  .slot { all: unset; box-sizing: border-box; position: absolute; left: 0; right: 0; cursor: pointer; border: 1.6px dashed #2E9E5B; border-radius: 4px; background: #2E9E5B22; color: #1F7A45; font: 700 11px -apple-system, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; white-space: nowrap; transition: opacity .3s, top .6s cubic-bezier(.3,.9,.3,1), height .6s cubic-bezier(.3,.9,.3,1), transform .12s; }
+  .slot:active { transform: scale(.95); }
+  .nudging .slot { transition: opacity .25s; }
+  .more { color: #0077B6; border-top: 1px solid #0001; margin-top: 12px; padding-top: 10px; font-size: 14px; display: flex; justify-content: space-between; }
+  .side { flex: 1 1 280px; min-width: 260px; }
+  .side h3 { margin: 0 0 6px; font-size: 15px; }
+  .side li { font-size: 14px; margin-bottom: 4px; }
+  .scen { display: flex; gap: 8px; margin: 6px 0 16px; flex-wrap: wrap; }
+  .scen button { cursor: pointer; border: 1px solid #0003; background: transparent; color: inherit; border-radius: 16px; padding: 6px 12px; font: 13px -apple-system, system-ui, sans-serif; }
+  .scen button.on { background: #0077B6; border-color: #0077B6; color: #fff; }
+</style>
+
+<h2>Tap the green slot and watch the selection come back</h2>
+<p class="subtitle">Tap Now, then tap "Save $5.04". Tapping a tile directly stays quick, so you can feel the difference.</p>
+
+<div class="wrap">
+  <div class="phone" id="phone"><div class="pcard">
+    <div class="hl" id="hl"></div><div class="sv" id="sv"></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="sec">Distance to net zero</div>
+    <div class="note">kWh by Nov 15</div>
+    <div class="plot" id="plot"></div>
+    <div class="more"><span>How this is worked out</span><span>›</span></div>
+  </div></div>
+  <div class="side">
+    <h3>Try other cases</h3>
+    <div class="scen">
+      <button data-s="car" onclick="scene('car')">Car</button>
+      <button data-s="dish" onclick="scene('dish')">Dishwasher: small job</button>
+      <button data-s="best" onclick="scene('best')">Now is best</button>
+    </div>
+    <h3>What happens on the slot tap</h3>
+    <ul>
+      <li>The tile outline starts to slide back, slowly at first.</li>
+      <li>The charge moves at the same pace, and the Off-peak block fills the green slot.</li>
+      <li>Everything lands together, then the suggested tile and the check pop.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function () {
+  var S = {
+    car: { hl: 'Charge the car at 7:33 PM', sv: 'About $5.04 cheaper than now', lm: '$4.00', lr: 'All Off-peak', nm: '$9.04', nr: 'Mostly On-peak', save: 'Save $5.04',
+      banks: [{ n: 'On-peak', r: '31¢/kWh', base: 62, later: 0, now: 24 }, { n: 'Off-peak', r: '10¢/kWh', base: 198, later: 40, now: 16 }] },
+    dish: { hl: 'Dishwasher at 7:33 PM', sv: 'About $0.63 cheaper than now', lm: '$0.30', lr: 'All Off-peak', nm: '$0.93', nr: 'All On-peak', save: 'Save $0.63',
+      banks: [{ n: 'On-peak', r: '31¢/kWh', base: 62, later: 0, now: 3 }, { n: 'Off-peak', r: '10¢/kWh', base: 198, later: 3, now: 0 }] },
+    best: { hl: 'Charge the car now', sv: 'No cheaper time today', only: true, nm: '$4.00', nr: 'All Off-peak',
+      banks: [{ n: 'On-peak', r: '31¢/kWh', base: 62, now: 0 }, { n: 'Off-peak', r: '10¢/kWh', base: 198, now: 40 }] }
+  };
+  var NUDGE_MS = 1150, X = [28, 166], GREEN = '#2E9E5B', RED = '#D92D20', SLOT_MIN = 22, cur = 'car', mode = 'later', nudging = false, raf = null;
+  var phone = document.getElementById('phone');
+  var y = function (v) { return 52 + (238 - v) / 238 * 202; };
+  function q(a, i) { return document.querySelector('[' + a + '="' + i + '"]'); }
+
+  function buildBars() {
+    var h = '';
+    S[cur].banks.forEach(function (b, i) {
+      h += '<div class="bar" style="left:' + X[i] + 'px"><div class="seg base" data-b="' + i + '"></div>'
+        + '<button class="slot" data-g="' + i + '" style="opacity:0;pointer-events:none" onclick="nudge()"></button>'
+        + '<div class="seg job" data-j="' + i + '"></div><div class="out" data-o="' + i + '"></div><div class="val" data-v="' + i + '"></div>'
+        + '<div class="badge" data-d="' + i + '" style="opacity:0"></div><div class="nm" data-n="' + i + '"></div></div>';
+    });
+    h += '<div class="zero" style="top:' + y(0) + 'px"></div>';
+    document.getElementById('plot').innerHTML = h;
+  }
+  function buildTiles() {
+    var sc = S[cur], t = document.getElementById('tiles');
+    t.className = 'tiles' + (sc.only ? ' one' : '');
+    t.innerHTML = (sc.only ? '' : '<button class="tile" id="t-later" onclick="pick(\'later\')"><div class="w">At 7:33 PM</div><div class="m">' + sc.lm + '</div><div class="r">' + sc.lr + '</div></button>')
+      + '<button class="tile" id="t-now" onclick="pick(\'now\')"><div class="w">Now</div><div class="m">' + sc.nm + '</div><div class="r">' + sc.nr + '</div></button><div class="sel"></div>';
+    document.getElementById('hl').textContent = sc.hl;
+    document.getElementById('sv').textContent = sc.sv;
+  }
+  function tileText() {
+    var l = document.getElementById('t-later'), n = document.getElementById('t-now');
+    if (l) l.classList.toggle('on', mode === 'later');
+    n.classList.toggle('on', mode === 'now');
+  }
+  function moved() { return S[cur].banks[0].now; }
+  function blockH(job, b) { var h = y(b.base) - y(b.base + job); return Math.max(h, job ? 3 : 0); }
+
+  function bars(keepSlot) {
+    var sc = S[cur];
+    sc.banks.forEach(function (b, i) {
+      var job = b[mode] || 0, total = b.base + job, baseY = y(b.base), h = blockH(job, b), blockTop = baseY - h;
+      var be = q('data-b', i); be.style.top = baseY + 'px'; be.style.height = (y(0) - baseY) + 'px';
+      var j = q('data-j', i); j.style.top = blockTop + 'px'; j.style.height = h + 'px';
+      var fits = h >= 12; j.textContent = job && fits ? '+' + job : '';
+      var o = q('data-o', i); o.textContent = job && !fits ? '+' + job : ''; o.style.top = (baseY - h / 2 - 7) + 'px';
+      var d = q('data-d', i); d.style.top = (blockTop + h / 2 - 10) + 'px';
+      var labelTop = blockTop;
+      if (i === 1) {
+        var g = q('data-g', i), shown = !sc.only && mode === 'now';
+        if (!keepSlot) {
+          var sh = Math.max(y(0) - y(moved()), SLOT_MIN);
+          g.style.top = (blockTop - sh) + 'px'; g.style.height = sh + 'px';
+          g.style.opacity = shown ? 1 : 0; g.style.pointerEvents = shown ? 'auto' : 'none';
+          g.textContent = sc.save || '';
+          if (shown) labelTop = blockTop - sh;
+        } else { labelTop = parseFloat(g.style.top); }
+      }
+      q('data-v', i).style.top = (labelTop - 25) + 'px';
+    });
+  }
+  function marks() {
+    var sc = S[cur], isNow = mode === 'now';
+    sc.banks.forEach(function (b, i) {
+      var job = b[mode] || 0, good = job > 0 && i !== 0 && (sc.only || !isNow), bad = job > 0 && i === 0 && isNow;
+      var d = q('data-d', i); d.style.opacity = good || bad ? 1 : 0;
+      if (good || bad) { d.style.background = good ? GREEN : RED; d.textContent = good ? '✓' : '!'; }
+      var name = b.n + '<span class="rate">' + b.r + '</span>';
+      if (bad) name += '<span class="tag" style="background:' + RED + '">Most expensive</span>';
+      if (good) name += '<span class="tag" style="background:' + GREEN + '">Least expensive</span>';
+      q('data-n', i).innerHTML = name;
+    });
+  }
+  function numbers(from, to, ms, ease) {
+    if (raf) cancelAnimationFrame(raf);
+    var start = performance.now();
+    (function step(now) {
+      var p = ms ? Math.min((now - start) / ms, 1) : 1, e = ease(p);
+      to.forEach(function (t, i) { q('data-v', i).innerHTML = Math.round(from[i] + (t - from[i]) * e) + '<small>owed</small>'; });
+      if (p < 1) raf = requestAnimationFrame(step);
+    })(start);
+  }
+  function totals() { return S[cur].banks.map(function (b) { return b.base + (b[mode] || 0); }); }
+  function selection() { document.getElementById('tiles').classList.toggle('now', mode === 'now' && !S[cur].only); }
+
+  window.pick = function (m) {
+    if (S[cur].only || nudging) return;
+    var from = totals(); mode = m; selection(); tileText(); bars(false); marks();
+    numbers(from, totals(), 600, function (p) { return 1 - Math.pow(1 - p, 3); });
+  };
+  // The slot's tap: slow then fast, tile outline and bars together, and only then the pop.
+  window.nudge = function () {
+    if (nudging || mode !== 'now') return;
+    nudging = true; phone.classList.add('nudging');
+    var from = totals(); mode = 'later';
+    q('data-g', 1).style.pointerEvents = 'none';
+    q('data-d', 0).style.opacity = 0;
+    selection(); bars(true);
+    numbers(from, totals(), NUDGE_MS, function (p) { return p * p * p; });
+    setTimeout(tileText, NUDGE_MS * .78);
+    setTimeout(function () {
+      phone.classList.remove('nudging'); nudging = false;
+      q('data-g', 1).style.opacity = 0;
+      marks();
+      var t = document.getElementById('t-later'), c = q('data-d', 1);
+      t.classList.add('pop'); c.classList.add('pop');
+      setTimeout(function () { t.classList.remove('pop'); c.classList.remove('pop'); bars(false); }, 260);
+    }, NUDGE_MS);
+  };
+  window.scene = function (s) {
+    if (nudging) return;
+    cur = s; mode = S[s].only ? 'now' : 'later';
+    buildTiles(); buildBars(); selection(); tileText(); bars(false); marks();
+    numbers(totals(), totals(), 0, function (p) { return p; });
+    document.querySelectorAll('.scen button').forEach(function (e) { e.classList.toggle('on', e.dataset.s === cur); });
+  };
+  scene('car');
+})();
+</script>
