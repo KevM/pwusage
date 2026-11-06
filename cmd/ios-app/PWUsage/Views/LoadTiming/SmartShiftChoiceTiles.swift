@@ -3,6 +3,7 @@ import SwiftUI
 struct SmartShiftChoiceTiles: View {
     let choices: [SmartShiftChoice]
     let selected: SmartShiftChoiceID
+    var isPopping = false
     let onSelect: (SmartShiftChoiceID) -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -45,6 +46,7 @@ struct SmartShiftChoiceTiles: View {
                     .matchedGeometryEffect(id: "selection", in: selectionShape)
             }
         }
+        .scaleEffect(choice.id == selected && isPopping ? 1.05 : 1)
         .accessibilityElement(children: .combine)
     }
 }

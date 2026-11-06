@@ -10,6 +10,7 @@ struct SmartShiftVerdictView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: SmartShiftSelection
     @State private var landingCount = 0
+    @State private var isPopping = false
 
     init(verdict: SmartShiftVerdict, timeZone: String, isSelected: Bool = true,
          onOpenSolarSettings: @escaping () -> Void = {}) {
@@ -41,10 +42,12 @@ struct SmartShiftVerdictView: View {
 
     @ViewBuilder private var choiceTiles: some View {
         if reduceMotion {
-            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected, onSelect: select)
+            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected,
+                                  isPopping: isPopping, onSelect: select)
                 .id(selection.selected).transition(.opacity)
         } else {
-            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected, onSelect: select)
+            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected,
+                                  isPopping: isPopping, onSelect: select)
         }
     }
 
@@ -58,7 +61,8 @@ struct SmartShiftVerdictView: View {
 
     private var chart: some View {
         SmartShiftBankChart(bars: verdict.rateBars, slot: verdict.slot, selection: selection.selected,
-                            marks: selection.marks, isSlotHeld: selection.isReturning, onTapSlot: returnToSuggested)
+                            marks: selection.marks, isSlotHeld: selection.isReturning, isPopping: isPopping,
+                            onTapSlot: returnToSuggested)
     }
 
     private func select(_ id: SmartShiftChoiceID) {
@@ -79,7 +83,14 @@ struct SmartShiftVerdictView: View {
         } completion: {
             guard selection.isReturning else { return }
             withAnimation(.spring) { selection.landReturn(); landingCount += 1 }
+            pop()
             announceLanding()
+        }
+    }
+
+    private func pop() {
+        withAnimation(.spring(duration: 0.18)) { isPopping = true } completion: {
+            withAnimation(.spring(duration: 0.25)) { isPopping = false }
         }
     }
 

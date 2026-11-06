@@ -6,6 +6,7 @@ struct SmartShiftBankChart: View {
     let selection: SmartShiftChoiceID
     let marks: SmartShiftChoiceID
     let isSlotHeld: Bool
+    var isPopping = false
     let onTapSlot: () -> Void
 
     private let plotHeight: CGFloat = 200
@@ -62,6 +63,7 @@ struct SmartShiftBankChart: View {
                 if let badge = bar.state(for: marks).badge, !isSlotHeld || badge != .priciest {
                     Image(systemName: badge == .cheapest ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                         .foregroundStyle(badge == .cheapest ? .green : .red)
+                        .scaleEffect(badge == .cheapest && isPopping ? 1.15 : 1)
                         .offset(y: block.lowerBound - 8)
                 }
                 if selection == .now || isSlotHeld, let slot, let range = geometry.slot(on: bar) {
