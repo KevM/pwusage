@@ -15,6 +15,8 @@ struct SolarSystemView: View {
     /// The reveal owed for a system found while nobody was watching has been seen.
     var onRevealSeen: () -> Void = {}
 
+    private static let visualID = "solar-system-visual"
+
     @Environment(\.reconnectTesla) private var reconnectTesla
     @State private var isConfirmingLocation = false
     @State private var outcome: SolarLocationShareResult?
@@ -50,7 +52,21 @@ struct SolarSystemView: View {
     private func content(_ presentation: SiteHistoryPresentation) -> some View {
         // The status's own layout honors the Debug "Ignore Existing Layout" setting.
         let layout = status != nil ? status?.layout : stored?.layout
-        return List {
+        return ScrollViewReader { proxy in
+            list(presentation, layout: layout)
+                // The screen keeps its place between visits, and an owed reveal plays only once.
+                .onAppear { scrollToRevealIfOwed(proxy) }
+                .onChange(of: status?.isRevealOwed) { withAnimation { scrollToRevealIfOwed(proxy) } }
+        }
+    }
+
+    private func scrollToRevealIfOwed(_ proxy: ScrollViewProxy) {
+        guard status?.isRevealOwed == true else { return }
+        proxy.scrollTo(Self.visualID, anchor: .top)
+    }
+
+    private func list(_ presentation: SiteHistoryPresentation, layout: SolarLayout?) -> some View {
+        List {
             if status != nil || layout != nil {
                 Section {
                     SolarSystemVisual(
@@ -60,6 +76,7 @@ struct SolarSystemView: View {
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
+                        .id(Self.visualID)
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
                         SolarSystemDetailsRows(layout: layout, isImproving: presentation.phase == .foundImproving)
