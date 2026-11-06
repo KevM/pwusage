@@ -11,6 +11,8 @@ struct SmartShiftBankChart: View {
     var tappedBarKey: String?
     var onTapBar: (String) -> Void = { _ in }
 
+    @State private var nameHeights: [String: CGFloat] = [:]
+
     private let plotHeight: CGFloat = 240
     private var showsSlot: Bool { selection == .now || isSlotHeld }
 
@@ -26,8 +28,9 @@ struct SmartShiftBankChart: View {
                 }
             }
         }
-        .frame(height: geometry.totalHeight)
+        .frame(height: geometry.totalHeight(of: bars, nameHeights: nameHeights))
         .accessibilityElement(children: .contain)
+        .dynamicTypeSize(...Self.largestText)
         .frame(maxWidth: 500)
     }
 
@@ -48,18 +51,24 @@ struct SmartShiftBankChart: View {
                 .foregroundStyle(bar.periodKey == tappedBarKey ? Color.emphasis : Color.primary)
             Text(bar.rate).font(.caption2).foregroundStyle(.secondary)
             let state = bar.state(for: marks)
-            if let label = state.badgeLabel, let badge = state.badge {
-                Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.white)
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                    .padding(.horizontal, 7).padding(.vertical, 1)
-                    .background(Self.color(for: badge), in: Capsule())
-            }
+            // Always laid out, so the chart's height doesn't change as the label moves between bars.
+            badgeLabel(state.badgeLabel ?? "Least expensive", badge: state.badge)
+                .opacity(state.badgeLabel == nil ? 0 : 1)
         }
         .frame(maxWidth: .infinity, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { nameHeights[bar.periodKey] = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(bar.state(for: selection).explanation)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { onTapBar(bar.periodKey) }
+    }
+
+    private func badgeLabel(_ label: String, badge: SmartShiftBadge?) -> some View {
+        Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.8)
+            .padding(.horizontal, 7).padding(.vertical, 1)
+            .background(badge.map(Self.color(for:)) ?? .clear, in: Capsule())
     }
 
     private func column(_ bar: SmartShiftBar, geometry: SmartShiftBarGeometry) -> some View {
@@ -113,7 +122,7 @@ struct SmartShiftBankChart: View {
             } else {
                 let margin = center - width / 2
                 Text("\(label) kWh").font(.caption.weight(.bold)).foregroundStyle(Color.emphasis)
-                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .lineLimit(1).minimumScaleFactor(0.5)
                     .frame(width: margin - 4, alignment: .trailing)
                     .position(x: margin / 2 - 2, y: middle)
             }
@@ -152,6 +161,9 @@ struct SmartShiftBankChart: View {
         }
     }
 
+    /// The chart's labels stop growing here, because its bars and gaps are fixed and larger text
+    /// collides. The panel under the chart says the same amounts at any text size.
+    private static let largestText = DynamicTypeSize.xxLarge
     private static let bankFill = Color.secondary.opacity(0.2)
     private static func color(for badge: SmartShiftBadge) -> Color { badge == .cheapest ? .green : .red }
 }

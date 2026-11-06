@@ -21,7 +21,7 @@ struct SmartShiftBarGeometry {
     static let headroom: CGFloat = minimumSlotHeight + totalLabelRoom
     /// Space between a bar's lowest point and its name.
     static let nameGap: CGFloat = 5
-    /// Room for a name, its rate and a badge label.
+    /// The least room kept for a name, its rate and a badge label; larger text measures more.
     static let nameRoom: CGFloat = 58
     /// The zero line must have this much clear to label it.
     private static let netZeroLabelWidth: CGFloat = 46
@@ -86,6 +86,13 @@ struct SmartShiftBarGeometry {
 
     /// The whole chart: the plot and the names under its bars.
     var totalHeight: CGFloat { height + Self.nameGap + Self.nameRoom }
+
+    /// The chart with its names as measured, so a name at a large text size stays inside it.
+    func totalHeight(of bars: [SmartShiftBar], nameHeights: [String: CGFloat]) -> CGFloat {
+        bars.reduce(totalHeight) { tallest, bar in
+            max(tallest, nameTop(of: bar) + (nameHeights[bar.periodKey] ?? 0))
+        }
+    }
 
     func isTorn(_ bar: SmartShiftBar) -> Bool { tornKeys.contains(bar.periodKey) }
 

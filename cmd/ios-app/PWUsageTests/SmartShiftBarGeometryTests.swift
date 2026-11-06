@@ -134,6 +134,23 @@ struct SmartShiftBarGeometryTests {
         #expect(geometry.nameTop(of: nearZero) + SmartShiftBarGeometry.nameRoom <= geometry.totalHeight)
     }
 
+    @Test func theChartGrowsToHoldATallNameOnItsLowestBar() {
+        let geometry = SmartShiftBarGeometry(bars: [nearZero, farOwed], slot: saving, plotHeight: 240)
+        let bars = [nearZero, farOwed]
+        #expect(geometry.totalHeight(of: bars, nameHeights: [:]) == geometry.totalHeight)
+        #expect(geometry.totalHeight(of: bars, nameHeights: ["peak": 40]) == geometry.totalHeight)
+        let tall = geometry.totalHeight(of: bars, nameHeights: ["peak": 140])
+        #expect(tall == geometry.nameTop(of: nearZero) + 140)
+    }
+
+    @Test func aTallNameOnAHigherBarOnlyGrowsTheChartWhenItReachesTheBottom() {
+        let geometry = SmartShiftBarGeometry(bars: [nearZero, farOwed], slot: saving, plotHeight: 240)
+        let bars = [nearZero, farOwed]
+        let reach = geometry.totalHeight - geometry.nameTop(of: farOwed)
+        #expect(geometry.totalHeight(of: bars, nameHeights: ["off": reach]) == geometry.totalHeight)
+        #expect(geometry.totalHeight(of: bars, nameHeights: ["off": reach + 10]) == geometry.totalHeight + 10)
+    }
+
     @Test func aFarBanksNameSitsUnderItsLowestPoint() {
         let banked = bar("banked", baseline: -300, now: 40, later: 10)
         let geometry = SmartShiftBarGeometry(bars: [banked], slot: nil, plotHeight: 240)
