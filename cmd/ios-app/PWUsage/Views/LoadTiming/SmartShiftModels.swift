@@ -68,9 +68,16 @@ struct SmartShiftBar: Equatable {
     let rate: String
     let buyRate: Double
     let baselinePosition: Double
-    let recommended: SmartShiftBarState
-    let now: SmartShiftBarState
+    var recommended: SmartShiftBarState
+    var now: SmartShiftBarState
     func state(for id: SmartShiftChoiceID) -> SmartShiftBarState { id == .now ? now : recommended }
+}
+
+struct SmartShiftSlot: Equatable {
+    let periodKey: String
+    let extraKwh: Double
+    let label: String
+    let accessibilityLabel: String
 }
 
 struct SmartShiftVerdict: Equatable {
@@ -88,6 +95,7 @@ struct SmartShiftVerdict: Equatable {
     let chartTitle: String
     let chartSubtitle: String
     let rateBars: [SmartShiftBar]
+    let slot: SmartShiftSlot?
     let headline: String
     let barsCaption: String
     /// Recommended first; a single bar when the recommended start is now.

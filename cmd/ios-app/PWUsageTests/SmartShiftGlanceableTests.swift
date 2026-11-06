@@ -71,4 +71,17 @@ extension SmartShiftPresentationTests {
         #expect(bar.recommended.total == "7 banked")
         #expect(bar.now.total == "60 banked")
     }
+    @Test func savingCaseBadgesAndLabelsBothChoices() throws {
+        let verdict = try Self.verdict(Self.make(profile: Self.pump))
+        let peak = try #require(verdict.rateBars.first { $0.name == "Peak" })
+        let offPeak = try #require(verdict.rateBars.first { $0.name == "Off-Peak" })
+        #expect(offPeak.recommended.badge == .cheapest)
+        #expect(offPeak.recommended.badgeLabel == "Least expensive")
+        #expect(peak.now.badge == .priciest)
+        #expect(peak.now.badgeLabel == "Most expensive")
+        let slot = try #require(verdict.slot)
+        #expect(slot.periodKey == "Off-Peak")
+        #expect(slot.extraKwh == 14)
+        #expect(slot.label == "Save \(Self.money(1.89))")
+    }
 }
