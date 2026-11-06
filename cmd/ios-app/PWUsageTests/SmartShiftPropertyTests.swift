@@ -63,6 +63,24 @@ struct SmartShiftPropertyTests {
         #expect(scenario.evaluate(projection: projection).comparison == nil)
     }
 
+    @Test(arguments: Array(UInt64(0) ..< 100))
+    func runsAgreeOnTheBaselineAndMoveTheSameEnergy(seed: UInt64) throws {
+        let scenario = SmartShiftScenario(seed: seed)
+        let comparison = try #require(scenario.evaluate(projection: .flat(timeZone: scenario.zone)).comparison)
+        var later = 0.0
+        var now = 0.0
+        for lane in comparison.lanes {
+            let laterDraw = lane.projectedKwh - lane.projectedAfterRecommendedKwh
+            let nowDraw = lane.projectedKwh - lane.projectedAfterStartNowKwh
+            #expect(laterDraw >= -0.001, "\(scenario.diagnostic)")
+            #expect(nowDraw >= -0.001, "\(scenario.diagnostic)")
+            later += laterDraw
+            now += nowDraw
+        }
+        #expect(abs(later - scenario.energy) < 0.05, "\(scenario.diagnostic)")
+        #expect(abs(now - scenario.energy) < 0.05, "\(scenario.diagnostic)")
+    }
+
     @Test func forecastGapFallsBackToHistory() throws {
         var scenario = SmartShiftScenario(seed: 2)
         scenario.billHours = 72

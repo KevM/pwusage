@@ -51,6 +51,28 @@ struct SmartShiftChoice: Equatable {
     let caption: String
 }
 
+enum SmartShiftBadge: Equatable { case cheapest, priciest }
+
+struct SmartShiftBarState: Equatable {
+    let runKwh: Double
+    let totalPosition: Double
+    let runLabel: String?
+    let total: String
+    var badge: SmartShiftBadge?
+    var badgeLabel: String?
+}
+
+struct SmartShiftBar: Equatable {
+    let periodKey: String
+    let name: String
+    let rate: String
+    let buyRate: Double
+    let baselinePosition: Double
+    let recommended: SmartShiftBarState
+    let now: SmartShiftBarState
+    func state(for id: SmartShiftChoiceID) -> SmartShiftBarState { id == .now ? now : recommended }
+}
+
 struct SmartShiftVerdict: Equatable {
     enum Note: Equatable {
         /// `usesHistory`: banks followed the site's last four weeks rather than holding still.
@@ -65,6 +87,7 @@ struct SmartShiftVerdict: Equatable {
     let choices: [SmartShiftChoice]
     let chartTitle: String
     let chartSubtitle: String
+    let rateBars: [SmartShiftBar]
     let headline: String
     let barsCaption: String
     /// Recommended first; a single bar when the recommended start is now.
