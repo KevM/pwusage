@@ -1,65 +1,146 @@
 import SwiftUI
+import UIKit
 
-/// The verdict, cost bars, why line, legend, energy weather chart and notes, in
-/// reading order. Renders a `SmartShiftVerdict` and nothing else, so previews and
-/// `LoadTimingView` show the same card.
 struct SmartShiftVerdictView: View {
     let verdict: SmartShiftVerdict
     let timeZone: String
+    var isSelected = true
+    var onOpenDetails: (SmartShiftChoiceID) -> Void = { _ in }
     var onOpenSolarSettings: () -> Void = {}
 
-    /// Bar column width beside the why line: about a phone's worth, so a small
-    /// saving still shows as a visible gap.
-    static let sideBySideBars: ClosedRange<CGFloat> = 300 ... 380
-    /// Narrowest the why line gets beside the bars; below this they stack.
-    static let sideBySideWhyMinWidth: CGFloat = 420
-    static let sideBySideSpacing: CGFloat = 24
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selection: SmartShiftSelection
+    @State private var landingCount = 0
+    @State private var isPopping = false
+    @State private var tappedBarKey: String?
 
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var width: CGFloat = 0
-
-    /// Wide enough for a prose column with the bars beside it, where
-    /// full-width bars would stretch a small saving into an unreadable sliver.
-    /// Accessibility text sizes stay stacked: the breakpoint assumes default-size labels.
-    private var barsBesideWhy: Bool {
-        !dynamicTypeSize.isAccessibilitySize
-            && width >= Self.sideBySideWhyMinWidth + Self.sideBySideSpacing + Self.sideBySideBars.lowerBound
+    init(verdict: SmartShiftVerdict, timeZone: String, isSelected: Bool = true,
+         onOpenDetails: @escaping (SmartShiftChoiceID) -> Void = { _ in },
+         onOpenSolarSettings: @escaping () -> Void = {}) {
+        self.verdict = verdict
+        self.timeZone = timeZone
+        self.isSelected = isSelected
+        self.onOpenDetails = onOpenDetails
+        self.onOpenSolarSettings = onOpenSolarSettings
+        _selection = State(initialValue: SmartShiftSelection(choices: verdict.choices))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(verdict.headline)
-                .font(.title3.weight(.bold))
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-            if barsBesideWhy {
-                HStack(alignment: .top, spacing: Self.sideBySideSpacing) {
-                    why
-                    SmartShiftCostBars(verdict: verdict)
-                        .frame(minWidth: Self.sideBySideBars.lowerBound, maxWidth: Self.sideBySideBars.upperBound)
-                        // Bars before the why line, as when stacked.
-                        .accessibilitySortPriority(1)
+            Text(verdict.title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
+            Text(verdict.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.emphasis)
+            choiceTiles
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(verdict.chartTitle).font(.headline)
+                    Button { onOpenDetails(selection.selected) } label: {
+                        Image(systemName: "info.circle").foregroundStyle(Color.emphasis)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(SmartShiftPresentation.detailsTitle)
                 }
-                .accessibilityElement(children: .contain)
-            } else {
-                SmartShiftCostBars(verdict: verdict)
-                why
+                Text(verdict.chartSubtitle).font(.caption).foregroundStyle(.secondary)
             }
-            EnergyWeatherLegend(verdict: verdict)
-            EnergyWeatherChart(verdict: verdict, timeZone: timeZone)
-            ForEach(Array(verdict.notes.enumerated()), id: \.offset) { _, note in
-                noteView(note)
+            bankChart
+            barPanel
+            ForEach(Array(verdict.notes.enumerated()), id: \.offset) { _, note in noteView(note) }
+        }
+        .onChange(of: verdict) { _, updated in selection.reconcile(with: updated.choices) }
+        .onChange(of: isSelected) { _, active in
+            if active {
+                selection = SmartShiftSelection(choices: verdict.choices)
+                tappedBarKey = nil
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .sensoryFeedback(.impact(weight: .light), trigger: landingCount)
     }
 
-    private var why: some View {
-        Text(verdict.why)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: SectionTheme.maxProseWidth, alignment: .leading)
+    @ViewBuilder private var choiceTiles: some View {
+        if reduceMotion {
+            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected,
+                                  isPopping: isPopping, onSelect: select)
+                .id(selection.selected).transition(.opacity)
+        } else {
+            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected,
+                                  isPopping: isPopping, onSelect: select)
+        }
+    }
+
+    @ViewBuilder private var bankChart: some View {
+        if reduceMotion {
+            chart.id(selection.selected).transition(.opacity)
+        } else {
+            chart
+        }
+    }
+
+    private var chart: some View {
+        SmartShiftBankChart(bars: verdict.rateBars, slot: verdict.slot, selection: selection.selected,
+                            marks: selection.marks, isSlotHeld: selection.isReturning, isPopping: isPopping,
+                            onTapSlot: returnToSuggested, tappedBarKey: tappedBarKey, onTapBar: tapBar)
+    }
+
+    /// What a tapped bar means for the selected time, above the way into the full arithmetic.
+    private var barPanel: some View {
+        let tapped = verdict.rateBars.first { $0.periodKey == tappedBarKey }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(tapped?.state(for: selection.selected).explanation ?? SmartShiftPresentation.barHint)
+                .font(.footnote)
+                .foregroundStyle(tapped == nil ? .secondary : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { onOpenDetails(selection.selected) } label: {
+                HStack(spacing: 4) {
+                    Text(SmartShiftPresentation.detailsTitle)
+                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.emphasis)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func tapBar(_ key: String) {
+        withAnimation(reduceMotion ? nil : .snappy) { tappedBarKey = tappedBarKey == key ? nil : key }
+    }
+
+    private func select(_ id: SmartShiftChoiceID) {
+        withAnimation(reduceMotion ? .easeInOut(duration: 0.25) : .smooth(duration: 0.6)) { selection.select(id) }
+    }
+
+    private func returnToSuggested() {
+        if reduceMotion {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                selection.beginReturn()
+                selection.landReturn()
+            }
+            announceLanding()
+            return
+        }
+        withAnimation(.timingCurve(0.6, 0.02, 0.8, 0.25, duration: 1.15)) {
+            selection.beginReturn()
+        } completion: {
+            guard selection.isReturning else { return }
+            withAnimation(.spring) { selection.landReturn(); landingCount += 1 }
+            pop()
+            announceLanding()
+        }
+    }
+
+    private func pop() {
+        withAnimation(.spring(duration: 0.18)) { isPopping = true } completion: {
+            withAnimation(.spring(duration: 0.25)) { isPopping = false }
+        }
+    }
+
+    private func announceLanding() {
+        let choice = verdict.choices.first { $0.id == selection.selected }?.label ?? ""
+        let totals = verdict.rateBars.map { "\($0.name), \($0.state(for: selection.selected).total)" }
+            .joined(separator: ". ")
+        UIAccessibility.post(notification: .announcement, argument: "\(choice). \(totals)")
     }
 
     @ViewBuilder

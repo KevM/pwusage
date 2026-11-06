@@ -11,35 +11,44 @@ enum ForecastAvailability: Equatable {
     case ready
 }
 
-struct CostBar: Equatable {
+enum SmartShiftChoiceID: Equatable, Hashable { case recommended, now }
+
+struct SmartShiftChoice: Equatable {
+    let id: SmartShiftChoiceID
     let label: String
-    let amount: String
-    let value: Double
-    let isRecommended: Bool
+    let price: String
+    let caption: String
 }
 
-/// A dashed rate-period switch on the chart, labelled "← Peak | Off-Peak →".
-struct SwitchMarker: Equatable {
-    let date: Date
-    let label: String
-    /// "← Peak": the period ending here, drawn just left of the line.
-    let beforeLabel: String?
-    /// "Off-Peak →": the period starting here, drawn just right of the line.
-    let afterLabel: String?
+enum SmartShiftBadge: Equatable { case cheapest, priciest }
+
+struct SmartShiftBarState: Equatable {
+    let runKwh: Double
+    let totalPosition: Double
+    let runLabel: String?
+    let total: String
+    var badge: SmartShiftBadge?
+    var badgeLabel: String?
+    /// What tapping this bar says for this time.
+    var explanation = ""
 }
 
-/// One rate period's "energy weather" lane, from now to the end of the comparison.
-struct LaneDisplay: Equatable {
-    /// "Off-Peak (kWh)"
-    let title: String
-    /// "18 kWh banked now", "6 kWh owed now" or "0 kWh now"
-    let startLabel: String
-    let recommended: [LoadTimingForecastEstimator.BalancePoint]
-    /// `nil` when the recommended start is now, so there is only one line.
-    let startNow: [LoadTimingForecastEstimator.BalancePoint]?
-    /// One label when both plans end at the same rounded value, else `[recommended, now]`.
-    let endLabels: [String]
-    let switches: [SwitchMarker]
+struct SmartShiftBar: Equatable {
+    let periodKey: String
+    let name: String
+    let rate: String
+    let buyRate: Double
+    let baselinePosition: Double
+    var recommended: SmartShiftBarState
+    var now: SmartShiftBarState
+    func state(for id: SmartShiftChoiceID) -> SmartShiftBarState { id == .now ? now : recommended }
+}
+
+struct SmartShiftSlot: Equatable {
+    let periodKey: String
+    let extraKwh: Double
+    let label: String
+    let accessibilityLabel: String
 }
 
 struct SmartShiftVerdict: Equatable {
@@ -51,22 +60,15 @@ struct SmartShiftVerdict: Equatable {
         case unobservedBalance
     }
 
-    let headline: String
-    let barsCaption: String
-    /// Recommended first; a single bar when the recommended start is now.
-    let bars: [CostBar]
-    /// "36% less"
-    let percentLess: String?
+    let title: String
+    let subtitle: String
+    let choices: [SmartShiftChoice]
+    let chartTitle: String
+    let chartSubtitle: String
+    let rateBars: [SmartShiftBar]
+    let slot: SmartShiftSlot?
     let why: String
-    /// "Charge later"
-    let laterLabel: String
-    /// "Charge now"
-    let nowLabel: String
-    let lanes: [LaneDisplay]
-    /// Clock times for the chart's x-axis: now, each run's end, and each switch.
-    let axisDates: [Date]
     let notes: [Note]
-    let accessibilitySummary: String
 }
 
 /// One rate period in "How this is worked out".

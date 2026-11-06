@@ -51,6 +51,11 @@ extension SmartShiftPresentation {
                 timeZone: inputs.timeZone).costBreakdowns
     }
 
+    /// The selected time's arithmetic first, so the sheet opens on what the screen was showing.
+    static func breakdowns(_ breakdowns: [CostBreakdown], leading id: SmartShiftChoiceID) -> [CostBreakdown] {
+        id == .now && breakdowns.count > 1 ? breakdowns.reversed() : breakdowns
+    }
+
     /// "Charging tomorrow at 8:00 AM would be cheaper if the sun holds, but …", when the
     /// safety rule turned down a cheaper start; otherwise `nil`.
     static func ruledOutNote(
@@ -161,14 +166,12 @@ extension SmartShiftPresentation {
         return "0 kWh"
     }
 
-    static func startLabel(_ kwh: Double) -> String { "\(balanceLabel(kwh)) now" }
-
     /// A chart line's end: "18 banked", "6 owed" or "0". The lane title carries the unit.
     static func endLabel(_ kwh: Double) -> String {
         let value = roundedKwh(kwh)
-        if value > 0 { return "\(value) banked" }
-        if value < 0 { return "\(-value) owed" }
-        return "0"
+        if value > 0 { return "\(value) kWh banked" }
+        if value < 0 { return "\(-value) kWh owed" }
+        return "0 kWh"
     }
 
     static func roundedKwh(_ kwh: Double) -> Int {

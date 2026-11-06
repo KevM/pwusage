@@ -71,7 +71,8 @@ and simplify the sentence.
   "6 kWh owed now"), and energy the bank cannot cover is bought at the
   **full rate**. These are deliberate Smart Shift terms; do not replace them
   with "export cushion", "import gap" or "grid rate" there. Everywhere else,
-  use the word list.
+  use the word list. **Net zero** is the bank's goal. The chart slot says
+  “Save <amount>” without “about”; the headline and VoiceOver include it.
 - **No dashes as separators in sentences.** Use a middle dot (·) for compact
   metadata ("Off-Peak · $0.12/kWh") or a new sentence.
 

@@ -112,6 +112,8 @@ enum SmartShiftPresentation {
     static let noForecastNote = "Solar forecasts aren't available for this home, so banks are shown as they stand now."
     static let noForecastHistoryNote =
         "Solar forecasts aren't available for this home, so banks follow your last four weeks."
+    static let detailsTitle = "How this is worked out"
+    static let barHint = "Tap a bar to see what it means."
     static let checkingSolarNote = "Checking today's solar…"
     static let unobservedBalanceNote = "Some rate periods have no bank yet, so they're priced at the full rate."
 

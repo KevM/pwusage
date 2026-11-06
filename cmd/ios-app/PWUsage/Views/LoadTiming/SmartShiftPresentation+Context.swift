@@ -22,7 +22,6 @@ extension SmartShiftPresentation {
             return String(first)
         }
 
-        var laterLabel: String { "\(verb) later" }
         var nowLabel: String { "\(verb) now" }
 
         func money(_ amount: Double) -> String { DashboardPresentation.currency(amount, code: currencyCode) }
@@ -58,25 +57,6 @@ extension SmartShiftPresentation {
             return roundedKwh(kwh) > 0 ? "have \(roundedKwh(kwh)) kWh banked" : "have no bank"
         }
 
-        var headline: String {
-            let time = isNow ? "now" : when(comparison.recommendedStart)
-            // A safe start that is also cheaper than now keeps the saving headline.
-            if claimsSaving {
-                return "\(profile.name) \(time): about \(money(comparison.savings)) cheaper than now"
-            }
-            switch comparison.safety {
-            case .nowSafe:
-                return "\(profile.name) now: no cheaper time today"
-            case .nowUnsafe(let key):
-                let more = max(0, comparison.recommendedCost - comparison.costNow)
-                return "\(profile.name) \(time): about \(money(more)) more than now, "
-                    + "but it won't leave \(name(key)) short"
-            case .noSafeStart(let key):
-                return "\(profile.name) \(time): the least risky time, "
-                    + "but a cloudy week could still leave \(name(key)) short"
-            }
-        }
-
         /// Shorter is better only when the recommendation is also the cheaper bar:
         /// never when no start is safe, and not when the safe start costs more than now.
         var claimsSaving: Bool {
@@ -91,52 +71,17 @@ extension SmartShiftPresentation {
         }
 
         func verdict(forecast: ForecastAvailability) -> SmartShiftVerdict {
-            let nowBar = CostBar(label: nowLabel,
-                                 amount: money(comparison.costNow),
-                                 value: comparison.costNow, isRecommended: isNow)
-            let bars = isNow
-                ? [nowBar]
-                : [CostBar(label: laterLabel,
-                           amount: money(comparison.recommendedCost),
-                           value: comparison.recommendedCost,
-                           isRecommended: true), nowBar]
-            let lanes = comparison.lanes.map(lane)
             return SmartShiftVerdict(
-                headline: headline,
-                barsCaption: claimsSaving ? "Added to your bill (shorter is better)" : "Added to your bill",
-                bars: bars,
-                percentLess: percentLess,
+                title: title,
+                subtitle: subtitle,
+                choices: choices,
+                chartTitle: "Distance to net zero",
+                chartSubtitle: "kWh owed or banked by \(shortDate(comparison.projectionEnd))",
+                rateBars: guidedBars,
+                slot: slot,
                 why: why,
-                laterLabel: laterLabel,
-                nowLabel: nowLabel,
-                lanes: lanes,
-                axisDates: axisDates,
-                notes: notes(forecast: forecast),
-                accessibilitySummary: accessibilitySummary
+                notes: notes(forecast: forecast)
             )
-        }
-
-        var switchMarkers: [SwitchMarker] {
-            comparison.periodSwitches.map { date in
-                let before = timing.tariffTimeline.first { $0.end == date }.map { name($0.periodKey) }
-                let after = timing.tariffTimeline.first { $0.start == date }.map { name($0.periodKey) }
-                let beforeLabel = before.map { "\u{2190} \($0)" }, afterLabel = after.map { "\($0) \u{2192}" }
-                let label = [beforeLabel, afterLabel].compactMap(\.self).joined(separator: " | ")
-                return SwitchMarker(date: date, label: label, beforeLabel: beforeLabel, afterLabel: afterLabel)
-            }
-        }
-
-        var axisDates: [Date] {
-            let duration = comparison.recommendedEnd.timeIntervalSince(comparison.recommendedStart)
-            let ends = [now.addingTimeInterval(duration), comparison.recommendedEnd]
-            let dates = Set([now] + ends + comparison.periodSwitches)
-            return dates.filter { $0 >= now && $0 <= comparison.horizonEnd }.sorted()
-        }
-
-        var percentLess: String? {
-            guard claimsSaving, comparison.costNow > 0 else { return nil }
-            let percent = Int(((comparison.costNow - comparison.recommendedCost) / comparison.costNow * 100).rounded())
-            return percent > 0 ? "\(percent)% less" : nil
         }
 
         var why: String {
@@ -284,22 +229,6 @@ extension SmartShiftPresentation {
                 + "giving up \(rate(draw.key, sell: true)) in credit."
         }
 
-        func lane(_ lane: LoadTimingForecastEstimator.BalanceLane) -> LaneDisplay {
-            let laterEnd = lane.recommended.last?.kwh ?? lane.startKwh
-            let nowEnd = lane.startNow.last?.kwh ?? lane.startKwh
-            let endLabels = isNow || endLabel(laterEnd) == endLabel(nowEnd)
-                ? [endLabel(laterEnd)]
-                : [endLabel(laterEnd), endLabel(nowEnd)]
-            return LaneDisplay(
-                title: "\(name(lane.periodKey)) (kWh)",
-                startLabel: startLabel(lane.startKwh),
-                recommended: lane.recommended,
-                startNow: isNow ? nil : lane.startNow,
-                endLabels: endLabels,
-                switches: switchMarkers
-            )
-        }
-
         func notes(forecast: ForecastAvailability) -> [SmartShiftVerdict.Note] {
             var notes: [SmartShiftVerdict.Note]
             switch forecast {
@@ -311,20 +240,6 @@ extension SmartShiftPresentation {
             }
             if comparison.hasUnobservedBalance { notes.append(.unobservedBalance) }
             return notes
-        }
-
-        var accessibilitySummary: String {
-            comparison.lanes.map { lane in
-                let period = name(lane.periodKey)
-                let start = "\(balanceLabel(lane.startKwh)) now"
-                let nowEnd = balanceLabel(lane.startNow.last?.kwh ?? lane.startKwh)
-                if isNow {
-                    return "\(period) bank: \(start); \(nowLabel.lowercased()) leaves \(nowEnd)."
-                }
-                let laterEnd = balanceLabel(lane.recommended.last?.kwh ?? lane.startKwh)
-                return "\(period) bank: \(start); \(laterLabel.lowercased()) leaves \(laterEnd), "
-                    + "\(nowLabel.lowercased()) leaves \(nowEnd)."
-            }.joined(separator: " ")
         }
     }
 }

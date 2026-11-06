@@ -104,8 +104,8 @@ struct BillRatePeriodTotals: View {
     }
 
     private func balanceColor(_ netGridKwh: Double) -> Color {
-        if netGridKwh < 0 { return EnergyWeatherChart.bankedColor }
-        if netGridKwh > 0 { return EnergyWeatherChart.owedColor }
+        if netGridKwh < 0 { return EnergyBalanceColors.banked }
+        if netGridKwh > 0 { return EnergyBalanceColors.owed }
         return .secondary
     }
 }

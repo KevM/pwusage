@@ -3,6 +3,12 @@ import SwiftUI
 
 /// Where a balance sits on the Billing and Smart Shift charts. They read like a bill: using more
 /// grid energy moves the line up toward cost, an export cushion sits below zero, and zero is the goal.
+enum EnergyBalanceColors {
+    static let owed = Color.orange
+    static let banked = Color.green
+    static let rule = Color.gray.opacity(0.6)
+}
+
 enum EnergyBalanceAxis {
     /// Net grid energy is already positive for an import gap.
     static func position(forNetGrid netGridKwh: Double) -> Double { netGridKwh }
@@ -20,12 +26,12 @@ struct EnergyBalanceBackdrop: ChartContent {
     var body: some ChartContent {
         RectangleMark(xStart: .value("Start", timeRange.lowerBound), xEnd: .value("End", timeRange.upperBound),
                       yStart: .value("Zero", 0), yEnd: .value("Top", balanceRange.upperBound))
-            .foregroundStyle(EnergyWeatherChart.owedColor.opacity(0.14))
+            .foregroundStyle(EnergyBalanceColors.owed.opacity(0.14))
         RectangleMark(xStart: .value("Start", timeRange.lowerBound), xEnd: .value("End", timeRange.upperBound),
                       yStart: .value("Bottom", balanceRange.lowerBound), yEnd: .value("Zero", 0))
-            .foregroundStyle(EnergyWeatherChart.bankedColor.opacity(0.12))
+            .foregroundStyle(EnergyBalanceColors.banked.opacity(0.12))
         RuleMark(y: .value("Zero", 0))
-            .foregroundStyle(EnergyWeatherChart.ruleColor)
+            .foregroundStyle(EnergyBalanceColors.rule)
             .lineStyle(StrokeStyle(lineWidth: 1))
     }
 }
@@ -171,7 +177,8 @@ struct BillOutlookChart: View {
             ForEach(Array(recorded.enumerated()), id: \.offset) { _, point in
                 LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),
                          series: .value("Source", "Recorded"))
-                    .foregroundStyle(Color.emphasis).lineStyle(EnergyWeatherChart.laterStroke)
+                    .foregroundStyle(Color.emphasis)
+                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
             }
             ForEach(Array(projected.enumerated()), id: \.offset) { _, point in
                 LineMark(x: .value("Date", point.date), y: .value("kWh", energy(point, key: period.key)),

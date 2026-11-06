@@ -157,8 +157,8 @@ struct BillSavingsFlow: View {
 
     private func tint(_ role: BillSavingsMove.Role) -> Color {
         switch role {
-        case .pay: EnergyWeatherChart.owedColor
-        case .onlyEarn: EnergyWeatherChart.bankedColor
+        case .pay: EnergyBalanceColors.owed
+        case .onlyEarn: EnergyBalanceColors.banked
         }
     }
 }

@@ -30,6 +30,7 @@ struct SmartShiftDetailsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section { Text(snapshot.verdict.why) }
                 ForEach(Array(snapshot.breakdowns.enumerated()), id: \.offset) { _, breakdown in
                     Section {
                         ForEach(Array(breakdown.lines.enumerated()), id: \.offset) { _, line in

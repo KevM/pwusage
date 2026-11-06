@@ -121,6 +121,7 @@ action. Do not add another tint for emphasis, and do not use purple or indigo. P
 on an emphasis fill, and use `.emphasisProminentButton()` for primary buttons, because white is unreadable on
 the dark mode fill. Data colors keep their
 meaning: solar is orange, Home is blue, battery and banked energy are green, owed energy is orange.
+Red is a status color for Smart Shift’s most-expensive mark.
 
 ## Formatting and linting
 

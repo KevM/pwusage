@@ -71,7 +71,8 @@ extension LoadTimingView {
                                intervals: intervals, context: context)
     }
 
-    func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict) -> SmartShiftDetailsSnapshot {
+    func detailsSnapshot(_ state: SmartShiftState, verdict: SmartShiftVerdict,
+                         selected: SmartShiftChoiceID) -> SmartShiftDetailsSnapshot {
         let comparison = state.evaluation?.result.comparison
         let usedForecast = state.evaluation?.forecast == .ready
         var breakdowns: [CostBreakdown] = []
@@ -98,7 +99,7 @@ extension LoadTimingView {
             verdict: verdict,
             comparison: comparison,
             rows: SmartShiftPresentation.periodRows(timing: state.timing, currencyCode: currencyCode),
-            breakdowns: breakdowns,
+            breakdowns: SmartShiftPresentation.breakdowns(breakdowns, leading: selected),
             ruledOutNote: ruledOutNote,
             forecastFetchedAt: usedForecast ? coordinator.publishedForecastFetchedAt : nil,
             contextAsOf: usedForecast ? coordinator.loadPlanningContext?.asOf : nil,

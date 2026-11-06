@@ -45,7 +45,7 @@ extension SmartShiftPresentationTests {
             inputs: .init(timing: Self.rawKeyTiming(), now: Self.now, billingCycleEnd: Self.at(480),
                           currencyCode: "USD", timeZone: "UTC"))
         let verdict = try Self.verdict(screen)
-        #expect(verdict.lanes.map(\.title) == ["On-Peak (kWh)", "Off-Peak (kWh)"])
+        #expect(Set(verdict.rateBars.map(\.name)) == Set(["On-Peak", "Off-Peak"]))
         #expect(verdict.why.hasPrefix("Starting now runs during On-Peak,"))
     }
 
