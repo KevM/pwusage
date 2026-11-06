@@ -37,7 +37,8 @@ struct AppTabView: View {
     }
 
     @ViewBuilder private var tabs: some View {
-        let status = model.siteHistoryStatus
+        // As in Settings: without the beta, the banner would open a screen with nothing to show.
+        let status = coordinator.solarLayoutStatus == .disabled ? nil : model.siteHistoryStatus
         let presentation = SiteHistoryPresentation(status: status, now: .now)
         if #available(iOS 26.1, *) {
             let banner = SolarSystemBannerModel(presentation: presentation, status: status)
@@ -115,7 +116,8 @@ struct AppTabView: View {
                          onExitDemo: model.isDemo ? { demoMode?.exit() } : nil,
                          siteHistory: coordinator.solarLayoutStatus == .disabled ? nil : model.siteHistoryStatus,
                          siteHistoryDebug: siteHistoryDebug,
-                         onLocationSaved: model.homeLocationSaved)
+                         onLocationSaved: model.homeLocationSaved,
+                         onRevealSeen: model.solarSystemRevealSeen)
         }
     }
 

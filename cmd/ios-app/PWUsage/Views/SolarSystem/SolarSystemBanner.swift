@@ -2,7 +2,10 @@ import SwiftUI
 
 /// What the tab bar's banner shows: the story of the Solar System screen in miniature.
 struct SolarSystemBannerModel: Equatable {
-    enum Mode: Equatable { case loading, needsLocation }
+    enum Mode: Equatable { case loading, needsLocation, found }
+
+    let title = "Found your solar system"
+    let inlineTitle = "Solar system found"
 
     let mode: Mode
     let countText: String
@@ -13,20 +16,42 @@ struct SolarSystemBannerModel: Equatable {
     let fittedRange: [Double]?
     let latitude: Double?
     let accessibilityLabel: String
+    /// "8.8 kW · facing south-southwest" once found.
+    let detailText: String
+    /// The largest panel group's direction, once found.
+    private let foundAzimuth: Double?
 
     init(presentation: SiteHistoryPresentation, status: SiteHistoryStatus?) {
-        mode = presentation.phase == .needsLocation ? .needsLocation : .loading
+        let found = status?.isRevealOwed == true ? status?.layout : nil
+        mode = if found != nil {
+            .found
+        } else {
+            presentation.phase == .needsLocation ? .needsLocation : .loading
+        }
         countText = SiteHistoryPresentation.days(presentation.downloadedDays)
         days = status?.days ?? []
         isPaused = presentation.phase == .waiting
         if case .fitted(let range)? = status?.wedge { fittedRange = range } else { fittedRange = nil }
         latitude = status?.latitude
-        accessibilityLabel = mode == .needsLocation
-            ? "Add your location to find your solar system"
-            : presentation.accessibilitySummary
+        foundAzimuth = found?.planes.max(by: { $0.dcKwp < $1.dcKwp })?.azimuth
+        detailText = found.map(Self.detail) ?? ""
+        accessibilityLabel = switch mode {
+        case .needsLocation: "Add your location to find your solar system"
+        case .loading: presentation.accessibilitySummary
+        case .found: "Found your solar system. " + (found.map(SiteHistoryPresentation.describe) ?? "")
+        }
     }
 
-    var wedgeCenter: Double { SolarSystemWedge.center(fittedRange: fittedRange, latitude: latitude) }
+    private static func detail(_ layout: SolarLayout) -> String {
+        let total = layout.planes.reduce(0) { $0 + $1.dcKwp }
+        let size = "\(total.formatted(.number.precision(.fractionLength(1)))) kW"
+        guard let main = layout.planes.max(by: { $0.dcKwp < $1.dcKwp }) else { return size }
+        return "\(size) · facing \(SolarSystemCompass.name(main.azimuth))"
+    }
+
+    var wedgeCenter: Double {
+        foundAzimuth ?? SolarSystemWedge.center(fittedRange: fittedRange, latitude: latitude)
+    }
 }
 
 /// The banner prototype's motion: each newly downloaded day glides along the track from the right
@@ -96,7 +121,8 @@ struct SolarSystemBannerClocks: Equatable {
 
 /// The tab bar's accessory while the solar system is being found: a tiny compass, the title and
 /// day count, and a track where a dot glides in for each downloaded day. Inline it is just the
-/// compass and the track. Without a location it asks for one instead.
+/// compass and the track. Without a location it asks for one instead. A system found while nobody
+/// was watching waits here until it is opened.
 @available(iOS 26.0, *)
 struct SolarSystemBanner: View {
     let model: SolarSystemBannerModel
@@ -111,14 +137,15 @@ struct SolarSystemBanner: View {
 
     private var isInline: Bool { placement == .inline }
     private var radius: CGFloat { isInline ? 11 : 15 }
+    private static let foundWedgeWidth = 18.0
 
     var body: some View {
         Button(action: onOpen) {
             Group {
-                if model.mode == .needsLocation {
-                    needsLocation
-                } else {
-                    loading
+                switch model.mode {
+                case .needsLocation: needsLocation
+                case .found: found
+                case .loading: loading
                 }
             }
             .padding(.horizontal, 16)
@@ -140,6 +167,28 @@ struct SolarSystemBanner: View {
                 .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
         }
+    }
+
+    /// Waits, still, until opened: the compass closed on the direction that was found.
+    private var found: some View {
+        HStack(spacing: 10) {
+            Canvas { canvas, size in
+                let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                drawCompass(canvas, center: center, azimuth: model.wedgeCenter, width: Self.foundWedgeWidth)
+            }
+            .frame(width: 2 * radius, height: 2 * radius)
+            .accessibilityHidden(true)
+            if isInline {
+                Text(model.inlineTitle).font(.subheadline.weight(.semibold)).minimumScaleFactor(0.8)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(model.title).font(.subheadline.weight(.semibold)).minimumScaleFactor(0.8)
+                    Text(model.detailText).font(.caption).foregroundStyle(.secondary).minimumScaleFactor(0.8)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .lineLimit(1)
     }
 
     private var loading: some View {
@@ -185,30 +234,13 @@ struct SolarSystemBanner: View {
 
     private func draw(_ context: GraphicsContext, size: CGSize, now: Date) {
         let center = CGPoint(x: radius, y: size.height / 2)
-        func rim(_ azimuth: Double) -> CGPoint {
-            let radians = azimuth * .pi / 180
-            return CGPoint(x: center.x + sin(radians) * radius, y: center.y - cos(radians) * radius)
-        }
+        func rim(_ azimuth: Double) -> CGPoint { rimPoint(azimuth, center: center) }
         var compass = context
         compass.opacity = model.isPaused ? 0.45 : 1
-        let ring = Path(ellipseIn: CGRect(x: 0, y: center.y - radius, width: 2 * radius, height: 2 * radius))
-        compass.stroke(ring, with: .color(SolarSystemColors.ring), lineWidth: 1)
         let landed = clocks.landed(model.days, at: now)
-        if landed > 0 {
-            let width = SolarSystemWedge.bannerWidth(clearDays: landed, fittedRange: model.fittedRange)
-            var wedge = Path()
-            wedge.move(to: center)
-            for step in 0 ... 16 {
-                wedge.addLine(to: rim(model.wedgeCenter - width / 2 + width * Double(step) / 16))
-            }
-            wedge.closeSubpath()
-            compass.fill(wedge, with: .color(SolarSystemColors.wedge.opacity(0.55)))
-            var line = Path()
-            line.move(to: center)
-            line.addLine(to: rim(model.wedgeCenter))
-            compass.stroke(line, with: .color(SolarSystemColors.ray),
-                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-        }
+        let width = landed > 0
+            ? SolarSystemWedge.bannerWidth(clearDays: landed, fittedRange: model.fittedRange) : nil
+        drawCompass(compass, center: center, azimuth: model.wedgeCenter, width: width)
         let trackRight = size.width - 4
         let trackLeft = isInline ? 2 * radius + 10 : max(trackRight - 96, 2 * radius + 10)
         let ease = SolarSystemSceneClocks.ease
@@ -225,6 +257,30 @@ struct SolarSystemBanner: View {
                 dot(context, point, radius: 2.8, type: .clear, opacity: 1)
             }
         }
+    }
+
+    private func rimPoint(_ azimuth: Double, center: CGPoint) -> CGPoint {
+        let radians = azimuth * .pi / 180
+        return CGPoint(x: center.x + sin(radians) * radius, y: center.y - cos(radians) * radius)
+    }
+
+    /// The ring and, once there's a direction, its wedge and center line.
+    private func drawCompass(_ context: GraphicsContext, center: CGPoint, azimuth: Double, width: Double?) {
+        let ring = Path(ellipseIn: CGRect(
+            x: center.x - radius, y: center.y - radius, width: 2 * radius, height: 2 * radius))
+        context.stroke(ring, with: .color(SolarSystemColors.ring), lineWidth: 1)
+        guard let width else { return }
+        var wedge = Path()
+        wedge.move(to: center)
+        for step in 0 ... 16 {
+            wedge.addLine(to: rimPoint(azimuth - width / 2 + width * Double(step) / 16, center: center))
+        }
+        wedge.closeSubpath()
+        context.fill(wedge, with: .color(SolarSystemColors.wedge.opacity(0.55)))
+        var line = Path()
+        line.move(to: center)
+        line.addLine(to: rimPoint(azimuth, center: center))
+        context.stroke(line, with: .color(SolarSystemColors.ray), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
     }
 
     private func dot(

@@ -6,6 +6,7 @@ struct SiteHistoryStoredState: Equatable, Sendable {
     var location: SolarHomeLocation?
     /// Site-local days holding any reading.
     var days: [String] = []
+    var isRevealOwed = false
 }
 
 /// The saved onboarding state of one site and what the phone holds for it, as the Solar System
@@ -47,11 +48,13 @@ struct SiteHistoryStatus: Equatable, Sendable {
     let producingDays: Int
     let clearDays: Int
     let wedge: Wedge
+    /// This phone found the layout and nobody has seen it yet; never true without a layout to show.
+    let isRevealOwed: Bool
 
     init(
         scope: SolarForecastSiteScope, progress: SiteHistoryOnboardingProgress?, throttledUntil: Date?,
         result: DetectedSolarLayout? = nil, homeLocation: SolarHomeLocation? = nil, storedDays: [String] = [],
-        ledger: SiteHistoryDayLedger? = nil
+        ledger: SiteHistoryDayLedger? = nil, isRevealOwed: Bool = false
     ) {
         self.scope = scope
         self.progress = progress
@@ -63,6 +66,7 @@ struct SiteHistoryStatus: Equatable, Sendable {
         case .estimated: .estimated
         default: .exact
         }
+        self.isRevealOwed = isRevealOwed && layout != nil
         latitude = homeLocation?.latitude
         let types = ledger?.dayTypes ?? [:]
         days = storedDays.sorted().map { Day(day: $0, type: types[$0]) }

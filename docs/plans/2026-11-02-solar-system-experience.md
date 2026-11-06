@@ -186,3 +186,15 @@
 - Server changes: the fill contract is unchanged.
 - Drawing the user's actual roof shape.
 - Visuals for the other features discussed: today's solar curve, the rate-day ring and the Smart Shift bank gauge.
+
+## Found while nobody was watching
+
+Agreed with the owner on 2026-11-06. Detection can finish in the background or on another tab, and the first look at the screen deliberately replays nothing, so that person would never see the find. Now a find they missed waits for them.
+
+- **What owes a reveal.** Detection on this phone saves a usable layout (medium or high) for a site with none. That is the first usable layout, not the end of the search, because it is when the house appears and forecasting starts using it. Improving a layout owes nothing. A layout from iCloud never does, because it was not found here; that covers sign-in, reinstall and a new detector version.
+- **Banner.** It shows "Found your solar system" and "8.8 kW · facing south-southwest" (inline, "Solar system found") with the compass closed on the direction found. It stays until Solar System is opened, by any route, and has no dismiss. It never shows in the demo, and iOS before 26.1 has no accessory, so those phones get the reveal only.
+- **Reveal, about 11 s, once the screen is visible and the app active.** The strip grows out from the newest week (1 s), days take their colors in one sweep (1 s), and every clear day flies within 2.5 s however many there are, narrowing the wedge. The tilt and house then play as they do live. It does not assume days were sorted gradually, since an already-high layout sorts once at the finish. A tap skips to the finished house.
+- **Seen.** Once the house starts to rise, on a skip, or at once under Reduce Motion, where the finished house shows in place. Leaving sooner keeps it owed, so the banner comes back. Someone watching when the layout is found gets the live animation, and that counts.
+- **Storage.** `SolarLayout-reveals.json`, beside the layout records and never inside one, so iCloud cannot carry it; excluded from backup; per account and site. Sign-out and Debug's Reset clear it. Changing the home location clears the layout and the owed reveal, and finding it again celebrates again.
+- **Not included.** Push notifications, catching up on a search still in progress, and announcing a search that ended without a result.
+- **Debug.** Ignore Existing Layout hides only layouts from before it was turned on, so a rerun shows what it finds instead of "Not enough clear days". Reset moves that moment forward. Replay Reveal owes the reveal again for the stored layout.

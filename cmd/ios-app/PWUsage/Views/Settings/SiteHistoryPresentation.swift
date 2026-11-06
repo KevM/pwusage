@@ -38,11 +38,13 @@ struct SiteHistoryPresentation: Equatable {
         statusLine = wording.line
         action = Self.action(phase, status: status)
         let isActive = status?.progress?.phase == .active
-        showsBanner = switch phase {
+        let showsForPhase = switch phase {
         case .loading, .waiting: isActive
         case .needsLocation: status?.progress != nil
         case .needsReconnect, .foundImproving, .foundFinal, .unavailable: false
         }
+        // A found system nobody has seen stays up in any phase, until it is seen.
+        showsBanner = showsForPhase || status?.isRevealOwed == true
         accessibilitySummary = Self.summary(phase, line: wording.line, status: status)
     }
 

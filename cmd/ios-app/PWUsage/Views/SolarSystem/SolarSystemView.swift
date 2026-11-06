@@ -12,6 +12,8 @@ struct SolarSystemView: View {
     var startsAtLocation = false
     /// After a new home location is saved, so a search that stopped for want of one resumes.
     var onLocationSaved: () -> Void = {}
+    /// The reveal owed for a system found while nobody was watching has been seen.
+    var onRevealSeen: () -> Void = {}
 
     @Environment(\.reconnectTesla) private var reconnectTesla
     @State private var isConfirmingLocation = false
@@ -55,7 +57,8 @@ struct SolarSystemView: View {
                         input: SolarSystemSceneInput(
                             status: status, layout: layout, isWaiting: presentation.phase == .waiting),
                         summary: status == nil && layout != nil
-                            ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary)
+                            ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
+                        onRevealSeen: onRevealSeen)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {

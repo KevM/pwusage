@@ -210,7 +210,7 @@ struct PWUsageAppModelHistoryOnboardingTests {
             let defaults = try #require(UserDefaults(suiteName: "SiteHistoryDebug.\(UUID().uuidString)"))
             let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "s")
             #expect(!SiteHistoryDebugSettings.ignoresLayout(scope, defaults: defaults))
-            defaults.set(true, forKey: SiteHistoryDebugSettings.ignoresLayoutKey(scope))
+            SiteHistoryDebugSettings.setIgnoresLayout(true, scope: scope, at: .now, defaults: defaults)
             #expect(SiteHistoryDebugSettings.ignoresLayout(scope, defaults: defaults))
             #expect(!SiteHistoryDebugSettings.ignoresLayout(
                 SolarForecastSiteScope(accountScopeID: "a", siteID: "other"), defaults: defaults))

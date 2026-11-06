@@ -15,6 +15,7 @@ struct SettingsView: View {
     var siteHistory: SiteHistoryStatus?
     var siteHistoryDebug: SiteHistoryDebugActions?
     var onLocationSaved: () -> Void = {}
+    var onRevealSeen: () -> Void = {}
 
     @State private var isConfirmingSignOut = false
 
@@ -75,7 +76,8 @@ struct SettingsView: View {
             case .solarSystem(let startsAtLocation):
                 SolarSystemView(
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
-                    startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved)
+                    startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved,
+                    onRevealSeen: onRevealSeen)
             case .about:
                 AboutSheet()
             }
