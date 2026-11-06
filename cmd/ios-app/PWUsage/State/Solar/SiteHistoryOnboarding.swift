@@ -1,7 +1,8 @@
 import Foundation
 
-/// Imports a site's recent history, then keeps reaching back toward a high-confidence layout.
-/// A clear-day pass sorts the stored days once six checked days are unsorted; full detection runs only when a
+/// Imports a site's recent history, then keeps reaching back toward a high-confidence layout. A
+/// layout that is already high confidence stops after the recent days and sorts them once.
+/// Otherwise a clear-day pass sorts the stored days once six checked days are unsorted; full detection runs only when a
 /// target is first reached (15 or 40 clear days, 180 producing days) or 30 checked days after the
 /// last one. Walks newest first in short slices from yesterday, so the recent days come
 /// first; the cursor moves only when a whole slice comes back `complete`, and any other answer
@@ -31,6 +32,9 @@ final class SiteHistoryOnboarding {
     }
 
     static let sliceDays = 3
+    /// All a high-confidence layout still loads: the days forecast correction reads. Detection
+    /// needs no more from this job, because the ordinary sync reads every day the server has.
+    static let recentDays = SolarHistoryStore.actualsDays
     /// Not a promise: the solar search may end earlier or continue past it.
     static let initialCheckpointDays = 90
     static let reassessEveryDays = 30
@@ -275,18 +279,16 @@ final class SiteHistoryOnboarding {
 
     // MARK: - Decisions
 
-    /// After a complete slice: a high-confidence layout (one iCloud brought back, say) still loads
-    /// the initial checkpoint for the forecast, sorting days as they come in without detection;
-    /// without a location the search ends there too; otherwise each due sort runs the
-    /// clear-day pass, which may run full detection.
+    /// After a complete slice: a high-confidence layout (one iCloud brought back, say) loads only
+    /// the recent days, then sorts once without detection; without a location the search ends at the
+    /// initial checkpoint; otherwise each due sort runs the clear-day pass, which may run full detection.
     private func decideAfterSlice(
         _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, timeZone: TimeZone
     ) async -> FinishReason? {
         let checked = progress.checkedDays(timeZone: timeZone)
         if await environment.layoutConfidence(scope: scope) == .high {
-            let done = checked >= Self.initialCheckpointDays
-            guard done || Self.sortDue(progress, checked: checked) else { return nil }
-            return await sortForHighLayout(&progress, scope: scope, checked: checked, finishing: done)
+            guard checked >= Self.recentDays else { return nil }
+            return await finishHighLayout(&progress, scope: scope, checked: checked)
         }
         guard await environment.hasLocation(scope: scope) else {
             return checked >= Self.initialCheckpointDays ? .locationNeeded : nil
@@ -343,14 +345,12 @@ final class SiteHistoryOnboarding {
         return result
     }
 
-    /// The clear-day pass without detection for a site whose layout is already high confidence,
-    /// and the finish reason when `finishing`.
-    private func sortForHighLayout(
-        _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, checked: Int,
-        finishing: Bool
-    ) async -> FinishReason? {
+    /// The one clear-day pass, without detection, for a site whose layout is already high
+    /// confidence, and its finish reason. A lost pass is made up once by `sortDaysIfUnsorted`.
+    private func finishHighLayout(
+        _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, checked: Int
+    ) async -> FinishReason {
         _ = await pass(&progress, scope: scope, checked: checked, detection: .never)
-        guard finishing else { return nil }
         return progress.lastAssessedCheckedDays == 0 ? .layoutAlreadyUsable : .layoutFound
     }
 
@@ -360,9 +360,8 @@ final class SiteHistoryOnboarding {
         _ progress: inout SiteHistoryOnboardingProgress, scope: SolarForecastSiteScope, timeZone: TimeZone
     ) async -> FinishReason {
         let checked = progress.checkedDays(timeZone: timeZone)
-        if await environment.layoutConfidence(scope: scope) == .high,
-           let reason = await sortForHighLayout(&progress, scope: scope, checked: checked, finishing: true) {
-            return reason
+        if await environment.layoutConfidence(scope: scope) == .high {
+            return await finishHighLayout(&progress, scope: scope, checked: checked)
         }
         if await environment.hasLocation(scope: scope),
            let result = await pass(&progress, scope: scope, checked: checked, detection: .atBound),

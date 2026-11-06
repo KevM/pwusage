@@ -5,6 +5,8 @@ enum SolarHistorySyncResult: Equatable, Sendable { case disabled, synced(timeZon
 
 actor SolarHistoryStore {
     static let shared = SolarHistoryStore()
+    /// How many days back `hourlyActuals` reads.
+    static let actualsDays = 14
     private struct StoredDay: Codable, Equatable {
         let dayStart: Date
         var slots: [Float?]
@@ -223,7 +225,7 @@ actor SolarHistoryStore {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
         let today = calendar.startOfDay(for: now)
-        guard let start = calendar.date(byAdding: .day, value: -14, to: today) else { return [] }
+        guard let start = calendar.date(byAdding: .day, value: -Self.actualsDays, to: today) else { return [] }
         var slotsByTime: [Date: [Float?]] = [:]
         for day in state.days {
             for (index, value) in day.slots.enumerated() {
