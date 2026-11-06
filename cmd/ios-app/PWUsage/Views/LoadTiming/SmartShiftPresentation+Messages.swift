@@ -161,8 +161,6 @@ extension SmartShiftPresentation {
         return "0 kWh"
     }
 
-    static func startLabel(_ kwh: Double) -> String { "\(balanceLabel(kwh)) now" }
-
     /// A chart line's end: "18 banked", "6 owed" or "0". The lane title carries the unit.
     static func endLabel(_ kwh: Double) -> String {
         let value = roundedKwh(kwh)

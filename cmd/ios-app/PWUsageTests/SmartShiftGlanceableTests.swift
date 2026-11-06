@@ -84,4 +84,20 @@ extension SmartShiftPresentationTests {
         #expect(slot.extraKwh == 14)
         #expect(slot.label == "Save \(Self.money(1.89))")
     }
+    @Test func unsafeStatesShowNoGuidance() throws {
+        let (unsafe, now) = Self.unsafeNow()
+        let (risky, otherNow) = Self.morningDip(safety: .noSafeStart(periodKey: "ON_PEAK"))
+        for verdict in [try Self.cycleVerdict(unsafe, now: now), try Self.cycleVerdict(risky, now: otherNow)] {
+            #expect(verdict.slot == nil)
+            #expect(verdict.rateBars.allSatisfy { $0.now.badge == nil && $0.recommended.badge == nil })
+        }
+    }
+
+    @Test func noGainMeansNoSlot() throws {
+        let lanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
+        let comparison = Self.comparison(lanes: lanes)
+        let verdict = try Self.verdict(Self.make(profile: Self.pump,
+                                                 result: .init(comparison: comparison, unavailableReason: nil)))
+        #expect(verdict.slot == nil)
+    }
 }

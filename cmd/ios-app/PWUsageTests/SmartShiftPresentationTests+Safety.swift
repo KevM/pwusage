@@ -76,22 +76,18 @@ extension SmartShiftPresentationTests {
     @Test func headlineWhenTheSafeStartCostsMoreThanNow() throws {
         let (comparison, now) = Self.unsafeNow()
         let verdict = try Self.cycleVerdict(comparison, now: now)
-        #expect(Self.normalized(verdict.headline)
+        #expect(Self.normalized(Self.legacyHeadline(verdict))
             == "Charge the car at 8:00 PM: about \(Self.money(3.16)) more than now, but it won't leave On-Peak short")
-        #expect(verdict.barsCaption == "Added to your bill")
-        #expect(verdict.bars.map(\.isRecommended) == [true, false])
-        #expect(verdict.percentLess == nil)
+        #expect(verdict.choices.map { $0.id == .recommended } == [true, false])
     }
 
     @Test func headlineWhenNoStartIsSafe() throws {
         let (comparison, now) = Self.morningDip(safety: .noSafeStart(periodKey: "ON_PEAK"))
         let verdict = try Self.cycleVerdict(comparison, now: now)
-        #expect(Self.normalized(verdict.headline)
+        #expect(Self.normalized(Self.legacyHeadline(verdict))
             == "Charge the car tomorrow at 8:00 AM: the least risky time, "
             + "but a cloudy week could still leave On-Peak short")
-        #expect(verdict.barsCaption == "Added to your bill")
-        #expect(verdict.percentLess == nil)
-        #expect(!verdict.headline.contains("cheaper"))
+        #expect(!Self.legacyHeadline(verdict).contains("cheaper"))
     }
 
     @Test func headlineWhenNoStartIsSafeAndNowIsLeastRisky() throws {
@@ -104,9 +100,9 @@ extension SmartShiftPresentationTests {
             safety: .noSafeStart(periodKey: "ON_PEAK"))
         #expect(dip.safety != comparison.safety)
         let verdict = try Self.cycleVerdict(comparison, now: now)
-        #expect(verdict.headline
+        #expect(Self.legacyHeadline(verdict)
             == "Charge the car now: the least risky time, but a cloudy week could still leave On-Peak short")
-        #expect(verdict.bars.count == 1)
+        #expect(verdict.choices.count == 1)
     }
 
     @Test func whyLineNamesTheProjectedBankALaterStartUses() throws {
@@ -201,10 +197,8 @@ extension SmartShiftPresentationTests {
                             offPeak: BankValues(-20, -30, -20, -20, -30, -20)),
             safety: .nowUnsafe(periodKey: "ON_PEAK"))
         let verdict = try Self.cycleVerdict(comparison, now: now)
-        #expect(Self.normalized(verdict.headline)
+        #expect(Self.normalized(Self.legacyHeadline(verdict))
             == "Charge the car at 8:00 PM: about \(Self.money(1.83)) cheaper than now")
-        #expect(verdict.barsCaption == "Added to your bill (shorter is better)")
-        #expect(verdict.percentLess != nil)
         #expect(verdict.why.hasPrefix("Starting now would draw on your On-Peak bank"))
     }
 }

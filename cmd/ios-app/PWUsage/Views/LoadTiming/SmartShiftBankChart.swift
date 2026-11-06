@@ -56,7 +56,8 @@ struct SmartShiftBankChart: View {
                         .offset(x: geometry.labelFitsInside(bar, for: selection) ? 0 : width / 2, y: block.lowerBound)
                 }
                 Text(state.total).font(.caption2.weight(.semibold))
-                    .offset(y: state.totalPosition >= 0 ? geometry.y(state.totalPosition) - 18
+                    .offset(y: state.total == "0" || state.totalPosition >= 0
+                        ? geometry.y(max(0, state.totalPosition)) - 18
                         : geometry.y(state.totalPosition) + 2)
                 if let badge = bar.state(for: marks).badge, !isSlotHeld || badge != .priciest {
                     Image(systemName: badge == .cheapest ? "checkmark.circle.fill" : "exclamationmark.circle.fill")

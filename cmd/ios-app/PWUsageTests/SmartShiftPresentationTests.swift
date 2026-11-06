@@ -101,6 +101,11 @@ struct SmartShiftPresentationTests {
         text.replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
     }
 
+    static func legacyHeadline(_ verdict: SmartShiftVerdict) -> String {
+        let subtitle = verdict.subtitle.prefix(1).lowercased() + verdict.subtitle.dropFirst()
+        return "\(verdict.title): \(subtitle)"
+    }
+
     static func money(_ amount: Double) -> String { DashboardPresentation.currency(amount, code: "USD") }
 
     static func rate(_ value: Double) -> String { DashboardPresentation.loadRate(value, code: "USD") }

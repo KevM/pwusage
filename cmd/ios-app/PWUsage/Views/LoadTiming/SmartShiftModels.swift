@@ -11,37 +11,6 @@ enum ForecastAvailability: Equatable {
     case ready
 }
 
-struct CostBar: Equatable {
-    let label: String
-    let amount: String
-    let value: Double
-    let isRecommended: Bool
-}
-
-/// A dashed rate-period switch on the chart, labelled "← Peak | Off-Peak →".
-struct SwitchMarker: Equatable {
-    let date: Date
-    let label: String
-    /// "← Peak": the period ending here, drawn just left of the line.
-    let beforeLabel: String?
-    /// "Off-Peak →": the period starting here, drawn just right of the line.
-    let afterLabel: String?
-}
-
-/// One rate period's "energy weather" lane, from now to the end of the comparison.
-struct LaneDisplay: Equatable {
-    /// "Off-Peak (kWh)"
-    let title: String
-    /// "18 kWh banked now", "6 kWh owed now" or "0 kWh now"
-    let startLabel: String
-    let recommended: [LoadTimingForecastEstimator.BalancePoint]
-    /// `nil` when the recommended start is now, so there is only one line.
-    let startNow: [LoadTimingForecastEstimator.BalancePoint]?
-    /// One label when both plans end at the same rounded value, else `[recommended, now]`.
-    let endLabels: [String]
-    let switches: [SwitchMarker]
-}
-
 enum SmartShiftChoiceID: Equatable, Hashable { case recommended, now }
 
 struct SmartShiftChoice: Equatable {
@@ -96,22 +65,8 @@ struct SmartShiftVerdict: Equatable {
     let chartSubtitle: String
     let rateBars: [SmartShiftBar]
     let slot: SmartShiftSlot?
-    let headline: String
-    let barsCaption: String
-    /// Recommended first; a single bar when the recommended start is now.
-    let bars: [CostBar]
-    /// "36% less"
-    let percentLess: String?
     let why: String
-    /// "Charge later"
-    let laterLabel: String
-    /// "Charge now"
-    let nowLabel: String
-    let lanes: [LaneDisplay]
-    /// Clock times for the chart's x-axis: now, each run's end, and each switch.
-    let axisDates: [Date]
     let notes: [Note]
-    let accessibilitySummary: String
 }
 
 /// One rate period in "How this is worked out".

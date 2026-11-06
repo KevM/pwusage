@@ -3,69 +3,12 @@ import Foundation
 import Testing
 
 extension SmartShiftPresentationTests {
-    @Test func laterStartVerdict() throws {
-        let verdict = try Self.verdict(Self.make())
-        #expect(Self.normalized(verdict.headline)
-            == "Charge the car at 4:30 PM: about \(Self.money(1.89)) cheaper than now")
-        #expect(verdict.barsCaption == "Added to your bill (shorter is better)")
-        #expect(verdict.bars.count == 2)
-        #expect(verdict.bars[0]
-            == CostBar(label: "Charge later", amount: Self.money(3.38), value: 3.38, isRecommended: true))
-        #expect(verdict.bars[1]
-            == CostBar(label: "Charge now", amount: Self.money(5.27), value: 5.27, isRecommended: false))
-        #expect(verdict.percentLess == "36% less")
-        #expect(verdict.laterLabel == "Charge later")
-        #expect(verdict.nowLabel == "Charge now")
-        #expect(verdict.notes == [.noForecast(usesHistory: false)])
-        // Now, each run's end, and each rate-period switch.
-        #expect(verdict.axisDates
-            == [Self.now, Self.at(14.4), Self.at(16.5), Self.at(22.4), Self.at(31), Self.at(40.5)])
-    }
-
     @Test func laterStartTomorrowSaysSo() throws {
         let comparison = Self.comparison(recommendedStart: Self.at(40.5))
         let verdict = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil)))
-        #expect(Self.normalized(verdict.headline)
+        #expect(Self.normalized(Self.legacyHeadline(verdict))
             == "Charge the car tomorrow at 4:30 PM: about \(Self.money(1.89)) cheaper than now")
         #expect(Self.normalized(verdict.why).contains("Tomorrow at 4:30 PM it"))
-    }
-
-    @Test func nowIsCheapestShowsOneBar() throws {
-        let lanes = [Self.lane("Peak", start: -6, later: -20, startNow: -20)]
-        let comparison = Self.comparison(costNow: 5.32, recommendedCost: 5.32,
-                                         savings: 0, recommendedStart: Self.now, lanes: lanes)
-        let verdict = try Self.verdict(Self.make(result: .init(comparison: comparison, unavailableReason: nil)))
-        #expect(verdict.headline == "Charge the car now: no cheaper time today")
-        #expect(verdict.barsCaption == "Added to your bill")
-        #expect(verdict.bars
-            == [CostBar(label: "Charge now", amount: Self.money(5.32), value: 5.32, isRecommended: true)])
-        #expect(verdict.percentLess == nil)
-        #expect(verdict.lanes.allSatisfy { $0.startNow == nil })
-        #expect(verdict.lanes.allSatisfy { $0.endLabels.count == 1 })
-        #expect(verdict.axisDates == [Self.now, Self.at(14.4), Self.at(16.5), Self.at(31), Self.at(40.5)])
-    }
-
-    @Test func startLabelsAndMergedEndLabels() throws {
-        let lanes = [
-            Self.lane("Off-Peak", start: 18, later: 4, startNow: 18),
-            Self.lane("Peak", start: -6, later: 10.2, startNow: 9.8),
-            Self.lane("Mid", start: 0.2, later: 0, startNow: -3)
-        ]
-        let verdict = try Self.verdict(
-            Self.make(result: .init(comparison: Self.comparison(lanes: lanes), unavailableReason: nil)))
-        #expect(verdict.lanes.map(\.title) == ["Off-Peak (kWh)", "Peak (kWh)", "Mid (kWh)"])
-        #expect(verdict.lanes.map(\.startLabel) == ["18 kWh banked now", "6 kWh owed now", "0 kWh now"])
-        #expect(verdict.lanes[0].endLabels == ["4 banked", "18 banked"])
-        #expect(verdict.lanes[1].endLabels == ["10 banked"])
-        #expect(verdict.lanes[2].endLabels == ["0", "3 owed"])
-        #expect(verdict.lanes[0].switches == [
-            SwitchMarker(date: Self.at(16.5), label: "\u{2190} Peak | Off-Peak \u{2192}",
-                         beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}"),
-            SwitchMarker(date: Self.at(31), label: "\u{2190} Off-Peak | Peak \u{2192}",
-                         beforeLabel: "\u{2190} Off-Peak", afterLabel: "Peak \u{2192}"),
-            SwitchMarker(date: Self.at(40.5), label: "\u{2190} Peak | Off-Peak \u{2192}",
-                         beforeLabel: "\u{2190} Peak", afterLabel: "Off-Peak \u{2192}")
-        ])
     }
 
     @Test func unobservedBalanceNote() throws {
@@ -89,17 +32,6 @@ extension SmartShiftPresentationTests {
         #expect(try Self.verdict(Self.make(forecast: .ready)).notes.isEmpty)
         #expect(try Self.verdict(Self.make(forecast: .unusable("The forecast provider is limiting requests."))).notes
             == [.forecastState("The forecast provider is limiting requests.")])
-    }
-
-    @Test func customJobLegend() throws {
-        let pump = LoadProfile(id: UUID().uuidString, name: "Pool pump", kind: .custom, energyKwh: 14,
-                               durationHours: 5.9, carSettings: nil)
-        let verdict = try Self.verdict(Self.make(profile: pump))
-        #expect(verdict.laterLabel == "Start later")
-        #expect(verdict.nowLabel == "Start now")
-        let dishes = LoadProfile(id: "dishwasher", name: "Wash the dishes", kind: .appliance, energyKwh: 5,
-                                 durationHours: 2, carSettings: nil)
-        #expect(try Self.verdict(Self.make(profile: dishes)).laterLabel == "Wash later")
     }
 
     @Test func noJobsWithoutProfile() {
@@ -269,11 +201,5 @@ extension SmartShiftPresentationTests {
         #expect(Self.normalized(try Self.verdict(screen).why)
             == "Starting now runs into Peak, where you have no bank, so it's bought at \(Self.rate(0.38)). "
             + "At 4:30 PM it uses your Off-Peak bank, giving up \(Self.rate(0.26)) in credit.")
-    }
-
-    @Test func accessibilitySummaryReadsEveryLane() throws { let verdict = try Self.verdict(Self.make())
-        #expect(verdict.accessibilitySummary == "Peak bank: 6 kWh owed now; charge later leaves 6 kWh owed, "
-            + "charge now leaves 20 kWh owed. "
-            + "Off-Peak bank: 18 kWh banked now; charge later leaves 4 kWh banked, charge now leaves 18 kWh banked.")
     }
 }

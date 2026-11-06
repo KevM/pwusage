@@ -25,4 +25,18 @@ struct SmartShiftBarGeometryTests {
         #expect(block.upperBound - block.lowerBound >= 3)
         #expect(!geometry.labelFitsInside(value, for: .now))
     }
+    @Test func smallSlotFitsAboveNowTotal() throws {
+        let value = bar(baseline: 100, now: 1, later: 4)
+        let slot = SmartShiftSlot(periodKey: "test", extraKwh: 3, label: "Save $1", accessibilityLabel: "Save")
+        let geometry = SmartShiftBarGeometry(bars: [value], slot: slot, plotHeight: 200)
+        let range = try #require(geometry.slot(on: value))
+        #expect(range.upperBound == geometry.y(101))
+        #expect(range.upperBound - range.lowerBound >= 22)
+        #expect(range.lowerBound >= 0)
+    }
+
+    @Test func threeBarsFitAtPhoneWidth() {
+        let width = SmartShiftBarGeometry.barWidth(count: 3, in: 280)
+        #expect(width > 0 && width * 3 <= 280)
+    }
 }

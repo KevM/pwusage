@@ -159,12 +159,12 @@ struct PreviewFixtureTests {
             }
             return verdict
         }
-        #expect(try verdict(.laterWithForecast).bars.count == 2)
+        #expect(try verdict(.laterWithForecast).choices.count == 2)
         #expect(try verdict(.laterWithForecast).notes.isEmpty)
-        #expect(try verdict(.laterWithoutForecast).bars.count == 2)
+        #expect(try verdict(.laterWithoutForecast).choices.count == 2)
         #expect(try verdict(.laterWithoutForecast).notes == [.noForecast(usesHistory: false)])
-        #expect(try verdict(.nowIsCheapest).bars.count == 1)
-        #expect(try verdict(.threePeriods).lanes.count >= 2)
+        #expect(try verdict(.nowIsCheapest).choices.count == 1)
+        #expect(try verdict(.threePeriods).rateBars.count >= 2)
     }
 
     private static func makeSeededRecords(
