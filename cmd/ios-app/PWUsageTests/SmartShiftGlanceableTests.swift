@@ -48,9 +48,9 @@ extension SmartShiftPresentationTests {
         #expect(peak.baselinePosition == 6)
         #expect(peak.now.runKwh == 14)
         #expect(peak.now.runLabel == "+14")
-        #expect(peak.now.total == "20 owed")
+        #expect(peak.now.total == "20 kWh owed")
         #expect(peak.recommended.runLabel == nil)
-        #expect(verdict.rateBars[1].recommended.total == "4 banked")
+        #expect(verdict.rateBars[1].recommended.total == "4 kWh banked")
     }
     @Test func smallRunsAndTotalsDoNotShowSignedZero() throws {
         let lanes = [Self.lane("Peak", start: 0.2, later: 0.1, startNow: 0.2)]
@@ -60,7 +60,7 @@ extension SmartShiftPresentationTests {
         let state = try #require(verdict.rateBars.first?.recommended)
         #expect(abs(state.runKwh - 0.1) < 0.0001)
         #expect(state.runLabel == nil)
-        #expect(state.total == "0")
+        #expect(state.total == "0 kWh")
     }
 
     @Test func barsUseProjectionEndValues() throws {
@@ -68,8 +68,8 @@ extension SmartShiftPresentationTests {
         let verdict = try Self.cycleVerdict(comparison, now: now)
         let bar = try #require(verdict.rateBars.first { $0.periodKey == "ON_PEAK" })
         #expect(bar.baselinePosition == -60)
-        #expect(bar.recommended.total == "7 banked")
-        #expect(bar.now.total == "60 banked")
+        #expect(bar.recommended.total == "7 kWh banked")
+        #expect(bar.now.total == "60 kWh banked")
     }
     @Test func savingCaseBadgesAndLabelsBothChoices() throws {
         let verdict = try Self.verdict(Self.make(profile: Self.pump))
@@ -101,9 +101,10 @@ extension SmartShiftPresentationTests {
         let verdict = try Self.verdict(Self.make(profile: Self.pump))
         let peak = try #require(verdict.rateBars.first { $0.name == "Peak" })
         let offPeak = try #require(verdict.rateBars.first { $0.name == "Off-Peak" })
-        #expect(peak.now.explanation == "Peak: 6 owed without this job, 20 owed with it. It's bought at 38¢/kWh.")
-        #expect(peak.recommended.explanation == "Peak: 6 owed. This job adds nothing here.")
-        #expect(offPeak.recommended.explanation == "Off-Peak: 18 banked without this job, 4 banked with it. "
+        #expect(peak.now.explanation == "Peak: 6 kWh owed without this job, 20 kWh owed with it. "
+            + "It's bought at 38¢/kWh.")
+        #expect(peak.recommended.explanation == "Peak: 6 kWh owed. This job adds nothing here.")
+        #expect(offPeak.recommended.explanation == "Off-Peak: 18 kWh banked without this job, 4 kWh banked with it. "
             + "It uses the bank, which costs only the 26¢/kWh credit.")
     }
 
@@ -114,7 +115,7 @@ extension SmartShiftPresentationTests {
                                                  result: .init(comparison: Self.comparison(lanes: lanes),
                                                                unavailableReason: nil)))
         let offPeak = try #require(verdict.rateBars.first { $0.name == "Off-Peak" })
-        #expect(offPeak.recommended.explanation == "Off-Peak: 4 banked without this job, 10 owed with it. "
+        #expect(offPeak.recommended.explanation == "Off-Peak: 4 kWh banked without this job, 10 kWh owed with it. "
             + "It uses the bank, then buys the rest at 20¢/kWh.")
     }
 

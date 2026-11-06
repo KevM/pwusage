@@ -35,7 +35,7 @@ struct SmartShiftBankChart: View {
         GeometryReader { proxy in
             if SmartShiftBarGeometry.fitsNetZeroLabel(count: bars.count, width: proxy.size.width) {
                 Text("Net zero").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    .offset(y: geometry.zeroY - 16)
+                    .offset(y: geometry.zeroY + 3)
             }
         }
     }
@@ -67,7 +67,8 @@ struct SmartShiftBankChart: View {
             ZStack(alignment: .topLeading) {
                 bank(bar, geometry: geometry, width: width, center: center)
                 run(bar, geometry: geometry, width: width, center: center)
-                Text(bar.state(for: selection).total).font(.caption.weight(.semibold)).lineLimit(1).fixedSize()
+                Text(bar.state(for: selection).total).font(.caption.weight(.semibold)).lineLimit(1)
+                    .minimumScaleFactor(0.8).frame(width: proxy.size.width - 4)
                     .position(x: center, y: geometry.totalLabelCenter(of: bar, for: selection, showsSlot: showsSlot))
                 badge(bar, geometry: geometry, width: width, center: center)
                 saving(bar, geometry: geometry, width: width, center: center)
@@ -108,8 +109,11 @@ struct SmartShiftBankChart: View {
                     .lineLimit(1).minimumScaleFactor(0.8).frame(width: width - 8 - badgeRoom)
                     .position(x: center - badgeRoom / 2, y: middle)
             } else {
-                Text(label).font(.caption.weight(.bold)).foregroundStyle(Color.emphasis).fixedSize()
-                    .position(x: center - width / 2 - 16, y: middle)
+                let margin = center - width / 2
+                Text("\(label) kWh").font(.caption.weight(.bold)).foregroundStyle(Color.emphasis)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .frame(width: margin - 4, alignment: .trailing)
+                    .position(x: margin / 2 - 2, y: middle)
             }
         }
     }
