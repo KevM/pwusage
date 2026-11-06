@@ -72,9 +72,9 @@ struct SmartShiftBankChart: View {
         let base = geometry.base(of: bar)
         if let stump = geometry.stump(of: bar) {
             let isOwed = bar.baselinePosition > 0
-            SmartShiftTornEdge(edge: isOwed ? .top : .bottom).fill(Self.bankFill)
+            SmartShiftBarCut(edge: isOwed ? .top : .bottom).fill(Self.bankFill)
                 .placedOnBar(stump, width: width, center: center)
-            SmartShiftTornEdge(edge: isOwed ? .bottom : .top).fill(Self.bankFill)
+            SmartShiftBarCut(edge: isOwed ? .bottom : .top).fill(Self.bankFill)
                 .placedOnBar(base, width: width, center: center)
         } else {
             RoundedRectangle(cornerRadius: 4).fill(Self.bankFill).placedOnBar(base, width: width, center: center)
@@ -116,7 +116,8 @@ struct SmartShiftBankChart: View {
                         width: CGFloat, center: CGFloat) -> some View {
         if showsSlot, let slot, let range = geometry.slot(on: bar) {
             Button(action: onTapSlot) {
-                Text(slot.label).font(.caption2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.8)
+                Text(slot.label).font(.caption2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.7)
+                    .padding(.horizontal, 5)
                     .frame(width: width, height: range.upperBound - range.lowerBound)
                     .background(.green.opacity(0.12))
                     .overlay(RoundedRectangle(cornerRadius: 4)

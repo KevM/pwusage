@@ -65,7 +65,7 @@ rule: bill date, or the rate-change date when the projection stops there (see `p
 - The scale stays fixed across both selections, so only the run moves.
 - The scale fits the job, not the largest bank, so a bar close to zero stays readable beside one hundreds of kWh away.
   Every bar shares it, so runs compare across bars, and it's capped at 8 pt per kWh so a small job isn't blown up.
-- A bar more than 1.5 jobs from zero is **torn**: a short stump stays on the zero line, a zigzag gap follows, and the
+- A bar more than 1.5 jobs from zero is **torn**: a short stump stays on the zero line, a diagonal cut follows, and the
   part around the run keeps the shared scale. Its printed total carries the true distance. A far bank tears the same
   way below zero and never appears to reach zero after the run.
 - There is no time axis, rate strip, switch line, legend or second series.

@@ -58,7 +58,8 @@ struct SmartShiftBarGeometryTests {
         #expect(geometry.stump(of: nearZero) == nil)
         let stump = try #require(geometry.stump(of: farOwed))
         #expect(stump.upperBound == geometry.zeroY)
-        #expect(geometry.base(of: farOwed).upperBound < stump.lowerBound)
+        let cutWidth = stump.lowerBound + SmartShiftBarGeometry.cutSlant - geometry.base(of: farOwed).upperBound
+        #expect(cutWidth == SmartShiftBarGeometry.cutGap)
     }
 
     @Test func tornBarsKeepOneScaleSoBlocksCompare() {
@@ -82,7 +83,8 @@ struct SmartShiftBarGeometryTests {
         #expect(geometry.isTorn(banked))
         let stump = try #require(geometry.stump(of: banked))
         #expect(stump.lowerBound == geometry.zeroY)
-        #expect(geometry.base(of: banked).lowerBound > stump.upperBound)
+        let cutWidth = geometry.base(of: banked).lowerBound + SmartShiftBarGeometry.cutSlant - stump.upperBound
+        #expect(cutWidth == SmartShiftBarGeometry.cutGap)
         #expect(geometry.block(of: banked, for: .now).lowerBound > geometry.base(of: banked).lowerBound)
     }
 

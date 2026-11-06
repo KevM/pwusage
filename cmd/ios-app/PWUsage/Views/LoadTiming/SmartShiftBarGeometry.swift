@@ -10,9 +10,12 @@ struct SmartShiftBarGeometry {
     static let maximumPointsPerKwh: CGFloat = 8
     /// A bar is torn when its baseline is more than this many jobs from zero.
     static let tearThreshold = 1.5
-    static let stumpHeight: CGFloat = 14
-    static let tearGap: CGFloat = 10
-    /// Points between the zero line and the torn part's run, which holds the stump, gap and a gray stub.
+    static let stumpHeight: CGFloat = 20
+    /// How far the diagonal cut rises across a bar.
+    static let cutSlant: CGFloat = 12
+    /// The cut's vertical width. It's the same across the bar because both edges rise together.
+    static let cutGap: CGFloat = 6
+    /// Points between the zero line and the torn part's run, which holds the stump, cut and a gray stub.
     static let tornLift: CGFloat = 46
     /// Room above the tallest bar for a slot's minimum height and the total above it.
     static let headroom: CGFloat = minimumSlotHeight + totalLabelRoom
@@ -89,7 +92,7 @@ struct SmartShiftBarGeometry {
     func base(of bar: SmartShiftBar) -> ClosedRange<CGFloat> {
         let end = y(bar.baselinePosition, on: bar)
         guard isTorn(bar) else { return min(zeroY, end) ... max(zeroY, end) }
-        let tear = Self.stumpHeight + Self.tearGap
+        let tear = Self.stumpHeight - Self.cutSlant + Self.cutGap
         return bar.baselinePosition > 0 ? end ... (zeroY - tear) : (zeroY + tear) ... end
     }
 
