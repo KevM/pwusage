@@ -5,14 +5,14 @@ import Testing
 @MainActor
 @Suite("Site history onboarding")
 struct SiteHistoryOnboardingTests {
-    private let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-1")
+    let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-1")
     private let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     /// 2026-11-02 12:00 in Chicago (CST).
     private let now = Date(timeIntervalSince1970: 1_793_642_400)
 
-    private var ledgers: SiteHistoryDayLedgerStore { SiteHistoryDayLedgerStore(directory: directory) }
+    var ledgers: SiteHistoryDayLedgerStore { SiteHistoryDayLedgerStore(directory: directory) }
 
-    private func make(
+    func make(
         _ environment: FakeOnboardingEnvironment, store: SiteHistoryOnboardingStore? = nil, clock: Date? = nil
     ) -> SiteHistoryOnboarding {
         let fixed = clock ?? now
@@ -165,38 +165,6 @@ struct SiteHistoryOnboardingTests {
         #expect(environment.requests.last?.from == "2025-11-02")
         let total = environment.requests.map(\.days).reduce(0, +)
         #expect(total == 365)
-    }
-
-    @Test func anExistingHighConfidenceLayoutStillImportsTheInitialCheckpoint() async {
-        let environment = FakeOnboardingEnvironment()
-        environment.confidence = .high
-        let outcome = await make(environment).run(scope: scope)
-        #expect(outcome == .finished(.layoutAlreadyUsable))
-        #expect(environment.requests.map(\.days).reduce(0, +) == 90)
-        #expect(environment.passes.count > 1)
-        #expect(environment.detectionCount == 0)
-    }
-
-    @Test func anExistingHighLayoutIsNotRedetectedAtAShortHistoryStart() async {
-        let environment = FakeOnboardingEnvironment()
-        environment.confidence = .high
-        environment.historyStart = "2026-09-13"
-        let outcome = await make(environment).run(scope: scope)
-        #expect(outcome == .finished(.layoutAlreadyUsable))
-        #expect(environment.requests.map(\.days).reduce(0, +) == 50)
-        #expect(environment.detectionCount == 0)
-    }
-
-    @Test func anExistingHighLayoutStillSortsTheDaysForTheStrip() async throws {
-        let environment = FakeOnboardingEnvironment()
-        environment.confidence = .high
-        environment.clearEvery = 2
-        let outcome = await make(environment).run(scope: scope)
-        #expect(outcome == .finished(.layoutAlreadyUsable))
-        #expect(environment.detectionCount == 0)
-        // The last pass ran at the finish, so every stored day has its type.
-        let ledger = try #require(try await ledgers.ledger(scope: scope))
-        #expect(ledger.dayTypes.count == Set(environment.stored.flatMap(\.self)).count)
     }
 
     @Test func aFinishedSiteWithoutDayTypesSortsThemOnce() async throws {

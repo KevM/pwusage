@@ -18,7 +18,7 @@
   - 40 clear days, 180 producing days and a direction range within 30° for high confidence.
 - **Loading continues toward high confidence.** Forecasting uses the layout as soon as it's usable; loading keeps going until high confidence, one year, the history start, or a problem more history won't fix. Reaching 180 producing days means about six months, so most sites now load at least half a year, at a few hundred more Tesla requests per site.
 - **Two passes:**
-  - The clear-day pass runs after every second slice (six days). It sorts days into clear, cloudy and no production, and saves the result. It never writes the layout record, so nothing syncs through iCloud.
+  - The clear-day pass runs after every second slice (six days), except that a layout already at high confidence runs it once, when it stops after the recent days. It sorts days into clear, cloudy and no production, and saves the result. It never writes the layout record, so nothing syncs through iCloud.
   - Full detection runs when the clear-day count first crosses 15 or 40, or producing days cross 180, with a fallback every 30 checked days. Each full run saves the layout record, as now.
 - **What the wedge means.** Before the first fit, its width is a stylized function of the clear-day count and doesn't claim to be a measured range. Once a fit exists, the width is the largest plane's `azimuthRange90`.
 - **What the house means.** The house is a neutral stand-in; nothing claims it's their roof:
