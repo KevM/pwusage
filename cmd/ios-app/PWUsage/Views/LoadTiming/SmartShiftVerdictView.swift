@@ -24,13 +24,12 @@ struct SmartShiftVerdictView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(verdict.title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(verdict.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.emphasis)
-            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected, onSelect: select)
+            choiceTiles
             VStack(alignment: .leading, spacing: 2) {
                 Text(verdict.chartTitle).font(.headline)
                 Text(verdict.chartSubtitle).font(.caption).foregroundStyle(.secondary)
             }
-            SmartShiftBankChart(bars: verdict.rateBars, slot: verdict.slot, selection: selection.selected,
-                                marks: selection.marks, isSlotHeld: selection.isReturning, onTapSlot: returnToSuggested)
+            bankChart
             ForEach(Array(verdict.notes.enumerated()), id: \.offset) { _, note in noteView(note) }
         }
         .onChange(of: verdict) { _, updated in selection.reconcile(with: updated.choices) }
@@ -38,6 +37,28 @@ struct SmartShiftVerdictView: View {
             if active { selection = SmartShiftSelection(choices: verdict.choices) }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: landingCount)
+    }
+
+    @ViewBuilder private var choiceTiles: some View {
+        if reduceMotion {
+            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected, onSelect: select)
+                .id(selection.selected).transition(.opacity)
+        } else {
+            SmartShiftChoiceTiles(choices: verdict.choices, selected: selection.selected, onSelect: select)
+        }
+    }
+
+    @ViewBuilder private var bankChart: some View {
+        if reduceMotion {
+            chart.id(selection.selected).transition(.opacity)
+        } else {
+            chart
+        }
+    }
+
+    private var chart: some View {
+        SmartShiftBankChart(bars: verdict.rateBars, slot: verdict.slot, selection: selection.selected,
+                            marks: selection.marks, isSlotHeld: selection.isReturning, onTapSlot: returnToSuggested)
     }
 
     private func select(_ id: SmartShiftChoiceID) {
