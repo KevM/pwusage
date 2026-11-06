@@ -204,6 +204,10 @@ actor SolarLayoutRecordStore {
         if merged != local {
             try save(merged, scope: scope)
         }
+        // What's owed is the layout found here. A new home location means iCloud's layout, if any, isn't it.
+        if !solarLocationsShareCoordinates(local?.location, merged.location) {
+            try? owedReveals.remove(scope)
+        }
         return merged
     }
 

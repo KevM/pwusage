@@ -116,6 +116,30 @@ struct SolarSystemRevealTests {
         #expect(try await store.isRevealOwed(scope: scope))
     }
 
+    @Test func aNewerHomeLocationFromICloudDropsTheOwedReveal() async throws {
+        let store = try await store()
+        try await save(result(), to: store)
+        let later = Date.now.addingTimeInterval(3600)
+        let moved = SolarHomeLocation(latitude: 44.0, longitude: -88.0, source: .device)
+        let remote = SolarLayoutRecord(
+            location: moved, locationSetAt: later, result: result(confidence: "high"), detectedAt: later,
+            attemptedAt: later, detectorVersion: SolarLayoutDetector.version, resultLocation: moved)
+        try await store.applyRemoteRecord(remote, scope: scope)
+        #expect(try await store.record(scope: scope)?.location == moved)
+        #expect(try await !store.isRevealOwed(scope: scope))
+    }
+
+    @Test func aNewerResultFromICloudForTheSameHomeKeepsTheOwedReveal() async throws {
+        let store = try await store()
+        try await save(result(), to: store)
+        let later = now.addingTimeInterval(3600)
+        let remote = SolarLayoutRecord(
+            location: home, locationSetAt: nil, result: result(confidence: "high"), detectedAt: later,
+            attemptedAt: later, detectorVersion: SolarLayoutDetector.version, resultLocation: home)
+        try await store.applyRemoteRecord(remote, scope: scope)
+        #expect(try await store.isRevealOwed(scope: scope))
+    }
+
     @Test func aLaterResultWithoutALayoutDropsTheOwedReveal() async throws {
         let store = try await store()
         try await save(result(), to: store)
