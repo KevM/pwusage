@@ -23,7 +23,7 @@ struct SmartShiftBarGeometry {
     static let nameGap: CGFloat = 5
     /// Room for a name, its rate and a badge label.
     static let nameRoom: CGFloat = 58
-    /// The first bar must leave this much of the zero line clear to label it.
+    /// The zero line must have this much clear to label it.
     private static let netZeroLabelWidth: CGFloat = 46
     private static let totalLabelRoom: CGFloat = 20
     private static let bottomInset: CGFloat = 2
@@ -142,10 +142,15 @@ struct SmartShiftBarGeometry {
         max(zeroY, base(of: bar).upperBound, y(bar.baselinePosition, on: bar)) + Self.nameGap
     }
 
-    static func fitsNetZeroLabel(count: Int, width: CGFloat) -> Bool {
-        guard count > 0 else { return false }
+    /// Where the zero line's label goes, just under the line: the gap between the first two bars,
+    /// which nothing else uses, or a lone bar's margin. Nil when it wouldn't fit.
+    static func netZeroLabelSlot(count: Int, width: CGFloat) -> (center: CGFloat, width: CGFloat)? {
+        guard count > 0 else { return nil }
         let column = width / CGFloat(count)
-        return (column - barWidth(count: count, in: width)) / 2 >= netZeroLabelWidth
+        let margin = (column - barWidth(count: count, in: width)) / 2
+        let room = (count == 1 ? margin : margin * 2) - 4
+        guard room >= netZeroLabelWidth else { return nil }
+        return (center: count == 1 ? margin / 2 : column, width: room)
     }
 
     static func barWidth(count: Int, in width: CGFloat) -> CGFloat {

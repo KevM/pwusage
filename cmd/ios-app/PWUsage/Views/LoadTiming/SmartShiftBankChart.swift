@@ -33,9 +33,11 @@ struct SmartShiftBankChart: View {
 
     private func netZeroLabel(_ geometry: SmartShiftBarGeometry) -> some View {
         GeometryReader { proxy in
-            if SmartShiftBarGeometry.fitsNetZeroLabel(count: bars.count, width: proxy.size.width) {
-                Text("Net zero").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    .offset(y: geometry.zeroY + 3)
+            if let slot = SmartShiftBarGeometry.netZeroLabelSlot(count: bars.count, width: proxy.size.width) {
+                Text("Net zero").font(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .frame(width: slot.width)
+                    .position(x: slot.center, y: geometry.zeroY + 11)
             }
         }
     }
@@ -106,7 +108,7 @@ struct SmartShiftBankChart: View {
         if let label = bar.state(for: selection).runLabel {
             if geometry.labelFitsInside(bar, for: selection) {
                 Text("\(label) kWh").font(.caption.weight(.bold)).foregroundStyle(Color.onEmphasis)
-                    .lineLimit(1).minimumScaleFactor(0.8).frame(width: width - 8 - badgeRoom)
+                    .lineLimit(1).minimumScaleFactor(0.6).frame(width: width - 8 - badgeRoom)
                     .position(x: center - badgeRoom / 2, y: middle)
             } else {
                 let margin = center - width / 2
@@ -136,7 +138,7 @@ struct SmartShiftBankChart: View {
                         width: CGFloat, center: CGFloat) -> some View {
         if showsSlot, let slot, let range = geometry.slot(on: bar) {
             Button(action: onTapSlot) {
-                Text(slot.label).font(.caption2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.7)
+                Text(slot.label).font(.caption2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.5)
                     .padding(.horizontal, 5)
                     .frame(width: width, height: range.upperBound - range.lowerBound)
                     .background(.green.opacity(0.12))

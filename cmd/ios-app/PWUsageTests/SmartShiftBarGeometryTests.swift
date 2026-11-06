@@ -140,9 +140,20 @@ struct SmartShiftBarGeometryTests {
         #expect(geometry.nameTop(of: banked) == geometry.base(of: banked).upperBound + SmartShiftBarGeometry.nameGap)
     }
 
-    @Test func theNetZeroLabelOnlyShowsBesideABarWhenItFits() {
-        #expect(SmartShiftBarGeometry.fitsNetZeroLabel(count: 2, width: 330))
-        #expect(!SmartShiftBarGeometry.fitsNetZeroLabel(count: 3, width: 330))
+    @Test func theNetZeroLabelSitsInTheGapBetweenBarsWhenItFits() throws {
+        let two = try #require(SmartShiftBarGeometry.netZeroLabelSlot(count: 2, width: 330))
+        let barWidth = SmartShiftBarGeometry.barWidth(count: 2, in: 330)
+        #expect(two.center == 165)
+        #expect(two.width <= 330 / 2 - barWidth)
+        #expect(two.width >= 46)
+        #expect(SmartShiftBarGeometry.netZeroLabelSlot(count: 3, width: 330) == nil)
+        #expect(SmartShiftBarGeometry.netZeroLabelSlot(count: 0, width: 330) == nil)
+    }
+
+    @Test func aLoneBarKeepsTheNetZeroLabelInItsMargin() throws {
+        let one = try #require(SmartShiftBarGeometry.netZeroLabelSlot(count: 1, width: 330))
+        let margin = (330 - SmartShiftBarGeometry.barWidth(count: 1, in: 330)) / 2
+        #expect(one.center + one.width / 2 <= margin)
     }
 
     @Test func totalsSitAboveTheSlotAndBanksAboveTheZeroLine() throws {
