@@ -18,6 +18,27 @@ struct SolarSystemSceneClocks: Equatable {
     static let houseStart = 0.45 * buildDuration
     static let houseDuration = 2.1 + 3 * 0.5 + 1.6
 
+    /// A system found while nobody was watching replays once, from an empty strip: the strip grows
+    /// out from the newest week, the days take their colors in one sweep, then every clear day flies
+    /// within the same window, however many there are. The tilt and house follow as they do live.
+    static let revealGrow = 1.0
+    static let revealSweep = 1.0
+    static let revealFlights = 2.5
+
+    /// The find playing on screen. `seenAt` is when the house starts to rise, which is when
+    /// someone counts as having seen it.
+    enum Reveal: Equatable {
+        case none
+        case playing(seenAt: Date)
+        case skipped
+    }
+
+    private(set) var reveal = Reveal.none
+    /// The find is replaying (not arriving live), so nothing it draws can rely on what's stored yet.
+    private(set) var isReplaying = false
+    private(set) var sorted: [String: Date] = [:]
+    private var wasRevealOwed = false
+
     private(set) var appeared: [String: Date] = [:]
     private(set) var flights: [String: Date] = [:]
     private(set) var buildStart: Date?
@@ -25,6 +46,7 @@ struct SolarSystemSceneClocks: Equatable {
         let from: Double
         let target: Double
         let start: Date
+        var duration = SolarSystemSceneClocks.widenDuration
     }
 
     private var widening: Widening?
@@ -33,7 +55,14 @@ struct SolarSystemSceneClocks: Equatable {
     private var knownColumns = 0
     private var hadLayout = false
 
-    mutating func observe(days: [SiteHistoryStatus.Day], columns: Int, hasLayout: Bool, now: Date) {
+    mutating func observe(
+        days: [SiteHistoryStatus.Day], columns: Int, hasLayout: Bool, revealOwed: Bool = false, now: Date
+    ) {
+        defer { wasRevealOwed = revealOwed }
+        if revealOwed, hasLayout, !wasRevealOwed, known == nil || hadLayout {
+            startReveal(days: days, columns: columns, now: now)
+            return
+        }
         let ids = Set(days.map(\.day))
         let clear = Set(days.filter { $0.type == .clear }.map(\.day))
         if let known {
@@ -48,15 +77,71 @@ struct SolarSystemSceneClocks: Equatable {
             if Double(columns) != shown { widening = Widening(from: shown, target: Double(columns), start: now) }
             if hasLayout, !hadLayout {
                 let landed = flights.values.map { $0.addingTimeInterval(Self.flightDuration) }.max() ?? now
-                buildStart = max(landed, now).addingTimeInterval(Self.buildDelay)
+                let start = max(landed, now).addingTimeInterval(Self.buildDelay)
+                buildStart = start
+                reveal = .playing(seenAt: start.addingTimeInterval(Self.houseStart))
             }
-            if !hasLayout { buildStart = nil }
+            if !hasLayout {
+                buildStart = nil
+                reveal = .none
+                isReplaying = false
+            }
         }
         known = ids
         knownClear = clear
         knownColumns = columns
         hadLayout = hasLayout
         prune(now: now)
+    }
+
+    private mutating func startReveal(days: [SiteHistoryStatus.Day], columns: Int, now: Date) {
+        // Newest first, as the strip grows outward from it.
+        let newestFirst = days.map(\.day).sorted(by: >)
+        let grown = now.addingTimeInterval(Self.revealGrow)
+        let swept = grown.addingTimeInterval(Self.revealSweep)
+        appeared = [:]
+        sorted = [:]
+        for (index, day) in newestFirst.enumerated() {
+            let share = Self.share(index, of: newestFirst.count)
+            appeared[day] = now.addingTimeInterval(share * Self.revealGrow)
+            sorted[day] = grown.addingTimeInterval(share * Self.revealSweep)
+        }
+        let clear = days.filter { $0.type == .clear }.map(\.day).sorted()
+        flights = [:]
+        for (index, day) in clear.enumerated() {
+            let share = Self.share(index, of: clear.count)
+            flights[day] = swept.addingTimeInterval(share * (Self.revealFlights - Self.flightDuration))
+        }
+        widening = Widening(from: 1, target: Double(columns), start: now, duration: Self.revealGrow)
+        let landed = clear.isEmpty ? swept : swept.addingTimeInterval(Self.revealFlights)
+        let start = landed.addingTimeInterval(Self.buildDelay)
+        buildStart = start
+        reveal = .playing(seenAt: start.addingTimeInterval(Self.houseStart))
+        isReplaying = true
+        known = Set(newestFirst)
+        knownClear = Set(clear)
+        knownColumns = columns
+        hadLayout = true
+    }
+
+    /// Jump to the finished house.
+    mutating func skipReveal() {
+        appeared = [:]
+        sorted = [:]
+        flights = [:]
+        widening = nil
+        buildStart = nil
+        reveal = .skipped
+        isReplaying = false
+    }
+
+    /// Whether anything has been observed yet.
+    var hasObserved: Bool { known != nil }
+
+    /// Whether a day shows its type yet; false only while a reveal's sweep hasn't reached it.
+    func isSorted(_ day: String, at now: Date) -> Bool {
+        guard let start = sorted[day] else { return true }
+        return now >= start
     }
 
     /// 0 before a day starts growing in, 1 once grown (or when it never animated).
@@ -78,7 +163,7 @@ struct SolarSystemSceneClocks: Equatable {
     /// The strip's eased column count while it widens; nil once settled.
     func widenedColumns(at now: Date) -> Double? {
         guard let widening else { return nil }
-        let progress = Self.progress(now.timeIntervalSince(widening.start), over: Self.widenDuration)
+        let progress = Self.progress(now.timeIntervalSince(widening.start), over: widening.duration)
         guard progress < 1 else { return nil }
         return widening.from + (widening.target - widening.from) * Self.ease(progress)
     }
@@ -107,6 +192,12 @@ struct SolarSystemSceneClocks: Equatable {
     private mutating func prune(now: Date) {
         appeared = appeared.filter { now.timeIntervalSince($0.value) < 30 }
         flights = flights.filter { now.timeIntervalSince($0.value) < 30 }
+        sorted = sorted.filter { now.timeIntervalSince($0.value) < 30 }
+    }
+
+    /// `index`'s place in 0...1 among `count` things.
+    private static func share(_ index: Int, of count: Int) -> Double {
+        count > 1 ? Double(index) / Double(count - 1) : 0
     }
 
     static func progress(_ elapsed: TimeInterval, over duration: TimeInterval) -> Double {

@@ -9,6 +9,8 @@ struct SolarSystemSceneInput: Equatable {
     var latitude: Double?
     var groups: [SolarSystemHouse.Group] = []
     var isWaiting = false
+    /// Found while nobody was watching: replay the find the first time it can be seen.
+    var isRevealOwed = false
 
     init(status: SiteHistoryStatus?, layout: SolarLayout?, isWaiting: Bool) {
         days = status?.days ?? []
@@ -21,6 +23,7 @@ struct SolarSystemSceneInput: Equatable {
             fittedRange = [largest.azimuth, largest.azimuth]
         }
         self.isWaiting = isWaiting
+        isRevealOwed = status?.isRevealOwed ?? false
     }
 
     var isFound: Bool { !groups.isEmpty }
@@ -32,6 +35,7 @@ struct SolarSystemSceneInput: Equatable {
 struct SolarSystemVisual: View {
     let input: SolarSystemSceneInput
     let summary: String
+    var onRevealSeen: () -> Void = {}
 
     nonisolated static let sceneHeight: CGFloat = 300
     /// Once the house stands: about a quarter of its height in gutter above and below.
@@ -39,6 +43,9 @@ struct SolarSystemVisual: View {
     nonisolated static let stripInset: CGFloat = 16
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    /// On screen in the visible tab; a tab keeps its screen alive while another shows.
+    @State private var isOnScreen = false
     @State private var width: CGFloat = 0
     @State private var clocks = SolarSystemSceneClocks()
     @State private var camera = SolarSystemCamera.found
@@ -83,23 +90,77 @@ struct SolarSystemVisual: View {
                         .accessibilityHidden(true)
                 }
             }
+            .overlay { if motion.isReplaying, motion.isAnimating(at: now) { skipArea } }
         }
         .frame(maxWidth: .infinity)
+        .opacity(isHoldingForReveal ? 0 : 1)
         // A fixed-size picture: its labels stop growing, and VoiceOver reads the summary instead.
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .onAppear { observe() }
+        .onAppear { isOnScreen = true }
+        .onDisappear { isOnScreen = false }
+        // What happened out of sight stays out of sight, so coming back starts a fresh first look,
+        // which replays only an owed reveal.
+        .onChange(of: isWatching, initial: true) {
+            clocks = SolarSystemSceneClocks()
+            observe()
+        }
         .onChange(of: input) { observe() }
         .onChange(of: width) { observe() }
+        .task(id: RevealWatch(isOwed: input.isRevealOwed, isWatching: isWatching, reveal: clocks.reveal)) {
+            await acknowledgeReveal()
+        }
+    }
+
+    private var isWatching: Bool { isOnScreen && scenePhase == .active }
+
+    /// A reveal hasn't started yet (it needs the width), and the finished house mustn't show first.
+    private var isHoldingForReveal: Bool {
+        input.isRevealOwed && !reduceMotion && !clocks.hasObserved
+    }
+
+    private var skipArea: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture { clocks.skipReveal() }
+            .accessibilityHidden(true)
+    }
+
+    private struct RevealWatch: Equatable {
+        let isOwed: Bool
+        let isWatching: Bool
+        let reveal: SolarSystemSceneClocks.Reveal
+    }
+
+    /// Seen once the house starts to rise, or at once when skipped or under Reduce Motion, where it
+    /// simply stands there. Leaving first cancels this, so the banner comes back.
+    private func acknowledgeReveal() async {
+        guard input.isRevealOwed, isWatching else { return }
+        if !reduceMotion {
+            switch clocks.reveal {
+            case .none:
+                return
+            case .skipped:
+                break
+            case .playing(let seenAt):
+                try? await Task.sleep(for: .seconds(max(seenAt.timeIntervalSinceNow, 0)))
+                guard !Task.isCancelled else { return }
+            }
+        }
+        onRevealSeen()
     }
 
     private var isMoving: Bool {
-        guard !reduceMotion else { return false }
+        guard !reduceMotion, isWatching else { return false }
         return input.isFound || clocks.isAnimating(at: .now) || dragStart != nil
     }
 
     private func observe() {
-        clocks.observe(days: input.days, columns: strip.columns, hasLayout: input.isFound, now: .now)
+        guard isWatching else { return }
+        let revealOwed = input.isRevealOwed && !reduceMotion
+        if revealOwed, width == 0 { return }
+        clocks.observe(days: input.days, columns: strip.columns, hasLayout: input.isFound, revealOwed: revealOwed,
+                       now: .now)
     }
 
     /// A gentle sway once the house stands.
@@ -159,7 +220,9 @@ struct SceneFrame {
         } else {
             wedgeCenter = SolarSystemWedge.center(fittedRange: input.fittedRange, latitude: input.latitude)
         }
-        var width = SolarSystemWedge.width(clearDays: max(landedClear, 1), fittedRange: input.fittedRange)
+        // A replay narrows the wedge as days land, as if the fit weren't known yet.
+        let range = clocks.isReplaying ? nil : input.fittedRange
+        var width = SolarSystemWedge.width(clearDays: max(landedClear, 1), fittedRange: range)
         if input.isFound {
             // On a find the wedge closes to one direction over 0.8 s.
             let closing = ease(min(build * SolarSystemSceneClocks.buildDuration / 0.8, 1))

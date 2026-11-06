@@ -73,13 +73,17 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
 
     /// The stored result the status shows; days come from `stored`.
     var storedResult: DetectedSolarLayout?
+    var isRevealOwed = false
 
     func storedState(scope _: SolarForecastSiteScope) async -> SiteHistoryStoredState {
         SiteHistoryStoredState(
             result: storedResult,
             location: location ? SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .device) : nil,
-            days: Array(Set(stored.flatMap(\.self))).sorted())
+            days: Array(Set(stored.flatMap(\.self))).sorted(),
+            isRevealOwed: isRevealOwed)
     }
+
+    func acknowledgeReveal(scope _: SolarForecastSiteScope) async { isRevealOwed = false }
 
     func classifyDays(scope _: SolarForecastSiteScope) async -> SolarDayClassification? {
         await onClassify?()

@@ -17,6 +17,8 @@ protocol SiteHistoryOnboardingEnvironment: AnyObject {
     func storedState(scope: SolarForecastSiteScope) async -> SiteHistoryStoredState
     /// Run detection now, outside the ordinary schedule, and keep its result.
     func detect(scope: SolarForecastSiteScope) async -> DetectedSolarLayout?
+    /// The found system has been seen, or the site was forgotten.
+    func acknowledgeReveal(scope: SolarForecastSiteScope) async
 }
 
 /// The app's onboarding environment: the server fill, the on-device history and layout records,
@@ -60,13 +62,18 @@ final class LiveSiteHistoryOnboardingEnvironment: SiteHistoryOnboardingEnvironme
         return true
     }
 
+    func acknowledgeReveal(scope: SolarForecastSiteScope) async {
+        try? await records.acknowledgeReveal(scope: scope)
+    }
+
     func hasLocation(scope: SolarForecastSiteScope) async -> Bool {
         await record(scope)?.location != nil
     }
 
     func layoutConfidence(scope: SolarForecastSiteScope) async -> SolarLayoutConfidence? {
         #if DEBUG
-            if SiteHistoryDebugSettings.ignoresLayout(scope) { return nil }
+            let detectedAt = await record(scope)?.detectedAt
+            if SiteHistoryDebugSettings.hidesResult(detectedAt: detectedAt, scope: scope) { return nil }
         #endif
         guard let result = await record(scope)?.result else { return nil }
         return SolarLayoutDetector.forecastLayout(result, detectedAt: .distantPast)?.confidence
@@ -76,10 +83,12 @@ final class LiveSiteHistoryOnboardingEnvironment: SiteHistoryOnboardingEnvironme
         let record = await record(scope)
         var result = record?.result
         #if DEBUG
-            if SiteHistoryDebugSettings.ignoresLayout(scope) { result = nil }
+            if SiteHistoryDebugSettings.hidesResult(detectedAt: record?.detectedAt, scope: scope) { result = nil }
         #endif
         let days = (try? await history.storedDays(scope: scope)) ?? []
-        return SiteHistoryStoredState(result: result, location: record?.location, days: days)
+        let isRevealOwed = (try? await records.isRevealOwed(scope: scope)) ?? false
+        return SiteHistoryStoredState(
+            result: result, location: record?.location, days: days, isRevealOwed: isRevealOwed)
     }
 
     /// Off the main actor; cancelling the caller cancels the pass.

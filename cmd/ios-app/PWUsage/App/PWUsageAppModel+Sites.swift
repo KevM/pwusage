@@ -109,6 +109,13 @@ extension PWUsageAppModel {
         return true
     }
 
+    /// The found system has been seen on the Solar System screen.
+    func solarSystemRevealSeen() {
+        guard let historyOnboarding, let accountScopeID, let selectedSiteID else { return }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+        Task { await historyOnboarding.acknowledgeReveal(scope: scope) }
+    }
+
     /// A corrected location can unblock detection without discarding imported history.
     func homeLocationSaved() {
         guard sessionVerified, let historyOnboarding, let accountScopeID, let selectedSiteID else { return }

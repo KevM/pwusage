@@ -25,7 +25,7 @@ struct SolarSystemDayStrip: View {
                 context.draw(text, at: layout.labelOrigin(label), anchor: label.trailing ? .trailing : .leading)
             }
             for cell in layout.cells {
-                let type = types[cell.day] ?? nil
+                let type = clocks.isSorted(cell.day, at: now) ? types[cell.day] ?? nil : nil
                 let growth = clocks.growth(cell.day, at: now)
                 guard growth > 0 else { continue }
                 let frame = layout.frame(cell)

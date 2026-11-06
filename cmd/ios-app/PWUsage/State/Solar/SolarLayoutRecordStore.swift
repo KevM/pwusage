@@ -1,43 +1,6 @@
 import CryptoKit
 import Foundation
 
-struct SolarLayoutRemoteApplyOutcome: Equatable, Sendable {
-    let record: SolarLayoutRecord
-    let appliedScopes: [SolarForecastSiteScope]
-}
-
-struct SolarLayoutRecord: Codable, Equatable, Sendable {
-    var location: SolarHomeLocation?
-    var locationSetAt: Date?
-    var result: DetectedSolarLayout?
-    var detectedAt: Date?
-    var attemptedAt: Date?
-    var detectorVersion: Int?
-    var resultLocation: SolarHomeLocation?
-
-    func response(historyEnabled: Bool) -> MobileSolarLayoutResponse {
-        guard historyEnabled else { return .disabled }
-        guard let location else { return .enabled(location: nil, layout: nil, reason: .needsLocation) }
-        guard let result, let detectedAt, detectorVersion == SolarLayoutDetector.version,
-              solarLocationsShareCoordinates(resultLocation, location) else {
-            return .enabled(location: location, layout: nil, reason: .pending)
-        }
-        switch result.status {
-        case .notEnoughHistory:
-            return .enabled(location: location, layout: nil, reason: .notEnoughHistory)
-        case .lowConfidence:
-            return .enabled(location: location, layout: nil, reason: .lowConfidence)
-        case .failed:
-            return .enabled(location: location, layout: nil, reason: .pending)
-        case .detected:
-            guard let layout = SolarLayoutDetector.forecastLayout(result, detectedAt: detectedAt) else {
-                return .enabled(location: location, layout: nil, reason: .pending)
-            }
-            return .enabled(location: location, layout: layout, reason: nil)
-        }
-    }
-}
-
 actor SolarLayoutRecordStore {
     static let shared = SolarLayoutRecordStore()
 
@@ -47,6 +10,7 @@ actor SolarLayoutRecordStore {
     private var cache: [SolarForecastSiteScope: SolarLayoutRecord] = [:]
     private var authority: WriteAuthority = .unrestricted
     private var unsynced: [SolarForecastSiteScope: UUID]?
+    private var owedReveals: SolarLayoutOwedReveals
     private var onBindingChange: (@Sendable () async -> Void)?
     private var onUploadRead: (@Sendable () async -> Void)?
 
@@ -72,6 +36,7 @@ actor SolarLayoutRecordStore {
         self.activeAccountScopeProvider = activeAccountScopeProvider
         self.directory = directory ?? (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory).appendingPathComponent("SolarLayout", isDirectory: true)
+        owedReveals = SolarLayoutOwedReveals(fileManager: fileManager, recordDirectory: self.directory)
     }
 
     var hasEngine: Bool {
@@ -149,6 +114,7 @@ actor SolarLayoutRecordStore {
         value.location = rounded
         value.locationSetAt = date
         try commitLocal(value, scope: scope)
+        if value.result == nil { try? acknowledgeReveal(scope: scope) }
     }
 
     @discardableResult
@@ -160,12 +126,14 @@ actor SolarLayoutRecordStore {
               solarLocationsShareCoordinates(value.location, Self.rounded(location)) else {
             return false
         }
+        let hadLayout = Self.showsLayout(value, scope: scope)
         value.result = result
         value.detectedAt = date
         value.attemptedAt = date
         value.detectorVersion = SolarLayoutDetector.version
         value.resultLocation = value.location
         try commitLocal(value, scope: scope)
+        updateOwedReveal(hadLayout: hadLayout, record: value, scope: scope)
         return true
     }
 
@@ -186,7 +154,17 @@ actor SolarLayoutRecordStore {
         value.detectorVersion = SolarLayoutDetector.version
         value.resultLocation = value.location
         try commitLocal(value, scope: scope)
+        try? acknowledgeReveal(scope: scope)
         return true
+    }
+
+    /// Whether the site already had a layout to show before a new result; Debug's Ignore Existing
+    /// Layout counts what it hides as none, so a search it reruns can celebrate.
+    private static func showsLayout(_ record: SolarLayoutRecord, scope: SolarForecastSiteScope) -> Bool {
+        #if DEBUG
+            if SiteHistoryDebugSettings.hidesResult(detectedAt: record.detectedAt, scope: scope) { return false }
+        #endif
+        return record.hasUsableResult
     }
 
     @discardableResult
@@ -225,6 +203,10 @@ actor SolarLayoutRecordStore {
         let merged = SolarLayoutCloudMerge.merge(local: local, remote: remote)
         if merged != local {
             try save(merged, scope: scope)
+        }
+        // What's owed is the layout found here. A new home location means iCloud's layout, if any, isn't it.
+        if !solarLocationsShareCoordinates(local?.location, merged.location) {
+            try? owedReveals.remove(scope)
         }
         return merged
     }
@@ -309,8 +291,41 @@ actor SolarLayoutRecordStore {
         directory.deletingLastPathComponent().appendingPathComponent("\(directory.lastPathComponent)-unsynced.json")
     }
 
+    // MARK: - Owed reveals
+
+    /// Whether this phone found the site's layout and nobody has seen the reveal yet. Kept beside
+    /// the records, never in one: iCloud must not carry it to another phone, and a layout iCloud
+    /// brings back was never found here.
+    func isRevealOwed(scope: SolarForecastSiteScope) throws -> Bool {
+        owedReveals.contains(scope)
+    }
+
+    func acknowledgeReveal(scope: SolarForecastSiteScope) throws {
+        try owedReveals.remove(scope)
+    }
+
+    #if DEBUG
+        /// Debug's Replay Reveal: owes one for the layout already stored, if there is one.
+        func markRevealOwed(scope: SolarForecastSiteScope) throws {
+            guard try record(scope: scope)?.hasUsableResult == true else { return }
+            try owedReveals.insert(scope)
+        }
+    #endif
+
+    /// After a local detection: a first usable layout owes a reveal, a result with no layout
+    /// cancels one, and improving a layout changes nothing. A lost marker only costs the
+    /// celebration, so it never fails the save.
+    private func updateOwedReveal(hadLayout: Bool, record: SolarLayoutRecord, scope: SolarForecastSiteScope) {
+        if !record.hasUsableResult {
+            try? owedReveals.remove(scope)
+        } else if !hadLayout {
+            try? owedReveals.insert(scope)
+        }
+    }
+
     func remove(scope: SolarForecastSiteScope) throws {
         cache.removeValue(forKey: scope)
+        try? acknowledgeReveal(scope: scope)
         try removeFile(fileURL(scope))
     }
 
@@ -318,6 +333,7 @@ actor SolarLayoutRecordStore {
         cache.removeAll()
         unsynced = [:]
         try removeFile(unsyncedURL)
+        try owedReveals.removeAll()
         guard fileManager.fileExists(atPath: directory.path) else { return }
         try fileManager.removeItem(at: directory)
     }

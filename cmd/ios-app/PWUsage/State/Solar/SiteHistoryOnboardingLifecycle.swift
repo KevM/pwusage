@@ -73,7 +73,8 @@ final class SiteHistoryOnboardingLifecycle {
         guard generation == statusGeneration, scope == lastScope else { return }
         let next = SiteHistoryStatus(
             scope: scope, progress: progress, throttledUntil: throttle, result: stored.result,
-            homeLocation: stored.location, storedDays: stored.days, ledger: ledger)
+            homeLocation: stored.location, storedDays: stored.days, ledger: ledger,
+            isRevealOwed: stored.isRevealOwed)
         if status != next { status = next }
     }
 
@@ -129,6 +130,13 @@ final class SiteHistoryOnboardingLifecycle {
         }
         try? await store.remove(scope: scope)
         try? await ledgers.remove(scope: scope)
+        await onboarding.acknowledgeReveal(scope: scope)
+        await refreshStatus()
+    }
+
+    /// The found system has been seen: the banner's done state goes, and no replay is owed.
+    func acknowledgeReveal(scope: SolarForecastSiteScope) async {
+        await onboarding.acknowledgeReveal(scope: scope)
         await refreshStatus()
     }
 

@@ -135,6 +135,10 @@ final class SiteHistoryOnboarding {
         await environment.storedState(scope: scope)
     }
 
+    func acknowledgeReveal(scope: SolarForecastSiteScope) async {
+        await environment.acknowledgeReveal(scope: scope)
+    }
+
     /// One pass without detection for a finished site whose days were never sorted, for its strip.
     func sortDaysIfUnsorted(scope: SolarForecastSiteScope) async {
         guard var progress = try? await store.progress(scope: scope), case .finished = progress.phase,
