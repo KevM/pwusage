@@ -230,9 +230,10 @@ struct LoadTimingView: View {
         LoadTimingCard {
             switch state.screen.content {
             case .verdict(let verdict):
-                SmartShiftVerdictView(verdict: verdict, timeZone: timeZone) {
+                SmartShiftVerdictView(verdict: verdict, timeZone: timeZone, isSelected: isSelected) {
                     isSolarForecastSheetPresented = true
                 }
+                .id(state.profile?.id)
                 Divider()
                 Button {
                     detailsSnapshot = detailsSnapshot(state, verdict: verdict)
