@@ -1,6 +1,7 @@
 require "fileutils"
 require "json"
 require "yaml"
+require_relative "duo-report"
 
 default_platform(:ios)
 
@@ -168,6 +169,8 @@ platform :ios do
     # Duo capture comes out one pixel under its accepted size.
     pngs = Dir[File.join(PWUSAGE_ROOT, "fastlane", "screenshots", "**", "*.png")]
     sh("swift", File.join(__dir__, "flatten-screenshots.swift"), *pngs) unless pngs.empty?
+    Snapshot::ReportsGenerator.prepend(PWUsageDuoReport)
+    Snapshot::ReportsGenerator.new.generate
   end
 
   # snapshot shuts every simulator down and boots it folded, so the Duo can't
