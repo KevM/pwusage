@@ -64,6 +64,9 @@ export default observePage('/', async function Home() {
                   </Button>
                 </Link>
               </div>
+              <Link href="/ios" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+                New: the pwusage iPhone app is in beta. Join on TestFlight →
+              </Link>
             </SectionCard>
 
             <div className="flex justify-center">
