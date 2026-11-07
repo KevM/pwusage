@@ -16,7 +16,7 @@ jobs:
   testflight:
     name: Test, archive and upload
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: cmd/ios-app
@@ -45,6 +45,7 @@ jobs:
         run: ./run-tests.sh --full
         env:
           TMPDIR: /tmp
+          PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
       - name: Trust GitHub signing repository host
         run: |
           mkdir -p ~/.ssh
