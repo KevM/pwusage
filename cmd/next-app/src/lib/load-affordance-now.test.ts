@@ -46,13 +46,13 @@ describe('buildLoadAffordanceNow', () => {
 
     it('reports the period and rounded surplus like the header tooltip', () => {
         const v = buildLoadAffordanceNow(view(period({ cycleNetExportKwh: 119.6 })))!;
-        expect(v.contextLabel).toBe('Off-Peak · 120 kWh surplus');
+        expect(v.contextLabel).toBe('Off-Peak · 120 kWh banked');
     });
 
     it('warns off large loads when nothing is affordable', () => {
         const v = buildLoadAffordanceNow(view(period({ cycleNetExportKwh: 1 })))!;
         expect(v.glyph).toBeNull();
-        expect(v.headline).toBe('Avoid large loads');
+        expect(v.headline).toBe('Wait for a cheaper rate period');
     });
 
     it('says what the next load up still needs', () => {
@@ -74,7 +74,7 @@ describe('buildLoadAffordanceNow', () => {
     it('reads a deficit period as unaffordable rather than as surplus', () => {
         const v = buildLoadAffordanceNow(view(period({ cycleNetExportKwh: -30 })))!;
         expect(v.glyph).toBeNull();
-        expect(v.contextLabel).toBe('Off-Peak · 30 kWh short');
+        expect(v.contextLabel).toBe('Off-Peak · 30 kWh owed');
     });
 
     it('picks the active period out of the full pricing set', () => {
@@ -82,6 +82,6 @@ describe('buildLoadAffordanceNow', () => {
             period({ name: 'ON_PEAK', isActive: false, cycleNetExportKwh: 300 }),
             period({ name: 'OFF_PEAK', isActive: true, cycleNetExportKwh: 10 }),
         ))!;
-        expect(v.contextLabel).toBe('Off-Peak · 10 kWh surplus');
+        expect(v.contextLabel).toBe('Off-Peak · 10 kWh banked');
     });
 });

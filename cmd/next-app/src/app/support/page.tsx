@@ -23,14 +23,18 @@ export default function SupportPage() {
                 </SectionCard>
                 <SectionCard title="Sign-in and connected sites" bodyClassName="space-y-4">
                     <p>pwusage requires a Tesla account with access to a supported energy site. Sign-in opens Tesla&apos;s secure login flow. If your session has expired, sign in again. A Tesla account that only has vehicles will not provide a Powerwall dashboard.</p>
-                    <p>If a feature asks you to reconnect Tesla, review and grant the requested permission. Battery Hold requires Energy Product Commands permission to change your backup reserve.</p>
+                    <p>If a feature asks you to reconnect Tesla, review and grant the requested permission. Battery Saver needs the Energy Product Commands permission to change your Powerwall backup reserve.</p>
                 </SectionCard>
                 <SectionCard title="Stale readings or connection problems" bodyClassName="space-y-4">
                     <p>Check your connection, then pull down on the dashboard to refresh. The app can display saved data while offline; check its timestamps and saved-data notice. Missing or old battery charge appears as unknown rather than a fresh reading.</p>
-                    <p>Bill estimates depend on saved tariff and energy data and may differ from your utility bill. If the app says it is newer than the server, report the message and app build number so we can check the deployment.</p>
+                    <p>Bill estimates depend on your saved rate plan and energy data and may differ from your utility bill. If the app says it is newer than the server, report the message and app build number so we can check the deployment.</p>
                 </SectionCard>
-                <SectionCard title="Battery Hold and solar forecasts" bodyClassName="space-y-4">
-                    <p>Battery Hold changes your Tesla backup reserve after confirmation. Stopping a hold restores the reserve saved when it started. If status is unavailable, retry before starting another hold. You can also inspect your current reserve in Tesla&apos;s app.</p>
+                <SectionCard title="Rate plans and Time of Use" bodyClassName="space-y-4">
+                    <p>pwusage works best with a Time of Use rate plan. A Time of Use rate plan splits the day into rate periods, like Peak and Off-Peak, each with its own rate. Your Powerwall can store energy when it is cheap and use it when rates are high, and Smart Shift finds the cheapest time to start a job like charging the car.</p>
+                    <p>pwusage reads your rate plan from Tesla. If your bill estimate or rate periods look wrong, check the rate plan in the Tesla app, then refresh it from your site&apos;s settings on the pwusage website.</p>
+                </SectionCard>
+                <SectionCard title="Battery Saver and solar forecasts" bodyClassName="space-y-4">
+                    <p>Battery Saver saves your Powerwall charge for when rates spike by raising your backup reserve after you confirm. Turning off Battery Saver restores your previous backup reserve. If its status is unavailable, try again before turning it on a second time. You can also check your current reserve in Tesla&apos;s app.</p>
                     <p>Solcast forecasts are optional and require your own API key and rooftop site. Check the forecast status message for connection, setup, or household-history problems. You can disconnect Solcast without disconnecting Tesla.</p>
                 </SectionCard>
                 <SectionCard title="Account and privacy requests" bodyClassName="space-y-4">

@@ -46,7 +46,7 @@ function NextCheaperBanner({
 
     return (
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-gray-700 dark:border-slate-700 dark:bg-slate-800 dark:text-gray-300">
-            You&apos;re in the cheapest period right now.
+            You&apos;re in the cheapest rate period right now.
         </div>
     );
 }
@@ -55,7 +55,7 @@ export function PeriodCardRow({ siteId, hasTariff, loadTiming }: PeriodCardRowPr
     if (!hasTariff) {
         return (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-gray-300">
-                Configure a tariff to see load-timing recommendations.{' '}
+                Add your rate plan to see the cheapest times to start a job.{' '}
                 <Link href={`/site/${siteId}/settings`} className="underline">Open site settings →</Link>
             </div>
         );
@@ -64,7 +64,7 @@ export function PeriodCardRow({ siteId, hasTariff, loadTiming }: PeriodCardRowPr
     if (!loadTiming || !loadTiming.hasCycleData || loadTiming.periods.length === 0) {
         return (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-gray-300">
-                No cycle data yet — recommendations will appear once the site reports usage.
+                No usage this billing cycle yet. Smart Shift appears once your site reports usage.
             </div>
         );
     }

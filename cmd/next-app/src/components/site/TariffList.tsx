@@ -52,11 +52,11 @@ export function TariffList({ tariffs, onRefresh, refreshLoading, refreshStatus }
         return (
             <Card>
                 <CardHeader action={refreshButton}>
-                    <CardTitle>Tariff Information</CardTitle>
+                    <CardTitle>Rate Plan</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {renderRefreshSection()}
-                    <p className="text-gray-500 dark:text-gray-400">No tariffs found for this site.</p>
+                    <p className="text-gray-500 dark:text-gray-400">No rate plan found for this site yet. Refresh from Tesla to load it.</p>
                 </CardContent>
             </Card>
         );
@@ -67,7 +67,7 @@ export function TariffList({ tariffs, onRefresh, refreshLoading, refreshStatus }
             {tariffs.map((tariff, index) => (
                 <Card key={tariff.id}>
                     <CardHeader action={index === 0 ? refreshButton : undefined}>
-                        <CardTitle>{formatTouName(tariff.name || `Tariff #${tariff.id}`)} Tariff Information</CardTitle>
+                        <CardTitle>{formatTouName(tariff.name || `Rate Plan #${tariff.id}`)}</CardTitle>
                     </CardHeader>
                     <CardContent>
                         {index === 0 && renderRefreshSection()}
@@ -91,17 +91,17 @@ export function TariffList({ tariffs, onRefresh, refreshLoading, refreshStatus }
                                         <CardContent className="p-0 bg-gray-50/50 dark:bg-slate-900/50">
                                             {(!season.schedules || season.schedules.length === 0) ? (
                                                 <div className="p-6">
-                                                    <p className="text-gray-500 dark:text-gray-400 italic text-sm">No schedules defined.</p>
+                                                    <p className="text-gray-500 dark:text-gray-400 italic text-sm">No rate periods defined.</p>
                                                 </div>
                                             ) : (
                                                 <Table>
                                                     <TableHeader className="border-b border-gray-200 dark:border-slate-700">
                                                         <TableRow className="bg-gray-100 dark:bg-slate-800/80">
-                                                            <TableHead className="pl-4 text-gray-700 dark:text-gray-300">Schedule Name</TableHead>
+                                                            <TableHead className="pl-4 text-gray-700 dark:text-gray-300">Rate Period</TableHead>
                                                             <TableHead className="text-gray-700 dark:text-gray-300">Time Range</TableHead>
                                                             <TableHead className="text-gray-700 dark:text-gray-300">Days</TableHead>
-                                                            <TableHead className="text-gray-700 dark:text-gray-300">Buy Rate ($/kWh)</TableHead>
-                                                            <TableHead className="pr-4 text-gray-700 dark:text-gray-300">Sell Rate ($/kWh)</TableHead>
+                                                            <TableHead className="text-gray-700 dark:text-gray-300">Grid Rate ($/kWh)</TableHead>
+                                                            <TableHead className="pr-4 text-gray-700 dark:text-gray-300">Export Rate ($/kWh)</TableHead>
                                                         </TableRow>
                                                     </TableHeader>
                                                     <TableBody className="divide-y divide-gray-100 dark:divide-slate-800">

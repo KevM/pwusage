@@ -33,7 +33,7 @@ interface NILMChartProps {
 // Helper to format tariff names (e.g., SUPER_OFF_PEAK -> Super Off-Peak)
 const formatTariffName = (name: string | undefined) => {
     if (!name) return undefined;
-    if (name.includes('Tariff')) return name; // Don't format "Tariff 1"
+    if (name.startsWith('Rate plan ')) return name; // Don't format "Rate plan 1"
 
     return name
         .toLowerCase()
@@ -130,7 +130,7 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode = 
 
         const rawName = touName || (
             (tariffs && tariffId !== undefined)
-                ? (tariffs[tariffId] || `Tariff ${tariffId}`)
+                ? (tariffs[tariffId] || `Rate plan ${tariffId}`)
                 : undefined
         );
 
@@ -187,7 +187,7 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode = 
                 </div>
 
                 <div className="flex items-center justify-between gap-4 mb-1">
-                    <span style={{ color: colors.load }}>Load</span>
+                    <span style={{ color: colors.load }}>Home</span>
                     <span style={{ color: colors.load, fontWeight: 'bold', fontSize: '14px' }}>{(Number(payload[0].value) / 1000).toFixed(2)} kW</span>
                 </div>
                 {payload[0].payload.solarWatts !== undefined && (
@@ -218,7 +218,7 @@ const TooltipContent = ({ active, payload, label, events, tariffs, isDarkMode = 
                 {activeEvent && (
                     <div className="mt-3 pt-3 border-t -mx-4 px-4 pb-1" style={{ backgroundColor: colors.loadBg, borderColor: colors.border }}>
                         <div className="flex justify-between items-center mb-2">
-                            <span style={{ color: colors.loadText, fontWeight: 'bold' }}>Load #{activeEvent.index + 1}</span>
+                            <span style={{ color: colors.loadText, fontWeight: 'bold' }}>Job #{activeEvent.index + 1}</span>
                             <span style={{ fontSize: '10px', color: colors.loadText, borderColor: colors.loadText, borderWidth: '1px', padding: '0 4px', borderRadius: '4px', opacity: 0.7 }}>DETECTED LOAD</span>
                         </div>
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1" style={{ color: colors.dateText }}>
@@ -575,7 +575,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         }}
                     />
                     <input type="checkbox" className="hidden" checked={visibleSeries.load} readOnly />
-                    <span style={{ color: themeColors.text }}>Load</span>
+                    <span style={{ color: themeColors.text }}>Home</span>
                 </label>
 
                 <label
@@ -749,7 +749,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                                     onClick={() => onEventClick && onEventClick(event)}
                                     className="cursor-pointer" // Show pointer to indicate clickable
                                     label={{
-                                        value: "Load",
+                                        value: "Job",
                                         position: 'insideBottom',
                                         fill: active ? '#f8fafc' : '#5C7E8F',
                                         fontSize: 12,
@@ -768,7 +768,7 @@ export default function NILMChart({ data, events, tariffs, highlightedEvent, sel
                         <Line
                             type="linear"
                             dataKey="powerWatts"
-                            name="Load Power (kW)"
+                            name="Home use (kW)"
                             stroke={themeColors.load}
                             dot={false}
                             strokeWidth={2}

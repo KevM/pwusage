@@ -59,7 +59,7 @@ export async function parkBattery(
   const originalReserve = info?.backup_reserve_percent;
   if (typeof originalReserve !== 'number' || !Number.isInteger(originalReserve)
       || originalReserve < 0 || originalReserve > 100) {
-    return { status: 'error', message: 'Tesla did not return a valid backup reserve. No hold was started.' };
+    return { status: 'error', message: 'Tesla did not return a valid backup reserve. Battery Saver wasn’t turned on.' };
   }
   // A successful restore command can precede Tesla's cached site_info update.
   // Do not mistake the just-stopped hold target for a new original reserve.
@@ -75,7 +75,7 @@ export async function parkBattery(
 
   const loadPower = live?.load_power;
   if (typeof loadPower !== 'number' || Number.isNaN(loadPower)) {
-    return { status: 'error', message: 'Failed to retrieve baseline load power.' };
+    return { status: 'error', message: 'Couldn’t read your current Home use from Tesla. Battery Saver wasn’t turned on.' };
   }
 
   const plan = planReserve(soc);
@@ -156,7 +156,7 @@ export async function restoreBattery(deps: RestoreDeps): Promise<RestoreResult> 
       const hold = await deps.repo.getActiveHold(deps.siteId);
       if (!hold || (deps.expectedHoldId !== undefined && hold.id !== deps.expectedHoldId)) return { status: 'no_active_hold' };
       claimedId = hold.id;
-      if (!await deps.repo.claimHold(hold.id, owner)) return { status: 'error', message: 'A hold check or restoration is already in progress. Try again shortly.' };
+      if (!await deps.repo.claimHold(hold.id, owner)) return { status: 'error', message: 'Battery Saver is already updating. Try again in a moment.' };
       return restoreClaimedBattery({ ...deps, expectedHoldId: hold.id, leaseOwner: owner });
     });
   } catch (e) {

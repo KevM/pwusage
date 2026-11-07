@@ -11,7 +11,7 @@ export function NoPowerwallYet() {
             bodyClassName="space-y-4"
         >
             <p className="text-sm text-blue-900/90 dark:text-blue-100/90">
-                You are logged in, but your account has no Powerwall or other Tesla Energy site yet. Powerwall Usage is built to help you monitor home energy flow and save money with tariff-aware energy arbitrage.
+                You are logged in, but your account has no Powerwall or other Tesla Energy site yet. Powerwall Usage is built to help you see your home energy use and save money by using your battery when rates are high on a Time of Use rate plan.
             </p>
 
             <div className="mx-auto w-full max-w-md overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">

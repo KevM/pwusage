@@ -73,6 +73,13 @@ and simplify the sentence.
   with "export cushion", "import gap" or "grid rate" there. Everywhere else,
   use the word list. **Net zero** is the bank's goal. The chart slot says
   “Save <amount>” without “about”; the headline and VoiceOver include it.
+- **Time of Use is the niche; say it where we explain it.** A Powerwall plus a
+  Time of Use rate plan is the core of what pwusage helps with (solar is a
+  bonus). Use "Time of Use" on explainer surfaces only: the About page,
+  help and FAQ text, and onboarding. Tie it to rate plans and rate periods
+  ("A Time of Use rate plan splits the day into rate periods, like Peak and
+  Off-Peak, each with its own rate."). Everywhere else, say "rate plan" and
+  the period's name. Never use the abbreviation "TOU".
 - **No dashes as separators in sentences.** Use a middle dot (·) for compact
   metadata ("Off-Peak · $0.12/kWh") or a new sentence.
 

@@ -1,9 +1,34 @@
 import Image from 'next/image';
+import Link from 'next/link';
 
 import { Card, CardBody } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+
+const GLOSSARY: { term: string; definition: string; example?: string }[] = [
+    {
+        term: 'Time of Use rate plan',
+        definition:
+            'A rate plan where the price of grid power depends on the time of day. The day is split into rate periods, each with its own rate.',
+        example: 'Example: Peak $0.31/kWh · Off-Peak $0.106/kWh',
+    },
+    {
+        term: 'Rate period',
+        definition: 'A window of time in your rate plan with its own rate, like Peak or Off-Peak.',
+        example: 'Example: Monday to Friday, 8 AM to 8 PM · Peak',
+    },
+    {
+        term: 'Grid rate',
+        definition:
+            'What you pay per kWh for power from the grid in a rate period. Most plans credit exported solar at a separate, lower rate.',
+    },
+    {
+        term: 'Energy arbitrage',
+        definition:
+            'Storing energy when it is cheap and using it when it is expensive. With a Powerwall, that means filling the battery Off-Peak or from solar, and using it during Peak.',
+    },
+];
 
 export default function AboutPage() {
     return (
@@ -12,8 +37,9 @@ export default function AboutPage() {
 
             <div className="space-y-8">
                 <p className="text-xl text-gray-700 dark:text-gray-200">
-                    We use the data from your Tesla Powerwall gateway to assist in monitoring your electricity consumption.
-                    This helps you make smart decisions about when best to use energy in your home to <strong>save money using energy arbitrage</strong>.
+                    Powerwall Usage helps you save money with a Powerwall on a Time of Use rate plan. Time your heavy energy
+                    use for when grid power is cheapest, and save your battery for when rates spike. If you have solar, the
+                    savings get even better.
                 </p>
 
                 <section>
@@ -21,7 +47,7 @@ export default function AboutPage() {
                         <div className="-m-6">
                             <Image
                                 src="/energy-arbitrage.png"
-                                alt="Energy Arbitrage Infographic describing the savings of storing solar energy vs selling it back to the grid"
+                                alt="Energy arbitrage infographic comparing selling excess solar to the grid with storing it in a battery"
                                 width={1024}
                                 height={1024}
                                 className="w-full h-auto"
@@ -29,110 +55,114 @@ export default function AboutPage() {
                         </div>
                     </SectionCard>
                     <p className="mt-2 text-center text-sm text-gray-500">
-                        Visualizing the cost difference between selling excess solar and using it from a battery.
+                        The cost difference between selling excess solar and using it from a battery.
                     </p>
                 </section>
 
-                <SectionCard title="Why use this app?">
+                <SectionCard title="Time of Use rate plans">
                     <div className="space-y-6 text-gray-700 dark:text-gray-300">
                         <p>
-                            Most solar systems include monitoring to help you see how much energy your system is producing.
-                            Where this app really shines is with <strong>Time of Use billing</strong>.
+                            Most people are used to paying one flat rate for electricity. On a <strong>Time of Use</strong>{' '}
+                            rate plan, the price depends on when you use it. Your utility splits the day into{' '}
+                            <em>rate periods</em>, like Peak and Off-Peak, and each rate period has its own rate. Peak is
+                            often two or three times the Off-Peak rate.
                         </p>
-
-                        <div>
-                            <h2 className="mb-4 text-2xl font-bold text-gray-900 dark:text-gray-100">Time of Use (TOU) Billing</h2>
-                            <p className="mb-4">
-                                Most people are used to flat rates for their electricity.
-                                <em>Time of Use (TOU)</em> billing is a billing strategy where the cost of electricity varies based on the time of day.
-                                Most utilities have a choice to use this billing strategy.
-                                Your time of use billing is usually separated into multiple time-based <em>Tariff Periods</em>, such as On-Peak and Off-Peak.
-                                Each <em>Tariff Period</em> has its rate or <em>Tariff</em> that you pay for electricity in that period.
-                                If you have a solar system and a battery it is likely you can save a lot of money on a TOU plan.
-                            </p>
-                        </div>
+                        <p>
+                            A Powerwall turns that difference into savings. It stores energy when grid power is cheap, or
+                            from your solar panels, and powers your home during Peak instead of the grid. That is{' '}
+                            <strong>energy arbitrage</strong>, and it is where Powerwall Usage helps the most.
+                        </p>
 
                         <Card className="bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
                             <CardBody>
                                 <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-                                    Example of shifting solar to Off-Peak periods to save money:
+                                    Example: selling solar at Peak, then buying power back Off-Peak
                                 </h3>
                                 <ul className="list-disc space-y-2 pl-6">
-                                    <li>On Peak OverProduction nets a credit: 500 kwh * $0.055 / kwh = <strong className="text-green-600">$27.50</strong></li>
-                                    <li>Off Peak Consumption: 500 kwh * $0.106 / kwh = <strong className="text-red-600">$53.00</strong></li>
+                                    <li>
+                                        Export 500 kWh of solar during Peak, credited at $0.055/kWh:{' '}
+                                        <strong className="text-green-600">$27.50</strong>
+                                    </li>
+                                    <li>
+                                        Buy 500 kWh back Off-Peak at $0.106/kWh:{' '}
+                                        <strong className="text-red-600">$53.00</strong>
+                                    </li>
                                 </ul>
                                 <p className="mt-4 font-semibold text-gray-900 dark:text-gray-100">
-                                    Loss: <span className="text-red-600">$53.00</span> - <span className="text-green-600">$27.50</span> = <span className="text-red-600">$25.50</span> per month
+                                    You pay <span className="text-red-600">$25.50</span> more each month than if your
+                                    Powerwall had stored that energy for later.
                                 </p>
                             </CardBody>
                         </Card>
 
                         <p>
-                            Most people simply try to avoid consuming power during the <strong>Peak</strong> billing rates and shift usage to <strong>Off-Peak</strong> rates.
-                            However, your solar production happens mostly during the day during your expensive rate periods.
-                            Having solar and a battery can help you store excess solar energy and use it when you most benefit from it.
-                            <strong>This application helps you figure out when that is.</strong>
+                            The trick is knowing when to store, when to use the battery and when to run heavy jobs.{' '}
+                            <strong>Powerwall Usage helps you work that out.</strong>
                         </p>
                     </div>
                 </SectionCard>
 
-                <SectionCard title="Monitoring Your Bill">
+                <SectionCard title="How Powerwall Usage helps">
+                    <ul className="list-disc space-y-3 pl-6 text-gray-700 dark:text-gray-300">
+                        <li>
+                            <strong>Smart Shift</strong> finds the cheapest time to start a job, like charging the car or
+                            running the dishwasher, and shows about how much you save.
+                        </li>
+                        <li>
+                            <strong>Battery Saver</strong> saves your Powerwall charge for when rates spike, then restores
+                            your previous backup reserve.
+                        </li>
+                        <li>
+                            <strong>Your bill, so far</strong> shows what you have spent in each rate period this billing
+                            cycle and estimates the total.
+                        </li>
+                        <li>
+                            Take it with you in the <Link href="/ios" className="text-primary underline">iPhone and iPad app</Link>,
+                            now in beta.
+                        </li>
+                    </ul>
+                </SectionCard>
+
+                <SectionCard title="Following your bill">
                     <div className="space-y-4 text-gray-700 dark:text-gray-300">
                         <p>
-                            Knowing how much energy you are importing and exporting during each <em>Tariff Period</em> helps you understand your energy consumption
-                            and will help you make smart decisions about when best to use energy in your home.
+                            Knowing how much energy you import and export in each rate period shows you where your money
+                            goes, and when it is best to use energy in your home.
                         </p>
                         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
                             <Image
                                 src="/estimated-bill-v2.png"
-                                alt="Estimated Power Bill Example showing cost breakdown by tariff period"
+                                alt="Estimated bill example showing the cost in each rate period"
                                 width={1024}
                                 height={1024}
                                 className="w-full h-auto"
                             />
                         </div>
                         <p>
-                            The goal is to use your estimated bill to monitor energy usage and consumption across your tariff periods.
-                            With this app you can try to keep usage in your expensive periods to a minimum.
+                            Use your estimated bill to keep energy use in your most expensive rate periods as low as you
+                            can.
                         </p>
                     </div>
                 </SectionCard>
 
                 <SectionCard title="Glossary">
                     <dl className="grid grid-cols-1 gap-x-4 gap-y-4 md:grid-cols-2">
-                        <Card className="bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-                            <CardBody className="space-y-1">
-                                <dt className="font-bold text-gray-900 dark:text-gray-100">Time of Use</dt>
-                                <dd className="text-gray-700 dark:text-gray-300">
-                                    A billing strategy where the cost of electricity varies based on the time of day.
-                                    There is usually multiple <em>Tariff Periods</em> with different rates or <em>Tariffs</em> for consuming energy from the grid and selling your solar overproduction.
-                                    <br />
-                                    <span className="text-sm italic text-gray-500">Example: On-Peak $0.31 / kWh, Off-Peak $0.106 / kWh</span>
-                                </dd>
-                            </CardBody>
-                        </Card>
-                        <Card className="bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-                            <CardBody className="space-y-1">
-                                <dt className="font-bold text-gray-900 dark:text-gray-100">Tariff</dt>
-                                <dd className="text-gray-700 dark:text-gray-300">A rate per kWh for electricity that you purchase from the grid and usually a separate rate for selling back to the grid.</dd>
-                            </CardBody>
-                        </Card>
-                        <Card className="bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-                            <CardBody className="space-y-1">
-                                <dt className="font-bold text-gray-900 dark:text-gray-100">Tariff Period</dt>
-                                <dd className="text-gray-700 dark:text-gray-300">
-                                    A range of time and the tariff it is being billed at.
-                                    <br />
-                                    <span className="text-sm italic text-gray-500">Example: Monday 8am-8pm Tariff: On-Peak</span>
-                                </dd>
-                            </CardBody>
-                        </Card>
-                        <Card className="bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-                            <CardBody className="space-y-1">
-                                <dt className="font-bold text-gray-900 dark:text-gray-100">Arbitrage</dt>
-                                <dd className="text-gray-700 dark:text-gray-300">Buying energy at the lowest price possible and selling it at the highest price possible.</dd>
-                            </CardBody>
-                        </Card>
+                        {GLOSSARY.map((entry) => (
+                            <Card key={entry.term} className="bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+                                <CardBody className="space-y-1">
+                                    <dt className="font-bold text-gray-900 dark:text-gray-100">{entry.term}</dt>
+                                    <dd className="text-gray-700 dark:text-gray-300">
+                                        {entry.definition}
+                                        {entry.example ? (
+                                            <>
+                                                <br />
+                                                <span className="text-sm italic text-gray-500">{entry.example}</span>
+                                            </>
+                                        ) : null}
+                                    </dd>
+                                </CardBody>
+                            </Card>
+                        ))}
                     </dl>
                 </SectionCard>
             </div>

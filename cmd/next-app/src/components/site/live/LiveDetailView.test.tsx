@@ -33,7 +33,7 @@ function renderView() {
 }
 
 describe('LiveDetailView', () => {
-    it('renders Load timing below Today chart and before SankeyCard', () => {
+    it('renders Smart Shift below Today chart and before SankeyCard', () => {
         const html = renderToStaticMarkup(
             <LiveDetailView
                 siteId="123"
@@ -58,7 +58,7 @@ describe('LiveDetailView', () => {
             />
         );
         const chartAt = html.indexOf('Test Site');
-        const loadTimingAt = html.indexOf('Load timing this cycle');
+        const loadTimingAt = html.indexOf('Smart Shift this cycle');
         const sankeyAt = html.indexOf('Energy Value Flow');
 
         expect(chartAt).toBeGreaterThanOrEqual(0);

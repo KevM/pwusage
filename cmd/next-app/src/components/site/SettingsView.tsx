@@ -89,7 +89,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
         if (canvas) {
             const deepLink = continueUrl(window.location.origin, `/site/${site.id}/live?action=park`);
             drawQrWithLogo(canvas, deepLink)
-                .catch(err => console.error('Error generating Battery Hold QR code:', err));
+                .catch(err => console.error('Error generating Battery Saver QR code:', err));
         }
     }, [site.id]);
 
@@ -106,14 +106,14 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
             if (!response.ok) {
                 setRefreshStatus({
                     type: 'error',
-                    message: data.error || 'Failed to refresh tariffs'
+                    message: data.error || 'Couldn’t refresh your rate plan. Try again.'
                 });
                 return;
             }
 
             setRefreshStatus({
                 type: 'success',
-                message: 'Tariffs updated successfully'
+                message: 'Rate plan updated'
             });
 
             router.refresh();
@@ -273,9 +273,9 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Battery Hold Quick Link (QR)</CardTitle>
+                    <CardTitle>Battery Saver Quick Link (QR)</CardTitle>
                     <CardDescription>
-                        Scan this QR code with your phone or mobile device to jump directly to the Live view and initiate a battery hold command.
+                        Saves your Powerwall charge for when rates spike. Scan this QR code with your phone to open the Live view and turn on Battery Saver.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col items-center">
@@ -283,7 +283,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                         <canvas ref={canvasRef} className="w-48 h-48" />
                     </div>
                     <p className="text-sm text-gray-500 dark:text-gray-400 text-center max-w-sm mb-4 italic">
-                        Put this QR code near your EV charger to make it easy to start a battery hold with your personal device.
+                        Put this QR code near your EV charger so you can turn on Battery Saver from your phone before charging the car.
                     </p>
                     <div className="flex gap-4 w-full max-w-sm">
                         <Button
@@ -292,7 +292,7 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                             onClick={() => {
                                 const deepLink = continueUrl(window.location.origin, `/site/${site.id}/live?action=park`);
                                 navigator.clipboard.writeText(deepLink)
-                                    .then(() => toast({ title: 'Link copied', description: 'Battery Hold URL copied to clipboard!', variant: 'success' }))
+                                    .then(() => toast({ title: 'Link copied', description: 'Battery Saver link copied to the clipboard.', variant: 'success' }))
                                     .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
                             }}
                         >

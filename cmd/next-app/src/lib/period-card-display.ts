@@ -24,10 +24,10 @@ export function getPeriodCardDisplay(input: PeriodCardDisplayInput): PeriodCardD
     if (basis === 'neutral') {
         netLabel = '—';
     } else {
-        // Match the language the user uses for these states — arrows alone
-        // don't communicate over-producing vs. in-deficit clearly enough.
-        const word = cycleNetExportKwh > 0 ? 'Surplus' : 'Deficit';
-        netLabel = `${word} ${Math.round(Math.abs(cycleNetExportKwh))} kWh`;
+        // Smart Shift's bank words (docs/voice-and-terms.md): arrows alone
+        // don't say whether a period is banked or owed clearly enough.
+        const word = cycleNetExportKwh > 0 ? 'banked' : 'owed';
+        netLabel = `${Math.round(Math.abs(cycleNetExportKwh))} kWh ${word}`;
     }
 
     const colorClass =

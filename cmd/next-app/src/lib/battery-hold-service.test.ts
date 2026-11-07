@@ -154,7 +154,7 @@ describe('parkBattery', () => {
     const client = fakeClient({ getLiveStatus: vi.fn().mockResolvedValue({ percentage_charged: 90, load_power: NaN }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });
-    expect(res).toEqual({ status: 'error', message: 'Failed to retrieve baseline load power.' });
+    expect(res).toEqual({ status: 'error', message: 'Couldn’t read your current Home use from Tesla. Battery Saver wasn’t turned on.' });
     expect(repo.createHold).not.toHaveBeenCalled();
   });
 

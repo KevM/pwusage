@@ -6,6 +6,12 @@ export interface LoadHeadroomGlyphProps {
     headroom: SiteLiveDataHeadroom | null | undefined;
 }
 
+/** Smart Shift bank words: positive kWh is banked, negative is owed. */
+function bankText(kwh: number): string {
+    const rounded = Math.round(Math.abs(kwh));
+    return kwh < 0 ? `${rounded} kWh owed` : `${rounded} kWh banked`;
+}
+
 export function LoadHeadroomGlyph({ headroom }: LoadHeadroomGlyphProps) {
     if (!headroom) return null;
 
@@ -13,8 +19,8 @@ export function LoadHeadroomGlyph({ headroom }: LoadHeadroomGlyphProps) {
     const tone = LOAD_GLYPH_TONES[headroom.glyph ?? 'none'];
 
     const summary = headroom.profileLabel
-        ? `${formatTouName(headroom.periodName)} · ${Math.round(headroom.surplusKwh)} kWh surplus — ${headroom.profileLabel}`
-        : `${formatTouName(headroom.periodName)} · ${Math.round(headroom.surplusKwh)} kWh — avoid large loads`;
+        ? `${formatTouName(headroom.periodName)} · ${bankText(headroom.surplusKwh)} · ${headroom.profileLabel}`
+        : `${formatTouName(headroom.periodName)} · ${bankText(headroom.surplusKwh)} · wait for a cheaper rate period`;
 
     return (
         <span

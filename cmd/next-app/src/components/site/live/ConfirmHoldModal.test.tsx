@@ -21,13 +21,15 @@ describe('ConfirmHoldModal', () => {
     );
     expect(html).not.toMatch(/Reserve/i);
     expect(html).toContain('70%');
+    expect(html).toContain('Turn On Battery Saver');
+    expect(html).not.toMatch(/\bhold\b/i);
   });
 
   it('offers auto-detect and fixed-duration options', () => {
     const html = renderToStaticMarkup(
       <ConfirmHoldModal soc={70} plan={planReserve(70)} onConfirm={noop} onClose={noop} />,
     );
-    expect(html).toMatch(/Auto-detect/i);
-    expect(html).toMatch(/Fixed/i);
+    expect(html).toContain('Until the job finishes');
+    expect(html).toContain('For a set time');
   });
 });

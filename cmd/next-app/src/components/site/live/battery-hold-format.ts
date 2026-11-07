@@ -3,10 +3,10 @@ import { planReserve } from '@/lib/battery-hold-rules';
 export function holdButtonLabel(soc: number): string {
   const plan = planReserve(soc);
   if (plan.ambiguous) {
-    return 'Hold battery...';
+    return 'Turn On Battery Saver…';
   }
   const target = plan.target;
-  return target === 100 ? 'Hold battery at 100% (max)' : `Hold battery at ${target}%`;
+  return `Turn On Battery Saver at ${holdReserveText(target)}`;
 }
 
 /** "100% (max)" for a full hold, otherwise a plain percent. */
@@ -16,5 +16,5 @@ export function holdReserveText(target: number): string {
 
 /** Copy for the dismissible notice when the restore guard left a changed reserve as-is. */
 export function guardNoticeText(current: number): string {
-  return `Hold cancelled — your reserve is set to ${current}% (changed outside the app), so we left it as-is.`;
+  return `Battery Saver stopped. Your reserve was changed outside pwusage to ${current}%, so we left it as-is.`;
 }
