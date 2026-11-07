@@ -1,13 +1,16 @@
 import SwiftUI
 
-/// The signed-in root: one tab per `AppTab`, a sidebar on iPad and Mac and a
-/// tab bar on iPhone. Sheets that must show over any tab live here, not on a
+/// The signed-in root: one tab per `AppTab`, a sidebar on iPad and a
+/// tab bar on iPhone and Mac. Sheets that must show over any tab live here, not on a
 /// tab's content, so an external launch can clear them from the model.
 struct AppTabView: View {
     @ObservedObject var model: PWUsageAppModel
     @ObservedObject var coordinator: DashboardCoordinator
     let site: MobileSite
     @Environment(\.demoMode) private var demoMode
+    private var defaultTabPlacement: AdaptableTabBarPlacement {
+        ProcessInfo.processInfo.isiOSAppOnMac ? .tabBar : .sidebar
+    }
     /// The banner's motion outlives its content, which the tab bar recreates as it updates.
     @State private var bannerClocks = SolarSystemBannerClocks()
 
@@ -67,7 +70,7 @@ struct AppTabView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
-        .defaultAdaptableTabBarPlacement(.sidebar)
+        .defaultAdaptableTabBarPlacement(defaultTabPlacement)
         .tabViewSidebarHeader { siteHeader }
         .sheet(item: $coordinator.presentedSheet) { sheet in
             switch sheet {
