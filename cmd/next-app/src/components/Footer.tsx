@@ -17,6 +17,9 @@ export function Footer() {
                     {/* Links Section */}
                     <div className="flex flex-col md:items-end space-y-2">
                         <h3 className="text-white text-lg font-bold mb-2">Quick Links</h3>
+                        <Link href="/ios" className="hover:text-white transition-colors">
+                            iPhone App (Beta)
+                        </Link>
                         <Link href="/about" className="hover:text-white transition-colors">
                             About
                         </Link>
