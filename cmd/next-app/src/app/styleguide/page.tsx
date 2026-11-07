@@ -124,7 +124,7 @@ export default function StyleGuidePage() {
                         <div className="rounded-lg border border-gray-200 dark:border-slate-800 p-4 space-y-3">
                             <div className="h-16 w-full rounded-md bg-blue-600 shadow-inner"></div>
                             <div>
-                                <p className="text-sm font-medium text-gray-900 dark:text-white">Load (Usage)</p>
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">Home (Usage)</p>
                                 <p className="text-xs text-gray-500 dark:text-gray-400">bg-blue-600 / text-blue-700</p>
                                 <p className="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-1">#2563eb (L) / #60a5fa (D)</p>
                             </div>
@@ -577,7 +577,7 @@ export default function StyleGuidePage() {
             <section id="table-primitives" className="space-y-6 scroll-mt-24">
                 <div>
                     <H2>Table Primitives</H2>
-                    <P className="mt-1">Reusable table structure for admin, tariff, and reporting views.</P>
+                    <P className="mt-1">Reusable table structure for admin, rate plan, and reporting views.</P>
                 </div>
                 <div className="bg-white dark:bg-slate-900 p-6 rounded-lg border border-gray-200 dark:border-slate-800">
                     <Table>
@@ -617,7 +617,7 @@ export default function StyleGuidePage() {
                                 Live
                             </span>
                             <LiveMetricChip label="Solar" value="4.2 kW" labelStyle="text" surfaceStyle="flat" valueClassName="text-amber-700 dark:text-amber-300" />
-                            <LiveMetricChip label="Load" value="2.8 kW" labelStyle="text" surfaceStyle="flat" valueClassName="text-blue-700 dark:text-blue-300" />
+                            <LiveMetricChip label="Home" value="2.8 kW" labelStyle="text" surfaceStyle="flat" valueClassName="text-blue-700 dark:text-blue-300" />
                             <LiveMetricChip
                                 label="Battery"
                                 value="73%"

@@ -38,12 +38,12 @@ export function buildLoadAffordanceNow(
     const nextUp = [...profiles].reverse().find(p => p.headroomKwh > surplusKwh) ?? null;
 
     const surplusLabel = surplusKwh < 0
-        ? `${Math.round(-surplusKwh)} kWh short`
-        : `${Math.round(surplusKwh)} kWh surplus`;
+        ? `${Math.round(-surplusKwh)} kWh owed`
+        : `${Math.round(surplusKwh)} kWh banked`;
 
     return {
         glyph: glyphForHeadroom(surplusKwh, profiles),
-        headline: best?.label ?? 'Avoid large loads',
+        headline: best?.label ?? 'Wait for a cheaper rate period',
         contextLabel: `${formatTouName(active.name)} · ${surplusLabel}`,
         nextUpLabel: nextUp
             ? `${nextUp.label} needs ${Math.round(nextUp.headroomKwh - surplusKwh)} kWh more`

@@ -23,7 +23,7 @@ export default function TagModal({ isOpen, onClose, onSave, currentTags = [], av
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
             <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-md">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">Tag Load Event</h3>
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">Tag Job</h3>
                     <button onClick={onClose} className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-2xl">&times;</button>
                 </div>
 

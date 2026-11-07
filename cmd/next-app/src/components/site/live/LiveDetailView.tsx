@@ -65,7 +65,7 @@ export function LiveDetailView({
                 <HalfHourRefresh />
             </SectionCard>
 
-            <SectionCard title={`${siteName} — Today`} density="compact">
+            <SectionCard title={`${siteName} · Today`} density="compact">
                 <TodayEnergyChart
                     rows={todayChartRows}
                     todayStart={todayStart}
@@ -80,8 +80,8 @@ export function LiveDetailView({
                 />
             </SectionCard>
 
-            <SectionCard title="Load timing this cycle" density="compact" bodyClassName="space-y-3">
-                {cyclePricingUnavailable ? <p role="status" className="text-sm text-gray-500 dark:text-gray-400">Historical pricing is incomplete for this cycle. Load timing is unavailable until pricing is resolved.</p> : <PeriodCardRow
+            <SectionCard title="Smart Shift this cycle" density="compact" bodyClassName="space-y-3">
+                {cyclePricingUnavailable ? <p role="status" className="text-sm text-gray-500 dark:text-gray-400">Pricing is incomplete for this billing cycle, so Smart Shift is unavailable until it’s filled in.</p> : <PeriodCardRow
                     siteId={siteId}
                     hasTariff={hasTariff}
                     loadTiming={loadTiming}
@@ -93,8 +93,8 @@ export function LiveDetailView({
             )}
 
             <Suspense fallback={
-                <SectionCard title="Hold battery for charging" density="compact">
-                    <p className="text-sm text-gray-500">Loading battery control...</p>
+                <SectionCard title="Battery Saver" density="compact">
+                    <p className="text-sm text-gray-500">Loading Battery Saver…</p>
                 </SectionCard>
             }>
                 <BatteryHoldCard

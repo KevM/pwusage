@@ -340,7 +340,7 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
             {/* Event List (Card View) */}
             <Card className="overflow-hidden">
                 <CardHeader className="bg-gray-50 dark:bg-gray-900/50 items-center text-center">
-                    <CardTitle className="text-lg">Detected Load Events</CardTitle>
+                    <CardTitle className="text-lg">Detected Jobs</CardTitle>
                 </CardHeader>
 
                 <CardContent className="pt-4">
@@ -348,8 +348,8 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
                         {events.length === 0 ? (
                             <div className="col-span-full">
                                 <EmptyState
-                                    title="No significant load events"
-                                    description="No significant load events were detected for this day."
+                                    title="No jobs detected"
+                                    description="No large jobs were detected for this day."
                                 />
                             </div>
                         ) : (

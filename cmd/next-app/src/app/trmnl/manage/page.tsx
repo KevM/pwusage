@@ -684,7 +684,7 @@ function ManageContent() {
                                                     checked={editingScreen?.componentConfig.showLoadTiming ?? false}
                                                     onChange={(e) => updateEditingConfig((prev) => ({ ...prev, showLoadTiming: e.target.checked }))}
                                                 />
-                                                <span className="leading-tight">Load timing</span>
+                                                <span className="leading-tight">Smart Shift</span>
                                             </Label>
                                         </div>
                                     </div>

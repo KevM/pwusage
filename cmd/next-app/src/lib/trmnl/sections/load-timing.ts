@@ -4,13 +4,13 @@ import { formatTouName, formatCentsPerKwhShort } from '../../format-utils';
 
 function netLabel(basis: string, netExportKwh: number): string {
     if (basis === 'neutral') return '';
-    const word = netExportKwh > 0 ? 'Surplus' : 'Deficit';
-    return `${word} ${Math.round(Math.abs(netExportKwh))} kWh`;
+    const word = netExportKwh > 0 ? 'banked' : 'owed';
+    return `${Math.round(Math.abs(netExportKwh))} kWh ${word}`;
 }
 
 export const loadTimingSection: TrmnlSection = {
     id: 'loadTiming',
-    label: 'Load timing',
+    label: 'Smart Shift',
     configKey: 'showLoadTiming',
     isEnabled: (l) => Boolean(l.hasLoadTimingSection),
     render: (ctx, l) => {
@@ -20,13 +20,13 @@ export const loadTimingSection: TrmnlSection = {
         if (!view.hasTariff) {
             return `
             <div class="flex flex--row flex--center-x flex--center-y w--full" style="min-height: ${l.loadTimingMinHeight}px;">
-                <span class="title title--small">Configure a tariff to see load timing</span>
+                <span class="title title--small">Add your rate plan to see Smart Shift</span>
             </div>`;
         }
         if (!view.hasCycleData || view.periods.length === 0) {
             return `
             <div class="flex flex--row flex--center-x flex--center-y w--full" style="min-height: ${l.loadTimingMinHeight}px;">
-                <span class="title title--small">No cycle data yet</span>
+                <span class="title title--small">No usage this billing cycle yet</span>
             </div>`;
         }
 
@@ -51,7 +51,7 @@ export const loadTimingSection: TrmnlSection = {
         } else if (view.activeIsCheapest) {
             banner = `
             <div class="flex flex--row flex--center-x w--full">
-                <span class="title title--medium">You are in the Cheapest period</span>
+                <span class="title title--medium">You are in the cheapest rate period</span>
             </div>`;
         }
 

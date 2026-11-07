@@ -73,7 +73,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409 && body?.error === 'needs_reauth') { setNeedsReauth(true); return { ok: false, body }; }
-    if (res.status === 409 && body?.error === 'reserve_sync_pending') { setError('Tesla is still reporting the previous hold’s reserve. Wait a moment, then try starting again.'); return { ok: false, body }; }
+    if (res.status === 409 && body?.error === 'reserve_sync_pending') { setError('Tesla is still reporting the reserve from the last Battery Saver. Wait a moment, then try starting again.'); return { ok: false, body }; }
     if (res.status === 422 && body?.error === 'needs_choice') { setError('A reserve choice is required.'); return { ok: false, body }; }
     if (!res.ok) { setError('Something went wrong. Try again.'); return { ok: false, body }; }
     return { ok: true, body };
@@ -109,33 +109,35 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     body = (
       <Alert variant="warning">
         <AlertDescription>
-          Battery control needs the energy command permission.{' '}
+          Battery Saver needs the energy command permission.{' '}
           <a href="/login" className="underline">Reconnect your Tesla account</a>.
         </AlertDescription>
       </Alert>
     );
   } else if (initialHold) {
     const restores = initialHold.mode === 'timer'
-      ? `restores at ${new Date(initialHold.safety_expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-      : 'auto-restores when charging ends, or after the safety window';
+      ? `turns off at ${new Date(initialHold.safety_expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+      : 'turns off when the job finishes, or after the safety window';
     body = (
       <div className="space-y-3">
         <p className="text-sm">
-          Holding at <strong>{holdReserveText(initialHold.target_reserve)}</strong>. It {restores} (to {initialHold.original_reserve}%).
+          Battery Saver is on, saving your Powerwall at <strong>{holdReserveText(initialHold.target_reserve)}</strong>. It {restores}, then sets your backup reserve back to {initialHold.original_reserve}%.
         </p>
         <div className="flex gap-2 items-center flex-wrap">
-          <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(true)}>Restore now</Button>
+          <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(true)}>Turn Off Battery Saver</Button>
           <Button variant="outline" size="sm" onClick={() => setShowQrModal(true)}>QR Code</Button>
         </div>
       </div>
     );
-  } else if (!hasTariff || soc === null) {
-    body = <p className="text-sm text-gray-500">Battery hold is unavailable until live battery data is present.</p>;
+  } else if (!hasTariff) {
+    body = <p className="text-sm text-gray-500">Battery Saver needs your rate plan. Refresh it from Tesla in your site settings, then try again.</p>;
+  } else if (soc === null) {
+    body = <p className="text-sm text-gray-500">A recent battery charge reading is needed to turn on Battery Saver. Refresh to update it.</p>;
   } else {
     body = (
       <div className="space-y-3">
         <p className="text-sm">
-          Parks the Powerwall at its current level so a large load (e.g. EV charging) draws from solar/grid instead of the battery.
+          Saves your Powerwall charge for when rates spike. While it is on, a job like charging the car runs on solar and the grid instead of the battery.
         </p>
         <div className="flex gap-2 items-center flex-wrap">
           <Button disabled={busy} onClick={() => setShowHoldModal(true)}>{holdButtonLabel(soc)}</Button>
@@ -146,7 +148,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   }
 
   return (
-    <SectionCard title="Hold battery for charging" density="compact">
+    <SectionCard title="Battery Saver" density="compact">
       {notice && (
         <Alert variant="warning" className="mb-3">
           <AlertDescription>
@@ -174,13 +176,13 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
       {showRestoreConfirm && initialHold && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-sm">
-            <h3 className="text-lg font-bold mb-3">Restore reserve?</h3>
+            <h3 className="text-lg font-bold mb-3">Turn Off Battery Saver?</h3>
             <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-              This ends the hold and sets the backup reserve back to {initialHold.original_reserve}%.
+              Turning off Battery Saver sets your backup reserve back to {initialHold.original_reserve}%.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" disabled={busy} onClick={() => setShowRestoreConfirm(false)}>Cancel</Button>
-              <Button disabled={busy} onClick={restore}>{busy ? 'Restoring…' : 'Restore'}</Button>
+              <Button disabled={busy} onClick={restore}>{busy ? 'Turning Off…' : 'Turn Off'}</Button>
             </div>
           </div>
         </div>
@@ -191,7 +193,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-sm flex flex-col items-center">
             <h3 className="text-lg font-bold mb-1 text-gray-900 dark:text-gray-100">QR Code</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 text-center">
-              Scan this QR code with your mobile device to open this page and automatically initiate a battery hold.
+              Scan this QR code with your phone to open this page and turn on Battery Saver.
             </p>
             
             <div className="bg-white p-3 rounded-lg border border-gray-100 dark:border-gray-800 shadow-sm mb-4">
@@ -206,7 +208,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
                 onClick={() => {
                   const deepLink = continueUrl(window.location.origin, `/site/${siteId}/live?action=park`);
                   navigator.clipboard.writeText(deepLink)
-                    .then(() => toast({ title: 'Link copied', description: 'Battery Hold link copied to clipboard!', variant: 'success' }))
+                    .then(() => toast({ title: 'Link copied', description: 'Battery Saver link copied to the clipboard.', variant: 'success' }))
                     .catch(() => toast({ title: 'Copy failed', description: 'Failed to copy link.', variant: 'danger' }));
                 }}
               >

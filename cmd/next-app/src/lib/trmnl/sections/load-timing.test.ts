@@ -54,8 +54,8 @@ describe('loadTimingSection', () => {
 
     it('renders surplus/deficit as words', () => {
         const html = loadTimingSection.render(ctx(view()), layout());
-        expect(html).toContain('Surplus');
-        expect(html).toContain('Deficit');
+        expect(html).toContain('kWh banked');
+        expect(html).toContain('kWh owed');
     });
 
     it('renders the next-cheaper banner', () => {
@@ -64,22 +64,22 @@ describe('loadTimingSection', () => {
         expect(html).toContain('today at 4 PM');
     });
 
-    it('shows "You are in the Cheapest period" when active is cheapest and no cheaper ahead', () => {
+    it('shows "You are in the cheapest rate period" when active is cheapest and no cheaper ahead', () => {
         const html = loadTimingSection.render(
             ctx(view({ nextCheaper: null, nextCheaperPhrase: null, activeIsCheapest: true })),
             layout()
         );
-        expect(html).toContain('You are in the Cheapest period');
+        expect(html).toContain('You are in the cheapest rate period');
     });
 
     it('renders a no-data message when cycle is empty', () => {
         const html = loadTimingSection.render(ctx(view({ hasCycleData: false, periods: [] })), layout());
-        expect(html).toContain('No cycle data');
+        expect(html).toContain('No usage this billing cycle yet');
     });
 
     it('renders a configure-tariff message when no tariff', () => {
         const html = loadTimingSection.render(ctx(view({ hasTariff: false, hasCycleData: false, periods: [] })), layout());
-        expect(html).toContain('Configure a tariff');
+        expect(html).toContain('Add your rate plan');
     });
 
     it('renders nothing when loadTiming is absent from context', () => {

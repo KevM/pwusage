@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getPeriodCardDisplay } from './period-card-display';
 
 describe('getPeriodCardDisplay', () => {
-    it('formats a sell card as Surplus with rounded kWh', () => {
+    it('formats a sell card as banked with rounded kWh', () => {
         const d = getPeriodCardDisplay({
             cycleNetExportKwh: 290.4,
             marginalCost: 0.03,
@@ -10,12 +10,12 @@ describe('getPeriodCardDisplay', () => {
             isActive: false
         });
         expect(d.costLabel).toBe('3¢ per kWh');
-        expect(d.netLabel).toBe('Surplus 290 kWh');
+        expect(d.netLabel).toBe('290 kWh banked');
         expect(d.colorClass).toContain('green');
         expect(d.ringClass).toBe('');
     });
 
-    it('formats a buy card as Deficit with rounded kWh', () => {
+    it('formats a buy card as owed with rounded kWh', () => {
         const d = getPeriodCardDisplay({
             cycleNetExportKwh: -95.2,
             marginalCost: 0.30,
@@ -23,7 +23,7 @@ describe('getPeriodCardDisplay', () => {
             isActive: false
         });
         expect(d.costLabel).toBe('30¢ per kWh');
-        expect(d.netLabel).toBe('Deficit 95 kWh');
+        expect(d.netLabel).toBe('95 kWh owed');
         expect(d.colorClass).toContain('red');
     });
 

@@ -69,8 +69,8 @@ export default function TrmnlHelpPage() {
                     )}
                 />
                 <FeatureCard
-                    title="Tariff Awareness"
-                    description="Optimize your usage by tracking consumption during On-Peak vs Off-Peak billing periods."
+                    title="Time of Use Rates"
+                    description="See your energy use in each rate period of your Time of Use rate plan, like Peak and Off-Peak, so you know when power costs the most."
                     iconToneClassName="bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
                     icon={(
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

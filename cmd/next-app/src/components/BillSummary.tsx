@@ -153,7 +153,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName, currencySymb
                                 <span className="truncate">{tariff.tariffName}</span>
                             </div>
                         )}
-                        description="Estimated monthly bill breakdown by TOU period"
+                        description="Estimated bill for this billing cycle, by rate period"
                     >
                         <div className="space-y-3">
                             <div className="hidden md:block">
@@ -240,7 +240,7 @@ export function BillSummary({ usage, activeTariffId, activeTouName, currencySymb
                                         <div className="flex items-start justify-between gap-3">
                                             <div>
                                                 <p className="font-semibold text-gray-900 dark:text-white">Total</p>
-                                                <p className="text-xs text-gray-500 dark:text-gray-400">Tariff total across all TOU periods</p>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400">Rate plan total across all rate periods</p>
                                             </div>
                                             <div className="text-right shrink-0">
                                                 <p className="font-bold tabular-nums text-gray-900 dark:text-gray-100">{formatCurrency(totals.cost, currencySymbol)}</p>

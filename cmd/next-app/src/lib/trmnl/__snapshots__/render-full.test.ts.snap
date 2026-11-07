@@ -166,13 +166,13 @@ exports[`renderFull characterization > snapshot: bill-plus-load-timing 1`] = `
                     <span class="value value--small"><strong>ACTIVE NOW</strong></span>
                     <span class="title title--small"><strong>Off-Peak</strong></span>
                     <span class="title title--xxlarge">20¢/kWh</span>
-                    <span class="label">Deficit 12 kWh</span>
+                    <span class="label">12 kWh owed</span>
                 </div>
                 <div class="flex flex--col flex--center-x" style="flex: 1 1 0;">
                     <span class="label">Next today at 4 PM</span>
                     <span class="title title--small">On-Peak</span>
                     <span class="title title--medium">8¢/kWh</span>
-                    <span class="label">Surplus 9 kWh</span>
+                    <span class="label">9 kWh banked</span>
                 </div>
                 </div>
             </div>
@@ -341,13 +341,13 @@ exports[`renderFull characterization > snapshot: live-chart-load-timing 1`] = `
                     <span class="value value--small"><strong>ACTIVE NOW</strong></span>
                     <span class="title title--small"><strong>Off-Peak</strong></span>
                     <span class="title title--medium">20¢/kWh</span>
-                    <span class="label">Deficit 12 kWh</span>
+                    <span class="label">12 kWh owed</span>
                 </div>
                 <div class="flex flex--col flex--center-x" style="flex: 1 1 0;">
                     <span class="label">Next today at 4 PM</span>
                     <span class="title title--small">On-Peak</span>
                     <span class="title title--small">8¢/kWh</span>
-                    <span class="label">Surplus 9 kWh</span>
+                    <span class="label">9 kWh banked</span>
                 </div>
                 </div>
             </div>
@@ -565,13 +565,13 @@ exports[`renderFull characterization > snapshot: load-timing-only 1`] = `
                     <span class="value value--small"><strong>ACTIVE NOW</strong></span>
                     <span class="title title--small"><strong>Off-Peak</strong></span>
                     <span class="title title--xxlarge">20¢/kWh</span>
-                    <span class="label">Deficit 12 kWh</span>
+                    <span class="label">12 kWh owed</span>
                 </div>
                 <div class="flex flex--col flex--center-x" style="flex: 1 1 0;">
                     <span class="label">Next today at 4 PM</span>
                     <span class="title title--small">On-Peak</span>
                     <span class="title title--medium">8¢/kWh</span>
-                    <span class="label">Surplus 9 kWh</span>
+                    <span class="label">9 kWh banked</span>
                 </div>
                 </div>
             </div>

@@ -15,7 +15,7 @@ describe('LoadHeadroomGlyph', () => {
             }} />
         );
         expect(html).toContain('Off-Peak');
-        expect(html).toContain('120 kWh');
+        expect(html).toContain('120 kWh banked');
         expect(html).toContain('Little car');
     });
 
@@ -26,7 +26,9 @@ describe('LoadHeadroomGlyph', () => {
             }} />
         );
         expect(html).toContain('red');
-        expect(html).toContain('avoid large loads');
+        expect(html).toContain('8 kWh owed');
+        expect(html).toContain('wait for a cheaper rate period');
+        expect(html).not.toMatch(/load/i);
     });
 
     it('tones the small tier as a warning and larger tiers as success', () => {

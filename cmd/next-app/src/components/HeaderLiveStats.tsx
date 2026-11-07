@@ -255,13 +255,13 @@ export function HeaderMetricsStrip({
                 </span>
             </div>
 
-            {/* Load */}
+            {/* Home */}
             <div className="flex items-center gap-0.5 md:gap-1 shrink-0">
                 <span className="text-blue-500 dark:text-blue-400 shrink-0">
                     <LoadIcon />
                 </span>
                 <span className={`${isExpanded ? 'inline' : 'hidden sm:inline'} text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5`}>
-                    Load
+                    Home
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-blue-700 dark:text-blue-300">
                     {model.loadFormatted}

@@ -38,7 +38,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
                     <p className="text-xl font-semibold text-amber-700">{(stats.solarPower / 1000).toFixed(1)} kW</p>
                 </div>
                 <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
-                    <p className="text-sm text-gray-600">Load</p>
+                    <p className="text-sm text-gray-600">Home</p>
                     <p className="text-xl font-semibold text-blue-700">{(stats.loadPower / 1000).toFixed(1)} kW</p>
                 </div>
                 <div className="bg-purple-50 border-l-4 border-purple-500 p-3 rounded">
@@ -79,7 +79,7 @@ export function SiteLiveStats({ siteId, initialStats }: { siteId: string; initia
                     <div className="w-px h-4 bg-slate-300 dark:bg-slate-700"></div>
 
                     <div className="flex items-center gap-2">
-                        <span className="text-gray-500 dark:text-gray-400">Tariff:</span>
+                        <span className="text-gray-500 dark:text-gray-400">Rate period:</span>
                         <span className="font-medium text-slate-700 dark:text-slate-300">{formatTouName(stats.currentTariff ?? 'Unknown')}</span>
                     </div>
                 </div>

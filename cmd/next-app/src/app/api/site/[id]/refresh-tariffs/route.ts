@@ -32,7 +32,7 @@ export async function GET(
             });
         } catch (error) {
             console.error('[tariffs] request failed:', error);
-            return json({ error: 'Failed to fetch tariffs' }, 500);
+            return json({ error: 'Couldn’t load your rate plan.' }, 500);
         }
     });
 }
@@ -71,19 +71,19 @@ export async function POST(
 
         if (!updatedSite) {
             return NextResponse.json(
-                { error: 'Failed to refresh tariffs' },
+                { error: 'Couldn’t refresh your rate plan from Tesla.' },
                 { status: 500 }
             );
         }
 
         return NextResponse.json({
             success: true,
-            message: 'Tariffs refreshed successfully',
+            message: 'Rate plan refreshed',
             tariffCount: updatedSite.tariffs.length
         });
         } catch (error) {
             console.error(`[API] Refresh tariffs error:`, error);
-            const message = error instanceof Error ? error.message : 'Failed to refresh tariffs';
+            const message = error instanceof Error ? error.message : 'Couldn’t refresh your rate plan from Tesla.';
             return NextResponse.json(
                 { error: message },
                 { status: 500 }

@@ -15,7 +15,7 @@ export function SankeyCard({ snapshotSvg, cumulativeSvg }: SankeyCardProps) {
     return (
         <SectionCard
             title="Energy Value Flow"
-            description="Where your power comes from and where surplus goes, colored by arbitrage value."
+            description="Where your power comes from and where extra solar goes, colored by how much it saves you."
         >
             <div className="mb-3 inline-flex rounded-md border border-gray-300 overflow-hidden text-sm">
                 <button

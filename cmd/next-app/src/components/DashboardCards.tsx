@@ -180,10 +180,10 @@ export function DashboardCards({ initialProducts }: { initialProducts: ProductWi
                                     </div>
                                     <div>
                                         <p className="text-orange-700">Grid: {(product.liveGridPower / 1000).toFixed(1)} kW</p>
-                                        <p className="text-blue-700">Load: {(product.liveLoadPower / 1000).toFixed(1)} kW</p>
+                                        <p className="text-blue-700">Home: {(product.liveLoadPower / 1000).toFixed(1)} kW</p>
                                     </div>
                                 </div>
-                                <p className="text-sm text-gray-500">Tariff: {formatTouName(product.currentTariff)}</p>
+                                <p className="text-sm text-gray-500">Rate period: {formatTouName(product.currentTariff)}</p>
                             </SectionCard>
                         </Link>
                     );

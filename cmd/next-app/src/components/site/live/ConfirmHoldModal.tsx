@@ -40,19 +40,19 @@ export function ConfirmHoldModal({ soc, plan, busy = false, onConfirm, onClose }
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl p-6 w-full max-w-md">
         <div className="flex justify-between items-center mb-3">
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white">Hold battery for charging</h3>
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white">Turn On Battery Saver</h3>
           <button onClick={onClose} aria-label="Close" className="text-gray-500 hover:text-gray-900 dark:hover:text-white text-2xl leading-none">&times;</button>
         </div>
 
         <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-          Battery at {Math.floor(soc)}%. While held, the Powerwall draws the load from solar/grid instead of discharging.
+          Battery at {Math.floor(soc)}%. Battery Saver saves your Powerwall charge for when rates spike. While it is on, a job like charging the car runs on solar and the grid instead of the battery.
         </p>
 
         {plan.ambiguous && (
           <fieldset className="mb-4">
-            <legend className="text-sm font-medium mb-1">Reserve</legend>
+            <legend className="text-sm font-medium mb-1">Backup reserve</legend>
             <p className="text-xs text-gray-500 mb-2">
-              80% lets the battery serve the load down to 80%, then holds. 100% holds completely (no discharge).
+              At 80%, your Powerwall can discharge to 80% before Battery Saver keeps the rest. At 100%, it doesn’t discharge at all.
             </p>
             <div className="flex gap-2">
               {([80, 100] as const).map(v => (
@@ -69,11 +69,11 @@ export function ConfirmHoldModal({ soc, plan, busy = false, onConfirm, onClose }
           <legend className="text-sm font-medium mb-2">Duration</legend>
           <label className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm mb-2 cursor-pointer ${mode === 'auto' ? 'border-primary bg-primary/10' : 'border-gray-300 dark:border-gray-600'}`}>
             <input type="radio" name="mode" checked={mode === 'auto'} onChange={() => setMode('auto')} />
-            Auto-detect (restores when charging ends)
+            Until the job finishes (detected automatically)
           </label>
           <label className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer ${mode === 'timer' ? 'border-primary bg-primary/10' : 'border-gray-300 dark:border-gray-600'}`}>
             <input type="radio" name="mode" checked={mode === 'timer'} onChange={() => setMode('timer')} />
-            Fixed duration
+            For a set time
           </label>
 
           {mode === 'timer' && (
@@ -107,7 +107,7 @@ export function ConfirmHoldModal({ soc, plan, busy = false, onConfirm, onClose }
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={confirm} disabled={busy}>
-            {busy ? 'Holding…' : `Hold at ${holdReserveText(effectiveTarget)}`}
+            {busy ? 'Turning On…' : `Turn On at ${holdReserveText(effectiveTarget)}`}
           </Button>
         </div>
       </div>
