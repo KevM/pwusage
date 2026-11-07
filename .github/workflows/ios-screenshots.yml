@@ -51,10 +51,52 @@ jobs:
           TMPDIR: /tmp
         run: bundle exec fastlane ios screenshots
 
-      - name: Upload screenshots
+      - name: Retain screenshots
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ios-screenshots
           path: cmd/ios-app/fastlane/screenshots/
           if-no-files-found: ignore
+
+      - name: Install asc
+        run: HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install asc
+
+      - name: Upload screenshots to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_B64: ${{ secrets.ASC_KEY_CONTENT }}
+          ASC_BYPASS_KEYCHAIN: '1'
+        run: |
+          set -euo pipefail
+          app_id=$(asc apps list --bundle-id fm.rodeo.pwusage --output json | jq -er '.data | if length == 1 then .[0].id else error("Expected exactly one PWUsage app") end')
+          version=$(ruby -ryaml -e 'puts YAML.load_file("project.yml").fetch("settings").fetch("base").fetch("MARKETING_VERSION")')
+          shots=fastlane/screenshots/en-US
+          test -d "$shots"
+          staging=$(mktemp -d)
+          trap 'rm -rf "$staging"' EXIT
+          while IFS='|' read -r device_type prefix expected; do
+            mkdir "$staging/$device_type"
+            find "$shots" -maxdepth 1 -name "$prefix*.png" -exec cp {} "$staging/$device_type/" \;
+            count=$(find "$staging/$device_type" -name '*.png' | wc -l | tr -d ' ')
+            if [ "$count" -ne "$expected" ]; then
+              echo "::error::Expected $expected $device_type screenshots, found $count"
+              exit 1
+            fi
+            asc screenshots validate --path "$staging/$device_type" --device-type "$device_type" --output json
+          done <<'SCREENSHOT_SETS'
+          IPHONE_69|iPhone 18 Pro Max-|6
+          IPHONE_DUO|iPhone Duo-|5
+          IPAD_PRO_3GEN_129|iPad Pro 13-inch (M5)-|5
+          SCREENSHOT_SETS
+          for device_type in IPHONE_69 IPHONE_DUO IPAD_PRO_3GEN_129; do
+            asc screenshots upload \
+              --app "$app_id" \
+              --version "$version" \
+              --locale en-US \
+              --path "$staging/$device_type" \
+              --device-type "$device_type" \
+              --replace --confirm \
+              --output json
+          done
