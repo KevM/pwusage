@@ -146,6 +146,13 @@ UPDATE "Site" SET tesla_connection_user_id = user_id
 WHERE user_id IS NOT NULL AND tesla_connection_user_id IS NULL;
 
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS memberships_checked_at TIMESTAMPTZ;
+-- One Battery Saver start at a time per physical Powerwall (section 7). Same RLS block as SiteMember.
+CREATE TABLE IF NOT EXISTS "BatteryHoldStartClaim" (
+    claim_key  TEXT PRIMARY KEY,
+    owner      UUID NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
 ALTER TABLE "BatteryHold" ADD COLUMN IF NOT EXISTS started_by_user_id TEXT
     REFERENCES "User"(id) ON DELETE SET NULL;
 ALTER TABLE "TrmnlInstallation" ADD COLUMN IF NOT EXISTS installed_by_user_id TEXT
@@ -189,9 +196,12 @@ Rules:
 - **A Tesla error or timeout on that check fails the login** with the existing `fleet-api-failed` result, so a
   blip doesn't create a permanent duplicate. A member whose grant is definitely unusable just doesn't count.
 - A member check matches on their mapped ID in `products`. If `products` turns out to carry the same identifier, compare that directly.
-- Don't hold a transaction across Tesla calls. Do them first, then in one transaction take
-  `pg_advisory_xact_lock(hashtext(H))`, re-check steps 1 and 2, and write. That stops two first logins
-  creating two sites.
+- Don't hold a transaction across Tesla calls. Do them first and remember which `(site_id, user_id)` memberships with
+  `H` they considered. Then in one transaction take `pg_advisory_xact_lock(hashtext(H))`, re-check steps 1 and 2, and
+  compare that set with the memberships now present. If it changed, for example because another first login just created
+  the site, write nothing, leave the transaction, and redo the member check against the new set. After 2 attempts, fail the
+  login with `fleet-api-failed` so it can be retried. Write only when the set still matches. The lock alone isn't enough,
+  because it serializes writes without invalidating a decision made before them.
 - `site_info` missing the hardware field: fall through to step 4 with a NULL `H`, and log it.
 - Then reconcile (section 6.3) using this same product list.
 
@@ -349,9 +359,24 @@ same Powerwall. Your reserve is 20% and you park at 80%. Your partner parks too,
 100% target. Your hold sees 100%, cancels as `reserve_changed`, and never restores. Your partner's restores to 80%.
 The reserve stays at 80%. This comes from reading the code, not from running it.
 
-**Guard (Phase 1).** Before parking, refuse if another `Site` with the same `tesla_hardware_id` has an active hold
-that isn't past `safety_expires_at`. Ignoring expired holds stops a previous owner's dead hold from blocking a new
-owner. Once rows merge the unique index does this job, but the guard stays for any remaining duplicates.
+**Guard (Phase 1).** `parkBattery` sends the reserve command before `createHold`, and the unique index is per site, so a
+check alone would let two starts through duplicate rows both pass and both send. Starting therefore takes a claim first:
+
+1. **Claim, before reading the reserve or sending anything.** `claim_key` is `tesla_hardware_id`, or `site:<Site.id>` when
+   that's NULL. One statement decides it, and `rowCount` is the verdict:
+   `INSERT … ON CONFLICT (claim_key) DO UPDATE SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at WHERE
+   "BatteryHoldStartClaim".expires_at <= now()`. A loser gets the existing "Battery Saver is already updating" response and
+   sends nothing.
+2. **Check under the claim.** Refuse if any `Site` with the same key has an active hold that isn't past `safety_expires_at`.
+   Ignoring expired holds stops a previous owner's dead hold from blocking a new owner. Also apply the existing
+   `reserve_sync_pending` check across those rows, because a restore through another row can leave `site_info` showing the old
+   target as if it were the original reserve.
+3. **Read the reserve, send the command, and create the hold** as today, including the compensating restore.
+4. **Release in `finally`,** conditioned on `owner`. If the release fails, expiry takes over.
+
+The lease is 90 seconds, longer than the 60-second function cap, so a live request can't outlast its claim. A session-level
+advisory lock wouldn't work here, because production connects through the transaction-mode pooler and a lock can't span
+Tesla calls. Once rows merge the unique index covers same-site inserts, but the claim stays for any remaining duplicates.
 
 **Restores with several members.** `getRestoreCandidates(hold)` returns usable members: the hold's starter, the
 connection user, then the rest by `joined_at`. Those denied commands within 7 days go last. Each uses its own token
@@ -478,7 +503,7 @@ Each phase is its own draft PR with lint, typecheck, tests and build passing.
 
 - Merge `codex/no-sites-login-loop`, verified but not yet pushed.
 - Migration (section 4). Backfill the hardware ID.
-- Battery Saver guard across rows with the same hardware.
+- Battery Saver start claim and guard across rows with the same hardware.
 - At login, clear `user_id` on rows this user holds that a successful product list doesn't include. This removes stale
   sites like the son's, and stops removed people reading stored data.
 - Membership-based `AccountDeletionService`, and `Site_user_id_fkey` to `SET NULL`.
@@ -523,12 +548,12 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | --- | --- |
 | Migration | Backfill matches owners with `tesla_energy_site_id = Site.id`; runs twice; RLS and grants; missing hardware field stays NULL. |
 | Keys | Connection must be a member; removal nulls it; user delete and the section 9 site delete succeed, with a bare site delete on a site with summaries rejected. |
-| Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site. |
+| Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site, including when both finished their Tesla checks before either wrote; a changed membership set redoes the check, then fails the login after 2 attempts. |
 | Sold home | Seller unlisted or dead gives a fresh site, and the buyer can't read the seller's site. Seller still listed joins, then is removed at the next reconcile (documents the known risk). |
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
 | Reconcile | Listed; re-invited; missing; empty; failed call; removing the last member ends an active hold with `no_members` and sends no Tesla command, while a remaining member keeps it active; a removed sole member who returns gets a fresh site; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry, including a final 404; recently imported connection user is still reconciled; dead grant removal only when another member works. |
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
-| Battery Saver | Guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
+| Battery Saver | Two concurrent starts through duplicate rows send exactly one command; the claim is taken before the reserve read; an expired claim can be taken over and a stale owner can't release it; a failed `createHold` still restores; `reserve_sync_pending` spans rows; guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
 | Deletion | Seeded with summaries that reference a rate plan: member leaves and the site survives; last member removes everything; simultaneous deletes; login racing deletion. |
 | Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; refuses with an active hold; dry run writes nothing. |
