@@ -2,801 +2,791 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement a self-service, GDPR-compliant account deletion feature allowing web app users to permanently purge their account, sites, and energy data, with intent telemetry and cryptographic challenge verification.
+**Goal:** Let a signed-in user permanently delete their pwusage account from a dedicated `/account-delete` page, without ever stranding a Powerwall at a raised backup reserve.
 
-**Architecture:** Database-level `ON DELETE CASCADE` constraints guarantee atomic cleanup of user and site data. An intent API issues a signed HMAC challenge token when the confirmation modal is opened; a `DELETE /api/user` endpoint verifies the challenge token and origin/CSRF boundaries, revokes Tesla tokens (best-effort), purges database records in a transaction, and clears the session cookie.
+**Spec:** [`docs/superpowers/specs/2026-11-08-user-account-deletion-design.md`](../specs/2026-11-08-user-account-deletion-design.md). Read it first.
 
-**Tech Stack:** Next.js 15+ App Router, TypeScript, PostgreSQL (`pg`), Tailwind CSS, Vitest.
+**Architecture:** `DELETE /api/user` calls `deleteAccount` in `account-deletion-service.ts`, which restores any active Battery Saver session and then calls `AccountDeletionRepo`. The repo deletes in one transaction, removing `EnergyDayArchive` first because a plain cascade fails on `EnergyDaySummary`. The `/account-delete` page shows the details and takes the typed confirmation. `/account-delete/done` offers optional Tesla removal.
+
+**Tech Stack:** Next.js 16 App Router, TypeScript, PostgreSQL (`pg`), Tailwind CSS, Vitest 4.
+
+**Verification status:** All code below was built on a throwaway worktree of `881a2127`. There, typecheck, lint, `npm test -- --run` (1,824 passed), `npm run test:hold:postgres` (69 passed) and `npm run build` all succeeded. Removing the `EnergyDayArchive` delete made the Postgres test fail with the production error, so the test does catch that bug. The pages were not opened in a browser and no real deletion was run; Task 7 covers those. If `main` has moved, re-check the diffs against it.
 
 ## Global Constraints
 
-- Avoid `any` in TypeScript; explicitly type all parameters, responses, and interfaces.
-- User-facing copy must adhere to `docs/voice-and-terms.md`.
-- All verification steps must run from `cmd/next-app`.
-- Follow repository patterns: data access in `*-repo.ts`, orchestration in `*-service.ts`.
-- Before completing tasks, full build, lint, and Vitest suite must pass cleanly.
+- Run commands from `cmd/next-app`.
+- **Never run deletion code or tests against `.env` or `DATABASE_URL`.** `.env` points at the Dev DB, and the Postgres suite uses a disposable local cluster on purpose. It needs PostgreSQL's `pg_config` on `PATH`.
+- Use `npm run db:migration:create`. Never name a migration file by hand.
+- Do not add `@testing-library/react` or jsdom. Component tests use `renderToStaticMarkup`.
+- Do not add a Tesla revocation call or a challenge token. The spec explains why.
+- No `any`. User-facing copy follows `docs/voice-and-terms.md`.
 
 ---
 
-### Task 1: Database Migration for Account Deletion Cascades
+### Task 1: Migration and transactional delete
 
 **Files:**
-- Create: `cmd/next-app/db-migrations/20261108130000_user_account_deletion_cascades.sql`
-- Test: `cmd/next-app/src/lib/user-account-deletion.postgres.test.ts`
+- Create: `cmd/next-app/db-migrations/<generated>_user_account_deletion_cascades.sql`
+- Create: `cmd/next-app/src/lib/account-deletion-repo.ts`
+- Create: `cmd/next-app/src/lib/account-deletion-postgres.test.ts`
+- Modify: `cmd/next-app/scripts/test-battery-hold.sh`
 
-**Interfaces:**
-- Consumes: PostgreSQL schema (`User`, `Site`, `Tariff`, `TrmnlInstallation`, `SystemAnnouncement`)
-- Produces: Cascade constraints ensuring `DELETE FROM "User" WHERE id = $1` completely purges all owned records without orphaned foreign keys.
+- [ ] **Step 1: Add the failing Postgres test to the disposable suite**
 
-- [ ] **Step 1: Write the failing postgres integration test**
-
-Create `cmd/next-app/src/lib/user-account-deletion.postgres.test.ts`:
+Create `cmd/next-app/src/lib/account-deletion-postgres.test.ts`:
 
 ```typescript
-import { describe, it, expect, beforeEach } from 'vitest';
-import { pool } from './db';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { readdir, readFile } from 'node:fs/promises';
 
-describe('User Account Deletion Cascades', () => {
-    const testUserId = 'test-del-user-' + Date.now();
-    const testSiteId = 'test-del-site-' + Date.now();
+const local = vi.hoisted(() => ({ database: undefined as unknown as import('pg').Pool }));
+vi.mock('./db', () => ({ pool: { connect: () => local.database.connect() } }));
 
-    beforeEach(async () => {
-        // Clean up test fixtures
-        await pool.query('DELETE FROM "User" WHERE id = $1', [testUserId]);
+import { AccountDeletionRepo, ActiveBatterySaverError } from './account-deletion-repo';
+import { createActivityTestDatabase, safeActivityTestSocket as safeSocket } from './battery-hold-activity-test-db';
+
+// Mirrors the production foreign keys for the tables this test creates by hand.
+const TARIFF_TABLES = `
+  CREATE TABLE "Tariff" (id serial PRIMARY KEY, site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE);
+  CREATE TABLE "TariffSeason" (id serial PRIMARY KEY, tariff_id int NOT NULL REFERENCES "Tariff"(id) ON DELETE CASCADE);
+  CREATE TABLE "TariffSchedule" (id serial PRIMARY KEY, season_id int NOT NULL REFERENCES "TariffSeason"(id) ON DELETE CASCADE);`;
+const ARCHIVE_TABLE = `
+  CREATE TABLE "EnergyDayArchive" (
+    site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE, day_start date NOT NULL, revision int NOT NULL,
+    PRIMARY KEY (site_id, day_start, revision));`;
+const OTHER_TABLES = `
+  CREATE TABLE "EnergyDaySummary" (
+    site_id text NOT NULL, day_start date NOT NULL, revision int NOT NULL,
+    tariff_id int NOT NULL REFERENCES "Tariff"(id), tariff_schedule_id int REFERENCES "TariffSchedule"(id),
+    FOREIGN KEY (site_id, day_start, revision) REFERENCES "EnergyDayArchive"(site_id, day_start, revision) ON DELETE CASCADE);
+  CREATE TABLE "LoadTag" (id serial PRIMARY KEY, site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE);
+  CREATE TABLE "TrmnlInstallation" (id serial PRIMARY KEY, site_id text NOT NULL);
+  CREATE TABLE "MobileLoginHandoff" (id serial PRIMARY KEY, user_id text NOT NULL);
+  CREATE TABLE "SystemAnnouncement" (id serial PRIMARY KEY, author_id text REFERENCES "User"(id));`;
+
+const OWNED_TABLES = [
+  'Site', 'Tariff', 'TariffSeason', 'TariffSchedule', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag',
+  'TrmnlInstallation', 'MobileLoginHandoff', 'BatteryHold',
+];
+
+async function applyDeletionMigrationTwice(): Promise<void> {
+  const file = (await readdir('db-migrations')).find(name => name.endsWith('_user_account_deletion_cascades.sql'));
+  if (!file) throw new Error('Migration not found');
+  const sql = await readFile(`db-migrations/${file}`, 'utf8');
+  await local.database.query(sql);
+  await local.database.query(sql);
+}
+
+async function seedAccount(userId: string, siteId: string): Promise<void> {
+  const db = local.database;
+  await db.query('INSERT INTO "User" (id) VALUES ($1)', [userId]);
+  await db.query('INSERT INTO "Site" (id, user_id) VALUES ($1, $2)', [siteId, userId]);
+  const tariff = (await db.query('INSERT INTO "Tariff" (site_id) VALUES ($1) RETURNING id', [siteId])).rows[0].id;
+  const season = (await db.query('INSERT INTO "TariffSeason" (tariff_id) VALUES ($1) RETURNING id', [tariff])).rows[0].id;
+  const schedule = (await db.query('INSERT INTO "TariffSchedule" (season_id) VALUES ($1) RETURNING id', [season])).rows[0].id;
+  await db.query(`INSERT INTO "EnergyDayArchive" VALUES ($1, '2026-01-01', 1)`, [siteId]);
+  await db.query(`INSERT INTO "EnergyDaySummary" VALUES ($1, '2026-01-01', 1, $2, $3)`, [siteId, tariff, schedule]);
+  await db.query('INSERT INTO "LoadTag" (site_id) VALUES ($1)', [siteId]);
+  await db.query('INSERT INTO "TrmnlInstallation" (site_id) VALUES ($1)', [siteId]);
+  await db.query('INSERT INTO "MobileLoginHandoff" (user_id) VALUES ($1)', [userId]);
+  await db.query('INSERT INTO "SystemAnnouncement" (author_id) VALUES ($1)', [userId]);
+}
+
+const countFor = async (table: string, column: string, value: string): Promise<number> =>
+  Number((await local.database.query(`SELECT count(*) FROM "${table}" WHERE ${column} = $1`, [value])).rows[0].count);
+
+const insertActiveHold = (siteId: string) => local.database.query(`
+  INSERT INTO "BatteryHold" (site_id, status, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at)
+  VALUES ($1, 'active', 20, 100, 90, 500, now() + interval '1 hour')`, [siteId]);
+
+describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
+  afterAll(async () => { await local.database?.end(); });
+
+  // Trigger firing order follows creation order, and the plain cascade fails when
+  // Tariff fires before EnergyDayArchive. Production has that order; both must work.
+  describe.each([
+    ['tariff_first', TARIFF_TABLES + ARCHIVE_TABLE],
+    ['archive_first', ARCHIVE_TABLE + TARIFF_TABLES],
+  ])('with foreign keys created %s', (order, tables) => {
+    it('removes everything the account owns and leaves other accounts alone', async () => {
+      await local.database?.end();
+      local.database = await createActivityTestDatabase(`account_deletion_${order}`);
+      await local.database.query(tables + OTHER_TABLES);
+      await applyDeletionMigrationTwice();
+      await seedAccount('leaving', 'site-a');
+      await seedAccount('staying', 'site-b');
+
+      const result = await new AccountDeletionRepo().deleteAccount('leaving');
+
+      expect(result.siteIds).toEqual(['site-a']);
+      expect(await countFor('User', 'id', 'leaving')).toBe(0);
+      expect(await countFor('Site', 'id', 'site-a')).toBe(0);
+      for (const table of ['Tariff', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag', 'TrmnlInstallation']) {
+        expect(await countFor(table, 'site_id', 'site-a'), table).toBe(0);
+        expect(await countFor(table, 'site_id', 'site-b'), table).toBe(1);
+      }
+      expect(await countFor('MobileLoginHandoff', 'user_id', 'leaving')).toBe(0);
+      expect(await countFor('MobileLoginHandoff', 'user_id', 'staying')).toBe(1);
+      for (const table of OWNED_TABLES) {
+        const total = Number((await local.database.query(`SELECT count(*) FROM "${table}"`)).rows[0].count);
+        expect(total, table).toBe(table === 'BatteryHold' ? 0 : 1);
+      }
+      expect(Number((await local.database.query('SELECT count(*) FROM "SystemAnnouncement" WHERE author_id IS NULL')).rows[0].count)).toBe(1);
     });
 
-    it('cascades deletion from User to Site, Tariff, and child records', async () => {
-        // 1. Insert user
-        await pool.query('INSERT INTO "User" (id, email) VALUES ($1, $2)', [testUserId, 'del@example.com']);
+    it('refuses while Battery Saver is active and rolls everything back', async () => {
+      await seedAccount('holding', 'site-c');
+      await insertActiveHold('site-c');
 
-        // 2. Insert site
-        await pool.query(`
-            INSERT INTO "Site" (id, user_id, name, installed, timezone)
-            VALUES ($1, $2, 'Test Site', NOW(), 'America/Chicago')
-        `, [testSiteId, testUserId]);
+      await expect(new AccountDeletionRepo().deleteAccount('holding')).rejects.toBeInstanceOf(ActiveBatterySaverError);
 
-        // 3. Insert tariff
-        const tariffRes = await pool.query(`
-            INSERT INTO "Tariff" (site_id, name) VALUES ($1, 'Default Tariff') RETURNING id
-        `, [testSiteId]);
-        const tariffId = tariffRes.rows[0].id;
-
-        // 4. Insert TrmnlInstallation
-        await pool.query(`
-            INSERT INTO "TrmnlInstallation" (site_id, uuid) VALUES ($1, $2)
-        `, [testSiteId, 'trmnl-uuid-' + Date.now()]);
-
-        // 5. Delete user
-        await pool.query('DELETE FROM "User" WHERE id = $1', [testUserId]);
-
-        // 6. Assert all records were purged
-        const siteCheck = await pool.query('SELECT * FROM "Site" WHERE id = $1', [testSiteId]);
-        expect(siteCheck.rows.length).toBe(0);
-
-        const tariffCheck = await pool.query('SELECT * FROM "Tariff" WHERE id = $1', [tariffId]);
-        expect(tariffCheck.rows.length).toBe(0);
-
-        const trmnlCheck = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE site_id = $1', [testSiteId]);
-        expect(trmnlCheck.rows.length).toBe(0);
+      expect(await countFor('User', 'id', 'holding')).toBe(1);
+      expect(await countFor('EnergyDayArchive', 'site_id', 'site-c')).toBe(1);
     });
+
+    it('finishes without error when the account is already gone', async () => {
+      await expect(new AccountDeletionRepo().deleteAccount('missing')).resolves.toEqual({ siteIds: [] });
+    });
+  });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails without cascade migration**
+Change `cmd/next-app/scripts/test-battery-hold.sh`:
 
-Run:
-```bash
-cd cmd/next-app && npx vitest run src/lib/user-account-deletion.postgres.test.ts
+```diff
+@@ -17,4 +17,4 @@ LC_ALL=C "$hold_pg_bin/pg_ctl" -D "$hold_socket/data" -l "$hold_socket/server.lo
+ hold_started=true
+ export BATTERY_HOLD_TEST_SOCKET="$hold_socket"
+ npm test -- --run src/lib/battery-hold-postgres.test.ts src/lib/battery-hold-activity-postgres.test.ts \
+-  src/lib/battery-hold-activity-delivery-postgres.test.ts src/lib/battery-hold-activity-test-db.test.ts "$@"
++  src/lib/battery-hold-activity-delivery-postgres.test.ts src/lib/battery-hold-activity-test-db.test.ts src/lib/account-deletion-postgres.test.ts "$@"
 ```
-Expected: FAIL (violates foreign key constraint on `Site.user_id`).
 
-- [ ] **Step 3: Create the migration file**
+- [ ] **Step 2: Run it and confirm it fails**
 
-Create `cmd/next-app/db-migrations/20261108130000_user_account_deletion_cascades.sql`:
+```bash
+npm run test:hold:postgres
+```
+
+Expected: FAIL, because `./account-deletion-repo` does not exist.
+
+- [ ] **Step 3: Generate the migration**
+
+```bash
+npm run db:migration:create user_account_deletion_cascades
+```
+
+Replace the generated file's contents with:
 
 ```sql
 -- Migration: user_account_deletion_cascades
--- Ensures foreign key deletion cascades from User -> Site -> Child tables
+-- Lets one DELETE of a "User" row remove what the account owns. EnergyDaySummary's
+-- NO ACTION keys to Tariff and TariffSchedule stay as they are: AccountDeletionRepo
+-- deletes EnergyDayArchive first, in the same transaction.
 
--- 1. Site -> User CASCADE
 ALTER TABLE "Site"
     DROP CONSTRAINT IF EXISTS "Site_user_id_fkey",
     ADD CONSTRAINT "Site_user_id_fkey"
         FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE;
 
--- 2. TrmnlInstallation -> Site CASCADE
+-- site_id had no foreign key before this. Adding one fails loudly if any orphan exists.
 ALTER TABLE "TrmnlInstallation"
     DROP CONSTRAINT IF EXISTS "TrmnlInstallation_site_id_fkey",
     ADD CONSTRAINT "TrmnlInstallation_site_id_fkey"
         FOREIGN KEY (site_id) REFERENCES "Site"(id) ON DELETE CASCADE;
 
--- 3. SystemAnnouncement -> User SET NULL (do not delete announcements when admin is deleted)
 ALTER TABLE "SystemAnnouncement"
     DROP CONSTRAINT IF EXISTS "SystemAnnouncement_author_id_fkey",
     ADD CONSTRAINT "SystemAnnouncement_author_id_fkey"
         FOREIGN KEY (author_id) REFERENCES "User"(id) ON DELETE SET NULL;
 ```
 
-Apply migration to local test database:
-```bash
-cd cmd/next-app && npx tsx -e "
-import { pool } from './src/lib/db';
-import * as fs from 'fs';
-const sql = fs.readFileSync('db-migrations/20261108130000_user_account_deletion_cascades.sql', 'utf8');
-await pool.query(sql);
-await pool.end();
-console.log('Migration applied');
-"
-```
+- [ ] **Step 4: Add the repo**
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run:
-```bash
-cd cmd/next-app && npx vitest run src/lib/user-account-deletion.postgres.test.ts
-```
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add cmd/next-app/db-migrations/20261108130000_user_account_deletion_cascades.sql cmd/next-app/src/lib/user-account-deletion.postgres.test.ts
-git commit -m "feat(db): add account deletion cascade foreign keys"
-```
-
----
-
-### Task 2: Deletion Challenge Token Utility
-
-**Files:**
-- Create: `cmd/next-app/src/lib/deletion-challenge.ts`
-- Test: `cmd/next-app/src/lib/deletion-challenge.test.ts`
-
-**Interfaces:**
-- Produces:
-  ```typescript
-  export interface DeletionChallengePayload {
-      userId: string;
-      exp: number;
-      purpose: 'delete-account';
-  }
-  export function createDeletionChallengeToken(userId: string, ttlMs?: number): string;
-  export function verifyDeletionChallengeToken(token: string, expectedUserId: string): boolean;
-  ```
-
-- [ ] **Step 1: Write the failing test**
-
-Create `cmd/next-app/src/lib/deletion-challenge.test.ts`:
+Create `cmd/next-app/src/lib/account-deletion-repo.ts`:
 
 ```typescript
-import { describe, it, expect } from 'vitest';
-import { createDeletionChallengeToken, verifyDeletionChallengeToken } from './deletion-challenge';
+import { pool } from './db';
 
-describe('deletion-challenge', () => {
-    it('creates a valid challenge token that verifies for the matching user', () => {
-        const token = createDeletionChallengeToken('user-123');
-        expect(typeof token).toBe('string');
-        expect(verifyDeletionChallengeToken(token, 'user-123')).toBe(true);
-    });
-
-    it('rejects a token if the user ID does not match', () => {
-        const token = createDeletionChallengeToken('user-123');
-        expect(verifyDeletionChallengeToken(token, 'user-456')).toBe(false);
-    });
-
-    it('rejects a token that has expired', () => {
-        const token = createDeletionChallengeToken('user-123', -1000); // expired 1s ago
-        expect(verifyDeletionChallengeToken(token, 'user-123')).toBe(false);
-    });
-
-    it('rejects a malformed or tampered token', () => {
-        const token = createDeletionChallengeToken('user-123');
-        const tampered = token.slice(0, -4) + 'abcd';
-        expect(verifyDeletionChallengeToken(tampered, 'user-123')).toBe(false);
-        expect(verifyDeletionChallengeToken('not.a.token', 'user-123')).toBe(false);
-    });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
-```bash
-cd cmd/next-app && npx vitest run src/lib/deletion-challenge.test.ts
-```
-Expected: FAIL (file not found).
-
-- [ ] **Step 3: Implement minimal code**
-
-Create `cmd/next-app/src/lib/deletion-challenge.ts`:
-
-```typescript
-import { createHmac, timingSafeEqual } from 'node:crypto';
-
-export interface DeletionChallengePayload {
-    userId: string;
-    exp: number;
-    purpose: 'delete-account';
-}
-
-const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-function getSecret(): string {
-    return process.env.JWT_SECRET || process.env.AUTH_SECRET || 'pwusage-deletion-fallback-secret';
-}
-
-export function createDeletionChallengeToken(userId: string, ttlMs: number = DEFAULT_TTL_MS): string {
-    const payload: DeletionChallengePayload = {
-        userId,
-        exp: Date.now() + ttlMs,
-        purpose: 'delete-account',
-    };
-    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const signature = createHmac('sha256', getSecret()).update(encodedPayload).digest('base64url');
-    return `${encodedPayload}.${signature}`;
-}
-
-export function verifyDeletionChallengeToken(token: string, expectedUserId: string): boolean {
-    if (!token || typeof token !== 'string') return false;
-    const parts = token.split('.');
-    if (parts.length !== 2) return false;
-
-    const [encodedPayload, signature] = parts;
-    const expectedSig = createHmac('sha256', getSecret()).update(encodedPayload).digest('base64url');
-
-    const sigBuf = Buffer.from(signature);
-    const expectedBuf = Buffer.from(expectedSig);
-    if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
-        return false;
+/** A Battery Saver session is active, so deleting now would strand the raised reserve. */
+export class ActiveBatterySaverError extends Error {
+    constructor() {
+        super('Battery Saver is active on a site owned by this account');
+        this.name = 'ActiveBatterySaverError';
     }
+}
 
-    try {
-        const payloadJson = Buffer.from(encodedPayload, 'base64url').toString('utf8');
-        const payload = JSON.parse(payloadJson) as DeletionChallengePayload;
+export class AccountDeletionRepo {
+    /**
+     * Removes the account and everything it owns in one transaction.
+     *
+     * Locking the User and Site rows blocks new child rows and site assignments until
+     * commit, because their foreign key checks need a share lock on these rows. A
+     * Battery Saver session started during deletion therefore cannot slip through.
+     */
+    async deleteAccount(userId: string): Promise<{ siteIds: string[] }> {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('SELECT id FROM "User" WHERE id = $1 FOR UPDATE', [userId]);
+            const sites = await client.query<{ id: string }>(
+                'SELECT id FROM "Site" WHERE user_id = $1 FOR UPDATE',
+                [userId],
+            );
+            const siteIds = sites.rows.map(site => site.id);
 
-        if (payload.purpose !== 'delete-account') return false;
-        if (payload.userId !== expectedUserId) return false;
-        if (typeof payload.exp !== 'number' || Date.now() > payload.exp) return false;
+            const activeHolds = await client.query(
+                `SELECT 1 FROM "BatteryHold" WHERE site_id = ANY($1::text[]) AND status = 'active' LIMIT 1`,
+                [siteIds],
+            );
+            if (activeHolds.rows.length > 0) throw new ActiveBatterySaverError();
 
-        return true;
-    } catch {
-        return false;
+            // EnergyDaySummary has NO ACTION keys to Tariff and TariffSchedule. Removing
+            // archives first removes the summaries, so the Site cascade cannot fail on
+            // them whichever order its triggers fire in.
+            await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id = ANY($1::text[])', [siteIds]);
+            await client.query('DELETE FROM "MobileLoginHandoff" WHERE user_id = $1', [userId]);
+            await client.query('DELETE FROM "User" WHERE id = $1', [userId]);
+            await client.query('COMMIT');
+            return { siteIds };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run the suite and confirm it passes**
 
-Run:
 ```bash
-cd cmd/next-app && npx vitest run src/lib/deletion-challenge.test.ts
+npm run test:hold:postgres
 ```
-Expected: PASS.
 
-- [ ] **Step 5: Commit**
+Expected: PASS, including both foreign key orders.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add cmd/next-app/src/lib/deletion-challenge.ts cmd/next-app/src/lib/deletion-challenge.test.ts
-git commit -m "feat(auth): add deletion challenge token generator and validator"
+git add db-migrations src/lib/account-deletion-repo.ts src/lib/account-deletion-postgres.test.ts scripts/test-battery-hold.sh
+git commit -m "feat(db): add transactional account deletion and cascades"
 ```
 
 ---
 
-### Task 3: Account Deletion Service
+### Task 2: Shared helpers
+
+Extracted so the deletion code reuses the existing logic instead of copying it.
 
 **Files:**
+- Modify: `cmd/next-app/src/lib/observability.ts`
+- Modify: `cmd/next-app/src/lib/request-security.ts`
+- Modify: `cmd/next-app/src/app/api/auth/sign-out-everywhere/route.ts`
+
+- [ ] **Step 1: Add `accountFingerprint`**
+
+Change `cmd/next-app/src/lib/observability.ts`:
+
+```diff
+@@ -135,10 +135,15 @@ export function setLogContext(fields: { siteId: string } | { siteIds: string[] }
+ type SessionRejection = 'missing-cookie' | 'invalid-session' | 'expired-session'
+     | 'missing-account' | 'inactive-account' | 'revoked-session' | 'site-not-assigned';
+ 
++/** A stable, non-reversible account id for logs. Raw user ids can be email addresses. */
++export function accountFingerprint(userId: string): string {
++    return createHash('sha256').update(userId).digest('hex').slice(0, 16);
++}
++
+ /** Fixed reasons and the same account fingerprint used by Tesla refresh events. */
+ export function logSessionRejection(reason: SessionRejection, userId?: string): void {
+     logEvent('info', 'auth.session.rejected', {
+-        reason, ...(userId ? { accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) } : {}),
++        reason, ...(userId ? { accountId: accountFingerprint(userId) } : {}),
+     });
+ }
+ 
+```
+
+- [ ] **Step 2: Add `isCrossOriginRequest` and use it in sign-out-everywhere**
+
+Change `cmd/next-app/src/lib/request-security.ts`:
+
+```diff
+@@ -14,3 +14,19 @@ export function isSecureRequest(request: NextRequest): boolean {
+     const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',', 1)[0]?.trim().toLowerCase();
+     return forwardedProto === 'https' || request.nextUrl.protocol === 'https:';
+ }
++
++/**
++ * CSRF defense in depth for cookie-authenticated writes. An absent Origin is allowed
++ * because URLSession requests from the iOS app may omit it.
++ */
++export function isCrossOriginRequest(request: NextRequest): boolean {
++    const origin = request.headers.get('origin');
++    if (origin) {
++        try {
++            if (new URL(origin).origin !== request.nextUrl.origin) return true;
++        } catch {
++            return true;
++        }
++    }
++    return request.headers.get('sec-fetch-site')?.toLowerCase() === 'cross-site';
++}
+```
+
+Change `cmd/next-app/src/app/api/auth/sign-out-everywhere/route.ts`:
+
+```diff
+@@ -1,7 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server';
+ import { getCurrentUser } from '@/lib/auth-checks';
+ import { UserRepo } from '@/lib/user-repo';
+-import { isSecureRequest } from '@/lib/request-security';
++import { isCrossOriginRequest, isSecureRequest } from '@/lib/request-security';
+ 
+ export const dynamic = 'force-dynamic';
+ 
+@@ -22,22 +22,7 @@ function jsonError(error: string, status: number): NextResponse {
+  * in depth consistent with the mobile session exchange route.
+  */
+ export async function POST(request: NextRequest): Promise<NextResponse> {
+-    const origin = request.headers.get('origin');
+-    if (origin) {
+-        let originUrl: URL;
+-        try {
+-            originUrl = new URL(origin);
+-        } catch {
+-            return jsonError('Cross-origin requests are not allowed', 403);
+-        }
+-        if (originUrl.origin !== request.nextUrl.origin) {
+-            return jsonError('Cross-origin requests are not allowed', 403);
+-        }
+-    }
+-
+-    if (request.headers.get('sec-fetch-site')?.toLowerCase() === 'cross-site') {
+-        return jsonError('Cross-origin requests are not allowed', 403);
+-    }
++    if (isCrossOriginRequest(request)) return jsonError('Cross-origin requests are not allowed', 403);
+ 
+     const user = await getCurrentUser();
+     if (!user) return jsonError('Unauthorized', 401);
+```
+
+- [ ] **Step 3: Confirm behaviour did not change**
+
+```bash
+npm test -- --run src/app/api/auth/sign-out-everywhere
+npm run typecheck
+```
+
+Expected: PASS.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/lib/observability.ts src/lib/request-security.ts src/app/api/auth/sign-out-everywhere/route.ts
+git commit -m "refactor(auth): extract account fingerprint and cross-origin check"
+```
+
+---
+
+### Task 3: Account deletion service
+
+**Files:**
+- Create: `cmd/next-app/src/lib/account-deletion-service.test.ts`
 - Create: `cmd/next-app/src/lib/account-deletion-service.ts`
-- Test: `cmd/next-app/src/lib/account-deletion-service.test.ts`
-
-**Interfaces:**
-- Consumes: `pool` from `./db`, `logEvent` from `./observability`
-- Produces:
-  ```typescript
-  export class AccountDeletionService {
-      deleteAccount(userId: string): Promise<{ success: boolean; sitesDeleted: number }>;
-  }
-  ```
 
 - [ ] **Step 1: Write the failing test**
 
 Create `cmd/next-app/src/lib/account-deletion-service.test.ts`:
 
 ```typescript
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AccountDeletionService } from './account-deletion-service';
-import { pool } from './db';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { logEventMock } = vi.hoisted(() => ({ logEventMock: vi.fn() }));
-vi.mock('./observability', () => ({
-    logEvent: logEventMock,
-    flushLogEvents: vi.fn(),
+const mocks = vi.hoisted(() => ({
+    getSitesForUser: vi.fn(),
+    invalidateCache: vi.fn(),
+    getActiveHold: vi.fn(),
+    createClient: vi.fn(),
+    restoreBattery: vi.fn(),
+    repoDelete: vi.fn(),
+    logEvent: vi.fn(),
 }));
 
-describe('AccountDeletionService', () => {
+vi.mock('./site-repo', () => ({
+    SiteRepo: class {
+        getSitesForUser = mocks.getSitesForUser;
+        invalidateCache = mocks.invalidateCache;
+    },
+}));
+vi.mock('./battery-hold-repo', () => ({
+    BatteryHoldRepo: class {
+        getActiveHold = mocks.getActiveHold;
+    },
+}));
+vi.mock('./battery-hold-service', () => ({
+    createSiteTeslaClient: mocks.createClient,
+    restoreBattery: mocks.restoreBattery,
+}));
+vi.mock('./account-deletion-repo', () => {
+    class ActiveBatterySaverError extends Error {}
+    return {
+        ActiveBatterySaverError,
+        AccountDeletionRepo: class {
+            deleteAccount = mocks.repoDelete;
+        },
+    };
+});
+vi.mock('./observability', () => ({
+    accountFingerprint: (userId: string) => `hash-of-${userId}`,
+    logEvent: mocks.logEvent,
+}));
+
+import { ActiveBatterySaverError } from './account-deletion-repo';
+import { deleteAccount, getAccountDeletionSites } from './account-deletion-service';
+
+describe('account deletion service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.getSitesForUser.mockResolvedValue([{ id: 'site-1', name: 'Home' }]);
+        mocks.getActiveHold.mockResolvedValue(null);
+        mocks.createClient.mockResolvedValue({ tesla: true });
+        mocks.repoDelete.mockResolvedValue({ siteIds: ['site-1'] });
     });
 
-    it('deletes user and mobile handoff records in a transaction and logs telemetry', async () => {
-        const querySpy = vi.spyOn(pool, 'query');
-        // Mock query returns:
-        // 1. BEGIN
-        // 2. SELECT site IDs
-        // 3. SELECT tokens
-        // 4. DELETE MobileLoginHandoff
-        // 5. DELETE User
-        // 6. COMMIT
-        querySpy.mockImplementation(async (sql: any, params?: any[]) => {
-            if (typeof sql === 'string' && sql.includes('SELECT id FROM "Site"')) {
-                return { rows: [{ id: 'site-1' }], rowCount: 1 } as any;
-            }
-            if (typeof sql === 'string' && sql.includes('SELECT refresh_token FROM "User"')) {
-                return { rows: [{ refresh_token: 'fake-refresh-token' }], rowCount: 1 } as any;
-            }
-            return { rows: [], rowCount: 1 } as any;
-        });
+    it('lists sites with the reserve Battery Saver would restore', async () => {
+        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        await expect(getAccountDeletionSites('user-1')).resolves.toEqual([
+            { id: 'site-1', name: 'Home', batterySaverRestoreReserve: 20 },
+        ]);
+    });
 
-        // Mock fetch to simulate Tesla revoke failure (should not throw)
-        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network timeout'));
+    it('deletes without touching Tesla when Battery Saver is off', async () => {
+        await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'deleted', siteCount: 1 });
+        expect(mocks.createClient).not.toHaveBeenCalled();
+        expect(mocks.invalidateCache).toHaveBeenCalledWith('site-1');
+    });
 
-        const service = new AccountDeletionService();
-        const result = await service.deleteAccount('user-to-delete');
-
-        expect(result.success).toBe(true);
-        expect(result.sitesDeleted).toBe(1);
-        expect(logEventMock).toHaveBeenCalledWith('info', 'user.account.deleted', expect.objectContaining({
-            userId: 'user-to-delete',
+    it('logs a fingerprint, never the raw user id', async () => {
+        await deleteAccount('user-1');
+        expect(mocks.logEvent).toHaveBeenCalledWith('info', 'user.account-deletion.completed', {
+            accountId: 'hash-of-user-1',
             siteCount: 1,
-        }));
+        });
+        expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('"user-1"');
+    });
 
-        querySpy.mockRestore();
-        fetchSpy.mockRestore();
+    it.each([['ok'], ['reserve_changed'], ['no_active_hold']])('deletes after a %s restore', async status => {
+        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.restoreBattery.mockResolvedValue({ status });
+        await expect(deleteAccount('user-1')).resolves.toMatchObject({ status: 'deleted' });
+        expect(mocks.restoreBattery).toHaveBeenCalledWith(expect.objectContaining({ siteId: 'site-1', reason: 'manual' }));
+    });
+
+    it('keeps the account when Tesla needs reconnecting', async () => {
+        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.restoreBattery.mockResolvedValue({ status: 'needs_reauth' });
+        await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'needs_reconnect' });
+        expect(mocks.repoDelete).not.toHaveBeenCalled();
+    });
+
+    it('keeps the account when no Tesla client can be built', async () => {
+        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.createClient.mockResolvedValue(null);
+        await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'needs_reconnect' });
+        expect(mocks.repoDelete).not.toHaveBeenCalled();
+    });
+
+    it('keeps the account when the restore cannot be confirmed', async () => {
+        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.restoreBattery.mockResolvedValue({ status: 'error', message: 'uncertain' });
+        await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'battery_saver_pending' });
+        expect(mocks.repoDelete).not.toHaveBeenCalled();
+    });
+
+    it('reports a session that started during deletion', async () => {
+        mocks.repoDelete.mockRejectedValue(new ActiveBatterySaverError());
+        await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'battery_saver_pending' });
+    });
+
+    it('rethrows database failures', async () => {
+        mocks.repoDelete.mockRejectedValue(new Error('connection lost'));
+        await expect(deleteAccount('user-1')).rejects.toThrow('connection lost');
+        expect(mocks.logEvent).toHaveBeenCalledWith('error', 'user.account-deletion.failed', expect.anything());
     });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run it and confirm it fails**
 
-Run:
 ```bash
-cd cmd/next-app && npx vitest run src/lib/account-deletion-service.test.ts
+npm test -- --run src/lib/account-deletion-service.test.ts
 ```
-Expected: FAIL (file not found).
 
-- [ ] **Step 3: Implement AccountDeletionService**
+Expected: FAIL, because the service does not exist.
+
+- [ ] **Step 3: Add the service**
 
 Create `cmd/next-app/src/lib/account-deletion-service.ts`:
 
 ```typescript
-import { pool } from './db';
-import { logEvent, flushLogEvents } from './observability';
+import { AccountDeletionRepo, ActiveBatterySaverError } from './account-deletion-repo';
+import { BatteryHoldRepo } from './battery-hold-repo';
+import { createSiteTeslaClient, restoreBattery, type RestoreResult } from './battery-hold-service';
+import { accountFingerprint, logEvent } from './observability';
+import { SiteRepo } from './site-repo';
 
-const TESLA_REVOKE_URL = 'https://fleet-auth.prd.na.vn.cloud.tesla.com/oauth2/v3/revoke';
-const EXTERNAL_TIMEOUT_MS = 3000;
+export interface AccountDeletionSite {
+    id: string;
+    name: string;
+    /** The reserve Battery Saver will restore; null when Battery Saver is off for this site. */
+    batterySaverRestoreReserve: number | null;
+}
 
-export class AccountDeletionService {
-    /**
-     * Attempts best-effort revocation of Tesla OAuth tokens without blocking local deletion.
-     */
-    private async revokeTeslaTokensBestEffort(userId: string, refreshToken: string | null): Promise<void> {
-        if (!refreshToken) return;
+export type AccountDeletionResult =
+    | { status: 'deleted'; siteCount: number }
+    | { status: 'needs_reconnect' }
+    | { status: 'battery_saver_pending' };
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), EXTERNAL_TIMEOUT_MS);
+export async function getAccountDeletionSites(userId: string): Promise<AccountDeletionSite[]> {
+    const sites = await new SiteRepo().getSitesForUser(userId);
+    const holdRepo = new BatteryHoldRepo();
+    return Promise.all(sites.map(async site => {
+        const hold = await holdRepo.getActiveHold(site.id);
+        return { id: site.id, name: site.name, batterySaverRestoreReserve: hold?.original_reserve ?? null };
+    }));
+}
 
-        try {
-            const body = new URLSearchParams({
-                token: refreshToken,
-                token_type_hint: 'refresh_token',
-                client_id: process.env.TESLA_CLIENT_ID || '',
-            });
+async function restoreSiteBatterySaver(siteId: string, repo: BatteryHoldRepo): Promise<RestoreResult> {
+    const client = await createSiteTeslaClient(siteId);
+    if (!client) return { status: 'needs_reauth' };
+    return restoreBattery({ client, repo, siteId, reason: 'manual' });
+}
 
-            await fetch(TESLA_REVOKE_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString(),
-                signal: controller.signal,
-            });
-        } catch (error) {
-            logEvent('warn', 'tesla.account-deletion.revoke-failed', {
-                userId,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        } finally {
-            clearTimeout(timeout);
+/**
+ * Restores any active Battery Saver session, then deletes the account. Deletion removes
+ * the record the restore relies on, so a restore that cannot be confirmed stops here.
+ */
+export async function deleteAccount(userId: string): Promise<AccountDeletionResult> {
+    const accountId = accountFingerprint(userId);
+    const siteRepo = new SiteRepo();
+    const holdRepo = new BatteryHoldRepo();
+
+    for (const site of await siteRepo.getSitesForUser(userId)) {
+        if (!await holdRepo.getActiveHold(site.id)) continue;
+        const restore = await restoreSiteBatterySaver(site.id, holdRepo);
+        if (restore.status === 'needs_reauth') {
+            logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'needs_reconnect' });
+            return { status: 'needs_reconnect' };
+        }
+        if (restore.status === 'error') {
+            logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'restore_unconfirmed' });
+            return { status: 'battery_saver_pending' };
         }
     }
 
-    async deleteAccount(userId: string): Promise<{ success: boolean; sitesDeleted: number }> {
-        // 1. Fetch site count and refresh token prior to deletion
-        const [sitesRes, tokenRes] = await Promise.all([
-            pool.query('SELECT id FROM "Site" WHERE user_id = $1', [userId]),
-            pool.query('SELECT refresh_token FROM "User" WHERE id = $1', [userId]),
-        ]);
-
-        const siteCount = sitesRes.rowCount ?? sitesRes.rows.length;
-        const refreshToken = tokenRes.rows[0]?.refresh_token || null;
-
-        // 2. Best-effort external revocation
-        await this.revokeTeslaTokensBestEffort(userId, refreshToken);
-
-        // 3. Atomic Database Purge
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query('DELETE FROM "MobileLoginHandoff" WHERE user_id = $1', [userId]);
-            await client.query('DELETE FROM "User" WHERE id = $1', [userId]);
-            await client.query('COMMIT');
-        } catch (error) {
-            await client.query('ROLLBACK');
-            logEvent('error', 'user.account-deletion.db-failed', {
-                userId,
-                error: error instanceof Error ? error.message : String(error),
-            });
-            throw error;
-        } finally {
-            client.release();
-        }
-
-        // 4. Telemetry
-        logEvent('info', 'user.account.deleted', {
-            userId,
-            siteCount,
-        });
-        flushLogEvents();
-
-        return { success: true, sitesDeleted: siteCount };
-    }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run:
-```bash
-cd cmd/next-app && npx vitest run src/lib/account-deletion-service.test.ts
-```
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add cmd/next-app/src/lib/account-deletion-service.ts cmd/next-app/src/lib/account-deletion-service.test.ts
-git commit -m "feat(service): add AccountDeletionService with best-effort revoke and atomic purge"
-```
-
----
-
-### Task 4: Delete Intent API Route (`POST /api/user/delete-intent`)
-
-**Files:**
-- Create: `cmd/next-app/src/app/api/user/delete-intent/route.ts`
-- Test: `cmd/next-app/src/app/api/user/delete-intent/route.test.ts`
-
-**Interfaces:**
-- Handles `POST /api/user/delete-intent`
-- Returns: `{ ok: true, challengeToken?: string }`
-
-- [ ] **Step 1: Write the failing test**
-
-Create `cmd/next-app/src/app/api/user/delete-intent/route.test.ts`:
-
-```typescript
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { POST } from './route';
-import { NextRequest } from 'next/server';
-
-const { getCurrentUserMock, logEventMock } = vi.hoisted(() => ({
-    getCurrentUserMock: vi.fn(),
-    logEventMock: vi.fn(),
-}));
-
-vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: getCurrentUserMock }));
-vi.mock('@/lib/observability', () => ({ logEvent: logEventMock, observeRoute: vi.fn() }));
-
-function makeRequest(body: unknown, origin = 'http://localhost:3000'): NextRequest {
-    return new NextRequest(`${origin}/api/user/delete-intent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', origin },
-        body: JSON.stringify(body),
-    });
-}
-
-describe('POST /api/user/delete-intent', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
-    it('rejects unauthenticated requests with 401', async () => {
-        getCurrentUserMock.mockResolvedValue(null);
-        const res = await POST(makeRequest({ action: 'dialog-opened' }));
-        expect(res.status).toBe(401);
-    });
-
-    it('emits telemetry and returns challengeToken on dialog-opened', async () => {
-        getCurrentUserMock.mockResolvedValue({ id: 'user-abc', email: 'test@example.com' });
-        const res = await POST(makeRequest({ action: 'dialog-opened' }));
-        expect(res.status).toBe(200);
-
-        const json = await res.json();
-        expect(json.ok).toBe(true);
-        expect(typeof json.challengeToken).toBe('string');
-        expect(logEventMock).toHaveBeenCalledWith('info', 'user.account-deletion.dialog-opened', { userId: 'user-abc' });
-    });
-
-    it('emits telemetry on dialog-cancelled without challengeToken', async () => {
-        getCurrentUserMock.mockResolvedValue({ id: 'user-abc', email: 'test@example.com' });
-        const res = await POST(makeRequest({ action: 'dialog-cancelled' }));
-        expect(res.status).toBe(200);
-
-        const json = await res.json();
-        expect(json.ok).toBe(true);
-        expect(json.challengeToken).toBeUndefined();
-        expect(logEventMock).toHaveBeenCalledWith('info', 'user.account-deletion.dialog-cancelled', { userId: 'user-abc' });
-    });
-
-    it('rejects invalid actions with 400', async () => {
-        getCurrentUserMock.mockResolvedValue({ id: 'user-abc' });
-        const res = await POST(makeRequest({ action: 'invalid-action' }));
-        expect(res.status).toBe(400);
-    });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
-```bash
-cd cmd/next-app && npx vitest run src/app/api/user/delete-intent/route.test.ts
-```
-Expected: FAIL (route not found).
-
-- [ ] **Step 3: Implement route handler**
-
-Create `cmd/next-app/src/app/api/user/delete-intent/route.ts`:
-
-```typescript
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth-checks';
-import { logEvent } from '@/lib/observability';
-import { createDeletionChallengeToken } from '@/lib/deletion-challenge';
-
-export const dynamic = 'force-dynamic';
-
-function jsonError(error: string, status: number): NextResponse {
-    return NextResponse.json({ error }, {
-        status,
-        headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
-    });
-}
-
-export async function POST(request: NextRequest): Promise<NextResponse> {
-    const user = await getCurrentUser();
-    if (!user) return jsonError('Unauthorized', 401);
-
-    let body: { action?: string };
+    let siteIds: string[];
     try {
-        body = await request.json();
-    } catch {
-        return jsonError('Invalid request body', 400);
+        ({ siteIds } = await new AccountDeletionRepo().deleteAccount(userId));
+    } catch (error) {
+        if (error instanceof ActiveBatterySaverError) {
+            logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'battery_saver_started' });
+            return { status: 'battery_saver_pending' };
+        }
+        logEvent('error', 'user.account-deletion.failed', { accountId, error });
+        throw error;
     }
 
-    if (body.action === 'dialog-opened') {
-        logEvent('info', 'user.account-deletion.dialog-opened', { userId: user.id });
-        const challengeToken = createDeletionChallengeToken(user.id);
-        return NextResponse.json({ ok: true, challengeToken }, {
-            headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
-        });
-    }
-
-    if (body.action === 'dialog-cancelled') {
-        logEvent('info', 'user.account-deletion.dialog-cancelled', { userId: user.id });
-        return NextResponse.json({ ok: true }, {
-            headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
-        });
-    }
-
-    return jsonError('Invalid action', 400);
+    siteIds.forEach(siteId => siteRepo.invalidateCache(siteId));
+    logEvent('info', 'user.account-deletion.completed', { accountId, siteCount: siteIds.length });
+    return { status: 'deleted', siteCount: siteIds.length };
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run it and confirm it passes**
 
-Run:
 ```bash
-cd cmd/next-app && npx vitest run src/app/api/user/delete-intent/route.test.ts
+npm test -- --run src/lib/account-deletion-service.test.ts
 ```
-Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add cmd/next-app/src/app/api/user/delete-intent/route.ts cmd/next-app/src/app/api/user/delete-intent/route.test.ts
-git commit -m "feat(api): add delete-intent route with intent logging and challenge token emission"
+git add src/lib/account-deletion-service.ts src/lib/account-deletion-service.test.ts
+git commit -m "feat(account): restore Battery Saver before deleting an account"
 ```
 
 ---
 
-### Task 5: User Deletion API Route (`DELETE /api/user`)
+### Task 4: `DELETE /api/user`
 
 **Files:**
+- Create: `cmd/next-app/src/app/api/user/route.test.ts`
 - Create: `cmd/next-app/src/app/api/user/route.ts`
-- Test: `cmd/next-app/src/app/api/user/route.test.ts`
-
-**Interfaces:**
-- Handles `DELETE /api/user`
-- Validates origin & `sec-fetch-site`, verifies session, checks `challengeToken`, checks `confirm === 'DELETE'`, calls `accountDeletionService.deleteAccount()`, clears `site_auth` cookie.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `cmd/next-app/src/app/api/user/route.test.ts`:
 
 ```typescript
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DELETE } from './route';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const { getCurrentUserMock, verifyChallengeMock, deleteAccountMock } = vi.hoisted(() => ({
-    getCurrentUserMock: vi.fn(),
-    verifyChallengeMock: vi.fn(),
-    deleteAccountMock: vi.fn(),
-}));
+const mocks = vi.hoisted(() => ({ getCurrentUser: vi.fn(), deleteAccount: vi.fn() }));
 
-vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: getCurrentUserMock }));
-vi.mock('@/lib/deletion-challenge', () => ({ verifyDeletionChallengeToken: verifyChallengeMock }));
-vi.mock('@/lib/account-deletion-service', () => ({
-    AccountDeletionService: vi.fn().mockImplementation(() => ({
-        deleteAccount: deleteAccountMock,
-    })),
-}));
+vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: mocks.getCurrentUser }));
+vi.mock('@/lib/account-deletion-service', () => ({ deleteAccount: mocks.deleteAccount }));
 
-function makeDeleteRequest(body: unknown, headers: Record<string, string> = {}): NextRequest {
-    const defaultHeaders = {
-        'content-type': 'application/json',
-        origin: 'http://localhost:3000',
-        ...headers,
-    };
-    return new NextRequest('http://localhost:3000/api/user', {
+import { DELETE } from './route';
+
+function makeRequest(body: unknown = { confirm: 'DELETE' }, headers: Record<string, string> = {}): NextRequest {
+    return new NextRequest('https://pwusage.test/api/user', {
         method: 'DELETE',
-        headers: defaultHeaders,
-        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json', ...headers },
+        body: typeof body === 'string' ? body : JSON.stringify(body),
     });
 }
 
 describe('DELETE /api/user', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+        mocks.deleteAccount.mockResolvedValue({ status: 'deleted', siteCount: 1 });
     });
 
-    it('rejects cross-origin requests with 403', async () => {
-        const req = makeDeleteRequest({}, { origin: 'http://malicious.test' });
-        const res = await DELETE(req);
-        expect(res.status).toBe(403);
-    });
-
-    it('rejects cross-site fetch requests with 403', async () => {
-        const req = makeDeleteRequest({}, { 'sec-fetch-site': 'cross-site' });
-        const res = await DELETE(req);
-        expect(res.status).toBe(403);
-    });
-
-    it('rejects unauthenticated requests with 401', async () => {
-        getCurrentUserMock.mockResolvedValue(null);
-        const req = makeDeleteRequest({ confirm: 'DELETE', challengeToken: 'valid-token' });
-        const res = await DELETE(req);
-        expect(res.status).toBe(401);
-    });
-
-    it('rejects invalid confirmation text with 400', async () => {
-        getCurrentUserMock.mockResolvedValue({ id: 'user-1' });
-        const req = makeDeleteRequest({ confirm: 'NOT_DELETE', challengeToken: 'token' });
-        const res = await DELETE(req);
-        expect(res.status).toBe(400);
-    });
-
-    it('rejects invalid or expired challenge token with 403', async () => {
-        getCurrentUserMock.mockResolvedValue({ id: 'user-1' });
-        verifyChallengeMock.mockReturnValue(false);
-        const req = makeDeleteRequest({ confirm: 'DELETE', challengeToken: 'bad-token' });
-        const res = await DELETE(req);
-        expect(res.status).toBe(403);
-    });
-
-    it('deletes account and clears site_auth cookie on valid request', async () => {
-        getCurrentUserMock.mockResolvedValue({ id: 'user-1' });
-        verifyChallengeMock.mockReturnValue(true);
-        deleteAccountMock.mockResolvedValue({ success: true, sitesDeleted: 1 });
-
-        const req = makeDeleteRequest({ confirm: 'DELETE', challengeToken: 'good-token' });
-        const res = await DELETE(req);
-        expect(res.status).toBe(200);
-
-        const cookie = res.cookies.get('site_auth');
+    it('deletes the account and clears the session cookie', async () => {
+        const response = await DELETE(makeRequest());
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(mocks.deleteAccount).toHaveBeenCalledWith('user-1');
+        const cookie = response.cookies.get('site_auth');
+        expect(cookie?.value).toBe('');
         expect(cookie?.maxAge).toBe(0);
-        expect(deleteAccountMock).toHaveBeenCalledWith('user-1');
+        expect(response.headers.get('cache-control')).toBe('no-store');
+    });
+
+    it.each([
+        [{ origin: 'https://evil.test' }],
+        [{ origin: 'not a url' }],
+        [{ 'sec-fetch-site': 'cross-site' }],
+    ])('rejects cross-origin requests: %j', async headers => {
+        const response = await DELETE(makeRequest({ confirm: 'DELETE' }, headers));
+        expect(response.status).toBe(403);
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
+    });
+
+    it('accepts a same-origin request', async () => {
+        const response = await DELETE(makeRequest({ confirm: 'DELETE' }, {
+            origin: 'https://pwusage.test',
+            'sec-fetch-site': 'same-origin',
+        }));
+        expect(response.status).toBe(200);
+    });
+
+    it('rejects unauthenticated requests', async () => {
+        mocks.getCurrentUser.mockResolvedValue(null);
+        const response = await DELETE(makeRequest());
+        expect(response.status).toBe(401);
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
+    });
+
+    it.each([[{ confirm: 'delete' }], [{}], [null], ['not json']])('rejects bad confirmation: %j', async body => {
+        const response = await DELETE(makeRequest(body));
+        expect(response.status).toBe(400);
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['needs_reconnect', 'TESLA_CONNECTION_REQUIRED'],
+        ['battery_saver_pending', 'BATTERY_SAVER_PENDING'],
+    ])('keeps the session when the result is %s', async (status, code) => {
+        mocks.deleteAccount.mockResolvedValue({ status });
+        const response = await DELETE(makeRequest());
+        expect(response.status).toBe(409);
+        expect((await response.json()).code).toBe(code);
+        expect(response.cookies.get('site_auth')).toBeUndefined();
+    });
+
+    it('keeps the session and returns 500 when deletion throws', async () => {
+        mocks.deleteAccount.mockRejectedValue(new Error('connection lost'));
+        const response = await DELETE(makeRequest());
+        expect(response.status).toBe(500);
+        expect(response.cookies.get('site_auth')).toBeUndefined();
+        expect(JSON.stringify(await response.json())).not.toContain('connection lost');
     });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run it and confirm it fails**
 
-Run:
 ```bash
-cd cmd/next-app && npx vitest run src/app/api/user/route.test.ts
+npm test -- --run src/app/api/user
 ```
-Expected: FAIL (route not found).
 
-- [ ] **Step 3: Implement DELETE /api/user route handler**
+- [ ] **Step 3: Add the route**
 
 Create `cmd/next-app/src/app/api/user/route.ts`:
 
 ```typescript
 import { NextRequest, NextResponse } from 'next/server';
+import { deleteAccount } from '@/lib/account-deletion-service';
 import { getCurrentUser } from '@/lib/auth-checks';
-import { isSecureRequest } from '@/lib/request-security';
-import { verifyDeletionChallengeToken } from '@/lib/deletion-challenge';
-import { AccountDeletionService } from '@/lib/account-deletion-service';
+import { observeRoute } from '@/lib/observability';
+import { isCrossOriginRequest, isSecureRequest } from '@/lib/request-security';
 
 export const dynamic = 'force-dynamic';
 
-function jsonError(error: string, status: number): NextResponse {
-    return NextResponse.json({ error }, {
-        status,
-        headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
-    });
+const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
+
+function jsonError(error: string, status: number, code?: string): NextResponse {
+    return NextResponse.json({ error, ...(code ? { code } : {}) }, { status, headers: NO_STORE });
 }
 
-export async function DELETE(request: NextRequest): Promise<NextResponse> {
-    // 1. Origin and CSRF defense-in-depth
-    const origin = request.headers.get('origin');
-    if (origin) {
-        let originUrl: URL;
-        try {
-            originUrl = new URL(origin);
-        } catch {
-            return jsonError('Cross-origin requests are not allowed', 403);
-        }
-        if (originUrl.origin !== request.nextUrl.origin) {
-            return jsonError('Cross-origin requests are not allowed', 403);
-        }
-    }
+/**
+ * DELETE /api/user permanently deletes the signed-in account. CSRF: site_auth is
+ * SameSite=Lax, and the origin check is defense in depth, matching sign-out-everywhere.
+ */
+async function handleDELETE(request: NextRequest): Promise<NextResponse> {
+    if (isCrossOriginRequest(request)) return jsonError('Cross-origin requests are not allowed', 403);
 
-    if (request.headers.get('sec-fetch-site')?.toLowerCase() === 'cross-site') {
-        return jsonError('Cross-origin requests are not allowed', 403);
-    }
-
-    // 2. Authentication check
     const user = await getCurrentUser();
-    if (!user) return jsonError('Unauthorized', 401);
+    if (!user) return jsonError('Sign in again, then try again.', 401);
 
-    // 3. Body parse and confirmation check
-    let body: { confirm?: string; challengeToken?: string };
+    let body: unknown;
     try {
         body = await request.json();
     } catch {
         return jsonError('Invalid request body', 400);
     }
-
-    if (body.confirm !== 'DELETE') {
-        return jsonError('Confirmation text must match DELETE', 400);
+    if ((body as { confirm?: unknown } | null)?.confirm !== 'DELETE') {
+        return jsonError('Type DELETE to confirm.', 400);
     }
 
-    if (!body.challengeToken || !verifyDeletionChallengeToken(body.challengeToken, user.id)) {
-        return jsonError('Invalid, expired, or missing deletion challenge token', 403);
-    }
-
-    // 4. Perform atomic account deletion
-    const deletionService = new AccountDeletionService();
+    let result;
     try {
-        await deletionService.deleteAccount(user.id);
-    } catch (e) {
-        return jsonError('Failed to delete account', 500);
+        result = await deleteAccount(user.id);
+    } catch {
+        return jsonError('Could not delete your account. Your account was not changed. Try again.', 500);
     }
 
-    // 5. Invalidate session cookie and respond
-    const response = NextResponse.json({ ok: true }, {
-        headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
-    });
+    if (result.status === 'needs_reconnect') {
+        return jsonError(
+            'Reconnect Tesla so pwusage can restore your Powerwall backup reserve, then try again. Your account was not deleted.',
+            409,
+            'TESLA_CONNECTION_REQUIRED',
+        );
+    }
+    if (result.status === 'battery_saver_pending') {
+        return jsonError(
+            'Could not confirm your Powerwall backup reserve was restored. Your account was not deleted. Try again in a few minutes.',
+            409,
+            'BATTERY_SAVER_PENDING',
+        );
+    }
+
+    const response = NextResponse.json({ ok: true }, { headers: NO_STORE });
     response.cookies.set('site_auth', '', {
         httpOnly: true,
         secure: isSecureRequest(request),
@@ -804,421 +794,727 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
         path: '/',
         sameSite: 'lax',
     });
-
     return response;
 }
+
+export const DELETE = observeRoute('/api/user', handleDELETE);
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run it and confirm it passes**
 
-Run:
 ```bash
-cd cmd/next-app && npx vitest run src/app/api/user/route.test.ts
+npm test -- --run src/app/api/user
 ```
-Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add cmd/next-app/src/app/api/user/route.ts cmd/next-app/src/app/api/user/route.test.ts
-git commit -m "feat(api): add DELETE /api/user with CSRF defense, challenge verification, and cookie invalidation"
+git add src/app/api/user
+git commit -m "feat(api): add DELETE /api/user"
 ```
 
 ---
 
-### Task 6: Delete Account UI on Profile Page
+### Task 5: `/account-delete` pages
 
 **Files:**
-- Create: `cmd/next-app/src/app/profile/DeleteAccountModal.tsx`
-- Create: `cmd/next-app/src/app/profile/DeleteAccountSection.tsx`
-- Modify: `cmd/next-app/src/app/profile/page.tsx`
-- Test: `cmd/next-app/src/app/profile/DeleteAccountModal.test.tsx`
+- Modify: `cmd/next-app/src/components/ui/Button.tsx`
+- Create: `cmd/next-app/src/lib/account-deletion-request.ts` and its test
+- Create: `cmd/next-app/src/components/account/AccountDeleteForm.tsx`
+- Create: `cmd/next-app/src/app/account-delete/page.tsx` and its test
+- Create: `cmd/next-app/src/app/account-delete/cancel/route.ts` and its test
+- Create: `cmd/next-app/src/app/account-delete/done/page.tsx` and its test
 
-**Interfaces:**
-- Produces:
-  `DeleteAccountSection`: Danger Zone section card rendered in `/profile`.
-  `DeleteAccountModal`: Interactive dialog handling intent telemetry, typed confirmation, and API execution.
+- [ ] **Step 1: Add the `danger` button variant**
 
-- [ ] **Step 1: Write the failing component test**
+Change `cmd/next-app/src/components/ui/Button.tsx`:
 
-Create `cmd/next-app/src/app/profile/DeleteAccountModal.test.tsx`:
+```diff
+@@ -1,7 +1,7 @@
+ import React from 'react';
+ 
+ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+-    variant?: 'primary' | 'secondary' | 'outline';
++    variant?: 'primary' | 'secondary' | 'outline' | 'danger';
+     size?: 'sm' | 'md' | 'lg';
+     appearance?: 'default' | 'glyph' | 'icon';
+     icon?: React.ReactNode;
+@@ -28,6 +28,7 @@ export function Button({
+     const variants = {
+         primary: "bg-primary text-bg-base hover:bg-primary/90 shadow-sm disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-slate-800 dark:disabled:text-slate-500 disabled:shadow-none",
+         secondary: "bg-secondary text-gray-900 dark:text-gray-100 hover:bg-secondary/80 disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-slate-800 dark:disabled:text-slate-500",
++        danger: "bg-red-600 text-white hover:bg-red-700 shadow-sm disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-slate-800 dark:disabled:text-slate-500 disabled:shadow-none",
+         outline: "border border-secondary bg-transparent hover:bg-bg-muted text-gray-900 dark:text-gray-100 dark:hover:text-gray-900 disabled:border-gray-200 disabled:text-gray-400 dark:disabled:border-slate-800 dark:disabled:text-slate-500"
+     };
+ 
+```
+
+- [ ] **Step 2: Write the failing tests**
+
+Create `cmd/next-app/src/lib/account-deletion-request.test.ts`:
 
 ```typescript
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import React from 'react';
-import { DeleteAccountModal } from './DeleteAccountModal';
+import { describe, expect, it, vi } from 'vitest';
+import { requestAccountDeletion } from './account-deletion-request';
 
-describe('DeleteAccountModal', () => {
-    const onClose = vi.fn();
+const respond = (status: number, body: string) => vi.fn().mockResolvedValue(new Response(body, { status }));
 
-    beforeEach(() => {
-        vi.clearAllMocks();
-        globalThis.fetch = vi.fn();
-    });
-
-    it('fetches challengeToken on mount when opened', async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ ok: true, challengeToken: 'test-challenge-123' }),
-        });
-
-        render(<DeleteAccountModal isOpen={true} onClose={onClose} />);
-
-        await waitFor(() => {
-            expect(globalThis.fetch).toHaveBeenCalledWith('/api/user/delete-intent', expect.objectContaining({
-                method: 'POST',
-                body: JSON.stringify({ action: 'dialog-opened' }),
-            }));
-        });
-    });
-
-    it('keeps Delete button disabled until user types DELETE', async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ ok: true, challengeToken: 'test-challenge-123' }),
-        });
-
-        render(<DeleteAccountModal isOpen={true} onClose={onClose} />);
-
-        const deleteButton = screen.getByRole('button', { name: /permanently delete account/i });
-        expect(deleteButton).toBeDisabled();
-
-        const input = screen.getByPlaceholderText('DELETE');
-        fireEvent.change(input, { target: { value: 'delete' } });
-        expect(deleteButton).toBeDisabled();
-
-        fireEvent.change(input, { target: { value: 'DELETE' } });
-        expect(deleteButton).not.toBeDisabled();
-    });
-
-    it('fires dialog-cancelled intent when Cancel is clicked', async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ ok: true, challengeToken: 'test-challenge-123' }),
-        });
-
-        render(<DeleteAccountModal isOpen={true} onClose={onClose} />);
-
-        const cancelButton = screen.getByRole('button', { name: /cancel/i });
-        fireEvent.click(cancelButton);
-
-        expect(globalThis.fetch).toHaveBeenCalledWith('/api/user/delete-intent', expect.objectContaining({
-            method: 'POST',
-            body: JSON.stringify({ action: 'dialog-cancelled' }),
+describe('requestAccountDeletion', () => {
+    it('sends the typed confirmation', async () => {
+        const fetcher = respond(200, '{"ok":true}');
+        await expect(requestAccountDeletion(fetcher)).resolves.toEqual({ ok: true });
+        expect(fetcher).toHaveBeenCalledWith('/api/user', expect.objectContaining({
+            method: 'DELETE',
+            body: JSON.stringify({ confirm: 'DELETE' }),
         }));
-        expect(onClose).toHaveBeenCalled();
+    });
+
+    it('shows the message from the server', async () => {
+        const fetcher = respond(409, '{"error":"Reconnect Tesla."}');
+        await expect(requestAccountDeletion(fetcher)).resolves.toEqual({ ok: false, message: 'Reconnect Tesla.' });
+    });
+
+    it('falls back when the error body is not JSON', async () => {
+        const result = await requestAccountDeletion(respond(502, 'Bad gateway'));
+        expect(result).toMatchObject({ ok: false, message: expect.stringContaining('Check your connection') });
+    });
+
+    it('falls back when the network fails', async () => {
+        const result = await requestAccountDeletion(vi.fn().mockRejectedValue(new Error('offline')));
+        expect(result).toMatchObject({ ok: false, message: expect.stringContaining('Check your connection') });
     });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Create `cmd/next-app/src/app/account-delete/page.test.tsx`:
 
-Run:
-```bash
-cd cmd/next-app && npx vitest run src/app/profile/DeleteAccountModal.test.tsx
+```typescript
+import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+    getCurrentUser: vi.fn(),
+    getSites: vi.fn(),
+    redirect: vi.fn((url: string) => { throw new Error(`redirect:${url}`); }),
+}));
+
+vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: mocks.getCurrentUser }));
+vi.mock('@/lib/account-deletion-service', () => ({ getAccountDeletionSites: mocks.getSites }));
+vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
+
+import AccountDeletePage, { metadata } from './page';
+
+const render = async () => renderToStaticMarkup(await AccountDeletePage());
+
+describe('/account-delete', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+        mocks.getSites.mockResolvedValue([{ id: 's1', name: 'Lake House', batterySaverRestoreReserve: null }]);
+    });
+
+    it('sends signed-out visitors through login and back', async () => {
+        mocks.getCurrentUser.mockResolvedValue(null);
+        await expect(render()).rejects.toThrow('redirect:/login?callback=/account-delete');
+    });
+
+    it('stays out of search results', () => {
+        expect(metadata.robots).toEqual({ index: false, follow: false });
+    });
+
+    it('lists the sites that will be deleted and starts with the button disabled', async () => {
+        const html = await render();
+        expect(html).toContain('Lake House');
+        expect(html).toContain('even if someone else also uses that Powerwall');
+        expect(html).not.toContain('Battery Saver is on');
+        expect(html).toMatch(/<button[^>]*disabled[^>]*>Permanently Delete Account/);
+        expect(html).toContain('href="/account-delete/cancel"');
+    });
+
+    it('warns about an active Battery Saver session with the reserve it restores', async () => {
+        mocks.getSites.mockResolvedValue([{ id: 's1', name: 'Lake House', batterySaverRestoreReserve: 20 }]);
+        const html = await render();
+        expect(html).toContain('Battery Saver is on for Lake House');
+        expect(html).toContain('restores your backup reserve to 20%');
+    });
+
+    it('explains an account with no sites', async () => {
+        mocks.getSites.mockResolvedValue([]);
+        expect(await render()).toContain('No sites are linked to this account');
+    });
+});
 ```
-Expected: FAIL (component not found).
 
-- [ ] **Step 3: Implement DeleteAccountModal and DeleteAccountSection**
+Create `cmd/next-app/src/app/account-delete/cancel/route.test.ts`:
 
-Create `cmd/next-app/src/app/profile/DeleteAccountModal.tsx`:
+```typescript
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 
-```tsx
+const mocks = vi.hoisted(() => ({ getCurrentUser: vi.fn() }));
+vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: mocks.getCurrentUser }));
+
+import { GET } from './route';
+
+describe('GET /account-delete/cancel', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it.each([[{ id: 'user-1' }], [null]])('returns to the profile page for %j', async user => {
+        mocks.getCurrentUser.mockResolvedValue(user);
+        const response = await GET(new NextRequest('https://pwusage.test/account-delete/cancel'));
+        expect(response.status).toBe(303);
+        expect(response.headers.get('location')).toBe('https://pwusage.test/profile');
+    });
+});
+```
+
+Create `cmd/next-app/src/app/account-delete/done/page.test.tsx`:
+
+```typescript
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import AccountDeleteDonePage, { metadata } from './page';
+
+describe('/account-delete/done', () => {
+    beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://pwusage.test'); });
+    afterEach(() => { vi.unstubAllEnvs(); });
+
+    it('links to the Tesla consent page and returns here', () => {
+        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', 'client-123');
+        const html = renderToStaticMarkup(<AccountDeleteDonePage />);
+        expect(html).toContain('https://auth.tesla.com/user/revoke/consent?revoke_client_id=client-123');
+        expect(html).toContain(encodeURIComponent('https://pwusage.test/account-delete/done'));
+    });
+
+    it('falls back to instructions without a client id', () => {
+        vi.stubEnv('PUBLIC_TESLA_OAUTH_CLIENT_ID', '');
+        const html = renderToStaticMarkup(<AccountDeleteDonePage />);
+        expect(html).not.toContain('auth.tesla.com');
+        expect(html).toContain('third-party app settings');
+    });
+
+    it('stays out of search results', () => {
+        expect(metadata.robots).toEqual({ index: false, follow: false });
+    });
+});
+```
+
+- [ ] **Step 3: Run them and confirm they fail**
+
+```bash
+npm test -- --run src/lib/account-deletion-request.test.ts src/app/account-delete
+```
+
+- [ ] **Step 4: Add the implementation**
+
+Create `cmd/next-app/src/lib/account-deletion-request.ts`:
+
+```typescript
+export const ACCOUNT_DELETE_CONFIRMATION = 'DELETE';
+
+export type AccountDeletionRequestResult = { ok: true } | { ok: false; message: string };
+
+const FALLBACK_MESSAGE = 'Could not delete your account. Check your connection and try again.';
+
+export async function requestAccountDeletion(fetcher: typeof fetch = fetch): Promise<AccountDeletionRequestResult> {
+    try {
+        const response = await fetcher('/api/user', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: ACCOUNT_DELETE_CONFIRMATION }),
+        });
+        if (response.ok) return { ok: true };
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        return { ok: false, message: typeof body?.error === 'string' ? body.error : FALLBACK_MESSAGE };
+    } catch {
+        return { ok: false, message: FALLBACK_MESSAGE };
+    }
+}
+```
+
+Create `cmd/next-app/src/components/account/AccountDeleteForm.tsx`:
+
+```typescript
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
+import { Input, Label } from '@/components/ui/Form';
+import { ACCOUNT_DELETE_CONFIRMATION, requestAccountDeletion } from '@/lib/account-deletion-request';
 
-interface DeleteAccountModalProps {
-    isOpen: boolean;
-    onClose: () => void;
-}
-
-export function DeleteAccountModal({ isOpen, onClose }: DeleteAccountModalProps) {
-    const [confirmText, setConfirmText] = useState('');
-    const [challengeToken, setChallengeToken] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
+export function AccountDeleteForm() {
+    const [confirmation, setConfirmation] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
-        if (!isOpen) {
-            setConfirmText('');
-            setChallengeToken(null);
-            setError(null);
+    async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (confirmation !== ACCOUNT_DELETE_CONFIRMATION || isDeleting) return;
+        setIsDeleting(true);
+        setError(null);
+        const result = await requestAccountDeletion();
+        if (result.ok) {
+            window.location.replace('/account-delete/done');
             return;
         }
-
-        let isMounted = true;
-        fetch('/api/user/delete-intent', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'dialog-opened' }),
-        })
-            .then(res => res.json())
-            .then(data => {
-                if (isMounted && data.challengeToken) {
-                    setChallengeToken(data.challengeToken);
-                }
-            })
-            .catch(() => {
-                if (isMounted) setError('Could not initialize deletion verification. Please try again.');
-            });
-
-        return () => {
-            isMounted = false;
-        };
-    }, [isOpen]);
-
-    if (!isOpen) return null;
-
-    const handleCancel = () => {
-        fetch('/api/user/delete-intent', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'dialog-cancelled' }),
-        }).catch(() => {});
-        onClose();
-    };
-
-    const handleDelete = async () => {
-        if (confirmText !== 'DELETE' || !challengeToken) return;
-
-        setIsLoading(true);
-        setError(null);
-
-        try {
-            const res = await fetch('/api/user', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    confirm: 'DELETE',
-                    challengeToken,
-                }),
-            });
-
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || 'Failed to delete account');
-            }
-
-            window.location.href = '/?deleted=true';
-        } catch (e) {
-            setError(e instanceof Error ? e.message : 'An error occurred during account deletion.');
-            setIsLoading(false);
-        }
-    };
+        setError(result.message);
+        setIsDeleting(false);
+    }
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900 p-6 shadow-2xl space-y-4">
-                <h3 className="text-xl font-bold text-red-600 dark:text-red-400">Permanently Delete Account</h3>
-
-                <p className="text-sm text-gray-600 dark:text-gray-300">
-                    This action is <strong className="text-red-600 dark:text-red-400">irreversible</strong>.
-                    All your connected sites, energy history archives, rate plans, and settings will be permanently erased immediately.
-                </p>
-
-                <p className="text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 p-3 rounded-md">
-                    <strong>Note regarding the iOS app:</strong> Your local device cache will clear automatically when the app next launches. Any solar layout data stored in your private iCloud can be removed under your iOS device&apos;s <em>Settings &gt; Apple Account &gt; iCloud &gt; PWUsage</em>.
-                </p>
-
-                {error && (
-                    <Alert variant="danger">
-                        <AlertTitle>Error</AlertTitle>
-                        <AlertDescription>{error}</AlertDescription>
-                    </Alert>
-                )}
-
-                <div className="space-y-2 pt-2">
-                    <label htmlFor="confirm-input" className="block text-sm font-medium">
-                        To confirm, type <span className="font-mono font-bold select-all">DELETE</span> below:
-                    </label>
-                    <input
-                        id="confirm-input"
-                        type="text"
-                        value={confirmText}
-                        onChange={e => setConfirmText(e.target.value)}
-                        placeholder="DELETE"
-                        disabled={isLoading}
-                        className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-800">
-                    <Button variant="secondary" onClick={handleCancel} disabled={isLoading}>
-                        Cancel
-                    </Button>
-                    <Button
-                        variant="danger"
-                        onClick={handleDelete}
-                        disabled={confirmText !== 'DELETE' || !challengeToken || isLoading}
-                    >
-                        {isLoading ? 'Deleting Account...' : 'Permanently Delete Account'}
-                    </Button>
-                </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+                <Alert variant="danger">
+                    <AlertTitle>Account not deleted</AlertTitle>
+                    <AlertDescription>{error}</AlertDescription>
+                </Alert>
+            )}
+            <div className="space-y-2">
+                <Label htmlFor="account-delete-confirmation">
+                    Type {ACCOUNT_DELETE_CONFIRMATION} to confirm
+                </Label>
+                <Input
+                    id="account-delete-confirmation"
+                    value={confirmation}
+                    onChange={event => setConfirmation(event.target.value)}
+                    disabled={isDeleting}
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    className="font-mono"
+                />
             </div>
-        </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                {/* A plain link: the cancel route records telemetry, so it must not be prefetched. */}
+                <a href="/account-delete/cancel" className="sm:order-first">
+                    <Button renderAs="span" variant="outline" className="w-full">Cancel</Button>
+                </a>
+                <Button
+                    type="submit"
+                    variant="danger"
+                    disabled={confirmation !== ACCOUNT_DELETE_CONFIRMATION || isDeleting}
+                >
+                    {isDeleting ? 'Deleting Account' : 'Permanently Delete Account'}
+                </Button>
+            </div>
+        </form>
     );
 }
 ```
 
-Create `cmd/next-app/src/app/profile/DeleteAccountSection.tsx`:
+Create `cmd/next-app/src/app/account-delete/page.tsx`:
 
-```tsx
-'use client';
-
-import React, { useState } from 'react';
+```typescript
+import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
+import { AccountDeleteForm } from '@/components/account/AccountDeleteForm';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
-import { Button } from '@/components/ui/Button';
-import { DeleteAccountModal } from './DeleteAccountModal';
+import { getAccountDeletionSites } from '@/lib/account-deletion-service';
+import { getCurrentUser } from '@/lib/auth-checks';
+import { accountFingerprint, logEvent, observePage } from '@/lib/observability';
 
-export function DeleteAccountSection() {
-    const [isModalOpen, setIsModalOpen] = useState(false);
+export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+    title: 'Delete Account | Powerwall Usage',
+    robots: { index: false, follow: false },
+};
+
+export default observePage('/account-delete', async function AccountDeletePage() {
+    const user = await getCurrentUser();
+    if (!user) redirect('/login?callback=/account-delete');
+
+    const sites = await getAccountDeletionSites(user.id);
+    const batterySaverSites = sites.filter(site => site.batterySaverRestoreReserve !== null);
+    logEvent('info', 'user.account-deletion.page-viewed', {
+        accountId: accountFingerprint(user.id),
+        siteCount: sites.length,
+        batterySaverActive: batterySaverSites.length > 0,
+    });
 
     return (
-        <>
-            <SectionCard
-                title="Danger Zone"
-                titleClassName="text-red-600 dark:text-red-400"
-                className="border-red-200 dark:border-red-950 mt-8"
-                description="Permanently delete your user account, linked energy sites, tariffs, and stored history."
-            >
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <p className="text-sm text-muted-foreground">
-                        Once deleted, your account and historical energy data cannot be recovered.
+        <PageShell maxWidth="lg">
+            <PageHeader
+                title="Delete Account"
+                description="Permanently delete your pwusage account. This cannot be undone."
+                className="mb-6"
+            />
+            <div className="space-y-6">
+                {batterySaverSites.map(site => (
+                    <Alert key={site.id} variant="warning">
+                        <AlertTitle>Battery Saver is on for {site.name}</AlertTitle>
+                        <AlertDescription>
+                            Battery Saver is holding your Powerwall charge. Deleting your account turns it off and
+                            restores your backup reserve to {site.batterySaverRestoreReserve}%.
+                        </AlertDescription>
+                    </Alert>
+                ))}
+                <SectionCard title="What gets deleted" bodyClassName="space-y-4 text-sm">
+                    {sites.length > 0 ? (
+                        <>
+                            <p>Your pwusage account and these sites, with their history, rate plans, Battery Saver settings and TRMNL connections:</p>
+                            <ul className="list-disc space-y-1 pl-5">
+                                {sites.map(site => <li key={site.id}>{site.name}</li>)}
+                            </ul>
+                            <p>Sites are deleted even if someone else also uses that Powerwall.</p>
+                        </>
+                    ) : (
+                        <p>Your pwusage account and the Tesla sign-in details stored with it. No sites are linked to this account.</p>
+                    )}
+                </SectionCard>
+                <SectionCard title="What deleting does not change" bodyClassName="space-y-4 text-sm">
+                    <p>Your Powerwall and your Tesla account keep working as they do now.</p>
+                    <p>Backups can keep deleted data for up to about 8 weeks, until they expire. Service logs can keep technical details until they expire.</p>
+                    <p>If you use the iPhone app, its saved data clears the next time it opens. Any solar layout saved to your private iCloud stays there until you remove it in your iPhone&apos;s iCloud settings.</p>
+                    <p>If you use TRMNL, remove the pwusage plugin in TRMNL. It stops receiving data once your account is deleted.</p>
+                    <p>Signing in with Tesla later creates a new, empty pwusage account.</p>
+                </SectionCard>
+                <SectionCard title="Confirm">
+                    <AccountDeleteForm />
+                </SectionCard>
+            </div>
+        </PageShell>
+    );
+});
+```
+
+Create `cmd/next-app/src/app/account-delete/cancel/route.ts`:
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server';
+import { getCurrentUser } from '@/lib/auth-checks';
+import { accountFingerprint, logEvent, observeRoute } from '@/lib/observability';
+
+export const dynamic = 'force-dynamic';
+
+/** Records the Cancel click for the deletion funnel, then returns to the profile page. */
+async function handleGET(request: NextRequest): Promise<NextResponse> {
+    const user = await getCurrentUser();
+    if (user) {
+        logEvent('info', 'user.account-deletion.cancelled', { accountId: accountFingerprint(user.id) });
+    }
+    return NextResponse.redirect(new URL('/profile', request.url), 303);
+}
+
+export const GET = observeRoute('/account-delete/cancel', handleGET);
+```
+
+Create `cmd/next-app/src/app/account-delete/done/page.tsx`:
+
+```typescript
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { Button } from '@/components/ui/Button';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { PageShell } from '@/components/ui/PageShell';
+import { SectionCard } from '@/components/ui/SectionCard';
+import { getAppBaseUrl } from '@/lib/url-utils';
+
+export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+    title: 'Account Deleted | Powerwall Usage',
+    robots: { index: false, follow: false },
+};
+
+function teslaRevokeUrl(): string | null {
+    const clientId = process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID?.trim();
+    if (!clientId) return null;
+    const params = new URLSearchParams({
+        revoke_client_id: clientId,
+        back_url: `${getAppBaseUrl()}/account-delete/done`,
+    });
+    return `https://auth.tesla.com/user/revoke/consent?${params}`;
+}
+
+// Public on purpose: the session is gone by the time this renders, so it cannot tell
+// whether a deletion really happened. It stays general and shows no account details.
+export default function AccountDeleteDonePage() {
+    const revokeUrl = teslaRevokeUrl();
+    return (
+        <PageShell maxWidth="lg">
+            <PageHeader
+                title="Account Deleted"
+                description="Your pwusage account and the sites linked to it have been deleted."
+                className="mb-6"
+            />
+            <div className="space-y-6">
+                <SectionCard title="Optional: remove pwusage from your Tesla account" bodyClassName="space-y-4 text-sm">
+                    <p>pwusage no longer has your Tesla sign-in details, but your Tesla account may still list pwusage as an app you approved. You can remove it at any time.</p>
+                    {revokeUrl ? (
+                        <a href={revokeUrl}>
+                            <Button renderAs="span" variant="outline">Remove pwusage from Tesla</Button>
+                        </a>
+                    ) : (
+                        <p>You can do this in your Tesla account&apos;s third-party app settings.</p>
+                    )}
+                </SectionCard>
+                <SectionCard title="What happens next" bodyClassName="space-y-4 text-sm">
+                    <p>Backups can keep deleted data for up to about 8 weeks, until they expire.</p>
+                    <p>If you use the iPhone app, its saved data clears the next time it opens. Any solar layout saved to your private iCloud stays there until you remove it in your iPhone&apos;s iCloud settings.</p>
+                    <p>If you use TRMNL, remove the pwusage plugin in TRMNL.</p>
+                    <p>
+                        Questions? Visit the <Link href="/support" className="text-primary underline">support page</Link>.
                     </p>
-                    <Button
-                        variant="danger"
-                        onClick={() => setIsModalOpen(true)}
-                    >
-                        Delete Account...
-                    </Button>
-                </div>
-            </SectionCard>
-            <DeleteAccountModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
-        </>
+                </SectionCard>
+            </div>
+        </PageShell>
     );
 }
 ```
 
-Modify `cmd/next-app/src/app/profile/page.tsx`:
-Add `import { DeleteAccountSection } from './DeleteAccountSection';` and render `<DeleteAccountSection />` right below the existing `SectionCard` near line 160.
+- [ ] **Step 5: Run them and confirm they pass**
 
-- [ ] **Step 4: Run component test to verify it passes**
-
-Run:
 ```bash
-cd cmd/next-app && npx vitest run src/app/profile/DeleteAccountModal.test.tsx
+npm test -- --run src/lib/account-deletion-request.test.ts src/app/account-delete
+npm run typecheck
 ```
-Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add cmd/next-app/src/app/profile/DeleteAccountModal.tsx cmd/next-app/src/app/profile/DeleteAccountSection.tsx cmd/next-app/src/app/profile/page.tsx cmd/next-app/src/app/profile/DeleteAccountModal.test.tsx
-git commit -m "feat(ui): add Danger Zone account deletion section and confirmation modal to Profile page"
+git add src/components/ui/Button.tsx src/lib/account-deletion-request.ts src/lib/account-deletion-request.test.ts src/components/account src/app/account-delete
+git commit -m "feat(web): add the account deletion pages"
 ```
 
 ---
 
-### Task 7: Homepage Toast Banner & Privacy Policy Documentation
+### Task 6: Entry points, privacy and docs
 
 **Files:**
-- Modify: `cmd/next-app/src/app/page.tsx`
+- Modify: `cmd/next-app/src/app/profile/page.tsx`
+- Modify: `cmd/next-app/src/app/products/page.tsx`
+- Modify: `cmd/next-app/src/app/robots.ts` and `robots.test.ts`
+- Modify: `cmd/next-app/src/app/sitemap.ts`
 - Modify: `cmd/next-app/src/app/privacy/page.tsx`
+- Modify: `cmd/next-app/src/app/support/page.tsx`
 - Modify: `Authentication.md`
-- Test: `cmd/next-app/src/app/page.test.tsx` (or vitest test checking deleted banner render)
 
-**Interfaces:**
-- Produces:
-  Homepage notification banner when `?deleted=true` is present.
-  Updated Privacy Policy clarifying self-service deletion on `/profile`.
-  Updated `Authentication.md` documenting the deletion flow.
+- [ ] **Step 1: Add the links**
 
-- [ ] **Step 1: Update Homepage to check searchParams for `deleted`**
+Change `cmd/next-app/src/app/profile/page.tsx`:
 
-Modify `cmd/next-app/src/app/page.tsx` to inspect `searchParams` and render an `<Alert variant="info">` or confirmation banner:
-```tsx
-// Inside Home page component:
-{searchParams?.deleted === 'true' && (
-    <div className="max-w-xl mx-auto mb-6">
-        <Alert variant="info">
-            <AlertTitle>Account Deleted</AlertTitle>
-            <AlertDescription>
-                Your account and all associated data have been permanently deleted.
-            </AlertDescription>
-        </Alert>
-    </div>
-)}
+```diff
+@@ -159,6 +159,16 @@ export default observePage('/profile', async function ProfilePage() {
+ 
+                 </div>
+             </SectionCard>
++
++            <SectionCard
++                className="mt-6"
++                title="Delete Account"
++                description="Permanently delete your pwusage account, your sites and their history."
++            >
++                <Link href="/account-delete" prefetch={false}>
++                    <Button renderAs="span" variant="danger">Delete Account</Button>
++                </Link>
++            </SectionCard>
+         </PageShell>
+     );
+ });
 ```
 
-- [ ] **Step 2: Update Privacy Policy (`cmd/next-app/src/app/privacy/page.tsx`)**
+Change `cmd/next-app/src/app/products/page.tsx`:
 
-Update line 42 in `cmd/next-app/src/app/privacy/page.tsx`:
-```tsx
-<p>You can permanently delete your pwusage account and all associated energy history at any time from your Profile page. If you use the iOS app, cached readings clear upon sign-out or session expiration, and any solar layout beta records stored in your private iCloud can be deleted in your iOS device settings. For additional privacy inquiries, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. Backups may retain removed data until their normal expiration.</p>
+```diff
+@@ -5,6 +5,7 @@ import { getAuthorizedSiteIds, getCurrentUser, hasValidSession } from '@/lib/aut
+ import { SiteRepo } from '@/lib/site-repo';
+ import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
+ import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
++import Link from 'next/link';
+ import { NoSupportedProducts } from '@/components/NoSupportedProducts';
+ import { NoPowerwallYet } from '@/components/no-powerwall-yet';
+ import { PageHeader } from '@/components/ui/PageHeader';
+@@ -115,6 +116,11 @@ export default observePage('/products', async function ProductsPage({ searchPara
+                 ) : (
+                     <NoSupportedProducts />
+                 )}
++                {!hasEnergyProducts && (
++                    <p className="text-sm text-muted-foreground">
++                        Not planning to use pwusage? <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete your account</Link>.
++                    </p>
++                )}
+             </div>
+         </PageShell>
+     );
 ```
 
-- [ ] **Step 3: Update `Authentication.md`**
+- [ ] **Step 2: Keep the page out of crawlers, test first**
 
-Append section under Identity and Secrets Model documenting `DELETE /api/user`:
-```markdown
-### Account Deletion (`DELETE /api/user`)
-- Requires valid `site_auth` session.
-- Requires confirmation challenge token issued via `POST /api/user/delete-intent`.
-- Performs best-effort token revocation with Tesla OAuth (`/oauth2/v3/revoke`).
-- Executes atomic transaction: deletes `MobileLoginHandoff` and cascades `User` -> `Site` -> child tables.
-- Clears `site_auth` cookie and logs operational audit event.
+Change `cmd/next-app/src/app/robots.test.ts`:
+
+```diff
+@@ -16,7 +16,7 @@ describe('robots', () => {
+     const rule = robots().rules;
+     const disallow = Array.isArray(rule) ? rule[0].disallow : rule.disallow;
+     expect(disallow).toEqual(
+-      expect.arrayContaining(['/api/', '/admin/', '/profile/', '/logout/'])
++      expect.arrayContaining(['/api/', '/admin/', '/profile/', '/logout/', '/account-delete'])
+     );
+   });
+ 
 ```
 
-- [ ] **Step 4: Run tests**
-
-Run:
 ```bash
-cd cmd/next-app && npm test -- --run
+npm test -- --run src/app/robots.test.ts
 ```
-Expected: PASS.
+
+Expected: FAIL. Then:
+
+Change `cmd/next-app/src/app/robots.ts`:
+
+```diff
+@@ -8,7 +8,7 @@ export default function robots(): MetadataRoute.Robots {
+   return {
+     rules: {
+       userAgent: '*',
+-      disallow: ['/api/', '/admin/', '/profile/', '/logout/'],
++      disallow: ['/api/', '/admin/', '/profile/', '/logout/', '/account-delete'],
+     },
+     sitemap: `${baseUrl}/sitemap.xml`,
+   };
+```
+
+Change `cmd/next-app/src/app/sitemap.ts`:
+
+```diff
+@@ -5,7 +5,7 @@ import { getAppBaseUrl } from '@/lib/url-utils';
+ //   /products — redirects anonymous visitors to /login (auth-gated)
+ //   /login    — an OAuth action handler (302s to Tesla), not content
+ //   /help     — has no page; the real help page lives at /help/trmnl
+-// Auth-gated areas (/site, /admin, /profile) and /api are also excluded and
++// Auth-gated areas (/site, /admin, /profile, /account-delete) and /api are also excluded and
+ // disallowed in robots.ts.
+ const PUBLIC_PATHS = ['', '/about', '/ios', '/news', '/help/trmnl', '/privacy', '/support'];
+ 
+```
+
+- [ ] **Step 3: Update the privacy policy, support page and auth docs**
+
+Change `cmd/next-app/src/app/privacy/page.tsx`:
+
+```diff
+@@ -13,7 +13,7 @@ export const metadata: Metadata = {
+ export default function PrivacyPage() {
+     return (
+         <PageShell maxWidth="lg" padding="default" fullHeight={false}>
+-            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 1, 2026." className="mb-8" />
++            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 8, 2026." className="mb-8" />
+             <div className="space-y-6 text-gray-700 dark:text-gray-300">
+                 <p>pwusage helps you understand your Powerwall energy use, estimate electricity costs, and use the optional Battery Saver feature for your Powerwall. This policy explains what information those features use.</p>
+                 <SectionCard title="Tesla account and energy information" bodyClassName="space-y-4">
+@@ -35,12 +35,13 @@ export default function PrivacyPage() {
+                 </SectionCard>
+                 <SectionCard title="TRMNL integration" bodyClassName="space-y-4">
+                     <p>If you install a TRMNL integration, pwusage shares the dashboard information needed to render your connected display. Our server stores your TRMNL OAuth access token, account and installation identifiers, display settings, and account information supplied by TRMNL, including your email address. We use these records to connect your display, authenticate integration requests, and maintain its settings. If your pwusage account has no email address, we may fill it from the email supplied by TRMNL.</p>
+-                    <p>Installation records remain until deleted. When you uninstall the integration through TRMNL and pwusage receives and verifies its uninstall notification, we delete the installation record, including its stored token and TRMNL account information. This does not delete your pwusage account, an email copied to that account, or energy history. If an uninstall does not reach pwusage, or you want other associated data deleted, email support@fm.rodeo. Backups may retain deleted records until their normal expiration.</p>
++                    <p>Installation records remain until deleted. When you uninstall the integration through TRMNL and pwusage receives and verifies its uninstall notification, we delete the installation record, including its stored token and TRMNL account information. This does not delete your pwusage account, an email copied to that account, or energy history. Deleting your pwusage account also deletes these records. If an uninstall does not reach pwusage, or you want other associated data deleted, email support@fm.rodeo. Backups may retain deleted records until their normal expiration.</p>
+                 </SectionCard>
+                 <SectionCard title="Retention and your choices" bodyClassName="space-y-4">
+                     <p>Server data can remain after you sign out or uninstall the app. Energy history is subject to service retention settings; account records, rate plan history, and backups have separate lifecycles. Signing out is not a request to delete your account.</p>
+                     <p>You can revoke pwusage&apos;s access in your Tesla account&apos;s third-party app settings and remove the optional Solcast connection in the app. Revoking Tesla access prevents future authorized API requests but does not automatically erase previously stored data.</p>
+-                    <p>To request access, correction, or deletion of your pwusage account and associated data, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership. Backups may retain removed data until their normal expiration.</p>
++                    <p>You can permanently delete your pwusage account, its sites and their energy history, rate plans, settings, and TRMNL records at any time from <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. Sites are deleted even if someone else also uses that Powerwall. Deleting your account does not remove pwusage from your Tesla account&apos;s approved apps; we offer a link to do that after deletion. It also does not remove any solar layout in your private iCloud, which you can remove in your iPhone&apos;s iCloud settings. Backups may retain removed data until their normal expiration, and operational logs until they expire.</p>
++                    <p>To request access or correction of your data, or if you cannot sign in to delete your account, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership.</p>
+                 </SectionCard>
+                 <SectionCard title="Privacy questions and changes" bodyClassName="space-y-4">
+                     <p>Email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a> with privacy questions. You can also visit our <Link href="/support" className="text-primary underline">support page</Link>. Material changes will be reflected on this page with an updated date.</p>
+```
+
+Change `cmd/next-app/src/app/support/page.tsx`:
+
+```diff
+@@ -38,7 +38,7 @@ export default function SupportPage() {
+                     <p>Solcast forecasts are optional and require your own API key and rooftop site. Check the forecast status message for connection, setup, or household-history problems. You can disconnect Solcast without disconnecting Tesla.</p>
+                 </SectionCard>
+                 <SectionCard title="Account and privacy requests" bodyClassName="space-y-4">
+-                    <p>For an account-data or deletion request, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
++                    <p>To delete your account, go to <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. For other account-data requests, or if you cannot sign in, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
+                     <p>Read our <Link href="/privacy" className="text-primary underline">privacy policy</Link> for details about account information, energy history, and local app data.</p>
+                 </SectionCard>
+                 <SectionCard title="TRMNL display help">
+```
+
+Change `Authentication.md`:
+
+```diff
+@@ -313,6 +313,25 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
+   refuses to renew the cookie. Re-authentication issues a token stamped with the
+   new version. The caller's cookie is cleared in the same response.
+ 
++### 6. Account deletion
++Page: `/account-delete` (signed-out visitors go through `/login?callback=/account-delete`).
++Route: `DELETE /api/user`
++- Requires an authenticated user and `{ "confirm": "DELETE" }`, with the same
++  origin/`sec-fetch-site` checks as sign-out-everywhere (`isCrossOriginRequest`).
++- Restores any active Battery Saver session first, because deletion removes the record
++  the restore relies on. If Tesla needs reconnecting or the restore cannot be confirmed,
++  it returns `409`, keeps the account and keeps the session.
++- Deletes in one transaction (`AccountDeletionRepo`), locking the `User` and `Site` rows
++  so a new Battery Saver session cannot slip in. `EnergyDayArchive` goes first because
++  `EnergyDaySummary` has `NO ACTION` keys to `Tariff` and `TariffSchedule`, then
++  `MobileLoginHandoff`, then `User`, which cascades to everything else it owns.
++- Clears the caller's `site_auth` cookie. Other devices are rejected on their next
++  request, because `resolveAuth` no longer finds the user.
++- Does not call Tesla to revoke tokens: Tesla documents no revocation endpoint for third
++  parties. `/account-delete/done` links to Tesla's consent page
++  (`auth.tesla.com/user/revoke/consent`) as an optional step. Revoking must follow
++  deletion, since pwusage needs the grant to restore the reserve.
++
+ ### Troubleshooting: "passkey failed" on auth.tesla.com
+ 
+ Tesla supports passkeys as an account sign-in credential. A passkey that a
+```
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+npm test -- --run src/app/robots.test.ts src/app/sitemap.test.ts
+```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add cmd/next-app/src/app/page.tsx cmd/next-app/src/app/privacy/page.tsx Authentication.md
-git commit -m "docs: update privacy policy and authentication docs for self-service account deletion"
+git add src/app/profile/page.tsx src/app/products/page.tsx src/app/robots.ts src/app/robots.test.ts src/app/sitemap.ts src/app/privacy/page.tsx src/app/support/page.tsx ../../Authentication.md
+git commit -m "feat(web): link to account deletion and update the privacy policy"
 ```
 
 ---
 
-### Task 8: Full Verification and Build Check
+### Task 7: Full verification
 
-**Files:**
-- Entire repository
+- [ ] **Step 1: Run every check, in this order**
 
-- [ ] **Step 1: Run linter**
-Run:
 ```bash
-cd cmd/next-app && npm run lint
+npm run lint
+npm run typecheck
+npm test -- --run
+npm run test:hold:postgres
+npm run build
 ```
-Expected: 0 errors.
 
-- [ ] **Step 2: Run typecheck**
-Run:
-```bash
-cd cmd/next-app && npm run typecheck
-```
-Expected: 0 type errors.
+Expected: no lint warnings and everything passes.
 
-- [ ] **Step 3: Run Vitest test suite**
-Run:
-```bash
-cd cmd/next-app && npm test -- --run
-```
-Expected: All tests pass.
+- [ ] **Step 2: Check the pages in a browser**
 
-- [ ] **Step 4: Run Next.js production build**
-Run:
-```bash
-cd cmd/next-app && npm run build
-```
-Expected: Build succeeds without errors.
+Use the preview tools with `npm run dev:agent` on port 5174. Do not submit the form against any database you care about.
+
+- `/account-delete/done` renders in light and dark mode at phone and desktop widths.
+- `/account-delete` signed out redirects to `/login?callback=/account-delete`.
+- Signed in, if a session is available: the Delete Account card shows on `/profile`, the button stays disabled until `DELETE` is typed exactly, and Cancel returns to `/profile`.
+
+- [ ] **Step 3: Hand the live checks to the owner**
+
+These need live Tesla access, so list them in the PR rather than running them. Use a throwaway account on beta, never the owner's real account:
+
+- A real deletion removes the account, and other signed-in devices are rejected.
+- With Battery Saver on, the warning shows the right reserve, and deleting restores it on the Powerwall.
+- With Tesla disconnected and Battery Saver on, deletion is refused and the account stays.
+- The Tesla removal link works and `back_url` returns to `/account-delete/done`. If Tesla does not return, the page still has to make sense.
+- The migration ran on the Dev copy without an orphan-row failure.
+
+- [ ] **Step 4: Mark the PR ready only after those checks**
