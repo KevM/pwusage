@@ -19,7 +19,7 @@ export default function SupportPage() {
                     <p>Email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a> for help with pwusage.</p>
                     <p>Join the <a href="https://discord.gg/KCweVtVNAB" className="text-primary underline" target="_blank" rel="noopener noreferrer">pwusage Discord community</a> for help from the maintainer and other users. You can also <a href="https://github.com/KevM/pwusage/issues" className="text-primary underline" target="_blank" rel="noopener noreferrer">report a bug on GitHub</a>.</p>
                     <p>Include your app version and build number from TestFlight, your iOS version, what you expected to happen, and the steps that reproduce the problem. For the website, include your browser and the page where the problem occurs.</p>
-                    <p>Discord and GitHub are public channels. Do not post passwords, authorization tokens, Solcast API keys, home addresses, or private account information. Redact screenshots before sharing them.</p>
+                    <p>Discord and GitHub are public channels. Do not post passwords, authorization tokens, home addresses, or private account information. Redact screenshots before sharing them.</p>
                 </SectionCard>
                 <SectionCard title="Sign-in and connected sites" bodyClassName="space-y-4">
                     <p>pwusage requires a Tesla account with access to a supported energy site. Sign-in opens Tesla&apos;s secure login flow. If your session has expired, sign in again. A Tesla account that only has vehicles will not provide a Powerwall dashboard.</p>
@@ -35,7 +35,7 @@ export default function SupportPage() {
                 </SectionCard>
                 <SectionCard title="Battery Saver and solar forecasts" bodyClassName="space-y-4">
                     <p>Battery Saver saves your Powerwall charge for when rates spike by raising your backup reserve after you confirm. Turning off Battery Saver restores your previous backup reserve. If its status is unavailable, try again before turning it on a second time. You can also check your current reserve in Tesla&apos;s app.</p>
-                    <p>Solcast forecasts are optional and require your own API key and rooftop site. Check the forecast status message for connection, setup, or household-history problems. You can disconnect Solcast without disconnecting Tesla.</p>
+                    <p>Solar forecasts are built in and automatic. The app estimates your rooftop solar production using your household usage history and weather reports, with no external account or API key required. If a solar forecast is unavailable or your panel layout is still being determined, Smart Shift falls back to your historical solar production patterns.</p>
                 </SectionCard>
                 <SectionCard title="Account and privacy requests" bodyClassName="space-y-4">
                     <p>For an account-data or deletion request, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
