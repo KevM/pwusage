@@ -94,7 +94,7 @@ is production or a recent copy of it. Check that before running the backfill.
 | # | Question | How to answer | Effect |
 | --- | --- | --- | --- |
 | U2 | Can an invited account's token change the reserve using its own current ID? | The earlier Battery Saver attempt sent no command, so it proved nothing. Run `scripts/set-backup-reserve.ts --site <id> --percent <current+1> --confirm --restore` as the invited account on beta. | If denied: those members see data, Battery Saver start is unavailable for them, and restore needs a member who can send commands. The design holds either way. |
-| U3 | What does a removed account's token get when it calls its old ID: reads and commands? | Same script, after removal. | Sets what a removed connection user's failed reads look like while they wait for the daily check (section 6.3). Not a blocker. |
+| U3 | What does a removed account's token get when it calls its old ID? **Reads are answered:** on 2026-11-08 production gap heal called the son's replaced ID, refreshed the token after a 401, then got `404 not_found` from `calendar_history`. Commands are still unknown. | Same script, after removal. | Sets what a removed connection user's failed reads look like while they wait for the daily check (section 6.3). Not a blocker. |
 | U4 | What happens at the API during a real ownership transfer? | Asked Tesla in [SUPPORT-2194](https://fleetapi-support.tesla.com/servicedesk/customer/portal/1/SUPPORT-2194), opened 2026-11-08, no answer yet. A real sale can't be simulated. | Sets how much the seller-removal timing risk (section 5) matters. |
 | U5 | Does hardware ID survive a gateway or Powerwall replacement? | Ask Tesla, or watch for it. | If not, a replaced system becomes a fresh site. Acceptable, but known. |
 
@@ -267,13 +267,13 @@ Reconcile against a successful `getProducts()`, at each login and daily:
 - A failed call changes nothing.
 
 **A failed site request never triggers a reconcile.** A 401 is normally an expired access token, which the client is
-already refreshing and retrying, and a 403 can also mean a missing scope. Checking from the request path would overlap
+already refreshing and retrying, a 403 can also mean a missing scope, and a replaced ID answers 404 (U3). Checking from the request path would overlap
 with that refresh and add a Tesla call to a failing request, for a rare case. If a removed member is the connection user,
 data can stall until the next login or daily check, about a day at worst. Battery Saver restores don't wait for this:
 they already move to the next candidate on a typed 401/403 (section 7).
 
 Log it so we can see when this happens: `logEvent('warn', 'site.connection.request-rejected', { siteId, accountId, status })`,
-with `accountId` hashed like the existing `tesla.refresh.*` events. Emit it only for the final typed 401/403, after any
+with `accountId` hashed like the existing `tesla.refresh.*` events. Emit it only for a final 401, 403 or 404, after any
 refresh and retry, so a routine token expiry doesn't count. The event only records the rejection and changes nothing.
 
 **Removal must not undo a newer write.** A login or cron can read the product list, then a re-invite login can update the
@@ -359,7 +359,8 @@ and its own Tesla ID.
 Inside the existing lease and 10-second deadline:
 
 1. Try the next candidate only when the attempt **proves** nothing was applied: no usable credentials, or a typed
-   401/403 whose `clearRestoreAttempt` succeeded.
+   401/403 whose `clearRestoreAttempt` succeeded. Treat a typed 404 the same way only if U3 confirms commands answer 404
+   for a replaced ID. A stale mapping would otherwise block a restore until the next reconcile.
 2. On any uncertain outcome, **stop**. Keep `restore_attempted_at` and let the existing reconcile and 15-minute guarded
    resend handle it. A second account doesn't make an uncertain command safe to repeat.
 3. A typed 401/403 sets `commands_denied_at`, and a successful command clears it.
@@ -508,7 +509,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site. |
 | Sold home | Seller unlisted or dead gives a fresh site, and the buyer can't read the seller's site. Seller still listed joins, then is removed at the next reconcile (documents the known risk). |
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
-| Reconcile | Listed; re-invited; missing; empty; failed call; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry; recently imported connection user is still reconciled; dead grant removal only when another member works. |
+| Reconcile | Listed; re-invited; missing; empty; failed call; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry, including a final 404; recently imported connection user is still reconciled; dead grant removal only when another member works. |
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
 | Battery Saver | Guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
