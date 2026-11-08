@@ -161,7 +161,8 @@ The connection foreign key and deletion SQL were tried on a throwaway local Post
 tables. It rejected a non-member connection user. Deleting a connection user left a shared site with a NULL
 pointer. Deleting the last member removed the site and its children, and a direct site delete and a user
 delete also worked. `ON DELETE SET NULL (column)` needs PostgreSQL 15+, and production is 17.6. This was a
-check on the sketch, not the Phase 1 test suite.
+check on the sketch, not the Phase 1 test suite. Those tables had no `EnergyDaySummary` rows: with them, a direct site
+delete fails (section 9).
 
 **Why one mapping table, not `SiteMember` plus an alias table?** Each person has exactly one current ID per
 home, so the ID is a property of the membership. A re-invite simply updates that row.
@@ -419,14 +420,23 @@ BEGIN
   DELETE FROM "MobileLoginHandoff" WHERE user_id = $1
   DELETE FROM "TrmnlInstallation"  WHERE installed_by_user_id = $1 AND site_id = ANY(sites)
   DELETE FROM "SiteMember"         WHERE user_id = $1               -- clears connection pointers
-  DELETE FROM "Site" s WHERE s.id = ANY(sites)
+  gone := SELECT id FROM "Site" s WHERE s.id = ANY(sites)
     AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)
+  DELETE FROM "EnergyDayArchive"   WHERE site_id = ANY(gone)          -- cascades summaries; must precede Site
+  DELETE FROM "Site"               WHERE id = ANY(gone)
   DELETE FROM "User" WHERE id = $1
 COMMIT
 then repairConnection for each surviving site
 ```
 
 Two members deleting at once is safe: the second sees the first's row gone and deletes the site.
+
+**Delete a site's day records first.** `EnergyDaySummary` references `Tariff` and `TariffSchedule` with `NO ACTION`, and
+production's `Site` cascades run in trigger creation order, `Tariff` before `EnergyDayArchive`. So a bare
+`DELETE FROM "Site"` on a site with summaries fails with `EnergyDaySummary_tariff_id_fkey`. Deleting `EnergyDayArchive`
+first removes the summaries through their cascade, which is what PR #319 does. Every code path that deletes a `Site`
+needs this order, or a helper that does it. Confirmed against production's trigger order on 2026-11-08, and rehearsed on
+a local copy of those constraints.
 
 **Before the transaction (best effort):**
 
@@ -444,14 +454,15 @@ host (`fleet-auth.prd.na.vn.cloud.tesla.com`) differs from the token host in `Au
 
 ## 10. Merging existing duplicates
 
-Only rows with matching hardware need this. Today that is Harrison alone, with four rows, one of them stale. Automatic merging of real history is too risky for something this rare, so this is an admin script,
+Only rows with matching hardware need this. Today that is Harrison alone, with three rows: the stale fourth (`2534053021086015`) was deleted from production on 2026-11-08. Automatic merging of real history is too risky for something this rare, so this is an admin script,
 `scripts/merge-duplicate-site.ts`, dry run by default:
 
 1. Report groups by `tesla_hardware_id`, with members, day counts, tariff versions, tags and TRMNL devices.
 2. For a chosen pair, keep the row with more history. **Refuse if either has an active hold.** Flag rate plans that differ,
    because the secondary's are dropped.
 3. In one transaction: move the secondary's members to the primary, keeping each `tesla_energy_site_id`; repoint TRMNL
-   installations and tags; delete the secondary, which cascades its history and activity registrations.
+   installations and tags; delete the secondary's `EnergyDayArchive` rows, then the secondary itself, which cascades its
+   rate plans, holds and activity registrations. A bare site delete fails (section 9).
 4. Days the primary lacks come back through gap healing, because members can still fetch them.
 
 Run production merges only with the owner's approval, after a backup. Warn affected members that iOS solar layouts need
@@ -511,7 +522,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Area | Cases on real PostgreSQL |
 | --- | --- |
 | Migration | Backfill matches owners with `tesla_energy_site_id = Site.id`; runs twice; RLS and grants; missing hardware field stays NULL. |
-| Keys | Connection must be a member; removal nulls it; site and user deletes succeed. |
+| Keys | Connection must be a member; removal nulls it; user delete and the section 9 site delete succeed, with a bare site delete on a site with summaries rejected. |
 | Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site. |
 | Sold home | Seller unlisted or dead gives a fresh site, and the buyer can't read the seller's site. Seller still listed joins, then is removed at the next reconcile (documents the known risk). |
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
@@ -519,8 +530,8 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
 | Battery Saver | Guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
-| Deletion | Member leaves and the site survives; last member removes everything; simultaneous deletes; login racing deletion. |
-| Merge | Moves members, TRMNL and tags; refuses with an active hold; dry run writes nothing. |
+| Deletion | Seeded with summaries that reference a rate plan: member leaves and the site survives; last member removes everything; simultaneous deletes; login racing deletion. |
+| Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; refuses with an active hold; dry run writes nothing. |
 
 **Vitest, mocked:** access helpers for added and removed members, battery-hold route tokens and errors, `/profile`, `syncUserEmail`,
 reconnect wording, flag off matches current behaviour, and `DELETE /api/user` on a shared site.
