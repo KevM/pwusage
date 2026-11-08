@@ -1,7 +1,7 @@
 # Shared Powerwall sites: several Tesla accounts on one site
 
 - **Date:** 2026-11-08, revised the same day after Phase 0 testing
-- **Status:** Draft for owner review. Tesla command behaviour and how accounts join remain open (sections 3 and 13).
+- **Status:** Draft for owner review. Tesla command behaviour and the remaining questions are open (sections 3 and 13).
 - **Area:** `cmd/next-app` (schema, auth, Tesla calls), small changes in `cmd/ios-app`
 - **Related:** [account deletion PR KevM/pwusage#319](https://github.com/KevM/pwusage/pull/319), [`Authentication.md`](../../../Authentication.md), [`DesignDecisions.md`](../../../DesignDecisions.md), `codex/no-sites-login-loop` (`5fcfaa6e`)
 
@@ -205,12 +205,12 @@ Tesla's data can't fully tell them apart, since both can show up as a new ID wit
 | **New owner, seller not yet removed** | **Wrong join.** The buyer sees the seller's history. The seller may see new data until the daily check removes them. |
 | Partner, but the only member's token is dead | Fresh site: an unwanted duplicate, which an admin can merge later. |
 
-The third row is the remaining risk and depends on U4. Tesla's transfer needs the deed and a support ticket,
-which makes it a narrow window but doesn't rule it out. The alternative is an invite link (Q2).
+**Owner decision (2026-11-08): join automatically on this live check, with no invite link.** Testing showed
+removal really does appear in `getProducts()`, and a link would add a screen and tokens and leave duplicates for
+everyone who doesn't use it.
 
-**This recommendation changed from the earlier discussion, which favoured an invite link.** Testing showed
-removal really does appear in `getProducts()`. A link also adds a screen and tokens, and leaves duplicates for
-everyone who doesn't use it, which is the problem this work exists to remove. It's the owner's call.
+The owner accepted the third row as a known risk. Tesla's transfer needs the deed and a support ticket, which
+makes the window narrow but doesn't rule it out, and U4 would show how narrow.
 
 ## 6. Tesla calls and tokens
 
@@ -509,7 +509,7 @@ deletions in each order.
 | # | Question | Recommendation |
 | --- | --- | --- |
 | Q1 | **Run the invited-account command test (U2).** | Needed before Phase 3, not before Phase 1. |
-| Q2 | **How should a second account join:** automatically when an existing member's product list confirms it, or only through an invite link? | Automatic. It needs no new screen and removes duplicates. Its risk is a buyer joining the seller's site if Tesla hasn't removed the seller yet. An invite link rules that out, but leaves a duplicate for everyone who doesn't use it. |
+| Q2 | How should a second account join? | **Decided by the owner: automatically on the live check** (section 5). A buyer joining a seller's site before Tesla removes the seller is an accepted risk. |
 | Q3 | When Tesla removes the last member (a sold home) and nobody chose to delete anything, how long do we keep the data? | Delete after 30 days with a small daily job. Crons skip it in the meantime. Keeping it forever is simpler but has a privacy cost. |
 | Q4 | Should new members see history from before they joined? | Yes. Tesla's app shows invited users history too. Mention it on the privacy page. |
 | Q5 | Should members see each other's email addresses in site settings? | Yes. It's how someone spots an unexpected person. Emails only. |
