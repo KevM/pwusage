@@ -272,6 +272,10 @@ with that refresh and add a Tesla call to a failing request, for a rare case. If
 data can stall until the next login or daily check, about a day at worst. Battery Saver restores don't wait for this:
 they already move to the next candidate on a typed 401/403 (section 7).
 
+Log it so we can see when this happens: `logEvent('warn', 'site.connection.request-rejected', { siteId, accountId, status })`,
+with `accountId` hashed like the existing `tesla.refresh.*` events. Emit it only for the final typed 401/403, after any
+refresh and retry, so a routine token expiry doesn't count. The event only records the rejection and changes nothing.
+
 **Removal must not undo a newer write.** A login or cron can read the product list, then a re-invite login can update the
 mapping before the removal runs. Delete only when `tesla_energy_site_id` still equals the ID that list was checked against
 and `last_seen_in_tesla_at` is older than when the list was fetched. `rowCount = 0` means something newer won, so do nothing.
@@ -479,7 +483,7 @@ send a wrong ID.
 failover, per-person commands and restore candidates turn on. Keep `user_id` equal to the connection, so turning the flag
 off is a clean rollback: non-connection members lose access, and nobody gains it. Beta first, with real accounts. Beta
 deploys need the CI env overrides, never `vercel redeploy`. Then production. Watch `tesla.refresh.*`, plus new
-`site.member.joined`, `site.member.removed` and `site.connection.moved` events, and measure `check-users` egress.
+`site.member.joined`, `site.member.removed`, `site.connection.moved` and `site.connection.request-rejected` events, and measure `check-users` egress.
 
 **Phase 4: Product and cleanup.** Member list (Q5), reconnect and `commands_denied` states on web and iOS, privacy and
 deletion copy, and the merge script. Merge Harrison with the owner's approval. iOS wrap-up needs an on-device check with
@@ -504,7 +508,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site. |
 | Sold home | Seller unlisted or dead gives a fresh site, and the buyer can't read the seller's site. Seller still listed joins, then is removed at the next reconcile (documents the known risk). |
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
-| Reconcile | Listed; re-invited; missing; empty; failed call; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile; recently imported connection user is still reconciled; dead grant removal only when another member works. |
+| Reconcile | Listed; re-invited; missing; empty; failed call; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry; recently imported connection user is still reconciled; dead grant removal only when another member works. |
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
 | Battery Saver | Guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
