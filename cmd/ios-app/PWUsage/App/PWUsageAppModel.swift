@@ -232,10 +232,20 @@ final class PWUsageAppModel: ObservableObject {
             }
         } catch let error as MobileAuthService.AuthError {
             screenState = .signedOut
-            signInMessage = error == .cancelled ? nil : "Could not complete sign-in. Try again."
+            signInMessage = Self.signInMessage(for: error)
         } catch {
             screenState = .signedOut
             signInMessage = "Could not connect to pwusage. Try again."
+        }
+    }
+
+    static func signInMessage(for error: MobileAuthService.AuthError) -> String? {
+        switch error {
+        case .cancelled: nil
+        case .noSites:
+            "Tesla sign-in worked, but this account has no Powerwall access. "
+                + "If someone removed your access in Tesla, ask them to add you again."
+        default: "Could not complete sign-in. Try again."
         }
     }
 
