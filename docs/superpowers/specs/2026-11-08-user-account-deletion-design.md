@@ -27,20 +27,22 @@ sequenceDiagram
     participant Profile as Profile Page (/profile)
     participant Modal as Delete Account Modal
     participant API as Next.js API (/api/user)
-    participant Telemetry as Telemetry (/api/user/delete-intent)
+    participant Telemetry as Intent & Challenge API (/api/user/delete-intent)
     participant Tesla as Tesla Fleet API
     participant DB as PostgreSQL Database
 
     User->>Profile: Clicks "Delete Account..."
     Profile->>Modal: Opens Confirmation Dialog
-    Modal->>Telemetry: POST { action: 'dialog-opened' }
+    Modal->>Telemetry: POST /api/user/delete-intent { action: 'dialog-opened' }
+    Telemetry-->>Modal: 200 OK { challengeToken: '...' }
     alt User Cancels
         User->>Modal: Clicks Cancel or Escapes
-        Modal->>Telemetry: POST { action: 'dialog-cancelled' }
+        Modal->>Telemetry: POST /api/user/delete-intent { action: 'dialog-cancelled', challengeToken: '...' }
         Modal-->>Profile: Closes
     else User Confirms
         User->>Modal: Types "DELETE" and clicks "Permanently Delete"
-        Modal->>API: DELETE /api/user { confirm: 'DELETE' }
+        Modal->>API: DELETE /api/user { confirm: 'DELETE', challengeToken: '...' }
+        API->>API: Verify challengeToken matches issued intent
         API->>API: Verify Same-Origin & Sec-Fetch-Site CSRF
         API->>API: Verify session & resolve User
         API->>Tesla: POST /oauth2/v3/revoke (best-effort, 3s timeout)
@@ -115,24 +117,42 @@ A new migration `YYYYMMDDHHMMSS_user_account_deletion_cascades.sql` will ensure 
 
 ### API Routes
 
-#### 1. `DELETE /api/user`
+#### 1. `POST /api/user/delete-intent`
+- **Method:** `POST`
+- **Auth:** Requires valid `site_auth` cookie (`getCurrentUser()`).
+- **Body:** `{ action: 'dialog-opened' | 'dialog-cancelled', challengeToken?: string }`
+- **Behavior:**
+  - If `action === 'dialog-opened'`:
+    - Emits telemetry `logEvent('info', 'user.account-deletion.dialog-opened', { userId })`.
+    - Generates a signed, single-use, time-bound (5-minute TTL) challenge token:
+      ```ts
+      // HMAC-SHA256 signed payload containing { userId, purpose: 'delete-account', exp, nonce }
+      const challengeToken = createDeletionChallengeToken(user.id);
+      ```
+    - Returns `200 OK { ok: true, challengeToken }`.
+  - If `action === 'dialog-cancelled'`:
+    - Emits telemetry `logEvent('info', 'user.account-deletion.dialog-cancelled', { userId })`.
+    - Returns `200 OK { ok: true }`.
+
+#### 2. `DELETE /api/user`
 - **Method:** `DELETE`
 - **Headers Checked:**
   - Same-origin validation: `originUrl.origin === request.nextUrl.origin`
   - Fetch metadata check: `request.headers.get('sec-fetch-site') !== 'cross-site'`
 - **Auth:** Requires valid `site_auth` cookie (`getCurrentUser()`).
-- **Body:** `{ confirm: 'DELETE' }`
+- **Body:** `{ confirm: 'DELETE', challengeToken: string }`
+- **Challenge Verification:**
+  - Decodes and cryptographically verifies `challengeToken` using the server secret (`JWT_SECRET`).
+  - Asserts `token.userId === currentUser.id`.
+  - Asserts `token.purpose === 'delete-account'`.
+  - Asserts `Date.now() < token.exp`.
+  - Rejects with `403 Forbidden` if challenge token is missing, invalid, or expired.
+- **Confirmation Verification:**
+  - Asserts `confirm === 'DELETE'`. Rejects with `400 Bad Request` if invalid.
 - **Response:**
   - `200 OK { ok: true }`
   - Sets cookie `site_auth` with `maxAge: 0`, `path: '/'`, `httpOnly: true`.
   - Headers: `Cache-Control: no-store`.
-
-#### 2. `POST /api/user/delete-intent`
-- **Method:** `POST`
-- **Auth:** Requires valid `site_auth` cookie.
-- **Body:** `{ action: 'dialog-opened' | 'dialog-cancelled' }`
-- **Response:** `200 OK { ok: true }`
-- **Telemetry:** Logs `user.account-deletion.dialog-opened` or `user.account-deletion.dialog-cancelled`.
 
 ---
 
