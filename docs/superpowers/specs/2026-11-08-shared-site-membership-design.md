@@ -95,7 +95,7 @@ is production or a recent copy of it. Check that before running the backfill.
 | --- | --- | --- | --- |
 | U2 | Can an invited account's token change the reserve using its own current ID? | The earlier Battery Saver attempt sent no command, so it proved nothing. Run `scripts/set-backup-reserve.ts --site <id> --percent <current+1> --confirm --restore` as the invited account on beta. | If denied: those members see data, Battery Saver start is unavailable for them, and restore needs a member who can send commands. The design holds either way. |
 | U3 | What does a removed account's token get when it calls its old ID: reads and commands? | Same script, after removal. | Picks which status codes trigger a recheck (section 6.3). Not a blocker. |
-| U4 | What happens at the API during a real ownership transfer? | Ask Tesla developer support. A real sale can't be simulated. | Sets how much the seller-removal timing risk (section 5) matters. |
+| U4 | What happens at the API during a real ownership transfer? | Asked Tesla in [SUPPORT-2194](https://fleetapi-support.tesla.com/servicedesk/customer/portal/1/SUPPORT-2194), opened 2026-11-08, no answer yet. A real sale can't be simulated. | Sets how much the seller-removal timing risk (section 5) matters. |
 | U5 | Does hardware ID survive a gateway or Powerwall replacement? | Ask Tesla, or watch for it. | If not, a replaced system becomes a fresh site. Acceptable, but known. |
 
 ## 4. Schema
