@@ -232,6 +232,13 @@ at Tesla**, even for the original member after a re-invite.
   goes too.
 - `scripts/set-backup-reserve.ts --site` and similar scripts take `Site.id` and use the factory.
 
+**Keep the mapping out of `getSite()`.** `Site` rows are plain objects cached for 15 minutes per instance, and
+`loadSitesFromDB` already leaves tokens out of that cache because they change outside the process. A Tesla ID has the
+same problem, since a re-invite replaces it. A list of every member's IDs on `Site` also means each caller has to pick
+the right one for the token it holds, and it could end up in a response. Instead, the query that loads the pinned
+account's credentials also returns that account's `tesla_energy_site_id`. That covers `beforeRequest` too, so a
+re-invite takes effect with no extra query. One private helper in `TeslaClient` builds the five site URLs.
+
 Pinning also matters without translation: a client holding A's token must never read B's stored credentials
 or claim B's refresh lease after the connection moves.
 
