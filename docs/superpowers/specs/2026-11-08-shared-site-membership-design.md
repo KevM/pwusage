@@ -291,8 +291,8 @@ works, remove the membership. If Tesla still lists them, their next login adds t
 access and the existing reconnect prompt.
 
 `removeMember` runs in one transaction: delete the row (which clears the connection through the foreign key),
-disable their `BatteryHoldActivity` rows for that site's holds, and delete TRMNL installations they installed.
-Then repair the connection. **Reconcile never deletes a `Site`** (Q3). Someone left with no sites sees the
+disable their `BatteryHoldActivity` rows for that site's holds, delete TRMNL installations they installed, and end any
+active hold if nobody is left (section 7). Then repair the connection. **Reconcile never deletes a `Site`** (Q3). Someone left with no sites sees the
 "No Powerwall access" page from `codex/no-sites-login-loop`.
 
 ### 6.4 Failover and standby grants
@@ -367,7 +367,13 @@ Inside the existing lease and 10-second deadline:
 4. A member's reserve change still cancels through the existing check.
 
 If nobody can restore, the hold stays active and keeps retrying, and **every** member sees that it needs someone to
-reconnect Tesla. Manual stop tries the person's own token first, then the candidates. Starting has no fallback:
+reconnect Tesla.
+
+**If removal leaves a site with no members,** `removeMember` ends any active hold in its transaction, with status
+`cancelled` and reason `no_members`, and logs `battery-hold.ended-no-members` with `siteId`. Otherwise the monitor would
+retry it every 15 minutes forever with nobody to restore it or be told. This sends no command, so **the Powerwall's reserve
+stays raised**. Tesla has already removed that person, so it's no longer theirs to change. The monitor already re-reads the
+active hold before touching Tesla, so a run in progress stops safely. Manual stop tries the person's own token first, then the candidates. Starting has no fallback:
 `needs_reauth` if their connection is lost, new `commands_denied` if Tesla refuses. Using another member's token here
 would hand them a permission Tesla withheld.
 
@@ -509,7 +515,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site. |
 | Sold home | Seller unlisted or dead gives a fresh site, and the buyer can't read the seller's site. Seller still listed joins, then is removed at the next reconcile (documents the known risk). |
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
-| Reconcile | Listed; re-invited; missing; empty; failed call; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry, including a final 404; recently imported connection user is still reconciled; dead grant removal only when another member works. |
+| Reconcile | Listed; re-invited; missing; empty; failed call; removing the last member ends an active hold with `no_members` and sends no Tesla command, while a remaining member keeps it active; a removed sole member who returns gets a fresh site; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry, including a final 404; recently imported connection user is still reconciled; dead grant removal only when another member works. |
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
 | Battery Saver | Guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
@@ -547,8 +553,9 @@ My choices, not owner decisions. Override as needed.
 - An empty product list removes memberships immediately.
 - A dead grant is removed after 14 days when another member's works. A forgotten password reset can therefore remove someone's
   TRMNL device, which I accepted to avoid a former owner keeping a live view.
-- A sole member removed by Tesla who later returns gets a fresh site, with the old row left to Q3. Tracking former members for
-  this rare case isn't worth the extra state.
+- A sole member removed by Tesla who later returns gets a fresh site and loses sight of their earlier history, with the old row
+  left to Q3. They look the same as a new homeowner. Remembering former members would restore their history, but it would also
+  let a seller reclaim the old site if the buyer invites them, which exposes the buyer's data. I chose to protect the buyer.
 - `commands_denied_at` expires after 7 days for restore ordering.
 - Merging existing duplicates is an admin script, not automatic.
 - Legacy `site_auth` tokens with no `sub` keep their claims path. The 30-day cap means none should remain, so removing that
