@@ -94,7 +94,7 @@ is production or a recent copy of it. Check that before running the backfill.
 | # | Question | How to answer | Effect |
 | --- | --- | --- | --- |
 | U2 | Can an invited account's token change the reserve using its own current ID? | The earlier Battery Saver attempt sent no command, so it proved nothing. Run `scripts/set-backup-reserve.ts --site <id> --percent <current+1> --confirm --restore` as the invited account on beta. | If denied: those members see data, Battery Saver start is unavailable for them, and restore needs a member who can send commands. The design holds either way. |
-| U3 | What does a removed account's token get when it calls its old ID: reads and commands? | Same script, after removal. | Picks which status codes trigger a recheck (section 6.3). Not a blocker. |
+| U3 | What does a removed account's token get when it calls its old ID: reads and commands? | Same script, after removal. | Sets what a removed connection user's failed reads look like while they wait for the daily check (section 6.3). Not a blocker. |
 | U4 | What happens at the API during a real ownership transfer? | Asked Tesla in [SUPPORT-2194](https://fleetapi-support.tesla.com/servicedesk/customer/portal/1/SUPPORT-2194), opened 2026-11-08, no answer yet. A real sale can't be simulated. | Sets how much the seller-removal timing risk (section 5) matters. |
 | U5 | Does hardware ID survive a gateway or Powerwall replacement? | Ask Tesla, or watch for it. | If not, a replaced system becomes a fresh site. Acceptable, but known. |
 
@@ -266,8 +266,17 @@ Reconcile against a successful `getProducts()`, at each login and daily:
   wait-for-a-second-result rule.
 - A failed call changes nothing.
 
-If the connection user gets a typed 401/403 on a site endpoint, reconcile them too, at most hourly per user.
-A 403 alone doesn't prove removal, since missing scopes also return it. U3 refines this.
+**A failed site request never triggers a reconcile.** A 401 is normally an expired access token, which the client is
+already refreshing and retrying, and a 403 can also mean a missing scope. Checking from the request path would overlap
+with that refresh and add a Tesla call to a failing request, for a rare case. If a removed member is the connection user,
+data can stall until the next login or daily check, about a day at worst. Battery Saver restores don't wait for this:
+they already move to the next candidate on a typed 401/403 (section 7).
+
+**Removal must not undo a newer write.** A login or cron can read the product list, then a re-invite login can update the
+mapping before the removal runs. Delete only when `tesla_energy_site_id` still equals the ID that list was checked against
+and `last_seen_in_tesla_at` is older than when the list was fetched. `rowCount = 0` means something newer won, so do nothing.
+Run reconciles outside any lease or transaction, through the normal refresh coordinator. If the list call fails or is in a
+retry floor, nothing changes.
 
 **The cron's existing skip can't be reused.** `verifyAllUserStatuses` skips users checked within 24 hours, and the
 importer bumps `last_checked_at` on every import, so connection users would never be reconciled. Use
@@ -495,7 +504,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Joining | Each row of the section 5 table, including all three-account Harrison IDs. A re-invite updates the row and creates no site. Member check error fails the login. Two first logins make one site. |
 | Sold home | Seller unlisted or dead gives a fresh site, and the buyer can't read the seller's site. Seller still listed joins, then is removed at the next reconcile (documents the known risk). |
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
-| Reconcile | Listed; re-invited; missing; empty; failed call; recently imported connection user is still reconciled; dead grant removal only when another member works. |
+| Reconcile | Listed; re-invited; missing; empty; failed call; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile; recently imported connection user is still reconciled; dead grant removal only when another member works. |
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
 | Battery Saver | Guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
