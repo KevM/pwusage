@@ -237,8 +237,9 @@ describe('GET /auth/tesla-callback', () => {
         await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
 
         expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('site_auth');
         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
-        expect(mocks.redirect).toHaveBeenCalledWith('/');
+        expect(mocks.redirect).toHaveBeenCalledWith('/no-sites');
     });
 
     it('redirects to saved callback only when it is safe relative path', async () => {

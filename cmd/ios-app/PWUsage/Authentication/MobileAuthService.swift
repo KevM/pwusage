@@ -32,6 +32,7 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         case alreadyInProgress
         case invalidCallback
         case stateMismatch
+        case noSites
         case serverRejectedLogin
         case cancelled
         case webAuthenticationFailed
@@ -121,7 +122,9 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
 
         guard let state = values["state"] else { throw AuthError.invalidCallback }
         guard state == expectedState else { throw AuthError.stateMismatch }
-        if values["error"] != nil { throw AuthError.serverRejectedLogin }
+        if let reason = values["error"] {
+            throw reason == "no_sites" ? AuthError.noSites : AuthError.serverRejectedLogin
+        }
 
         guard let code = values["code"], code.utf8.count <= 512,
               let attemptID = values["attempt"], UUID(uuidString: attemptID) != nil else {

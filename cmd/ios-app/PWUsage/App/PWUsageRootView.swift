@@ -47,8 +47,9 @@ struct PWUsageRootView: View {
             case .noSites:
                 EmptyStateScreen(
                     symbol: "house.badge.exclamationmark",
-                    title: "No sites available",
-                    message: "This account does not have a pwusage site yet.",
+                    title: "No Powerwall access",
+                    message: "This account no longer has access to a Powerwall. "
+                        + "If someone removed your access in Tesla, ask them to add you again.",
                     actionTitle: "Sign out",
                     action: { Task { await model.signOut() } }
                 )
