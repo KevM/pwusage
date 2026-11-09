@@ -25,8 +25,9 @@ INSERT INTO public."Site" VALUES ('s1');
 INSERT INTO public."MobileLoginHandoff" VALUES ('00000000-0000-0000-0000-000000000001', 'u1');
 INSERT INTO public."TrmnlInstallation" VALUES ('t1', 'inbound-token', 'unused-refresh-token');
 CREATE TABLE public."User" (id text PRIMARY KEY, email text, access_token text, refresh_token text, auth_status text,
-    tesla_refresh_state text, is_refreshing integer, refresh_lock_expires bigint, tesla_refresh_attempt_id text);
-INSERT INTO public."User" VALUES ('u1', 'owner@example.com', 'prod-access', 'prod-refresh', 'active', 'in_flight', 1, 99, 'prod-attempt');
+    tesla_refresh_state text, is_refreshing integer, refresh_lock_expires bigint, tesla_refresh_attempt_id text,
+    refresh_token_fp text);
+INSERT INTO public."User" VALUES ('u1', 'owner@example.com', 'prod-access', 'prod-refresh', 'active', 'in_flight', 1, 99, 'prod-attempt', 'prod-fingerprint');
 CREATE TABLE public."BatteryHoldActivity" (id serial PRIMARY KEY, push_token text);
 INSERT INTO public."BatteryHoldActivity" (push_token) VALUES ('device-token');
 CREATE TABLE public."EnergyDayArchive" (
@@ -161,6 +162,8 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         // Prod's single-use Tesla grant must never be refreshable from beta.
         expect(await rows(`SELECT email, access_token, refresh_token, auth_status FROM public."User"`))
             .toEqual([{ email: 'owner@example.com', access_token: null, refresh_token: null, auth_status: 'revoked' }]);
+        // The refresh-token fingerprint goes with the token it describes.
+        expect(await rows(`SELECT refresh_token_fp FROM public."User"`)).toEqual([{ refresh_token_fp: null }]);
         // Once prod has the refresh-state migration it never re-runs on the
         // copy, so the scrub sets the matching state itself.
         expect(await rows(`SELECT tesla_refresh_state, is_refreshing, refresh_lock_expires::int AS lock, tesla_refresh_attempt_id FROM public."User"`))

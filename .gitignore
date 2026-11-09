@@ -32,3 +32,4 @@ cmd/ios-app/fastlane/.env*
 .vercel
 cmd/ios-app/fastlane/screenshots/
 cmd/ios-app/fastlane/test_output/
+.env*

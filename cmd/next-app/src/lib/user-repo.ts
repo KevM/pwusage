@@ -8,6 +8,14 @@ import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { normalizeFleetBaseUrl } from './tesla-region';
+import { decryptToken, encryptToken, tokenFingerprint } from './token-crypto';
+
+/** Decrypt the token columns of a `User` row in place of the stored envelope. */
+function decryptUserTokens<T extends { access_token?: string | null; refresh_token?: string | null }>(row: T, userId: string): T {
+    if ('access_token' in row) row = { ...row, access_token: decryptToken(row.access_token, 'access_token', userId) };
+    if ('refresh_token' in row) row = { ...row, refresh_token: decryptToken(row.refresh_token, 'refresh_token', userId) };
+    return row;
+}
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -28,16 +36,10 @@ interface VerificationState extends TeslaConnectionState {
 
 export class UserRepo {
     // === Queries ===
-    async getByAccessToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
-        const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
-        if (res.rows.length === 0) return null;
-        return res.rows[0];
-    }
-
     async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
         const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url, is_active, auth_status, tesla_refresh_state, refresh_lock_expires, tesla_refresh_retry_after FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
-        return res.rows[0];
+        return decryptUserTokens(res.rows[0], userId);
     }
 
     async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
@@ -48,7 +50,7 @@ export class UserRepo {
             WHERE s.id = $1
         `, [siteId]);
         if (res.rows.length === 0) return null;
-        return res.rows[0];
+        return decryptUserTokens(res.rows[0], res.rows[0].user_id);
     }
 
     async isActive(userId: string): Promise<boolean> {
@@ -75,7 +77,7 @@ export class UserRepo {
     async getById(userId: string): Promise<User | null> {
         const res = await pool.query('SELECT * FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
-        return res.rows[0] as User;
+        return decryptUserTokens(res.rows[0] as User, userId);
     }
 
     async getByEmail(email: string): Promise<User | null> {
@@ -85,7 +87,8 @@ export class UserRepo {
         // migration).
         const res = await pool.query('SELECT * FROM "User" WHERE LOWER(email) = LOWER($1) ORDER BY id LIMIT 1', [email]);
         if (res.rows.length === 0) return null;
-        return res.rows[0] as User;
+        const user = res.rows[0] as User;
+        return decryptUserTokens(user, user.id);
     }
 
     async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
@@ -105,7 +108,8 @@ export class UserRepo {
             FROM "User" u
             ORDER BY last_data_import DESC NULLS LAST, u.is_active DESC
         `);
-        const users = userRes.rows as (User & { has_trmnl_integration: boolean; last_data_import: string | null })[];
+        const users = (userRes.rows as (User & { has_trmnl_integration: boolean; last_data_import: string | null })[])
+            .map(user => decryptUserTokens(user, user.id));
 
         // Fetch all sites (optimization: fetch all and map in memory instead of N+1 queries)
         // We also strip tokens from Site results here
@@ -182,11 +186,12 @@ export class UserRepo {
         fleetApiBaseUrl?: string | null;
     }): Promise<void> {
         const saved = await pool.query<{ tesla_credential_generation: number; is_active: boolean }>(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url)
-            VALUES ($1, $2, $3, $4, $5, 'active', true, $6)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url, refresh_token_fp)
+            VALUES ($1, $2, $3, $4, $5, 'active', true, $6, $7)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
+                refresh_token_fp = EXCLUDED.refresh_token_fp,
                 email = COALESCE(EXCLUDED.email, "User".email),
                 fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url),
                 auth_status = 'active',
@@ -194,8 +199,11 @@ export class UserRepo {
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 tesla_refresh_retry_after = 0, is_refreshing = 0, refresh_lock_expires = 0
             RETURNING tesla_credential_generation, is_active
-        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt,
-            normalizeFleetBaseUrl(params.fleetApiBaseUrl)]);
+        `, [params.userId, params.email,
+            encryptToken(params.accessToken, 'access_token', params.userId),
+            encryptToken(params.refreshToken, 'refresh_token', params.userId),
+            params.tokenExpiresAt, normalizeFleetBaseUrl(params.fleetApiBaseUrl),
+            tokenFingerprint(params.refreshToken)]);
         if (saved?.rows[0]) {
             logEvent('info', 'tesla.connection.credentials-restored', {
                 accountId: createHash('sha256').update(params.userId).digest('hex').slice(0, 16),
@@ -218,8 +226,8 @@ export class UserRepo {
 
     async updateTokens(userId: string, accessToken: string, refreshToken: string): Promise<void> {
         await pool.query(
-            'UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3',
-            [accessToken, refreshToken, userId]
+            'UPDATE "User" SET access_token = $1, refresh_token = $2, refresh_token_fp = $4 WHERE id = $3',
+            [encryptToken(accessToken, 'access_token', userId), encryptToken(refreshToken, 'refresh_token', userId), userId, tokenFingerprint(refreshToken)]
         );
     }
 
