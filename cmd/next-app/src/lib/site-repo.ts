@@ -126,6 +126,59 @@ export class SiteRepo {
         return moved.user_id;
     }
 
+    /** Record a successful product-list observation without moving an ID changed by another login. */
+    async touchMember(siteId: string, userId: string, teslaId: string, fetchedAt: Date): Promise<boolean> {
+        const result = await pool.query(`UPDATE "SiteMember"
+            SET last_seen_in_tesla_at = GREATEST(last_seen_in_tesla_at, $4::timestamptz)
+            WHERE site_id = $1 AND user_id = $2 AND tesla_energy_site_id = $3`,
+        [siteId, userId, teslaId, fetchedAt]);
+        return result.rowCount === 1;
+    }
+
+    /** Remove only the membership checked by an older successful product list. Site history survives. */
+    async removeMemberIfMissing(siteId: string, userId: string, teslaId: string, fetchedAt: Date): Promise<boolean> {
+        const client = await pool.connect();
+        let removed = false;
+        try {
+            await client.query('BEGIN');
+            await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+            const result = await client.query(`DELETE FROM "SiteMember"
+                WHERE site_id = $1 AND user_id = $2 AND tesla_energy_site_id = $3
+                  AND last_seen_in_tesla_at < $4::timestamptz RETURNING site_id`,
+            [siteId, userId, teslaId, fetchedAt]);
+            if (result.rowCount === 1) {
+                removed = true;
+                await client.query(`UPDATE "Site" SET user_id = NULL
+                    WHERE id = $1 AND user_id = $2`, [siteId, userId]);
+                await client.query(`UPDATE "BatteryHoldActivity" a
+                    SET delivery_state = 'disabled', disabled_reason = 'membership_removed',
+                        push_token = NULL, claim_owner = NULL, claim_expires_at = NULL, updated_at = now()
+                    FROM "BatteryHold" h
+                    WHERE h.id = a.hold_id AND h.site_id = $1 AND a.user_id = $2`, [siteId, userId]);
+                await client.query(`DELETE FROM "TrmnlInstallation"
+                    WHERE site_id = $1 AND installed_by_user_id = $2`, [siteId, userId]);
+                await client.query(`UPDATE "BatteryHold" h
+                    SET status = 'cancelled', restore_reason = 'no_members', restored_at = now()
+                    WHERE h.site_id = $1 AND h.status = 'active'
+                      AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = $1)`, [siteId]);
+            }
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+        if (removed) {
+            this.invalidateCache(siteId);
+            logEvent('info', 'site.member.removed', {
+                siteId, accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16),
+            });
+            await this.repairConnection(siteId);
+        }
+        return removed;
+    }
+
     async getSitesWithTariffs(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         if (siteIds.length === 0) return [];
 
