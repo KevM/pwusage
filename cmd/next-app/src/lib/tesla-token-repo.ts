@@ -7,6 +7,25 @@ import { TeslaConnectionRequiredError, TeslaRefreshBackoffError, TeslaRefreshErr
 import { createHash, randomUUID } from 'node:crypto';
 import { parseRefreshedTokens, type RefreshedTokens } from './tesla-auth';
 import { after } from 'next/server';
+import { decryptToken, encryptToken, tokenFingerprint } from './token-crypto';
+
+/** The stored pair, decrypted. Legacy plaintext rows pass through. */
+function decryptCredentials<T extends { access_token: string | null; refresh_token: string | null }>(row: T, userId: string): T {
+    return {
+        ...row,
+        access_token: decryptToken(row.access_token, 'access_token', userId),
+        refresh_token: decryptToken(row.refresh_token, 'refresh_token', userId),
+    };
+}
+
+/**
+ * Compare-and-swap predicate for the single-use refresh grant. Ciphertext is
+ * random-IV, so rows compare by HMAC fingerprint; rows not yet backfilled have no
+ * fingerprint and compare by their legacy plaintext. See DesignDecisions.md.
+ */
+function grantMatches(fpParam: string, plainParam: string): string {
+    return `(refresh_token_fp = ${fpParam} OR (refresh_token_fp IS NULL AND refresh_token = ${plainParam}))`;
+}
 
 interface AccountCredentials {
     access_token: string | null;
@@ -46,10 +65,10 @@ export class TeslaTokenRepo {
         const fields = { siteId, accountId: credentialId(userId) };
         while (Date.now() - start < timeoutMs) {
             const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status, is_active, refresh_lock_expires, tesla_refresh_state, tesla_refresh_retry_after, tesla_credential_generation, tesla_refresh_attempt_id FROM "User" WHERE id = $1`, [userId]);
-            const row = res.rows[0];
-            if (!row) {
+            if (!res.rows[0]) {
                 throw new Error('Token refresh wait failed: user not found');
             }
+            const row = decryptCredentials(res.rows[0], userId);
             if (row.tesla_refresh_state === 'in_flight' && Number(row.refresh_lock_expires) <= Date.now()) {
                 // The worker died mid-exchange. Its grant is retried after a
                 // backoff: if Tesla consumed it, the replacement was never
@@ -159,9 +178,9 @@ export class TeslaTokenRepo {
             WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
               AND auth_status IS DISTINCT FROM 'revoked' AND is_active = true
               AND tesla_refresh_state = 'ready' AND tesla_refresh_retry_after <= $3
-              AND refresh_token = $5
+              AND ${grantMatches('$5', '$6')}
             RETURNING access_token, refresh_token, tesla_credential_generation, tesla_refresh_attempt_id
-        `, [lease, userId, now, exchangeId, suppliedRefresh]);
+        `, [lease, userId, now, exchangeId, tokenFingerprint(suppliedRefresh), suppliedRefresh]);
         if (!claim.rowCount) {
             logEvent('info', 'tesla.refresh.not-claimed', fields);
             return this.waitForUserRefresh(userId, suppliedRefresh, siteId);
@@ -169,7 +188,7 @@ export class TeslaTokenRepo {
 
         // The caller may stop waiting, but a dispatched rotation must run through
         // persistence under its own deadline and the serverless request lifecycle.
-        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, claim.rows[0], fields, exchangeId);
+        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, decryptCredentials(claim.rows[0], userId), fields, exchangeId);
         try {
             after(async () => { await operation.catch(() => undefined); });
         } catch {
@@ -184,15 +203,19 @@ export class TeslaTokenRepo {
      * attempt id, old grant), not by the lease clock: a slow save must still land.
      */
     private async saveRotation(userId: string, next: RefreshedTokens, previousRefresh: string, generation: number, exchangeId: string): Promise<boolean> {
+        // Encrypt once so a retried save writes the same envelope.
+        const encryptedAccess = encryptToken(next.access_token, 'access_token', userId);
+        const encryptedRefresh = encryptToken(next.refresh_token, 'refresh_token', userId);
         const save = () => pool.query(`
-            UPDATE "User" SET access_token = $1, refresh_token = $2,
+            UPDATE "User" SET access_token = $1, refresh_token = $2, refresh_token_fp = $7,
                 tesla_credential_generation = tesla_credential_generation + 1,
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 auth_status = 'active', tesla_refresh_retry_after = 0,
                 is_refreshing = 0, refresh_lock_expires = 0
-            WHERE id = $3 AND refresh_token = $4
+            WHERE id = $3 AND ${grantMatches('$4', '$8')}
               AND tesla_credential_generation = $5 AND tesla_refresh_attempt_id = $6
-        `, [next.access_token, next.refresh_token, userId, previousRefresh, generation, exchangeId]);
+        `, [encryptedAccess, encryptedRefresh, userId, tokenFingerprint(previousRefresh), generation, exchangeId,
+            tokenFingerprint(next.refresh_token), previousRefresh]);
         let lastError: unknown;
         for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
             try {
