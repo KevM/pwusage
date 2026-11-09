@@ -100,9 +100,28 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         }
     }
 
+    var holdBill = false
+    private var billContinuations: [(String, CheckedContinuation<MobileBillResponse, Error>)] = []
+
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         billSiteIDs.append(siteID)
+        if holdBill {
+            return try await withCheckedThrowingContinuation { billContinuations.append((siteID, $0)) }
+        }
         return try Self.billResponse(siteID: siteID)
+    }
+
+    func resumeBillRequests() {
+        holdBill = false
+        let pending = billContinuations
+        billContinuations.removeAll()
+        for (siteID, continuation) in pending {
+            do {
+                continuation.resume(returning: try Self.billResponse(siteID: siteID))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {

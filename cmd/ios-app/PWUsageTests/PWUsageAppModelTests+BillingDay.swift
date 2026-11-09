@@ -113,4 +113,44 @@ extension PWUsageAppModelTests {
 
         #expect(model.sites == [Self.unconfirmedSite("site-1")])
     }
+
+    @Test("A bill request already running when the day is saved is replaced by a fresh one")
+    func saveSupersedesRunningBillRequest() async throws {
+        let api = ApplicationAPISpy(sites: [Self.unconfirmedSite("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        let coordinator = try #require(model.coordinator)
+        api.holdBill = true
+        let running = Task { await coordinator.refreshBill(trigger: .userGesture) }
+        while api.billSiteIDs.isEmpty { await Task.yield() }
+        let before = api.billSiteIDs.count
+        api.holdBill = false
+
+        let saving = Task { try await model.saveBillingDay(15, siteID: "site-1") }
+        await Task.yield()
+        api.resumeBillRequests()
+        try await saving.value
+        await running.value
+
+        #expect(api.billSiteIDs.count == before + 1)
+    }
+
+    @Test("A site refresh that started before a save cannot overwrite the saved day")
+    func staleRefreshDoesNotOverwriteSave() async throws {
+        let api = ApplicationAPISpy(sites: [Self.unconfirmedSite("site-1")])
+        let model = try makeModel(api: api)
+        await model.bootstrap()
+        api.holdSites = true
+        let refresh = Task { await model.refreshBillingDays() }
+        while api.siteFetchCount < 2 { await Task.yield() }
+
+        try await model.saveBillingDay(15, siteID: "site-1")
+        api.sites = [Self.unconfirmedSite("site-1")]
+        api.resumeSites()
+        await refresh.value
+
+        #expect(model.sites.first?.billingDay == 15)
+        #expect(model.sites.first?.billingDayConfirmed == true)
+        #expect(model.billingDayPromptSite == nil)
+    }
 }

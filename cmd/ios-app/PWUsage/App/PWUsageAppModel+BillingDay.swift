@@ -30,16 +30,22 @@ extension PWUsageAppModel {
         guard let index = sites.firstIndex(where: { $0.id == siteID }) else { return }
         sites[index] = sites[index].settingBillingDay(saved.billingDay)
         cache?.storeSites(sites)
-        if siteID == selectedSiteID { await coordinator?.refreshBill(trigger: .userGesture) }
+        if siteID == selectedSiteID { await coordinator?.refreshBillDiscardingRunning() }
     }
 
     /// Picks up a billing day chosen elsewhere (the web app, another phone) while this one still
     /// asks. Only the billing fields of sites already installed change, and a failure changes nothing.
     func refreshBillingDays() async {
-        guard sessionVerified, !isDemo, let fetched = try? await api.fetchSites() else { return }
+        guard sessionVerified, !isDemo else { return }
+        let before = sites
+        guard let fetched = try? await api.fetchSites() else { return }
         var updated = sites
         for index in updated.indices {
-            guard let match = fetched.first(where: { $0.id == updated[index].id }),
+            // A save made while the request was in flight is newer than the response.
+            let started = before.first { $0.id == updated[index].id }
+            guard started?.billingDay == updated[index].billingDay,
+                  started?.billingDayConfirmed == updated[index].billingDayConfirmed,
+                  let match = fetched.first(where: { $0.id == updated[index].id }),
                   match.billingDay != updated[index].billingDay
                   || match.billingDayConfirmed != updated[index].billingDayConfirmed
             else { continue }
