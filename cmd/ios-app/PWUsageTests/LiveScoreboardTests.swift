@@ -96,6 +96,19 @@ struct LiveScoreboardTests {
         #expect(DashboardPresentation.liveCardIsVisible(cardMinY: 0, cardMaxY: 0, visibleTop: 500))
     }
 
+    @Test("A scroll hero counts as gone once under 15% shows below the bar")
+    func heroVisibilityBelowBar() {
+        // A 200 pt hero from 20 to 220 in scroll content; 15% is 30 pt.
+        func visible(_ top: Double) -> Bool {
+            ScrollHero.isVisible(minY: 20, maxY: 220, visibleTop: top)
+        }
+        #expect(visible(-80))
+        #expect(visible(190)) // exactly 30 pt still shows
+        #expect(!visible(191))
+        // Before the hero is measured, keep the plain title.
+        #expect(ScrollHero.isVisible(minY: 0, maxY: 0, visibleTop: 500))
+    }
+
     @Test("Every battery symbol is a real SF Symbol, charging or not")
     func batterySymbolsResolve() {
         // SF Symbols has a bolt only on the full battery; a missing name draws nothing.
