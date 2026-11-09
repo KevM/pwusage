@@ -200,13 +200,11 @@ describe('TeslaTokenRepo refresh persistence', () => {
     });
 
     it('claims the grant by fingerprint, not by ciphertext', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 });
-        queryMock.mockResolvedValueOnce({ rows: [] });
         queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: encryptToken('old-token', 'access_token', 'user-1'), refresh_token: encryptToken('old-refresh', 'refresh_token', 'user-1') }] });
         queryMock.mockResolvedValue({ rowCount: 1, rows: [] });
         refreshAccessTokenMock.mockResolvedValueOnce({ access_token: 'new-access', refresh_token: 'new-refresh' });
 
-        await tokenRepo.getLockedRefreshHandler('site-1').refreshHandler('old-refresh');
+        await tokenRepo.getLockedUserRefreshHandler('user-1').refreshHandler('old-refresh');
 
         const claim = queryMock.mock.calls.find(([sql]) => String(sql).includes('SET is_refreshing = 1'));
         expect(claim?.[0]).toContain('(refresh_token_fp = $5 OR (refresh_token_fp IS NULL AND refresh_token = $6))');
