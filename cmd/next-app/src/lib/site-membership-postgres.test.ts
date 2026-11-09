@@ -10,6 +10,7 @@ vi.mock('./db', () => ({ pool: {
 } }));
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { SiteRepo } from './site-repo';
+import { UserRepo } from './user-repo';
 
 const socket = process.env.SITE_MEMBERSHIP_TEST_SOCKET;
 const safeSocket = socket && /^\/(?:private\/)?tmp\/site-membership-pg-[a-zA-Z0-9]+$/.test(socket);
@@ -27,8 +28,9 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       await local.database.query(`CREATE ROLE ${role}`);
     }
     await local.database.query(`CREATE TABLE "User" (
-      id text PRIMARY KEY, is_active boolean DEFAULT true, refresh_token text,
-      auth_status text, tesla_refresh_state text DEFAULT 'ready'
+      id text PRIMARY KEY, is_active boolean DEFAULT true, access_token text, refresh_token text,
+      auth_status text, tesla_refresh_state text DEFAULT 'ready', fleet_api_base_url text,
+      refresh_lock_expires bigint, tesla_refresh_retry_after bigint
     )`);
     await local.database.query(`CREATE TABLE "Site" (
       id text PRIMARY KEY, user_id text REFERENCES "User"(id), json jsonb
@@ -82,6 +84,19 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     expect(await sites.removeSitesMissingFromTesla('u1', [], new Date(Date.now() + 1000))).toEqual(['s1']);
     const row = (await local.database.query(`SELECT user_id, tesla_connection_user_id FROM "Site" WHERE id='s1'`)).rows[0];
     expect(row).toEqual({ user_id: null, tesla_connection_user_id: null });
+  });
+
+  it('loads the connection grant and the pinned member’s current Tesla ID together', async () => {
+    const users = new UserRepo();
+    const sites = new SiteRepo();
+    const first = await users.getTokensForSite('s1');
+    expect(first?.user_id).toBe('u1');
+    expect(first?.tesla_energy_site_id).toBe('s1');
+    await local.database.query(`UPDATE "SiteMember" SET tesla_energy_site_id='reinvite-1' WHERE site_id='s1'`);
+    expect((await users.getTokensForSiteMember('s1', 'u1'))?.tesla_energy_site_id).toBe('reinvite-1');
+    expect((await users.getTokensForSite('s1'))?.tesla_energy_site_id).toBe('reinvite-1');
+    expect(await sites.getSiteIdsForTeslaIds(['reinvite-1'])).toEqual(['s1']);
+    expect(await sites.getSiteIdsForTeslaIds(['s1'])).toEqual([]);
   });
 
   it('lets only one worker claim hardware shared by duplicate rows', async () => {

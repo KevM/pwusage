@@ -30,6 +30,7 @@ describe('SiteService Security', () => {
 
     const mockEnergyRepo = {
         getSites: vi.fn(),
+        getSiteIdsForTeslaIds: vi.fn().mockResolvedValue(['12345']),
         getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }])
     };
 
@@ -47,6 +48,19 @@ describe('SiteService Security', () => {
         expect(sites).toHaveLength(1);
         expect(sites[0].id).toBe(mockSite.id);
         expect(mockTeslaClient.getProducts).toHaveBeenCalled();
+        expect(mockEnergyRepo.getSiteIdsForTeslaIds).toHaveBeenCalledWith(['12345']);
+    });
+
+    it('maps a Tesla product ID back to the pwusage site ID in the legacy path', async () => {
+        mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 98765 }]);
+        mockEnergyRepo.getSiteIdsForTeslaIds.mockResolvedValueOnce(['pwusage-site']);
+        mockEnergyRepo.getSites.mockResolvedValueOnce([{ id: 'pwusage-site', name: 'Home' }]);
+        const service = new SiteService({
+            teslaClient: mockTeslaClient as unknown as TeslaClient,
+            siteRepo: mockEnergyRepo as unknown as SiteRepo,
+        });
+        expect((await service.getAuthorizedSites()).map(site => site.id)).toEqual(['pwusage-site']);
+        expect(mockEnergyRepo.getSiteIdsForTeslaIds).toHaveBeenCalledWith(['98765']);
     });
 
     it('should use JWT for authorization if provided and valid', async () => {
@@ -293,7 +307,7 @@ describe('SiteService Security', () => {
         };
 
         const mockTeslaTokenRepo = {
-            getLockedRefreshHandler: vi.fn().mockReturnValue({
+            getLockedUserRefreshHandler: vi.fn().mockReturnValue({
                 refreshHandler: vi.fn(),
                 errorHandler: vi.fn()
             })
@@ -311,7 +325,7 @@ describe('SiteService Security', () => {
             vi.resetAllMocks();
             // Default to authorized
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
-            mockTeslaTokenRepo.getLockedRefreshHandler.mockReturnValue({
+            mockTeslaTokenRepo.getLockedUserRefreshHandler.mockReturnValue({
                 refreshHandler: vi.fn(),
                 errorHandler: vi.fn()
             });
