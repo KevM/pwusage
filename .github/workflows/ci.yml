@@ -147,7 +147,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           MIGRATION_DB_URL=$(echo "$DATABASE_URL" | sed 's/:6543/:5432/')
-          supabase migration up --db-url "$MIGRATION_DB_URL"
+          supabase migration up --yes --db-url "$MIGRATION_DB_URL"
 
   deploy:
     name: Deploy to Vercel
