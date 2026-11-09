@@ -2,7 +2,8 @@ import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { randomUUID } from 'node:crypto';
 import { withIoDeadline, checkIoDeadline, abortable } from './io-deadline';
 import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
-import { BatteryHoldRepo } from './battery-hold-repo';
+import { BatteryHoldRepo, START_LEASE_MS } from './battery-hold-repo';
+export { START_LEASE_MS };
 import { createTeslaClientForSite, createTeslaClientForSiteMember } from './tesla-client-factory';
 import { siteMembershipEnabled } from './site-membership-flag';
 import type { BatteryHold } from './db';
@@ -11,6 +12,8 @@ import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
 import { logEvent } from './observability';
 
 const START_RESERVE_SETTLE_MS = 60 * 1000;
+/** The Tesla command must give up well inside the start lease renewed just before it. */
+export const START_COMMAND_DEADLINE_MS = 60 * 1000;
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
 import { computeTargetReserve, planReserve } from './battery-hold-rules';
@@ -59,7 +62,7 @@ export async function parkBattery(
       }
       logEvent('warn', 'battery-hold.retired-no-usable-members', { siteId: existing.site_id });
     }
-    return await parkBatteryWithClaim(deps, claimKey);
+    return await parkBatteryWithClaim(deps, claimKey, owner);
   } finally {
     await repo.releaseStart(claimKey, owner);
   }
@@ -68,6 +71,7 @@ export async function parkBattery(
 async function parkBatteryWithClaim(
   { client, repo, siteId, userId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
   claimKey: string,
+  owner: string,
 ): Promise<ParkResult> {
   if (mode === 'timer') {
     if (durationHours === undefined || durationHours === null || typeof durationHours !== 'number' || Number.isNaN(durationHours) || durationHours <= 0) {
@@ -121,8 +125,14 @@ async function parkBatteryWithClaim(
     ? Math.round((durationHours ?? 0) * 60 * 60 * 1000)
     : SAFETY_HOLD_MS;
 
+  // Tesla rate-limit retries can outlast the lease taken at the start. Confirm we
+  // still own it (extending it) before commanding, and abandon the command before
+  // the renewed lease could lapse, so no second start can slip in alongside us.
+  if (!await repo.renewStart(claimKey, owner)) {
+    return { status: 'error', message: 'Battery Saver is already updating.' };
+  }
   try {
-    const resp = await client.setBackupReserve(siteId, target);
+    const resp = await withIoDeadline(START_COMMAND_DEADLINE_MS, () => client.setBackupReserve(siteId, target));
     if (userId) {
       try { await repo.clearCommandsDenied(siteId, userId); }
       catch { console.warn(`[BatteryHold] Could not clear command denial for site ${siteId}`); }

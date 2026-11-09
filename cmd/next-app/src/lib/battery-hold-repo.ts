@@ -35,6 +35,9 @@ function mapRow(row: {
   };
 }
 
+/** How long a start owns its hardware claim before another request may take it. */
+export const START_LEASE_MS = 90 * 1000;
+
 export class BatteryHoldRepo {
   async getRestoreCandidates(holdId: number, preferredUserId?: string): Promise<string[]> {
     const { rows } = await pool.query<{ user_id: string }>(`
@@ -74,11 +77,21 @@ export class BatteryHoldRepo {
   async claimStart(key: string, owner: string): Promise<boolean> {
     const result = await pool.query(`
       INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at)
-      VALUES ($1, $2::uuid, clock_timestamp() + interval '90 seconds')
+      VALUES ($1, $2::uuid, clock_timestamp() + $3::int * interval '1 millisecond')
       ON CONFLICT (claim_key) DO UPDATE
       SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at
       WHERE "BatteryHoldStartClaim".expires_at <= clock_timestamp()
-    `, [key, owner]);
+    `, [key, owner, START_LEASE_MS]);
+    return result.rowCount === 1;
+  }
+
+  /** Extend a live lease; false if it lapsed or another start owns it now. */
+  async renewStart(key: string, owner: string): Promise<boolean> {
+    const result = await pool.query(`
+      UPDATE "BatteryHoldStartClaim"
+      SET expires_at = clock_timestamp() + $3::int * interval '1 millisecond'
+      WHERE claim_key = $1 AND owner = $2::uuid AND expires_at > clock_timestamp()
+    `, [key, owner, START_LEASE_MS]);
     return result.rowCount === 1;
   }
 
