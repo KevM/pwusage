@@ -340,8 +340,46 @@ export class SiteRepo {
     }
 
     async assignSiteToUser(siteId: string, userId: string): Promise<void> {
-        await pool.query('UPDATE "Site" SET user_id = $1 WHERE id = $2', [userId, siteId]);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+            if (site.rowCount !== 1) throw new Error(`Site ${siteId} not found`);
+            // Before the sharing cutover there is exactly one member per row.
+            await client.query('DELETE FROM "SiteMember" WHERE site_id = $1 AND user_id <> $2', [siteId, userId]);
+            await client.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+                VALUES ($1, $2, $1)
+                ON CONFLICT (site_id, user_id) DO UPDATE
+                SET tesla_energy_site_id = EXCLUDED.tesla_energy_site_id,
+                    last_seen_in_tesla_at = now()`, [siteId, userId]);
+            await client.query('UPDATE "Site" SET user_id = $1, tesla_connection_user_id = $1 WHERE id = $2', [userId, siteId]);
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
         this.invalidateCache(siteId);
+    }
+
+    /** A successful product list is the authority for the pre-sharing owner rows. */
+    async removeSitesMissingFromTesla(userId: string, listedTeslaIds: string[], fetchedAt: Date): Promise<string[]> {
+        const { rows } = await pool.query<{ site_id: string }>(`
+            WITH removed AS (
+                DELETE FROM "SiteMember"
+                WHERE user_id = $1
+                  AND NOT (tesla_energy_site_id = ANY($2::text[]))
+                  AND last_seen_in_tesla_at < $3
+                RETURNING site_id
+            )
+            UPDATE "Site" s SET user_id = NULL
+            FROM removed r
+            WHERE s.id = r.site_id AND s.user_id = $1
+            RETURNING s.id AS site_id
+        `, [userId, listedTeslaIds, fetchedAt]);
+        for (const row of rows) this.invalidateCache(row.site_id);
+        return rows.map(row => row.site_id);
     }
 
     async upsertSite(params: {

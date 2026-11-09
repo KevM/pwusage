@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queryMock } = vi.hoisted(() => ({
-    queryMock: vi.fn()
+const { queryMock, connectMock, clientQueryMock, releaseMock } = vi.hoisted(() => ({
+    queryMock: vi.fn(),
+    connectMock: vi.fn(),
+    clientQueryMock: vi.fn(),
+    releaseMock: vi.fn(),
 }));
 
 vi.mock('./db', () => ({
     pool: {
-        query: queryMock
+        query: queryMock,
+        connect: connectMock,
     }
 }));
 
@@ -364,16 +368,36 @@ describe('SiteRepo.getSitesWithTariffs', () => {
 describe('SiteRepo new commands and queries', () => {
     beforeEach(() => {
         queryMock.mockReset();
+        connectMock.mockReset();
+        clientQueryMock.mockReset();
+        releaseMock.mockReset();
     });
 
-    it('assignSiteToUser updates Site.user_id', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [] });
+    it('assignSiteToUser mirrors the sole member and connection atomically', async () => {
+        clientQueryMock.mockResolvedValue({ rowCount: 1, rows: [{ id: 'site-1' }] });
+        connectMock.mockResolvedValue({ query: clientQueryMock, release: releaseMock });
         const repo = new SiteRepo();
         await repo.assignSiteToUser('site-1', 'user-1');
-        expect(queryMock).toHaveBeenCalledWith(
-            'UPDATE "Site" SET user_id = $1 WHERE id = $2',
-            ['user-1', 'site-1']
-        );
+        expect(clientQueryMock.mock.calls.map(call => String(call[0]))).toEqual([
+            'BEGIN',
+            'SELECT id FROM "Site" WHERE id = $1 FOR UPDATE',
+            'DELETE FROM "SiteMember" WHERE site_id = $1 AND user_id <> $2',
+            expect.stringContaining('INSERT INTO "SiteMember"'),
+            'UPDATE "Site" SET user_id = $1, tesla_connection_user_id = $1 WHERE id = $2',
+            'COMMIT',
+        ]);
+        expect(releaseMock).toHaveBeenCalled();
+    });
+
+    it('removes only membership rows absent from a successful Tesla list', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ site_id: 'old-site' }] });
+        const fetchedAt = new Date('2026-11-08T20:00:00Z');
+        const removed = await new SiteRepo().removeSitesMissingFromTesla('user-1', ['current-site'], fetchedAt);
+        expect(removed).toEqual(['old-site']);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('last_seen_in_tesla_at < $3');
+        expect(sql).toContain('SET user_id = NULL');
+        expect(params).toEqual(['user-1', ['current-site'], fetchedAt]);
     });
 
     it('getSiteJson returns parsed json blob', async () => {

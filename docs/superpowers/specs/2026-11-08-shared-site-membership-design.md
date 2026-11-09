@@ -93,7 +93,7 @@ is production or a recent copy of it. Check that before running the backfill.
 
 | # | Question | How to answer | Effect |
 | --- | --- | --- | --- |
-| U2 | Can an invited account's token change the reserve using its own current ID? | The earlier Battery Saver attempt sent no command, so it proved nothing. Run `scripts/set-backup-reserve.ts --site <id> --percent <current+1> --confirm --restore` as the invited account on beta. | If denied: those members see data, Battery Saver start is unavailable for them, and restore needs a member who can send commands. The design holds either way. |
+| U2 | Can an invited account's token change the reserve using its own current ID? **Owner confirmed yes on 2026-11-08.** | The owner confirmed invited-account reserve changes work. This implementation session did not rerun the beta script. | Invited members can start Battery Saver with their own grant. |
 | U3 | What does a removed account's token get when it calls its old ID? **Reads are answered:** on 2026-11-08 production gap heal called the son's replaced ID, refreshed the token after a 401, then got `404 not_found` from `calendar_history`. Commands are still unknown. | Same script, after removal. | Sets what a removed connection user's failed reads look like while they wait for the daily check (section 6.3). Not a blocker. |
 | U4 | What happens at the API during a real ownership transfer? | Asked Tesla in [SUPPORT-2194](https://fleetapi-support.tesla.com/servicedesk/customer/portal/1/SUPPORT-2194), opened 2026-11-08, no answer yet. A real sale can't be simulated. | Sets how much the seller-removal timing risk (section 5) matters. |
 | U5 | Does hardware ID survive a gateway or Powerwall replacement? | Ask Tesla, or watch for it. | If not, a replaced system becomes a fresh site. Acceptable, but known. |
@@ -521,7 +521,7 @@ setting up again.
 
 Each phase is its own draft PR with lint, typecheck, tests and build passing.
 
-**Phase 0: testing.** Done, apart from U2 to U5. None of them block Phase 1.
+**Phase 0: testing.** Done, apart from U3 to U5. U2 was confirmed by the owner. None of the remaining questions block Phase 1.
 
 **Phase 1: Fixes for today, no sharing yet.**
 
@@ -595,7 +595,7 @@ deletions in each order.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
-| Q1 | **Run the invited-account command test (U2).** | Needed before Phase 3, not before Phase 1. |
+| Q1 | Can an invited account change the reserve with its own grant (U2)? | The owner confirmed yes on 2026-11-08. |
 | Q2 | How should a second account join? | **Decided by the owner: automatically on the live check** (section 5). A buyer joining a seller's site before Tesla removes the seller is an accepted risk. |
 | Q3 | When Tesla removes the last member (a sold home) and nobody chose to delete anything, how long do we keep the data? | Delete after 30 days with a small daily job. Crons skip it in the meantime. Keeping it forever is simpler but has a privacy cost. |
 | Q4 | Should new members see history from before they joined? | Yes. Tesla's app shows invited users history too. Mention it on the privacy page. |

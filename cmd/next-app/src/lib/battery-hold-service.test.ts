@@ -12,6 +12,8 @@ function fakeRepo(active: BatteryHold | null) {
     claimStart: vi.fn().mockResolvedValue(true),
     releaseStart: vi.fn().mockResolvedValue(undefined),
     getActiveHoldForClaim: vi.fn().mockResolvedValue(active),
+    getLatestRestoredHoldForClaim: vi.fn().mockResolvedValue(null),
+    retireUnrestorableHold: vi.fn().mockResolvedValue(false),
     getActiveHold: vi.fn().mockResolvedValue(active),
     claimHold: vi.fn().mockResolvedValue(true),
     releaseHold: vi.fn().mockResolvedValue(undefined),
@@ -63,6 +65,27 @@ describe('parkBattery', () => {
     expect(client.getEnergySiteInfo).not.toHaveBeenCalled();
     expect(client.setBackupReserve).not.toHaveBeenCalled();
     expect(repo.releaseStart).not.toHaveBeenCalled();
+  });
+
+  it('refuses a hold on another site row for the same Powerwall', async () => {
+    const repo = fakeRepo({ id: 9, site_id: 'other-site' } as BatteryHold);
+    const client = fakeClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });
+    expect(result).toEqual({ status: 'error', message: 'Battery Saver is already active on this Powerwall.' });
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.releaseStart).toHaveBeenCalled();
+  });
+
+  it('can start after atomically retiring an expired hold with no usable member', async () => {
+    const repo = fakeRepo({ id: 9, site_id: 'other-site' } as BatteryHold);
+    repo.retireUnrestorableHold.mockResolvedValue(true);
+    const client = fakeClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', reserveChoice: 100 });
+    expect(result.status).toBe('ok');
+    expect(repo.retireUnrestorableHold).toHaveBeenCalledWith(9);
+    expect(client.setBackupReserve).toHaveBeenCalledTimes(1);
   });
 
   it('parks at an explicit 100 choice in the ambiguous band and records the hold', async () => {
@@ -148,7 +171,7 @@ describe('parkBattery', () => {
   });
 
   it('refuses when a hold is already active', async () => {
-    const repo = fakeRepo({ id: 9 } as BatteryHold);
+    const repo = fakeRepo({ id: 9, site_id: 's' } as BatteryHold);
     const client = fakeClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });

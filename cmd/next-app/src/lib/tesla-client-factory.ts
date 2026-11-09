@@ -36,13 +36,14 @@ export async function createTeslaClientForSite(
     }
     const siteRepo = new SiteRepo();
     const tokenRepo = new TeslaTokenRepo(siteRepo);
-    const handlers = tokenRepo.getLockedRefreshHandler(siteId);
+    // Keep this client on the account selected at construction. A connection
+    // move must not make an in-flight call adopt another member's grant.
+    const handlers = tokenRepo.getLockedUserRefreshHandler(tokens.user_id);
     return new TeslaClient({
         accessToken: tokens.access_token || 'expired',
         beforeRequest: async () => {
-            const current = await new UserRepo().getTokensForSite(siteId);
+            const current = await new UserRepo().getTokens(tokens.user_id);
             assertTeslaConnection(current);
-            if (tokens.user_id !== current?.user_id) throw new Error('Site owner changed');
             return current;
         },
         refreshToken: tokens.refresh_token,
