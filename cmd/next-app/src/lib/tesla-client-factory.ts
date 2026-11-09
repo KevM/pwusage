@@ -27,6 +27,20 @@ async function currentTeslaConnection(userId: string) {
 }
 
 /**
+ * The site's connection credentials. With shared sites on, a missing or unusable connection
+ * (revoked, inactive, needs reconnect) is first moved to a usable member and re-read, so every
+ * reader sees the repaired connection rather than a reconnect prompt a healthy member makes untrue.
+ */
+export async function getSiteConnectionTokens(siteId: string) {
+    let tokens = await new UserRepo().getTokensForSite(siteId);
+    if (siteMembershipEnabled() && (!tokens?.refresh_token || tokens.is_active !== true || requiresTeslaReconnect(tokens))) {
+        await new SiteRepo().repairConnection(siteId);
+        tokens = await new UserRepo().getTokensForSite(siteId);
+    }
+    return tokens;
+}
+
+/**
  * Construct a TeslaClient for a specific site, wired with site-level locked token refresh handlers.
  * Returns null if no valid refresh_token exists for the site.
  */
@@ -34,11 +48,7 @@ export async function createTeslaClientForSite(
     siteId: string,
     options?: TeslaClientFactoryOptions
 ): Promise<TeslaClient | null> {
-    let tokens = await new UserRepo().getTokensForSite(siteId);
-    if (siteMembershipEnabled() && (!tokens?.refresh_token || tokens.is_active !== true || requiresTeslaReconnect(tokens))) {
-        await new SiteRepo().repairConnection(siteId);
-        tokens = await new UserRepo().getTokensForSite(siteId);
-    }
+    const tokens = await getSiteConnectionTokens(siteId);
     if (!tokens?.refresh_token) {
         return null;
     }

@@ -1,4 +1,4 @@
-import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
+import { isTeslaConnectionRequired, TeslaRefreshError, TeslaRefreshBackoffError } from './tesla-refresh-outcome';
 import { randomUUID } from 'node:crypto';
 import { withIoDeadline, checkIoDeadline, abortable } from './io-deadline';
 import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
@@ -224,14 +224,41 @@ export async function restoreBattery(deps: RestoreDeps): Promise<RestoreResult> 
   return result;
 }
 
+/** Failures that prove the command (or read) was never accepted: Tesla rejected the member's access,
+ * or their refresh was rejected/backed off/unavailable before or right after a 401. Unlike a timeout,
+ * these leave the outcome known, so another member can safely be tried. */
+function isNotAppliedFailure(e: unknown): boolean {
+  return (e instanceof TeslaAuthError && (e.status === 401 || e.status === 403))
+    || e instanceof TeslaRefreshError || e instanceof TeslaRefreshBackoffError || isTeslaConnectionRequired(e);
+}
+
 async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHoldId, leaseOwner, actorUserId }: RestoreDeps): Promise<RestoreResult> {
   const hold = await repo.getActiveHold(siteId);
   if (!hold || hold.id !== expectedHoldId || !leaseOwner || !await repo.ownsHold(hold.id, leaseOwner)) return { status: 'no_active_hold' };
   const isRecent = Date.now() - hold.created_at.getTime() < 5 * 60 * 1000;
+  /** Read the site's reserve through the connection client, then each candidate member, so one
+   * member's rejected, backed-off or removed grant doesn't end the restore before others are tried. */
+  async function readReserveWithFailover(): Promise<number> {
+    let firstError: unknown;
+    const makers: Array<() => Promise<TeslaClient | null>> = [async () => client];
+    if (shared) for (const id of candidates) if (id) makers.push(() => createTeslaClientForSiteMember(siteId, id));
+    for (const make of makers) {
+      try {
+        const readClient = await make();
+        if (readClient) return (await readClient.getEnergySiteInfo(siteId)).backup_reserve_percent;
+      } catch (e) {
+        firstError ??= e;
+        if (!isNotAppliedFailure(e)) throw e;
+      }
+    }
+    throw firstError ?? new Error('No usable Tesla client for this site.');
+  }
+  const shared = siteMembershipEnabled();
+  const candidates = shared ? await repo.getRestoreCandidates(hold.id, actorUserId) : [null];
   // Uncertain commands always reconcile via a read, including manual retries.
   if (hold.restore_attempted_at || (reason !== 'manual' && !isRecent)) {
     let current: number;
-    try { current = (await client.getEnergySiteInfo(siteId)).backup_reserve_percent; }
+    try { current = await readReserveWithFailover(); }
     catch (e) { return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) }; }
     if (!Number.isInteger(current) || current < 0 || current > 100) return { status: 'error', message: 'Tesla did not return a valid backup reserve.' };
     if (current !== hold.target_reserve && current !== hold.original_reserve) {
@@ -248,8 +275,6 @@ async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHol
       return { status: 'error', message: 'Previous restoration outcome is pending. Waiting before another command.' };
     }
   }
-  const shared = siteMembershipEnabled();
-  const candidates = shared ? await repo.getRestoreCandidates(hold.id, actorUserId) : [null];
   for (const memberId of candidates) {
     const commandClient = memberId ? await createTeslaClientForSiteMember(siteId, memberId) : client;
     if (!commandClient) continue;
@@ -259,8 +284,9 @@ async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHol
       checkIoDeadline();
       await abortable(commandClient.setBackupReserve(siteId, hold.original_reserve));
     } catch (e) {
-      if (e instanceof TeslaAuthError && (e.status === 401 || e.status === 403)) {
-        if (memberId) {
+      if (isNotAppliedFailure(e)) {
+        // Only Tesla's own 401/403 is a command-permission denial; a refresh failure says nothing about it.
+        if (memberId && e instanceof TeslaAuthError) {
           try { await repo.markCommandsDenied(siteId, memberId); }
           catch { console.warn(`[BatteryHold] Could not record command denial for site ${siteId}`); }
         }

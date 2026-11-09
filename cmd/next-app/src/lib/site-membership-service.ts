@@ -45,7 +45,10 @@ export class SiteMembershipService {
             if (!hardwareId) logEvent('warn', 'site.member.hardware-missing', { teslaId });
             const result = await this.resolveProduct(userId, teslaId, info, hardwareId, fetchedAt);
             siteIds.add(result.siteId);
-            if (result.kind === 'fresh') await this.importer.ensureSite(teslaId);
+            // A retained placeholder rejoined by its first member is also unfinished until it has a tariff.
+            if (result.kind === 'fresh' || (result.siteId === teslaId && await this.sites.needsInitialImport(result.siteId))) {
+                await this.importer.ensureSite(teslaId);
+            }
         }
 
         // A changed ID was already handled as a re-invite above. Each removal

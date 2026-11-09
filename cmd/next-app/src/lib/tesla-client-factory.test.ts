@@ -3,7 +3,8 @@ import {
     createTeslaClientForSite,
     createTeslaClientForSiteMember,
     createTeslaClientForUser,
-    createTeslaClientForAccessToken
+    createTeslaClientForAccessToken,
+    getSiteConnectionTokens
 } from './tesla-client-factory';
 import { TeslaClient } from './tesla-client';
 
@@ -60,6 +61,28 @@ describe('TeslaClientFactory', () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
+    });
+
+    describe('getSiteConnectionTokens', () => {
+        it('moves a broken connection to a usable member and re-reads, only when membership is enabled', async () => {
+            const broken = { access_token: 'a', refresh_token: 'r', user_id: 'old', is_active: true, tesla_refresh_state: 'reconnect_required' };
+            const healthy = { access_token: 'b', refresh_token: 'r2', user_id: 'new', is_active: true, tesla_refresh_state: 'ready' };
+            mockGetTokensForSite.mockResolvedValueOnce(broken).mockResolvedValueOnce(healthy);
+            expect(await getSiteConnectionTokens('home')).toEqual(broken);
+            expect(mockRepairConnection).not.toHaveBeenCalled();
+            vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            try {
+                mockGetTokensForSite.mockReset();
+                mockGetTokensForSite.mockResolvedValueOnce(broken).mockResolvedValueOnce(healthy);
+                expect(await getSiteConnectionTokens('home')).toEqual(healthy);
+                expect(mockRepairConnection).toHaveBeenCalledWith('home');
+                mockRepairConnection.mockClear();
+                mockGetTokensForSite.mockReset();
+                mockGetTokensForSite.mockResolvedValue(healthy);
+                await getSiteConnectionTokens('home');
+                expect(mockRepairConnection).not.toHaveBeenCalled();
+            } finally { vi.unstubAllEnvs(); }
+        });
     });
 
     describe('createTeslaClientForSite', () => {
