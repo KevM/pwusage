@@ -78,7 +78,7 @@ extension TodayEnergyWidgetTests {
                                                           date: TodayEnergyPreviewFixtures.date,
                                                           metric: selection.metric)
                     .padding(10).frame(width: 141, height: 141)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .background(TodayEnergyMetricFill(metric: selection.metric))
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .environment(\.dynamicTypeSize, .xxxLarge)
                 try render(view, name: "today-widget-small-\(selection.name)-\(dark ? "dark" : "light").png")
@@ -93,7 +93,7 @@ extension TodayEnergyWidgetTests {
                                                       date: TodayEnergyPreviewFixtures.date,
                                                       family: .systemSmall, metric: metric)
                 .frame(width: 141, height: 141)
-                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .background(TodayEnergyMetricFill(metric: metric))
                 .environment(\.colorScheme, .light)
             try render(view, name: "today-widget-canvas-small-\(metric.rawValue).png")
         }
