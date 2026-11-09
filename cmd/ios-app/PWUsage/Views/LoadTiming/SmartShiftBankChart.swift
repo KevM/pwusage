@@ -73,7 +73,7 @@ struct SmartShiftBankChart: View {
 
     private func column(_ bar: SmartShiftBar, geometry: SmartShiftBarGeometry) -> some View {
         GeometryReader { proxy in
-            let width = min(70, proxy.size.width * 0.6)
+            let width = min(SmartShiftBarGeometry.maxBarWidth, proxy.size.width * 0.6)
             let center = proxy.size.width / 2
             ZStack(alignment: .topLeading) {
                 bank(bar, geometry: geometry, width: width, center: center)
