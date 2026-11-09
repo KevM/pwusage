@@ -505,8 +505,12 @@ Only rows with matching hardware need this. Today that is Harrison alone, with t
    (`sample_count = expected_slots`) can't be missing any, so it needs no decoding. `writeDay` ignores an older fetch over
    stored samples, so these can't be copied the same way. List them in the dry run. The owner refetches them through the
    primary or names the days they accept losing.
-5. In one transaction: recheck steps 3 and 4 against current rows and refuse if anything remains, since crons may have added
-   days; then move the secondary's members to the primary, keeping each `tesla_energy_site_id`; repoint TRMNL installations
+5. **Take the Battery Saver start claim (section 7)** for the shared `tesla_hardware_id`, and refuse if it's held. A start
+   sends its command before creating its hold, so rechecking holds without the claim could miss one in progress and delete
+   the row it's about to use. Take the claim only here, not across step 3's copies: the lease wouldn't reliably outlast them,
+   and any earlier start has finished once the claim is free. Release it in `finally`, conditioned on `owner`.
+6. In one transaction, under that claim: recheck for active holds on both rows, and recheck steps 3 and 4 against current
+   rows, refusing if anything remains, since crons may have added days; then move the secondary's members to the primary, keeping each `tesla_energy_site_id`; repoint TRMNL installations
    and tags; delete the secondary's `EnergyDayArchive` rows, then the secondary itself, which cascades its rate plans, holds
    and activity registrations. A bare site delete fails (section 9).
 
@@ -576,7 +580,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Battery Saver | Two concurrent starts through duplicate rows send exactly one command; the claim is taken before the reserve read; an expired claim can be taken over and a stale owner can't release it; a failed `createHold` still restores; `reserve_sync_pending` spans rows; guard across rows; an expired hold that isn't restored yet still blocks a start through another row; an expired hold with nobody usable is retired and the start goes ahead; one with a usable member, a retry floor or a restore processing isn't retired; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
 | Deletion | Seeded with summaries that reference a rate plan: member leaves and the site survives; last member removes everything; simultaneous deletes; login racing deletion. |
-| Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; a secondary-only day older than 14 days ends up on the primary, priced with its rate plan; a day added after the copy, a same-day secondary record with a timestamp the primary lacks, even with an equal or lower sample count, and differing timezones each refuse; a rerun after a failed copy finishes cleanly; refuses with an active hold; dry run writes nothing. |
+| Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; a secondary-only day older than 14 days ends up on the primary, priced with its rate plan; a day added after the copy, a same-day secondary record with a timestamp the primary lacks, even with an equal or lower sample count, and differing timezones each refuse; a rerun after a failed copy finishes cleanly; refuses with an active hold, including one created after the first check; refuses while a start holds the claim, and a start refuses while the merge holds it; dry run writes nothing. |
 
 **Vitest, mocked:** access helpers for added and removed members, battery-hold route tokens and errors, `/profile`, `syncUserEmail`,
 reconnect wording, flag off matches current behaviour, and `DELETE /api/user` on a shared site.
