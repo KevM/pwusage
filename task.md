@@ -40,6 +40,8 @@ Branch: codex/shared-site-membership
 - [x] Pin site clients to their selected account; reconcile stale site rows after a successful Tesla product list; keep new hardware IDs; guard reserve settle across duplicate rows; retire expired holds only when nobody can restore; add disposable PostgreSQL regression tests.
 - [x] Attribute TRMNL installs to the signed-in installer and sync webhook email only to that account.
 - [ ] Finish Phase 1: shared-safe account deletion (PR #319 is still documentation-only), fuller PostgreSQL coverage, remaining identity fixes.
-- [ ] Phases 2–5: Tesla ID translation, gated membership cutover, product and iOS states, merge tool, rollout and documentation.
+- [x] Phase 2 core: pinned site clients translate all five Tesla site calls from `Site.id` to the member's fresh Tesla ID; missing mappings fail before a request. Legacy product-list access maps IDs back to pwusage sites. Disposable PostgreSQL and web tests cover re-invites and endpoint URLs.
+- [ ] Finish Phase 2: remove unused site-scoped refresh helpers and audit scripts and remaining site call paths.
+- [ ] Phases 3–5: gated membership cutover, product and iOS states, merge tool, rollout and documentation.
 
 U2: The owner confirmed on 2026-11-08 that invited accounts can change the reserve with their own Tesla grant. This session did not rerun the beta script.

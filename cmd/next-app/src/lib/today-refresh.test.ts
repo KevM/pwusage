@@ -48,6 +48,7 @@ const tokens = {
 
 const userRepoMock = {
     getTokensForSite: vi.fn(),
+    getTokensForSiteMember: vi.fn(),
     getTokens: vi.fn(),
 };
 
@@ -131,6 +132,7 @@ describe('refreshTodayData', () => {
         delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
 
         userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        userRepoMock.getTokensForSiteMember.mockResolvedValue({ ...tokens, tesla_energy_site_id: 'site-1', is_active: true, tesla_refresh_state: 'ready' });
         userRepoMock.getTokens.mockResolvedValue({ ...tokens, is_active: true, tesla_refresh_state: 'ready' });
         siteRepoMock.acquireImportLock.mockResolvedValue(true);
         siteRepoMock.releaseImportLock.mockResolvedValue(true);
@@ -266,6 +268,7 @@ describe('refreshTodayData latch', () => {
         vi.unstubAllEnvs();
         delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
         userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        userRepoMock.getTokensForSiteMember.mockResolvedValue({ ...tokens, tesla_energy_site_id: 'site-1', is_active: true, tesla_refresh_state: 'ready' });
         userRepoMock.getTokens.mockResolvedValue({ ...tokens, is_active: true, tesla_refresh_state: 'ready' });
         siteRepoMock.acquireImportLock.mockResolvedValue(true);
         siteRepoMock.releaseImportLock.mockResolvedValue(true);
@@ -409,6 +412,7 @@ describe('refreshLiveStatus', () => {
         delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
 
         userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        userRepoMock.getTokensForSiteMember.mockResolvedValue({ ...tokens, tesla_energy_site_id: 'site-1', is_active: true, tesla_refresh_state: 'ready' });
         userRepoMock.getTokens.mockResolvedValue({ ...tokens, is_active: true, tesla_refresh_state: 'ready' });
         siteRepoMock.getSite.mockResolvedValue({
             id: 'site-1',

@@ -42,10 +42,12 @@ export async function createTeslaClientForSite(
     return new TeslaClient({
         accessToken: tokens.access_token || 'expired',
         beforeRequest: async () => {
-            const current = await new UserRepo().getTokens(tokens.user_id);
+            const current = await new UserRepo().getTokensForSiteMember(siteId, tokens.user_id);
+            if (!current?.tesla_energy_site_id) throw new Error(`Tesla site mapping missing for ${siteId}`);
             assertTeslaConnection(current);
             return current;
         },
+        requireTeslaSiteMapping: true,
         refreshToken: tokens.refresh_token,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,
