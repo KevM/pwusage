@@ -13,6 +13,7 @@ import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
 import type { ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
+import { siteAuthRestoredSql, siteConnectionUserSql } from '../site-outage-sql';
 
 type ArchiveRecord=EnergyDayRecord;
 /**
@@ -298,7 +299,7 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             if(!await this.claimMutation(client,siteId)) {await client.query('ROLLBACK');return {status:'busy'};}
             // The owner's last Tesla access restore restarts the gap-heal window for status.
             const site=(await client.query<{timezone:string;auth_restored_at:Date|null}>(
-                'SELECT s.timezone,u.auth_restored_at FROM "Site" s LEFT JOIN "User" u ON u.id=s.user_id WHERE s.id=$1',[siteId])).rows[0];
+                `SELECT s.timezone,${siteAuthRestoredSql()} AS auth_restored_at FROM "Site" s LEFT JOIN "User" u ON u.id=${siteConnectionUserSql()} WHERE s.id=$1`,[siteId])).rows[0];
             const timezone=site?.timezone;
             if(!timezone||!Number.isSafeInteger(+start)||!Number.isSafeInteger(+now)||+start!==+getSiteMidnight(start,timezone)||start>now)throw new Error('Expected a started local day');
             // A fetch time from the future would lock the day against every later fetch.
@@ -378,8 +379,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
      */
     async getEmptyDays(siteId:string,from:Date,before:Date,now:Date):Promise<EmptyDayState[]> {
         const rows=(await this.pool.query<{day_start:Date;fetched_at:Date;settled:boolean}>(`SELECT a.day_start,a.fetched_at,
-            (a.fetched_at >= a.day_end AND GREATEST(a.day_end,u.auth_restored_at) < $4::timestamptz - make_interval(days => $5)) AS settled
-            FROM "EnergyDayArchive" a JOIN "Site" s ON s.id=a.site_id LEFT JOIN "User" u ON u.id=s.user_id
+            (a.fetched_at >= a.day_end AND GREATEST(a.day_end,${siteAuthRestoredSql()}) < $4::timestamptz - make_interval(days => $5)) AS settled
+            FROM "EnergyDayArchive" a JOIN "Site" s ON s.id=a.site_id LEFT JOIN "User" u ON u.id=${siteConnectionUserSql()}
             WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_start < $3 AND a.status='empty'
             ORDER BY a.day_start`,[siteId,from,before,now,DAY_GAP_HEAL_DAYS])).rows;
         return rows.map(r=>({dayStart:new Date(r.day_start),fetchedAt:new Date(r.fetched_at),settled:r.settled}));

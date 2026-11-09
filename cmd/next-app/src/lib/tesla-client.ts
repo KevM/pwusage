@@ -129,6 +129,8 @@ export interface TeslaClientConfig {
     beforeRequest?: () => Promise<StoredTeslaCredentials | null | void>;
     /** Site clients require a membership mapping on every site request. */
     requireTeslaSiteMapping?: boolean;
+    /** Final site rejection after refresh and retries; never initiates reconciliation. */
+    onFinalSiteRejection?: (status: 401 | 403 | 404) => void;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
@@ -483,6 +485,9 @@ export class TeslaClient {
         }
 
         if (!response.ok) {
+            if (typeof path !== 'string' && (response.status === 401 || response.status === 403 || response.status === 404)) {
+                this.config.onFinalSiteRejection?.(response.status);
+            }
             const body = errorBody ?? await abortable(response.text());
             const shortBody = body.length > 200 ? body.substring(0, 200) + '...' : body;
             if (response.status === 401 || response.status === 403) {

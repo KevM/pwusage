@@ -9,6 +9,7 @@ import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { normalizeFleetBaseUrl } from './tesla-region';
 import { siteMembershipEnabled } from './site-membership-flag';
+import { siteAuthRestoredSql, siteConnectionUserSql } from './site-outage-sql';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -181,7 +182,8 @@ export class UserRepo {
      */
     async getAuthRestoredAtForSite(siteId: string): Promise<Date | null> {
         const { rows } = await pool.query<{ auth_restored_at: Date | null }>(
-            'SELECT u.auth_restored_at FROM "Site" s JOIN "User" u ON u.id = s.user_id WHERE s.id = $1',
+            `SELECT ${siteAuthRestoredSql()} AS auth_restored_at FROM "Site" s
+             LEFT JOIN "User" u ON u.id = ${siteConnectionUserSql()} WHERE s.id = $1`,
             [siteId]
         );
         return rows[0]?.auth_restored_at ?? null;

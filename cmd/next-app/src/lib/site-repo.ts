@@ -5,6 +5,7 @@ import { UPSERT_SITE_SQL } from './site-upsert-sql';
 import { siteMembershipEnabled } from './site-membership-flag';
 import { logEvent } from './observability';
 import { createHash } from 'node:crypto';
+import { siteAuthLostSql, siteAuthRestoredSql, siteConnectionUserSql } from './site-outage-sql';
 
 // Use global cache to persist across reloads in dev
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
@@ -82,47 +83,63 @@ export class SiteRepo {
 
     /** Move a broken site connection to a usable member, without disturbing a healthy grant. */
     async repairConnection(siteId: string): Promise<string | null> {
-        if (!siteMembershipEnabled()) return null;
-        const { rows } = await pool.query<{ previous_user_id: string | null; user_id: string }>(`
+        const moved = await this.repairConnections(siteId);
+        return moved[0]?.user_id ?? null;
+    }
+
+    /** Batch failover before cron site selection; each site's candidate is chosen independently. */
+    async repairAllConnections(): Promise<number> {
+        return (await this.repairConnections(null)).length;
+    }
+
+    private async repairConnections(siteId: string | null): Promise<{ site_id: string; user_id: string }[]> {
+        if (!siteMembershipEnabled()) return [];
+        const { rows } = await pool.query<{ site_id: string; previous_user_id: string | null; user_id: string }>(`
             WITH site_state AS (
                 SELECT s.id, s.tesla_connection_user_id AS previous_user_id,
                        old.auth_lost_at AS previous_auth_lost_at, s.last_live_refresh_at
                 FROM "Site" s
                 LEFT JOIN "User" old ON old.id = s.tesla_connection_user_id
-                WHERE s.id = $1 AND (
+                WHERE ($1::text IS NULL OR s.id = $1) AND (
                     s.tesla_connection_user_id IS NULL OR old.id IS NULL
                     OR old.is_active IS NOT TRUE OR old.refresh_token IS NULL
                     OR old.refresh_token = '' OR old.auth_status = 'revoked'
                     OR old.tesla_refresh_state IN ('uncertain', 'reconnect_required')
                 )
             ), candidate AS (
-                SELECT m.user_id FROM site_state state
-                JOIN "SiteMember" m ON m.site_id = state.id
-                JOIN "User" u ON u.id = m.user_id
-                WHERE u.is_active = true AND NULLIF(u.refresh_token, '') IS NOT NULL
-                  AND u.auth_status IS DISTINCT FROM 'revoked'
-                  AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
-                  AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
-                ORDER BY (m.commands_denied_at IS NOT NULL), m.joined_at, m.user_id
-                LIMIT 1
+                SELECT state.id, next.user_id FROM site_state state
+                CROSS JOIN LATERAL (
+                    SELECT m.user_id FROM "SiteMember" m
+                    JOIN "User" u ON u.id = m.user_id
+                    WHERE m.site_id = state.id
+                      AND u.is_active = true AND NULLIF(u.refresh_token, '') IS NOT NULL
+                      AND u.auth_status IS DISTINCT FROM 'revoked'
+                      AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+                      AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+                    ORDER BY (m.commands_denied_at IS NOT NULL), m.joined_at, m.user_id
+                    LIMIT 1
+                ) next
             ), moved AS (
                 UPDATE "Site" s SET tesla_connection_user_id = c.user_id,
                     user_id = c.user_id,
-                    connection_lost_at = COALESCE(state.previous_auth_lost_at, state.last_live_refresh_at),
+                    connection_lost_at = COALESCE(state.previous_auth_lost_at,
+                        CASE WHEN state.last_live_refresh_at > 0
+                             THEN to_timestamp(state.last_live_refresh_at::double precision / 1000) END),
                     connection_restored_at = now()
-                FROM site_state state, candidate c
+                FROM site_state state JOIN candidate c ON c.id = state.id
                 WHERE s.id = state.id
                   AND s.tesla_connection_user_id IS NOT DISTINCT FROM state.previous_user_id
                   AND s.tesla_connection_user_id IS DISTINCT FROM c.user_id
-                RETURNING state.previous_user_id, c.user_id
-            ) SELECT previous_user_id, user_id FROM moved
+                RETURNING s.id AS site_id, state.previous_user_id, c.user_id
+            ) SELECT site_id, previous_user_id, user_id FROM moved
         `, [siteId]);
-        const moved = rows[0];
-        if (!moved) return null;
-        this.invalidateCache(siteId);
         const accountId = (id: string | null) => id ? createHash('sha256').update(id).digest('hex').slice(0, 16) : null;
-        logEvent('info', 'site.connection.moved', { siteId, previousAccountId: accountId(moved.previous_user_id), accountId: accountId(moved.user_id) });
-        return moved.user_id;
+        for (const moved of rows) {
+            this.invalidateCache(moved.site_id);
+            logEvent('info', 'site.connection.moved', { siteId: moved.site_id,
+                previousAccountId: accountId(moved.previous_user_id), accountId: accountId(moved.user_id) });
+        }
+        return rows;
     }
 
     /** Record a successful product-list observation without moving an ID changed by another login. */
@@ -144,16 +161,43 @@ export class SiteRepo {
 
     /** Remove only the membership checked by an older successful product list. Site history survives. */
     async removeMemberIfMissing(siteId: string, userId: string, teslaId: string, fetchedAt: Date): Promise<boolean> {
+        return this.removeMember(siteId, userId, teslaId, fetchedAt, false);
+    }
+
+    /** An old dead grant can leave only when another member was recently seen on Tesla. */
+    async removeDeadMember(siteId: string, userId: string, teslaId: string): Promise<boolean> {
+        return this.removeMember(siteId, userId, teslaId, new Date(), true);
+    }
+
+    private async removeMember(siteId: string, userId: string, teslaId: string,
+        fetchedAt: Date, deadGrant: boolean): Promise<boolean> {
         const client = await pool.connect();
         let removed = false;
         let endedHold = false;
         try {
             await client.query('BEGIN');
             await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+            if (deadGrant) await client.query('SELECT id FROM "User" WHERE id = $1 FOR UPDATE', [userId]);
+            const removalCondition = deadGrant
+                ? `AND last_seen_in_tesla_at < now() - interval '14 days'
+                   AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = $2
+                       AND u.auth_lost_at < now() - interval '14 days'
+                       AND (u.is_active IS NOT TRUE OR NULLIF(u.refresh_token, '') IS NULL
+                            OR u.auth_status = 'revoked'
+                            OR u.tesla_refresh_state IN ('uncertain', 'reconnect_required')))
+                   AND EXISTS (SELECT 1 FROM "SiteMember" other
+                       JOIN "User" survivor ON survivor.id = other.user_id
+                       WHERE other.site_id = $1 AND other.user_id <> $2
+                         AND other.last_seen_in_tesla_at >= now() - interval '2 days'
+                         AND survivor.is_active = true AND NULLIF(survivor.refresh_token, '') IS NOT NULL
+                         AND survivor.auth_status IS DISTINCT FROM 'revoked'
+                         AND survivor.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+                         AND survivor.tesla_refresh_state IS DISTINCT FROM 'reconnect_required')`
+                : 'AND last_seen_in_tesla_at < $4::timestamptz';
             const result = await client.query(`DELETE FROM "SiteMember"
                 WHERE site_id = $1 AND user_id = $2 AND tesla_energy_site_id = $3
-                  AND last_seen_in_tesla_at < $4::timestamptz RETURNING site_id`,
-            [siteId, userId, teslaId, fetchedAt]);
+                  ${removalCondition} RETURNING site_id`,
+            deadGrant ? [siteId, userId, teslaId] : [siteId, userId, teslaId, fetchedAt]);
             if (result.rowCount === 1) {
                 removed = true;
                 await client.query(`UPDATE "Site" SET user_id = NULL
@@ -401,10 +445,12 @@ export class SiteRepo {
      * the last recorded outage ended and the account is currently active.
      */
     async getSitesForGapHeal(activeSinceMs: number, restoredSinceMs: number): Promise<GapHealSite[]> {
+        const lost = siteAuthLostSql();
+        const restored = siteAuthRestoredSql();
         const { rows } = await pool.query<GapHealSite>(`
-            SELECT s.id, s.timezone, s.installed, u.auth_lost_at, u.auth_restored_at
+            SELECT s.id, s.timezone, s.installed, ${lost} AS auth_lost_at, ${restored} AS auth_restored_at
             FROM "Site" s
-            JOIN "User" u ON u.id = s.user_id
+            LEFT JOIN "User" u ON u.id = ${siteConnectionUserSql()}
             WHERE u.is_active = true
               AND u.refresh_token IS NOT NULL
               AND u.auth_status IS DISTINCT FROM 'revoked'
@@ -414,9 +460,9 @@ export class SiteRepo {
                    OR (u.tesla_refresh_state = 'in_flight' AND u.refresh_lock_expires <= $3))
               AND (s.last_live_refresh_at >= $1
                    OR (u.auth_status = 'active'
-                       AND u.auth_lost_at IS NOT NULL
-                       AND u.auth_restored_at > u.auth_lost_at
-                       AND u.auth_restored_at >= to_timestamp($2::double precision / 1000)))
+                       AND ${lost} IS NOT NULL
+                       AND ${restored} > ${lost}
+                       AND ${restored} >= to_timestamp($2::double precision / 1000)))
             ORDER BY s.last_import_at ASC NULLS FIRST, s.id
         `, [activeSinceMs, restoredSinceMs, Date.now()]);
         return rows;
