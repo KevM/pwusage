@@ -21,7 +21,8 @@ describe('TeslaAuthService', () => {
     };
 
     const mockSiteRepo = {
-        assignSiteToUser: vi.fn()
+        assignSiteToUser: vi.fn(),
+        removeSitesMissingFromTesla: vi.fn().mockResolvedValue([]),
     };
 
     const mockTeslaTokenRepo = {
@@ -148,6 +149,9 @@ describe('TeslaAuthService', () => {
 
         expect(mockImporter.ensureSite).toHaveBeenCalledWith('98765');
         expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'tesla-user-sub');
+        expect(mockSiteRepo.removeSitesMissingFromTesla).toHaveBeenCalledWith(
+            'tesla-user-sub', ['98765'], expect.any(Date)
+        );
         // Login already persisted credentials before Fleet calls. Site linking must
         // not overwrite a concurrent refresh or release another worker's lease.
         expect(mockTeslaTokenRepo.updateSiteTokens).not.toHaveBeenCalled();
@@ -597,6 +601,9 @@ describe('TeslaAuthService', () => {
         if (result.status === 'success') {
             expect(result.siteIds).toEqual([]);
         }
+        expect(mockSiteRepo.removeSitesMissingFromTesla).toHaveBeenCalledWith(
+            'tesla-user-sub', [], expect.any(Date)
+        );
     });
 
     it('(a) unknown-kid -> userInfo ok (realistic TeslaUserInfo shape) -> authenticated (success)', async () => {
@@ -2313,7 +2320,7 @@ describe('TeslaAuthService regional Fleet host', () => {
             getById: vi.fn().mockResolvedValue({ id: 'eu-sub', roles: [] }),
             getByEmail: vi.fn().mockResolvedValue(null),
         };
-        const siteRepo = { assignSiteToUser: vi.fn() };
+        const siteRepo = { assignSiteToUser: vi.fn(), removeSitesMissingFromTesla: vi.fn() };
         const teslaTokenRepo = { updateSiteTokens: vi.fn(), releaseRefreshLock: vi.fn() };
         const importerClients: TeslaClient[] = [];
         const importer = { ensureSite: vi.fn() };

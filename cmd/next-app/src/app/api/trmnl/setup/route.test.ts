@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     verifySiteAccess: vi.fn(),
+    getCurrentUser: vi.fn(),
     getSite: vi.fn(),
     exchangeCodeForToken: vi.fn(),
     fetchMe: vi.fn(),
@@ -10,7 +11,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/auth-checks', () => ({
-    verifySiteAccess: mocks.verifySiteAccess
+    verifySiteAccess: mocks.verifySiteAccess,
+    getCurrentUser: mocks.getCurrentUser,
 }));
 
 vi.mock('@/lib/site-repo', () => ({
@@ -38,6 +40,7 @@ describe('POST /api/trmnl/setup', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.getCurrentUser.mockResolvedValue({ id: 'installer-1' });
         process.env = {
             ...origEnv,
             TRMNL_CLIENT_ID: 'client-id-123',
@@ -110,7 +113,8 @@ describe('POST /api/trmnl/setup', () => {
             'uuid-from-body',
             null,
             expect.any(Object),
-            'access-token-1'
+            'access-token-1',
+            'installer-1'
         );
     });
 
@@ -136,7 +140,8 @@ describe('POST /api/trmnl/setup', () => {
             'uuid-from-jwt',
             null,
             expect.any(Object),
-            mockJwt
+            mockJwt,
+            'installer-1'
         );
     });
 
@@ -163,7 +168,8 @@ describe('POST /api/trmnl/setup', () => {
             null,
             42,
             expect.any(Object),
-            'opaque-access-token'
+            'opaque-access-token',
+            'installer-1'
         );
     });
 
@@ -189,7 +195,8 @@ describe('POST /api/trmnl/setup', () => {
             null,
             null,
             expect.any(Object),
-            'opaque-access-token'
+            'opaque-access-token',
+            'installer-1'
         );
     });
 
@@ -218,7 +225,8 @@ describe('POST /api/trmnl/setup', () => {
                 null,
                 null,
                 expect.any(Object),
-                'opaque-access-token'
+                'opaque-access-token',
+                'installer-1'
             );
         }
     });

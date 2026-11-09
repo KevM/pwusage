@@ -2,13 +2,17 @@ import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { randomUUID } from 'node:crypto';
 import { withIoDeadline, checkIoDeadline, abortable } from './io-deadline';
 import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
-import { BatteryHoldRepo } from './battery-hold-repo';
+import { BatteryHoldRepo, START_LEASE_MS } from './battery-hold-repo';
+export { START_LEASE_MS };
 import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
 import { seedHoldMonitoring } from './battery-hold-monitoring';
 import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
+import { logEvent } from './observability';
 
 const START_RESERVE_SETTLE_MS = 60 * 1000;
+/** The Tesla command must give up well inside the start lease renewed just before it. */
+export const START_COMMAND_DEADLINE_MS = 60 * 1000;
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
 import { computeTargetReserve, planReserve } from './battery-hold-rules';
@@ -34,7 +38,37 @@ export interface ParkDeps {
 }
 
 export async function parkBattery(
+  deps: ParkDeps,
+): Promise<ParkResult> {
+  const { repo, siteId } = deps;
+  const claimKey = await repo.getStartClaimKey(siteId);
+  const owner = randomUUID();
+  if (!await repo.claimStart(claimKey, owner)) {
+    return { status: 'error', message: 'Battery Saver is already updating.' };
+  }
+  try {
+    // Duplicate site rows can each carry an active hold, and the lookup returns
+    // only the newest. Retire one at a time and look again, so a start never
+    // commands the Powerwall while another hold still controls it.
+    for (let existing = await repo.getActiveHoldForClaim(claimKey); existing;
+         existing = await repo.getActiveHoldForClaim(claimKey)) {
+      if (!await repo.retireUnrestorableHold(existing.id)) {
+        return existing.site_id === siteId
+          ? { status: 'already_active', hold: existing }
+          : { status: 'error', message: 'Battery Saver is already active on this Powerwall.' };
+      }
+      logEvent('warn', 'battery-hold.retired-no-usable-members', { siteId: existing.site_id });
+    }
+    return await parkBatteryWithClaim(deps, claimKey, owner);
+  } finally {
+    await repo.releaseStart(claimKey, owner);
+  }
+}
+
+async function parkBatteryWithClaim(
   { client, repo, siteId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
+  claimKey: string,
+  owner: string,
 ): Promise<ParkResult> {
   if (mode === 'timer') {
     if (durationHours === undefined || durationHours === null || typeof durationHours !== 'number' || Number.isNaN(durationHours) || durationHours <= 0) {
@@ -42,15 +76,12 @@ export async function parkBattery(
     }
   }
 
-  const existing = await repo.getActiveHold(siteId);
-  if (existing) return { status: 'already_active', hold: existing };
-
   let live: { percentage_charged: number; load_power: number; timestamp: string };
   let info: { backup_reserve_percent: number };
   let lastRestored: BatteryHold | null;
   try {
     [live, info, lastRestored] = await Promise.all([
-      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHold(siteId),
+      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHoldForClaim(claimKey),
     ]);
   } catch (e) {
     return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
@@ -91,8 +122,14 @@ export async function parkBattery(
     ? Math.round((durationHours ?? 0) * 60 * 60 * 1000)
     : SAFETY_HOLD_MS;
 
+  // Tesla rate-limit retries can outlast the lease taken at the start. Confirm we
+  // still own it (extending it) before commanding, and abandon the command before
+  // the renewed lease could lapse, so no second start can slip in alongside us.
+  if (!await repo.renewStart(claimKey, owner)) {
+    return { status: 'error', message: 'Battery Saver is already updating.' };
+  }
   try {
-    const resp = await client.setBackupReserve(siteId, target);
+    const resp = await withIoDeadline(START_COMMAND_DEADLINE_MS, () => client.setBackupReserve(siteId, target));
     if (resp?.Message && /Max Backup Reserve/i.test(resp.Message)) {
       console.warn(`[BatteryHold] unexpected clamp for ${siteId}: sent ${target}, got "${resp.Message}"`);
     }

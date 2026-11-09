@@ -28,6 +28,17 @@ function dbRow(overrides: Record<string, unknown> = {}) {
 describe('BatteryHoldRepo', () => {
   beforeEach(() => queryMock.mockReset());
 
+  it('retires only an expired unprocessed hold with no usable member', async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1 });
+    expect(await new BatteryHoldRepo().retireUnrestorableHold(9)).toBe(true);
+    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("restore_reason = 'no_usable_members'");
+    expect(sql).toContain('safety_expires_at <= clock_timestamp()');
+    expect(sql).toContain('processing_expires_at <= clock_timestamp()');
+    expect(sql).toContain('NOT EXISTS');
+    expect(params).toEqual([9]);
+  });
+
   it('getActiveHold returns the mapped active hold or null', async () => {
     queryMock.mockResolvedValueOnce({ rows: [dbRow()] });
     const hold = await new BatteryHoldRepo().getActiveHold('site-1');

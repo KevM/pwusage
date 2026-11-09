@@ -28,3 +28,18 @@ Plan: docs/plans/2026-11-02-solar-system-experience.md
 - [x] Verification: suites, lint, Release build, simulator states (loading, waiting, needs location, improving, final; light/dark, AX text, Reduce Motion, location sheet search and map).
 
 Current state: Tasks 1–9 are implemented and verified on the simulator. Remaining for the user: the real-device run on Beta (`cmd/next-app/scripts/dev-history-reset.md`), including the clear-day pass's Debug timing on an iPhone 18 Pro and the oldest phone available; the cadence stays every second slice until those numbers say otherwise.
+
+# Shared site membership (2026-11-08)
+
+Design: docs/superpowers/specs/2026-11-08-shared-site-membership-design.md
+Branch: codex/shared-site-membership
+
+- [x] Create and locally rerun the membership schema migration.
+- [x] Add a physical-hardware Battery Saver start lease and reject starts while another row has an active hold.
+- [x] Resolve `/profile` from the signed-in account.
+- [x] Pin site clients to their selected account; reconcile stale site rows after a successful Tesla product list; keep new hardware IDs; guard reserve settle across duplicate rows; retire expired holds only when nobody can restore; add disposable PostgreSQL regression tests.
+- [x] Attribute TRMNL installs to the signed-in installer and sync webhook email only to that account.
+- [ ] Finish Phase 1: shared-safe account deletion (PR #319 is still documentation-only), fuller PostgreSQL coverage, remaining identity fixes.
+- [ ] Phases 2–5: Tesla ID translation, gated membership cutover, product and iOS states, merge tool, rollout and documentation.
+
+U2: The owner confirmed on 2026-11-08 that invited accounts can change the reserve with their own Tesla grant. This session did not rerun the beta script.

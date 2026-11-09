@@ -1,13 +1,22 @@
 import { TeslaAuthError } from './tesla-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeTargetReserve, parkBattery, restoreBattery } from './battery-hold-service';
+import { computeTargetReserve, parkBattery, restoreBattery, START_COMMAND_DEADLINE_MS, START_LEASE_MS, type ParkDeps } from './battery-hold-service';
 import type { BatteryHold } from './db';
+import type { BatteryHoldRepo } from './battery-hold-repo';
+import type { TeslaClient } from './tesla-client';
 
 const activity = vi.hoisted(() => ({ reconcile: vi.fn() }));
 vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: activity.reconcile }));
 
 function fakeRepo(active: BatteryHold | null) {
   return {
+    getStartClaimKey: vi.fn().mockResolvedValue('hardware-1'),
+    claimStart: vi.fn().mockResolvedValue(true),
+    renewStart: vi.fn().mockResolvedValue(true),
+    releaseStart: vi.fn().mockResolvedValue(undefined),
+    getActiveHoldForClaim: vi.fn().mockResolvedValue(active),
+    getLatestRestoredHoldForClaim: vi.fn().mockResolvedValue(null),
+    retireUnrestorableHold: vi.fn().mockResolvedValue(false),
     getActiveHold: vi.fn().mockResolvedValue(active),
     claimHold: vi.fn().mockResolvedValue(true),
     releaseHold: vi.fn().mockResolvedValue(undefined),
@@ -26,6 +35,11 @@ function fakeRepo(active: BatteryHold | null) {
     markCancelled: vi.fn().mockResolvedValue(true),
     recordMonitoring: vi.fn().mockResolvedValue(undefined),
   };
+}
+
+/** Present the fakes as the dependency types parkBattery declares, without `any`. */
+function asDeps(repo: ReturnType<typeof fakeRepo>, client: ReturnType<typeof fakeClient>): Pick<ParkDeps, 'repo' | 'client'> {
+  return { repo: repo as unknown as BatteryHoldRepo, client: client as unknown as TeslaClient };
 }
 
 function fakeClient(over: Record<string, unknown> = {}) {
@@ -49,6 +63,79 @@ describe('computeTargetReserve', () => {
 });
 
 describe('parkBattery', () => {
+  it('sends no Tesla command when another start owns the hardware claim', async () => {
+    const repo = fakeRepo(null);
+    repo.claimStart.mockResolvedValue(false);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's' });
+    expect(result).toEqual({ status: 'error', message: 'Battery Saver is already updating.' });
+    expect(client.getEnergySiteInfo).not.toHaveBeenCalled();
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.releaseStart).not.toHaveBeenCalled();
+  });
+
+  it('refuses a hold on another site row for the same Powerwall', async () => {
+    const repo = fakeRepo({ id: 9, site_id: 'other-site' } as BatteryHold);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's' });
+    expect(result).toEqual({ status: 'error', message: 'Battery Saver is already active on this Powerwall.' });
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.releaseStart).toHaveBeenCalled();
+  });
+
+  it('can start after atomically retiring an expired hold with no usable member', async () => {
+    const repo = fakeRepo({ id: 9, site_id: 'other-site' } as BatteryHold);
+    repo.retireUnrestorableHold.mockResolvedValue(true);
+    repo.getActiveHoldForClaim.mockResolvedValueOnce({ id: 9, site_id: 'other-site' } as BatteryHold).mockResolvedValue(null);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's', reserveChoice: 100 });
+    expect(result.status).toBe('ok');
+    expect(repo.retireUnrestorableHold).toHaveBeenCalledWith(9);
+    expect(client.setBackupReserve).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks for other active holds after retiring one and refuses while any remains', async () => {
+    const repo = fakeRepo(null);
+    repo.getActiveHoldForClaim
+      .mockResolvedValueOnce({ id: 9, site_id: 'other-site' } as BatteryHold)
+      .mockResolvedValueOnce({ id: 8, site_id: 's' } as BatteryHold);
+    repo.retireUnrestorableHold.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's' });
+    expect(result).toMatchObject({ status: 'already_active', hold: { id: 8 } });
+    expect(repo.retireUnrestorableHold).toHaveBeenNthCalledWith(1, 9);
+    expect(repo.retireUnrestorableHold).toHaveBeenNthCalledWith(2, 8);
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.releaseStart).toHaveBeenCalled();
+  });
+
+  it('renews the start lease before commanding Tesla and refuses when the lease was lost', async () => {
+    const repo = fakeRepo(null);
+    repo.renewStart.mockResolvedValue(false);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's', reserveChoice: 100 });
+    expect(result).toEqual({ status: 'error', message: 'Battery Saver is already updating.' });
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.createHold).not.toHaveBeenCalled();
+    expect(repo.releaseStart).toHaveBeenCalled();
+  });
+
+  it('commands Tesla only after the lease renewal, and gives up before the lease can lapse', async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = fakeRepo(null);
+      const client = fakeClient({ setBackupReserve: vi.fn(() => new Promise(() => {})) });
+      const pending = parkBattery({ ...asDeps(repo, client), siteId: 's', reserveChoice: 100 });
+      await vi.advanceTimersByTimeAsync(START_COMMAND_DEADLINE_MS + 1);
+      const result = await pending;
+      expect(result.status).toBe('error');
+      expect(repo.renewStart.mock.invocationCallOrder[0]).toBeLessThan(client.setBackupReserve.mock.invocationCallOrder[0]);
+      expect(START_COMMAND_DEADLINE_MS).toBeLessThan(START_LEASE_MS);
+      expect(repo.createHold).not.toHaveBeenCalled();
+      expect(repo.releaseStart).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('parks at an explicit 100 choice in the ambiguous band and records the hold', async () => {
     const repo = fakeRepo(null);
     const client = fakeClient();
@@ -132,7 +219,7 @@ describe('parkBattery', () => {
   });
 
   it('refuses when a hold is already active', async () => {
-    const repo = fakeRepo({ id: 9 } as BatteryHold);
+    const repo = fakeRepo({ id: 9, site_id: 's' } as BatteryHold);
     const client = fakeClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });

@@ -252,7 +252,7 @@ describe('POST /api/trmnl/webhook', () => {
         expect(mocks.updateUserEmail).not.toHaveBeenCalled();
     });
 
-    it('syncs email only when site has user_id and user email is absent', async () => {
+    it('syncs email only to the installation creator when their email is absent', async () => {
         mocks.verifyTrmnlToken.mockResolvedValue({
             sub: 'dev-1',
             plugin_setting_id: 10
@@ -262,6 +262,7 @@ describe('POST /api/trmnl/webhook', () => {
             id: 'inst-1',
             uuid: 'dev-1',
             site_id: 'site-a',
+            installed_by_user_id: 'installer-99',
             json: {}
         });
 
@@ -278,7 +279,7 @@ describe('POST /api/trmnl/webhook', () => {
 
         const res = await POST(req);
         expect(res.status).toBe(200);
-        expect(mocks.updateUserEmail).toHaveBeenCalledWith('user-99', 'new@example.com');
+        expect(mocks.updateUserEmail).toHaveBeenCalledWith('installer-99', 'new@example.com');
     });
 
     it('rejects partially numeric plugin_setting_id in body (e.g. "10abc")', async () => {

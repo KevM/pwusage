@@ -33,7 +33,87 @@ function mapRow(row: {
   };
 }
 
+/** How long a start owns its hardware claim before another request may take it. */
+export const START_LEASE_MS = 90 * 1000;
+
 export class BatteryHoldRepo {
+  async getStartClaimKey(siteId: string): Promise<string> {
+    const { rows } = await pool.query<{ claim_key: string }>(`
+      SELECT COALESCE(tesla_hardware_id, 'site:' || id) AS claim_key
+      FROM "Site" WHERE id = $1
+    `, [siteId]);
+    if (!rows[0]) throw new Error('Site not found');
+    return rows[0].claim_key;
+  }
+
+  async claimStart(key: string, owner: string): Promise<boolean> {
+    const result = await pool.query(`
+      INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at)
+      VALUES ($1, $2::uuid, clock_timestamp() + $3::int * interval '1 millisecond')
+      ON CONFLICT (claim_key) DO UPDATE
+      SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at
+      WHERE "BatteryHoldStartClaim".expires_at <= clock_timestamp()
+    `, [key, owner, START_LEASE_MS]);
+    return result.rowCount === 1;
+  }
+
+  /** Extend a live lease; false if it lapsed or another start owns it now. */
+  async renewStart(key: string, owner: string): Promise<boolean> {
+    const result = await pool.query(`
+      UPDATE "BatteryHoldStartClaim"
+      SET expires_at = clock_timestamp() + $3::int * interval '1 millisecond'
+      WHERE claim_key = $1 AND owner = $2::uuid AND expires_at > clock_timestamp()
+    `, [key, owner, START_LEASE_MS]);
+    return result.rowCount === 1;
+  }
+
+  async releaseStart(key: string, owner: string): Promise<void> {
+    await pool.query(`DELETE FROM "BatteryHoldStartClaim"
+      WHERE claim_key = $1 AND owner = $2::uuid`, [key, owner]);
+  }
+
+  async getActiveHoldForClaim(key: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT h.* FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      WHERE COALESCE(s.tesla_hardware_id, 'site:' || s.id) = $1
+        AND h.status = 'active'
+      ORDER BY h.created_at DESC LIMIT 1
+    `, [key]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
+  async getLatestRestoredHoldForClaim(key: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT h.* FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      WHERE COALESCE(s.tesla_hardware_id, 'site:' || s.id) = $1
+        AND h.status = 'restored' AND h.restored_at IS NOT NULL
+      ORDER BY h.restored_at DESC, h.id DESC LIMIT 1
+    `, [key]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
+  /** Retire only an expired hold whose Powerwall has no usable member grant. */
+  async retireUnrestorableHold(id: number): Promise<boolean> {
+    const result = await pool.query(`
+      UPDATE "BatteryHold" h
+      SET status = 'cancelled', restore_reason = 'no_usable_members', restored_at = clock_timestamp()
+      WHERE h.id = $1 AND h.status = 'active'
+        AND h.safety_expires_at <= clock_timestamp()
+        AND (h.processing_expires_at IS NULL OR h.processing_expires_at <= clock_timestamp())
+        AND NOT EXISTS (
+          SELECT 1 FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
+          WHERE m.site_id = h.site_id AND u.is_active = true
+            AND u.refresh_token IS NOT NULL
+            AND u.auth_status IS DISTINCT FROM 'revoked'
+            AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+            AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+        )
+    `, [id]);
+    return result.rowCount === 1;
+  }
+
   async clearRestoreAttempt(id: number, owner: string): Promise<boolean> {
     const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = NULL, restore_reason = NULL
       WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid
