@@ -260,7 +260,7 @@ describe('refreshAccessToken', () => {
         const thrown = await refreshAccessToken('old-refresh').catch((err: unknown) => err);
 
         // Empty strings satisfy a bare `typeof` check, so the previous guard
-        // let them through and updateSiteTokens would have written '' as the
+        // let them through and token persistence would have written '' as the
         // user's access and refresh tokens. A missing field must be equally
         // fatal to an empty one.
         expect(thrown).toBeInstanceOf(Error);

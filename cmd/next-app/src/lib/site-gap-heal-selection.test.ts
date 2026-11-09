@@ -24,7 +24,8 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
             tesla_refresh_state text NOT NULL DEFAULT 'ready', refresh_lock_expires bigint NOT NULL DEFAULT 0
         ); CREATE TABLE "Site" (
             id text PRIMARY KEY, user_id text, timezone text DEFAULT 'America/Chicago',
-            installed timestamptz DEFAULT '2025-01-01Z', last_live_refresh_at bigint, last_import_at bigint
+            installed timestamptz DEFAULT '2025-01-01Z', last_live_refresh_at bigint, last_import_at bigint,
+            tesla_connection_user_id text, connection_lost_at timestamptz, connection_restored_at timestamptz
         )`);
         const fixtures = [
             { id: 'active', live: now - DAY, imported: 2 },
@@ -62,5 +63,21 @@ describe.skipIf(!socket)('gap-heal eligibility after auth recovery (PostgreSQL)'
         expect(sites[0]).toMatchObject({
             auth_lost_at: new Date(now - 30 * DAY), auth_restored_at: new Date(now - 10 * DAY),
         });
+    });
+
+    it('keeps the old outage window after a healthy member takes over the connection', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            await pool.query(`UPDATE "Site" SET tesla_connection_user_id='active',
+                connection_lost_at=$2, connection_restored_at=$3 WHERE id=$1`,
+            ['idle', new Date(now - 20 * DAY), new Date(now - DAY)]);
+            const sites = await new SiteRepo().getSitesForGapHeal(now - 7 * DAY, now - 14 * DAY);
+            const recovered = sites.find(site => site.id === 'idle');
+            expect(recovered).toMatchObject({
+                auth_lost_at: new Date(now - 20 * DAY), auth_restored_at: new Date(now - DAY),
+            });
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 });

@@ -16,6 +16,8 @@ function decryptUserTokens<T extends { access_token?: string | null; refresh_tok
     if ('refresh_token' in row) row = { ...row, refresh_token: decryptToken(row.refresh_token, 'refresh_token', userId) };
     return row;
 }
+import { siteMembershipEnabled } from './site-membership-flag';
+import { siteAuthRestoredSql, siteConnectionUserSql } from './site-outage-sql';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -108,6 +110,9 @@ export class UserRepo {
 
     async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
+        const access = siteMembershipEnabled()
+            ? 'EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id = u.id)'
+            : 's.user_id = u.id';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
         const userRes = await pool.query(`
             SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.tesla_refresh_state, u.tesla_refresh_started_at, u.last_checked_at, u.auth_lost_at, u.auth_restored_at, u.created_at${tokenCols},
@@ -115,10 +120,10 @@ export class UserRepo {
                 SELECT 1
                 FROM "TrmnlInstallation" ti
                 JOIN "Site" s ON s.id = ti.site_id
-                WHERE s.user_id = u.id
+                WHERE ${access}
             ) as has_trmnl_integration,
             (
-                SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE s.user_id = u.id
+                SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE ${access}
             ) as last_data_import
             FROM "User" u
             ORDER BY last_data_import DESC NULLS LAST, u.is_active DESC
@@ -128,7 +133,10 @@ export class UserRepo {
 
         // Fetch all sites (optimization: fetch all and map in memory instead of N+1 queries)
         // We also strip tokens from Site results here
-        const siteRes = await pool.query('SELECT id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode FROM "Site"');
+        const siteRes = await pool.query(siteMembershipEnabled()
+            ? `SELECT s.id, m.user_id, s.name, s.utility, s.updated, s.installed, s.timezone, s.billing_start_day, s.timezone_display_mode
+               FROM "Site" s JOIN "SiteMember" m ON m.site_id = s.id`
+            : 'SELECT id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode FROM "Site"');
         const sites = siteRes.rows as Site[];
 
         // Map sites to users
@@ -178,7 +186,8 @@ export class UserRepo {
      */
     async getAuthRestoredAtForSite(siteId: string): Promise<Date | null> {
         const { rows } = await pool.query<{ auth_restored_at: Date | null }>(
-            'SELECT u.auth_restored_at FROM "Site" s JOIN "User" u ON u.id = s.user_id WHERE s.id = $1',
+            `SELECT ${siteAuthRestoredSql()} AS auth_restored_at FROM "Site" s
+             LEFT JOIN "User" u ON u.id = ${siteConnectionUserSql()} WHERE s.id = $1`,
             [siteId]
         );
         return rows[0]?.auth_restored_at ?? null;
@@ -278,6 +287,13 @@ export class UserRepo {
             // A login, refresh, revocation, or session-version bump during the
             // network check must supersede every eventual verification write.
             // No transaction/row lock is held across a Tesla request.
+            const membershipAccess = siteMembershipEnabled();
+            const siteAccess = membershipAccess
+                ? 'EXISTS (SELECT 1 FROM "SiteMember" WHERE site_id = $5 AND user_id = $3)'
+                : 'EXISTS (SELECT 1 FROM "Site" WHERE id = $5 AND user_id = $3)';
+            const anySite = membershipAccess
+                ? 'EXISTS (SELECT 1 FROM "SiteMember" WHERE user_id = $3)'
+                : 'EXISTS (SELECT 1 FROM "Site" WHERE user_id = $3)';
             const initial = await pool.query<VerificationState>(
                 'SELECT xmin::text AS auth_version, auth_status, is_active, tesla_refresh_state, refresh_lock_expires FROM "User" WHERE id = $1', [user.id],
             );
@@ -302,12 +318,8 @@ export class UserRepo {
                         refresh_lock_expires = CASE WHEN ${DEAD_LEASE} THEN 0 ELSE refresh_lock_expires END,
                         tesla_refresh_state = CASE WHEN ${DEAD_LEASE} THEN 'ready' ELSE tesla_refresh_state END
                     WHERE id = $3 AND xmin::text = $4
-                      AND ($5::text IS NULL OR EXISTS (
-                          SELECT 1 FROM "Site" WHERE id = $5 AND user_id = $3
-                      ))
-                      AND ($1 <> 'no_sites' OR NOT EXISTS (
-                          SELECT 1 FROM "Site" WHERE user_id = $3
-                      ))
+                      AND ($5::text IS NULL OR ${siteAccess})
+                      AND ($1 <> 'no_sites' OR NOT ${anySite})
                 `, [outcome, initial.rows[0].is_active, user.id, authVersion, siteId ?? null, Date.now(), TRANSIENT_BACKOFF_MS]);
                 if (updated.rowCount) return finish(outcome, reason, error, errorMessage);
 
@@ -331,7 +343,9 @@ export class UserRepo {
 
             // Get user's sites to test with
             phase = 'site-lookup';
-            const sitesRes = await pool.query('SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
+            const sitesRes = await pool.query(membershipAccess
+                ? 'SELECT site_id AS id FROM "SiteMember" WHERE user_id = $1 ORDER BY site_id LIMIT 1'
+                : 'SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
             if (sitesRes.rows.length === 0) {
                 // No sites - can't verify credentials
                 return await commitStatus('no_sites', 'no-linked-site');
@@ -347,8 +361,10 @@ export class UserRepo {
             // and falsely revoke a healthy user.
             let createClient = deps?.createClient;
             if (!createClient) {
-                const { createTeslaClientForSite } = await import('./tesla-client-factory');
-                createClient = createTeslaClientForSite;
+                const { createTeslaClientForSite, createTeslaClientForSiteMember } = await import('./tesla-client-factory');
+                createClient = membershipAccess
+                    ? (id => createTeslaClientForSiteMember(id, user.id))
+                    : createTeslaClientForSite;
             }
             phase = 'client-construction';
             const client = await createClient(siteId);
@@ -387,7 +403,7 @@ export class UserRepo {
         }
     }
 
-    async verifyAllUserStatuses() {
+    async verifyAllUserStatuses(deadlineMs = Infinity) {
         const users = await this.getAllUsers();
         logEvent('info', 'tesla.user-verification.batch-started', { userCount: users.length });
         let activeCount = 0;
@@ -398,6 +414,7 @@ export class UserRepo {
         const staleThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
         for (const user of users) {
+            if (Date.now() >= deadlineMs - 5_000) break;
             // Optimization: Skip if checked recently AND active
             const lastChecked = user.last_checked_at ? new Date(user.last_checked_at) : null;
             const isStale = !lastChecked || lastChecked < staleThreshold;

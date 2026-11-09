@@ -1,5 +1,5 @@
 import { requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
-import { UserRepo } from '@/lib/user-repo';
+import { getSiteConnectionTokens } from '@/lib/tesla-client-factory';
 import { observePage, setLogContext } from '@/lib/observability';
 import { SiteRepo } from '@/lib/site-repo';
 import { SiteService } from '@/lib/site-service';
@@ -114,7 +114,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         refDate
     } = result;
 
-    const connection = await new UserRepo().getTokensForSite(id);
+    const connection = await getSiteConnectionTokens(id);
     const reconnectRequired = !connection || requiresTeslaReconnect(connection);
 
     return (

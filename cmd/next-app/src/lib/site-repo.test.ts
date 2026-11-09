@@ -153,6 +153,20 @@ describe('SiteRepo site payload selection', () => {
             expect.anything()
         );
     });
+
+    it('uses memberships for site access only when the cutover is enabled', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            queryMock.mockResolvedValueOnce({ rows: [makeSiteRow({ user_id: 'connection-user' })] });
+            const sites = await new SiteRepo().getSitesForUser('invited-user');
+            expect(sites).toHaveLength(1);
+            const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+            expect(sql).toContain('id IN (SELECT site_id FROM "SiteMember" WHERE user_id = $1)');
+            expect(params).toEqual(['invited-user']);
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
 });
 
 describe('SiteRepo getSite request-scoped cache', () => {

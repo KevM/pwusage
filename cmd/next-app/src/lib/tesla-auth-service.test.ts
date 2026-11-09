@@ -12,6 +12,11 @@ import { TeslaTokenRepo } from './tesla-token-repo';
 import { TeslaClient, TeslaRegionError, type TeslaClientConfig } from './tesla-client';
 import { DEFAULT_FLEET_BASE_URL } from './tesla-region';
 
+const mockSharedSyncLogin = vi.hoisted(() => vi.fn());
+vi.mock('./site-membership-service', () => ({
+    SiteMembershipService: class { syncLogin = mockSharedSyncLogin; },
+}));
+
 describe('TeslaAuthService', () => {
     const mockUserRepo = {
         upsertOnTeslaAuth: vi.fn(),
@@ -26,8 +31,6 @@ describe('TeslaAuthService', () => {
     };
 
     const mockTeslaTokenRepo = {
-        updateSiteTokens: vi.fn(),
-        releaseRefreshLock: vi.fn(),
         getLockedUserRefreshHandler: vi.fn(),
     };
 
@@ -152,10 +155,36 @@ describe('TeslaAuthService', () => {
         expect(mockSiteRepo.removeSitesMissingFromTesla).toHaveBeenCalledWith(
             'tesla-user-sub', ['98765'], expect.any(Date)
         );
-        // Login already persisted credentials before Fleet calls. Site linking must
-        // not overwrite a concurrent refresh or release another worker's lease.
-        expect(mockTeslaTokenRepo.updateSiteTokens).not.toHaveBeenCalled();
-        expect(mockTeslaTokenRepo.releaseRefreshLock).not.toHaveBeenCalled();
+    });
+
+    it('uses shared membership reconciliation for login when the cutover is enabled', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            const tokenExchange = vi.fn().mockResolvedValue({ id_token: 'id', access_token: 'access',
+                refresh_token: 'refresh', expires_in: 3600 });
+            const verifyIdToken = vi.fn().mockResolvedValue({ nonce: 'nonce', sub: 'member', email: 'member@example.com' });
+            const products = [{ energy_site_id: 20, resource_type: 'battery' }];
+            mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'member@example.com' });
+            mockTeslaClient.getProducts.mockResolvedValue(products);
+            mockUserRepo.getById.mockResolvedValue({ id: 'member', roles: ['user'] });
+            mockSharedSyncLogin.mockResolvedValue(['shared-home']);
+            const service = new TeslaAuthService({
+                userRepo: mockUserRepo as unknown as UserRepo,
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+                importerCreator: vi.fn().mockReturnValue(mockImporter),
+                tokenExchange, verifyIdToken,
+            });
+            const result = await service.handleTeslaCallback({ code: 'code', state: 'state', savedState: 'state',
+                savedNonce: 'nonce', callbackUrl: 'http://localhost/callback' });
+            expect(result).toMatchObject({ status: 'success', siteIds: ['shared-home'] });
+            expect(mockSharedSyncLogin).toHaveBeenCalledWith('member', products, expect.any(Date));
+            expect(mockSiteRepo.assignSiteToUser).not.toHaveBeenCalled();
+            expect(mockSiteRepo.removeSitesMissingFromTesla).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it('coordinates refreshes during product import after identity and credentials are saved', async () => {
@@ -2321,7 +2350,7 @@ describe('TeslaAuthService regional Fleet host', () => {
             getByEmail: vi.fn().mockResolvedValue(null),
         };
         const siteRepo = { assignSiteToUser: vi.fn(), removeSitesMissingFromTesla: vi.fn() };
-        const teslaTokenRepo = { updateSiteTokens: vi.fn(), releaseRefreshLock: vi.fn() };
+        const teslaTokenRepo = { getLockedUserRefreshHandler: vi.fn() };
         const importerClients: TeslaClient[] = [];
         const importer = { ensureSite: vi.fn() };
         const service = new TeslaAuthService({
