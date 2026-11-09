@@ -42,6 +42,7 @@ Branch: codex/shared-site-membership
 - [ ] Finish Phase 1: shared-safe account deletion (PR #319 is still documentation-only), fuller PostgreSQL coverage, remaining identity fixes.
 - [x] Phase 2 core: pinned site clients translate all five Tesla site calls from `Site.id` to the member's fresh Tesla ID; missing mappings fail before a request. Legacy product-list access maps IDs back to pwusage sites. Disposable PostgreSQL and web tests cover re-invites and endpoint URLs.
 - [ ] Finish Phase 2: remove unused site-scoped refresh helpers. The script audit found one raw `calendar_history` call in `check-soe-history.ts`; it now reads the mapped ID from the pinned request credentials.
-- [ ] Phases 3–5: gated membership cutover, product and iOS states, merge tool, rollout and documentation.
+- [ ] Phase 3: flag added off by default; site-list and Live Activity access reads now use members when enabled. Join, reconciliation, failover, commands, and broader authorization still need implementation. Do not enable the flag yet.
+- [ ] Phases 4–5: product and iOS states, merge tool, rollout and documentation.
 
 U2: The owner confirmed on 2026-11-08 that invited accounts can change the reserve with their own Tesla grant. This session did not rerun the beta script.
