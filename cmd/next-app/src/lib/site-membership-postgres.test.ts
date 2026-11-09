@@ -276,6 +276,18 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     await repo.releaseStart('hardware-1', next);
   });
 
+  it('renews a start lease only for its live owner, never reviving an expired one', async () => {
+    const owner = randomUUID(); const other = randomUUID();
+    expect(await repo.claimStart('hardware-1', owner)).toBe(true);
+    await local.database.query(`UPDATE "BatteryHoldStartClaim" SET expires_at=now()+interval '5 seconds'`);
+    expect(await repo.renewStart('hardware-1', other)).toBe(false);
+    expect(await repo.renewStart('hardware-1', owner)).toBe(true);
+    const { rows } = await local.database.query(`SELECT expires_at > now() + interval '60 seconds' AS extended FROM "BatteryHoldStartClaim"`);
+    expect(rows[0].extended).toBe(true);
+    await local.database.query(`UPDATE "BatteryHoldStartClaim" SET expires_at=now()-interval '1 second'`);
+    expect(await repo.renewStart('hardware-1', owner)).toBe(false);
+    await repo.releaseStart('hardware-1', owner);
+  });
   it('finds an active hold on another row and retires it only when no usable member remains', async () => {
     const hold = await repo.createHold({ siteId: 's2', originalReserve: 20, targetReserve: 100,
       parkedSoc: 80, baselineLoadW: 500, safetyExpiresAt: new Date(Date.now() - 60_000) });
