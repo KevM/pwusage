@@ -42,15 +42,30 @@ export class UserRepo {
         return decryptUserTokens(res.rows[0], userId);
     }
 
-    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
+    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, tesla_energy_site_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
         const res = await pool.query(`
-            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state, u.refresh_lock_expires, u.tesla_refresh_retry_after
+            SELECT u.access_token, u.refresh_token, u.id as user_id, m.tesla_energy_site_id,
+                   u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state,
+                   u.refresh_lock_expires, u.tesla_refresh_retry_after
             FROM "User" u
-            JOIN "Site" s ON s.user_id = u.id
+            JOIN "Site" s ON s.tesla_connection_user_id = u.id
+            JOIN "SiteMember" m ON m.site_id = s.id AND m.user_id = u.id
             WHERE s.id = $1
         `, [siteId]);
         if (res.rows.length === 0) return null;
         return decryptUserTokens(res.rows[0], res.rows[0].user_id);
+    }
+
+    /** Fresh credentials and Tesla ID for one pinned member, even if the connection moved. */
+    async getTokensForSiteMember(siteId: string, userId: string): Promise<({ access_token: string; refresh_token: string; tesla_energy_site_id: string; fleet_api_base_url: string | null } & TeslaConnectionState) | null> {
+        const res = await pool.query(`
+            SELECT u.access_token, u.refresh_token, m.tesla_energy_site_id,
+                   u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state,
+                   u.refresh_lock_expires, u.tesla_refresh_retry_after
+            FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
+            WHERE m.site_id = $1 AND m.user_id = $2
+        `, [siteId, userId]);
+        return res.rows.length ? decryptUserTokens(res.rows[0], userId) : null;
     }
 
     async isActive(userId: string): Promise<boolean> {

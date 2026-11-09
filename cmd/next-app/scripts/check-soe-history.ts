@@ -120,7 +120,7 @@ async function run(): Promise<void> {
     console.log(`- end: ${end.toISOString()}`);
 
     const rawFetcher = client as unknown as {
-        fetch<T>(path: string, options?: RequestInit): Promise<T>;
+        fetch<T>(path: (stored: { tesla_energy_site_id?: string | null } | null | void) => string, options?: RequestInit): Promise<T>;
     };
 
     const s = start.toISOString();
@@ -147,7 +147,10 @@ async function run(): Promise<void> {
         period: args.period,
         time_zone: tz
     });
-    const raw = await rawFetcher.fetch<RawSoeCalendarHistory>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+    const raw = await rawFetcher.fetch<RawSoeCalendarHistory>((stored) => {
+        if (!stored?.tesla_energy_site_id) throw new Error(`Tesla site mapping missing for ${siteId}`);
+        return `/api/1/energy_sites/${encodeURIComponent(stored.tesla_energy_site_id)}/calendar_history?${query.toString()}`;
+    });
 
     const responseKeys = raw.response ? Object.keys(raw.response) : [];
     console.log('\nRaw response keys:');

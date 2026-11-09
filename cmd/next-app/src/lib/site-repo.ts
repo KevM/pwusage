@@ -65,6 +65,16 @@ export class SiteRepo {
         return rows as Site[];
     }
 
+    /** Legacy no-JWT callers prove access with Tesla's product list. */
+    async getSiteIdsForTeslaIds(teslaIds: string[]): Promise<string[]> {
+        if (teslaIds.length === 0) return [];
+        const { rows } = await pool.query<SiteIdRow>(`
+            SELECT DISTINCT site_id AS id FROM "SiteMember"
+            WHERE tesla_energy_site_id = ANY($1::text[])
+        `, [teslaIds]);
+        return rows.map(row => row.id);
+    }
+
     async getSitesWithTariffs(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         if (siteIds.length === 0) return [];
 
@@ -123,7 +133,7 @@ export class SiteRepo {
     private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         const jsonCol = options?.includeJson ? ', s.json' : '';
         const tokenCols = options?.includeTokens ? ', u.id AS token_owner_id, u.access_token, u.refresh_token, u.auth_status, u.fleet_api_base_url, u.tesla_refresh_state, u.refresh_lock_expires' : '';
-        const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.user_id' : '';
+        const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.tesla_connection_user_id' : '';
         // Site-level columns are fetched one row per site, separately from the
         // tariff tree. Selecting them through the Site × Tariff × Season ×
         // Schedule join repeats the wide values (json blob, Tesla tokens,
@@ -196,6 +206,7 @@ export class SiteRepo {
                 last_live_claim_at: row.last_live_claim_at != null ? Number(row.last_live_claim_at) : undefined,
                 live_status_cache: row.live_status_cache ?? undefined,
                 json: options?.includeJson ? row.json : undefined,
+                token_owner_id: options?.includeTokens ? (row.token_owner_id as string | null) ?? null : undefined,
                 access_token: options?.includeTokens ? decryptToken((row.access_token as string | null) ?? null, 'access_token', row.token_owner_id as string) : undefined,
                 refresh_token: options?.includeTokens ? decryptToken((row.refresh_token as string | null) ?? null, 'refresh_token', row.token_owner_id as string) : undefined,
                 tesla_refresh_state: options?.includeTokens ? row.tesla_refresh_state as SiteWithTariffs['tesla_refresh_state'] : undefined,
@@ -550,7 +561,7 @@ export class SiteRepo {
                 COALESCE(a.archived_days, 0)::int AS archived_days,
                 a.first_archived_day, a.last_archived_day, e.last_energy_at
             FROM "Site" s
-            LEFT JOIN "User" u ON u.id = s.user_id
+            LEFT JOIN "User" u ON u.id = s.tesla_connection_user_id
             LEFT JOIN (
                 SELECT site_id, count(*) AS archived_days,
                     min(day_start) AS first_archived_day, max(day_start) AS last_archived_day

@@ -8,6 +8,7 @@ import { SiteRepo } from './site-repo';
 import { EnergyRepo } from './energy-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { TrmnlService } from './trmnl-service';
+import { UserRepo } from './user-repo';
 import * as authJwt from './auth-jwt';
 import * as observability from './observability';
 
@@ -30,6 +31,7 @@ describe('SiteService Security', () => {
 
     const mockEnergyRepo = {
         getSites: vi.fn(),
+        getSiteIdsForTeslaIds: vi.fn().mockResolvedValue(['12345']),
         getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }])
     };
 
@@ -47,6 +49,19 @@ describe('SiteService Security', () => {
         expect(sites).toHaveLength(1);
         expect(sites[0].id).toBe(mockSite.id);
         expect(mockTeslaClient.getProducts).toHaveBeenCalled();
+        expect(mockEnergyRepo.getSiteIdsForTeslaIds).toHaveBeenCalledWith(['12345']);
+    });
+
+    it('maps a Tesla product ID back to the pwusage site ID in the legacy path', async () => {
+        mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 98765 }]);
+        mockEnergyRepo.getSiteIdsForTeslaIds.mockResolvedValueOnce(['pwusage-site']);
+        mockEnergyRepo.getSites.mockResolvedValueOnce([{ id: 'pwusage-site', name: 'Home' }]);
+        const service = new SiteService({
+            teslaClient: mockTeslaClient as unknown as TeslaClient,
+            siteRepo: mockEnergyRepo as unknown as SiteRepo,
+        });
+        expect((await service.getAuthorizedSites()).map(site => site.id)).toEqual(['pwusage-site']);
+        expect(mockEnergyRepo.getSiteIdsForTeslaIds).toHaveBeenCalledWith(['98765']);
     });
 
     it('should use JWT for authorization if provided and valid', async () => {
@@ -293,7 +308,7 @@ describe('SiteService Security', () => {
         };
 
         const mockTeslaTokenRepo = {
-            getLockedRefreshHandler: vi.fn().mockReturnValue({
+            getLockedUserRefreshHandler: vi.fn().mockReturnValue({
                 refreshHandler: vi.fn(),
                 errorHandler: vi.fn()
             })
@@ -311,7 +326,7 @@ describe('SiteService Security', () => {
             vi.resetAllMocks();
             // Default to authorized
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
-            mockTeslaTokenRepo.getLockedRefreshHandler.mockReturnValue({
+            mockTeslaTokenRepo.getLockedUserRefreshHandler.mockReturnValue({
                 refreshHandler: vi.fn(),
                 errorHandler: vi.fn()
             });
@@ -447,6 +462,44 @@ describe('SiteService Security', () => {
                 expect(result.usage).toEqual([{ some: 'usage' }]);
                 expect(result.installation).toEqual({ id: 'inst-123' });
             }
+        });
+
+        it('pins page recovery to the selected Tesla connection owner, not the legacy site owner', async () => {
+            const mockSiteRepo = {
+                getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
+                getSite: vi.fn().mockResolvedValue({
+                    ...mockSiteData, user_id: 'legacy-owner', token_owner_id: 'selected-member',
+                    access_token: 'a', refresh_token: 'r', fleet_api_base_url: null
+                })
+            };
+            mockEnergyRepo.hasData.mockResolvedValue(false);
+            const tokens = vi.spyOn(UserRepo.prototype, 'getTokensForSiteMember').mockResolvedValue({
+                access_token: 'a', refresh_token: 'r', tesla_energy_site_id: '999', fleet_api_base_url: null,
+                is_active: true, auth_status: 'active', tesla_refresh_state: 'ready', refresh_lock_expires: 0, tesla_refresh_retry_after: null
+            } as unknown as Awaited<ReturnType<UserRepo['getTokensForSiteMember']>>);
+            const baseUrl = vi.spyOn(UserRepo.prototype, 'setFleetApiBaseUrl').mockResolvedValue(undefined);
+            const teslaClientCreator = vi.fn().mockReturnValue({});
+
+            const service = new SiteService({
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator,
+                importerCreator: vi.fn().mockReturnValue(mockImporter)
+            });
+            await service.loadSitePageData('12345');
+
+            expect(mockTeslaTokenRepo.getLockedUserRefreshHandler).toHaveBeenCalledWith('selected-member');
+            const config = teslaClientCreator.mock.calls[0][0];
+            await config.beforeRequest();
+            expect(tokens).toHaveBeenCalledWith('12345', 'selected-member');
+            await config.onBaseUrlChange('https://fleet-api.prd.eu.vn.cloud.tesla.com');
+            expect(baseUrl).toHaveBeenCalledWith('selected-member', 'https://fleet-api.prd.eu.vn.cloud.tesla.com');
+            tokens.mockRestore(); baseUrl.mockRestore();
         });
 
         it('builds the Tesla client with explicit empty credentials when the site row is missing', async () => {

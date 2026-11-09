@@ -28,7 +28,7 @@ export interface SiteServiceDeps {
     // Defaults to the real UserRepo.getAuthState; injectable for tests.
     getAuthState?: (userId: string) => Promise<UserAuthState | null>;
     energyRepo?: Pick<EnergyRepo, 'hasData' | 'getUsageByTOU'>;
-    teslaTokenRepo?: Pick<TeslaTokenRepo, 'getLockedRefreshHandler'>;
+    teslaTokenRepo?: Pick<TeslaTokenRepo, 'getLockedUserRefreshHandler'>;
     trmnlService?: Pick<TrmnlService, 'getInstallationBySiteId'>;
     teslaClientCreator?: (config: TeslaClientConfig) => TeslaClient;
     importerCreator?: (client: TeslaClient) => Pick<Importer, 'ensureSite'>;
@@ -139,8 +139,9 @@ export class SiteService {
         const accessToken = site?.access_token;
         const refreshToken = site?.refresh_token;
 
-        const ownerId = site?.user_id;
-        const handlers = teslaTokenRepo.getLockedRefreshHandler(siteId);
+        // The selected Tesla connection's member, which can differ from the legacy owner.
+        const ownerId = site?.token_owner_id ?? undefined;
+        const handlers = ownerId ? teslaTokenRepo.getLockedUserRefreshHandler(ownerId) : null;
         // Tokens are absent when the site row is missing or the user has no
         // stored credentials. We still build the client and attempt ensureSite:
         // the empty token earns a 401 -> TeslaAuthError -> the 'auth-failure'
@@ -150,13 +151,15 @@ export class SiteService {
         const config: TeslaClientConfig = {
             accessToken: accessToken ?? '',
             beforeRequest: async () => {
-                const current = await new UserRepo().getTokensForSite(siteId);
+                const current = ownerId ? await new UserRepo().getTokensForSiteMember(siteId, ownerId) : null;
                 assertTeslaConnection(current);
+                if (!current?.tesla_energy_site_id) throw new Error(`Tesla site mapping missing for ${siteId}`);
                 return current;
             },
+            requireTeslaSiteMapping: true,
             refreshToken: refreshToken ?? undefined,
-            tokenRefreshHandler: handlers.refreshHandler,
-            onTokenError: handlers.errorHandler,
+            tokenRefreshHandler: handlers?.refreshHandler,
+            onTokenError: handlers?.errorHandler,
             onTokenUpdate: async () => {
                 console.log('Token update callback triggered (Site Page Service).');
             },
@@ -362,11 +365,9 @@ export class SiteService {
             throw new Error('Internal Error: Attempted to fetch from API without Tesla Client');
         }
         const products = await this.deps.teslaClient.getProducts();
-        return new Set(
-            products
-                .filter(p => p.energy_site_id !== undefined && p.energy_site_id !== null)
-                .map(p => p.energy_site_id?.toString() || '')
-                .filter(id => id !== '')
-        );
+        const teslaIds = products
+            .filter(p => p.energy_site_id !== undefined && p.energy_site_id !== null)
+            .map(p => p.energy_site_id!.toString());
+        return new Set(await this.deps.siteRepo.getSiteIdsForTeslaIds(teslaIds));
     }
 }
