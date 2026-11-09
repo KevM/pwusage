@@ -35,7 +35,7 @@ function setup() {
         getSite: vi.fn(async () => ({ user_id: 'owner' })),
         invalidateCache: vi.fn(),
     } as unknown as SiteRepo;
-    return new TeslaTokenRepo(siteRepo);
+    return new TeslaTokenRepo();
 }
 
 describe('account refresh coordination', () => {
@@ -59,7 +59,7 @@ describe('account refresh coordination', () => {
         // takes the lease; it adopts the stored rotation.
         query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
         query.mockResolvedValue({ rows: [{ ...rotated, auth_status: 'active', is_refreshing: 0, tesla_refresh_state: 'ready' }] });
-        const result = await setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token);
+        const result = await setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
         expect(result).toEqual(rotated);
         expect(exchange).not.toHaveBeenCalled();
     });
@@ -67,14 +67,14 @@ describe('account refresh coordination', () => {
     it.each([null, ''])('recovers with a stored refresh grant when access is %s', async access => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: access, refresh_token: 'refresh-A' }] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
-        expect(await setup().getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(await setup().getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
         expect(exchange).toHaveBeenCalledWith('refresh-A', expect.objectContaining({ exchangeId: expect.any(String), accountId: expect.any(String) }));
     });
 
     it('uses the latest stored refresh grant if a stale caller finds no usable access credential', async () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: null, refresh_token: 'refresh-current' }] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
-        expect(await setup().getLockedRefreshHandler('site').refreshHandler('refresh-stale')).toEqual(rotated);
+        expect(await setup().getLockedUserRefreshHandler('owner').refreshHandler('refresh-stale')).toEqual(rotated);
         expect(exchange).toHaveBeenCalledWith('refresh-current', expect.objectContaining({ exchangeId: expect.any(String), accountId: expect.any(String) }));
     });
 
@@ -118,7 +118,7 @@ describe('account refresh coordination', () => {
     it('correlates the exchange, persistence start and confirmed save', async () => {
         query.mockResolvedValueOnce({ rowCount: 1, rows: [original] });
         query.mockResolvedValue({ rowCount: 1, rows: [] });
-        await setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token);
+        await setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
         const events = logEvent.mock.calls.filter(([, event]) => ['tesla.refresh.started', 'tesla.refresh.persistence-started', 'tesla.refresh.succeeded'].includes(event));
         expect(events.map(([, event]) => event)).toEqual(['tesla.refresh.started', 'tesla.refresh.persistence-started', 'tesla.refresh.succeeded']);
         expect(new Set(events.map(([, , fields]) => fields.exchangeId)).size).toBe(1);
@@ -130,7 +130,7 @@ describe('account refresh coordination', () => {
         query.mockRejectedValueOnce(new IoDeadlineError());
         query.mockRejectedValueOnce(new IoDeadlineError()); // the save's single retry
         query.mockResolvedValue({ rowCount: 1, rows: [] });
-        await expect(setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token)).rejects.toMatchObject({ code: 'IO_DEADLINE_EXCEEDED' });
+        await expect(setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).rejects.toMatchObject({ code: 'IO_DEADLINE_EXCEEDED' });
         expect(logEvent).toHaveBeenCalledWith('warn', 'tesla.refresh.failed', expect.objectContaining({
             stage: 'persistence', failureCode: 'IO_DEADLINE_EXCEEDED', terminal: false,
         }));
@@ -153,7 +153,7 @@ describe('account refresh coordination', () => {
         });
         let operation!: Promise<unknown>;
         const caller = withIoDeadline(50, () => {
-            operation = setup().getLockedRefreshHandler('site').refreshHandler(original.refresh_token).catch(error => error);
+            operation = setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token).catch(error => error);
             return operation;
         }).catch(error => error);
         await started;
@@ -190,7 +190,7 @@ describe('account refresh coordination', () => {
         });
         vi.useFakeTimers();
         const repo = setup();
-        const site = repo.getLockedRefreshHandler('site').refreshHandler(original.refresh_token);
+        const site = repo.getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
         await vi.waitFor(() => expect(exchange).toHaveBeenCalledTimes(1));
         const browser = repo.getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
         await vi.waitFor(() => expect(query.mock.calls.filter(([sql]) => sql.includes('SET is_refreshing = 1'))).toHaveLength(2));

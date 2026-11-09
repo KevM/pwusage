@@ -66,12 +66,6 @@ vi.mock('@/lib/energy-repo', () => ({
     sumTodayRows: () => ({ homeKwh: 0, gridNetKwh: 0, solarKwh: 0 })
 }));
 
-vi.mock('@/lib/tesla-token-repo', () => ({
-    TeslaTokenRepo: class {
-        getLockedRefreshHandler = () => ({ refreshHandler: vi.fn(), errorHandler: vi.fn() });
-    }
-}));
-
 vi.mock('@/lib/db', () => ({
     pool: {
         query: vi.fn()

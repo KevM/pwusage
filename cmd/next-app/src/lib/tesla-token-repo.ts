@@ -1,8 +1,6 @@
 import { logEvent, flushLogEvents } from './observability';
 import { ioDelay, checkIoDeadline, withIoDeadline, ioFailureDetails } from './io-deadline';
 import { pool } from './db';
-import { SiteRepo } from './site-repo';
-import { UserRepo } from './user-repo';
 import { TeslaConnectionRequiredError, TeslaRefreshBackoffError, TeslaRefreshError, TRANSIENT_BACKOFF_MS } from './tesla-refresh-outcome';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseRefreshedTokens, type RefreshedTokens } from './tesla-auth';
@@ -58,11 +56,9 @@ function credentialId(value: string): string {
 }
 
 export class TeslaTokenRepo {
-    constructor(private siteRepo: SiteRepo, private userRepo: UserRepo = new UserRepo()) {}
-
     // === Queries ===
-    private async waitForUserRefresh(userId: string, suppliedRefresh: string, siteId?: string, timeoutMs = 20000, start = Date.now()): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
-        const fields = { siteId, accountId: credentialId(userId) };
+    private async waitForUserRefresh(userId: string, suppliedRefresh: string, timeoutMs = 20000, start = Date.now()): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
+        const fields = { accountId: credentialId(userId) };
         while (Date.now() - start < timeoutMs) {
             const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status, is_active, refresh_lock_expires, tesla_refresh_state, tesla_refresh_retry_after, tesla_credential_generation, tesla_refresh_attempt_id FROM "User" WHERE id = $1`, [userId]);
             if (!res.rows[0]) {
@@ -113,33 +109,6 @@ export class TeslaTokenRepo {
         throw new Error('Timeout waiting for token refresh lock');
     }
 
-    // === Commands ===
-    async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
-        const site = await this.siteRepo.getSite(siteId);
-
-        if (site && site.user_id) {
-            await this.userRepo.updateTokens(site.user_id, accessToken, refreshToken);
-            logEvent('info', 'tesla.credentials.updated', { siteId });
-        } else {
-            console.warn(`[TeslaTokenRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
-        }
-
-        this.siteRepo.invalidateCache(siteId);
-    }
-
-    getLockedRefreshHandler(siteId: string) {
-        return {
-            refreshHandler: async (refreshToken: string) => {
-                const site = await this.siteRepo.getSite(siteId);
-                if (!site?.user_id) throw new Error('Site/User not found for refresh');
-                return this.refreshUser(site.user_id, refreshToken, siteId);
-            },
-            // Revocation belongs inside refreshUser's guarded write. A callback
-            // after releasing the lease could revoke a subsequent successful login.
-            errorHandler: async () => {},
-        };
-    }
-
     getLockedUserRefreshHandler(userId: string) {
         return {
             refreshHandler: (refreshToken: string) => this.refreshUser(userId, refreshToken),
@@ -147,23 +116,23 @@ export class TeslaTokenRepo {
         };
     }
 
-    private async refreshUser(userId: string, suppliedRefresh: string, siteId?: string): Promise<RefreshedTokens> {
+    private async refreshUser(userId: string, suppliedRefresh: string): Promise<RefreshedTokens> {
         checkIoDeadline();
         if (process.env.TESLA_REFRESH_PAUSED === '1') {
-            logEvent('info', 'tesla.refresh.paused', { accountId: credentialId(userId), siteId });
+            logEvent('info', 'tesla.refresh.paused', { accountId: credentialId(userId) });
             throw new TeslaRefreshError('not_dispatched', null, null, 'Tesla refresh is paused');
         }
-        const fields = { siteId, accountId: credentialId(userId) };
+        const fields = { accountId: credentialId(userId) };
         // A recovered lease is claimed again once; more than that is a race
         // worth surfacing rather than looping on.
         for (let attempt = 0; attempt < 2; attempt++) {
-            const result = await this.claimAndRefresh(userId, suppliedRefresh, siteId, fields);
+            const result = await this.claimAndRefresh(userId, suppliedRefresh, fields);
             if (result !== RETRY_CLAIM) return result;
         }
         throw new Error('Concurrent credential renewal did not update stored credentials');
     }
 
-    private async claimAndRefresh(userId: string, suppliedRefresh: string, siteId: string | undefined, fields: { siteId: string | undefined; accountId: string }): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
+    private async claimAndRefresh(userId: string, suppliedRefresh: string, fields: { accountId: string }): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
         const now = Date.now();
         const lease = now + LEASE_MS;
         const exchangeId = randomUUID();
@@ -183,12 +152,12 @@ export class TeslaTokenRepo {
         `, [lease, userId, now, exchangeId, tokenFingerprint(suppliedRefresh), suppliedRefresh]);
         if (!claim.rowCount) {
             logEvent('info', 'tesla.refresh.not-claimed', fields);
-            return this.waitForUserRefresh(userId, suppliedRefresh, siteId);
+            return this.waitForUserRefresh(userId, suppliedRefresh);
         }
 
         // The caller may stop waiting, but a dispatched rotation must run through
         // persistence under its own deadline and the serverless request lifecycle.
-        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, decryptCredentials(claim.rows[0], userId), fields, exchangeId);
+        const operation = this.refreshClaimedUser(userId, suppliedRefresh, lease, decryptCredentials(claim.rows[0], userId), fields, exchangeId);
         try {
             after(async () => { await operation.catch(() => undefined); });
         } catch {
@@ -232,8 +201,8 @@ export class TeslaTokenRepo {
     }
 
     private async refreshClaimedUser(
-        userId: string, suppliedRefresh: string, siteId: string | undefined,
-        lease: number, current: AccountCredentials, fields: { siteId: string | undefined; accountId: string }, exchangeId: string,
+        userId: string, suppliedRefresh: string, lease: number, current: AccountCredentials,
+        fields: { accountId: string }, exchangeId: string,
     ): Promise<RefreshedTokens> {
         const generation = current.tesla_credential_generation;
         const exchangeFields = { ...fields, exchangeId, generationId: credentialId(`${userId}:${generation}`) };
@@ -251,7 +220,6 @@ export class TeslaTokenRepo {
                 ...exchangeFields, credentialId: credentialId(next.refresh_token),
             });
             if (await this.saveRotation(userId, next, previousRefresh, generation, exchangeId)) {
-                if (siteId) this.siteRepo.invalidateCache(siteId);
                 logEvent('info', 'tesla.refresh.succeeded', {
                     ...exchangeFields, previousCredentialId: credentialId(previousRefresh), credentialId: credentialId(next.refresh_token),
                     fromState: 'in_flight', toState: 'ready', persisted: true, outcome: 'credentials_received',
@@ -288,7 +256,7 @@ export class TeslaTokenRepo {
                 if (!recorded.rowCount) logEvent('info', 'tesla.refresh.outcome-superseded', { ...exchangeFields, outcome, attemptedState: state });
                 if (!recorded.rowCount && terminal) {
                     // A login may have superseded this rejected generation.
-                    return settled(await withIoDeadline(1000, () => this.waitForUserRefresh(userId, suppliedRefresh, siteId, 1000), null));
+                    return settled(await withIoDeadline(1000, () => this.waitForUserRefresh(userId, suppliedRefresh, 1000), null));
                 }
                 if (recorded.rowCount) logEvent('warn', 'tesla.refresh.state-changed', { ...exchangeFields, fromState: 'in_flight', toState: state, persisted: true, outcome, durationMs: Date.now() - startedAt, ...(retryAfter ? { retryAfter: new Date(retryAfter).toISOString() } : {}) });
                 flushLogEvents();
@@ -312,6 +280,6 @@ export class TeslaTokenRepo {
                 logEvent('warn', 'tesla.refresh.cleanup-deferred', exchangeFields);
             }
         }
-        return settled(await this.waitForUserRefresh(userId, suppliedRefresh, siteId));
+        return settled(await this.waitForUserRefresh(userId, suppliedRefresh));
     }
 }

@@ -617,7 +617,7 @@ export class TeslaAuthService {
                 // Before identity verification there is no safe account row to
                 // update. Never silently rotate the fresh login grant in memory.
                 if (!refreshIdentity.userId) throw new Error('Tesla login identity is not established for refresh');
-                const repo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
+                const repo = this.deps.teslaTokenRepo || new TeslaTokenRepo();
                 return repo.getLockedUserRefreshHandler(refreshIdentity.userId).refreshHandler(suppliedRefresh);
             },
         };
