@@ -1,4 +1,5 @@
 import { TeslaAuthError } from './tesla-client';
+import { TeslaConnectionRequiredError, TeslaRefreshBackoffError, TeslaRefreshError } from './tesla-refresh-outcome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeTargetReserve, parkBattery, restoreBattery, START_COMMAND_DEADLINE_MS, START_LEASE_MS, type ParkDeps } from './battery-hold-service';
 import type { BatteryHold } from './db';
@@ -310,6 +311,47 @@ describe('restoreBattery', () => {
       expect(repo.recordRestoreAttempt).toHaveBeenCalledTimes(2);
       expect(repo.markCommandsDenied).toHaveBeenCalledWith('s', 'starter');
       expect(second.setBackupReserve).toHaveBeenCalledWith('s', 20);
+    } finally {
+      vi.unstubAllEnvs(); memberClients.create.mockReset();
+    }
+  });
+
+  describe.each([
+    ['a refresh rejected by Tesla', () => new TeslaRefreshError('credential_rejected', 400, 'invalid_grant')],
+    ['a transient refresh backoff', () => new TeslaRefreshBackoffError(Date.now() + 60_000)],
+    ['a member that must reconnect', () => new TeslaConnectionRequiredError()],
+  ])('when a candidate fails with %s', (_name, makeError) => {
+    it('clears the attempt and restores through the next member without marking commands denied', async () => {
+      vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+      try {
+        const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date() } as BatteryHold);
+        repo.getRestoreCandidates.mockResolvedValue(['first', 'second']);
+        const first = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(makeError()) });
+        const second = fakeClient();
+        memberClients.create.mockImplementation(async (_siteId: string, userId: string) => userId === 'first' ? first : second);
+        const result = await restoreBattery({ client: fakeClient() as never, repo: repo as never, siteId: 's', reason: 'manual' });
+        expect(result.status).toBe('ok');
+        expect(repo.clearRestoreAttempt).toHaveBeenCalledTimes(1);
+        expect(repo.markCommandsDenied).not.toHaveBeenCalled();
+        expect(second.setBackupReserve).toHaveBeenCalledWith('s', 20);
+      } finally {
+        vi.unstubAllEnvs(); memberClients.create.mockReset();
+      }
+    });
+  });
+
+  it('reads the reserve through another member when the connection member can no longer reach the site', async () => {
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100,
+        created_at: new Date(Date.now() - 3_600_000) } as BatteryHold);
+      repo.getRestoreCandidates.mockResolvedValue(['standby']);
+      const connection = fakeClient({ getEnergySiteInfo: vi.fn().mockRejectedValue(new TeslaAuthError('Forbidden', 403)) });
+      const standby = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });
+      memberClients.create.mockResolvedValue(standby);
+      const result = await restoreBattery({ client: connection as never, repo: repo as never, siteId: 's', reason: 'safety_timeout' });
+      expect(result.status).toBe('ok');
+      expect(standby.setBackupReserve).toHaveBeenCalledWith('s', 20);
     } finally {
       vi.unstubAllEnvs(); memberClients.create.mockReset();
     }

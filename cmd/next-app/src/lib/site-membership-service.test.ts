@@ -57,6 +57,14 @@ describe('SiteMembershipService login reconciliation', () => {
         expect(importer.ensureSite).not.toHaveBeenCalled();
     });
 
+    it('finishes the initial import when rejoining a retained placeholder that never got a tariff', async () => {
+        members.commitDecision.mockResolvedValue({ kind: 'joined', siteId: '20' });
+        sites.needsInitialImport.mockResolvedValue(true);
+        expect(await service().syncLogin('user', [product(20)], fetchedAt)).toEqual(['20']);
+        expect(sites.needsInitialImport).toHaveBeenCalledWith('20');
+        expect(importer.ensureSite).toHaveBeenCalledWith('20');
+    });
+
     it('preserves the member during a re-invite with a new Tesla ID', async () => {
         members.membersForUser.mockResolvedValueOnce([{ site_id: 'home', tesla_energy_site_id: '10' }])
             .mockResolvedValueOnce([{ site_id: 'home', tesla_energy_site_id: '20' }]);
