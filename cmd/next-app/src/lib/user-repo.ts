@@ -67,7 +67,7 @@ export class UserRepo {
             FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
             WHERE m.site_id = $1 AND m.user_id = $2
         `, [siteId, userId]);
-        return res.rows[0] ?? null;
+        return res.rows.length ? decryptUserTokens(res.rows[0], userId) : null;
     }
 
     async isActive(userId: string): Promise<boolean> {

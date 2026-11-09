@@ -70,7 +70,10 @@ export class SiteMembershipJoinRepo {
                     WHERE m.user_id = $1 AND s.tesla_hardware_id = $2 ORDER BY m.joined_at LIMIT 1`,
                 [userId, hardwareId]);
                 if (own.rows[0]) {
-                    await client.query(`UPDATE "SiteMember" SET tesla_energy_site_id = $3,
+                    // An older product list must not put back an ID that a newer re-invite replaced:
+                    // GREATEST would keep the newer timestamp but not its mapping.
+                    await client.query(`UPDATE "SiteMember" SET
+                        tesla_energy_site_id = CASE WHEN last_seen_in_tesla_at <= $4 THEN $3 ELSE tesla_energy_site_id END,
                         last_seen_in_tesla_at = GREATEST(last_seen_in_tesla_at, $4)
                         WHERE site_id = $1 AND user_id = $2`, [own.rows[0].site_id, userId, teslaId, fetchedAt]);
                     await client.query('COMMIT');
@@ -99,6 +102,31 @@ export class SiteMembershipJoinRepo {
                 logEvent('info', 'site.member.joined', { siteId: verifiedSiteId,
                     accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) });
                 return { kind: 'joined', siteId: verifiedSiteId };
+            }
+
+            // Removing a site's last member keeps the Site row. When that Tesla ID comes back there is
+            // no membership to match, so reattach the retained row instead of colliding on its key.
+            const retained = await client.query<{ tesla_hardware_id: string | null }>(
+                'SELECT tesla_hardware_id FROM "Site" WHERE id = $1 FOR UPDATE', [teslaId]);
+            if (retained.rows[0]) {
+                const known = retained.rows[0].tesla_hardware_id;
+                if (known && hardwareId && known !== hardwareId) {
+                    throw new Error('Retained site belongs to a different Powerwall');
+                }
+                const members = await client.query('SELECT 1 FROM "SiteMember" WHERE site_id = $1 LIMIT 1', [teslaId]);
+                if (members.rowCount) {
+                    await client.query('ROLLBACK');
+                    return { kind: 'retry' };
+                }
+                await client.query(`INSERT INTO "SiteMember"
+                    (site_id, user_id, tesla_energy_site_id, last_seen_in_tesla_at)
+                    VALUES ($1, $2, $1, $3)`, [teslaId, userId, fetchedAt]);
+                await client.query(`UPDATE "Site" SET user_id = $2, tesla_connection_user_id = $2,
+                    tesla_hardware_id = COALESCE(tesla_hardware_id, $3) WHERE id = $1`, [teslaId, userId, hardwareId]);
+                await client.query('COMMIT');
+                logEvent('info', 'site.member.rejoined-retained', { siteId: teslaId,
+                    accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) });
+                return { kind: 'joined', siteId: teslaId };
             }
 
             const inserted = await client.query(`INSERT INTO "Site"
