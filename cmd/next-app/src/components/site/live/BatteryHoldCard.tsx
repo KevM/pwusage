@@ -85,8 +85,11 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     setBusy(true); setError(null); setNeedsReauth(false); setCommandsDenied(false);
     try {
       const { ok } = await post({ action: 'park', ...choice });
-      if (ok) { setShowHoldModal(false); router.refresh(); }
-    } catch { setError('Network error. Try again.'); } finally { setBusy(false); }
+      if (ok) router.refresh();
+    } catch { setError('Network error. Try again.'); } finally {
+      // Close on failure too: the warning and error render on the card, behind this dialog's overlay.
+      setShowHoldModal(false); setBusy(false);
+    }
   }
 
   async function restore() {
@@ -94,11 +97,13 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     try {
       const { ok, body } = await post({ action: 'restore' });
       if (ok) {
-        setShowRestoreConfirm(false);
         if (body?.status === 'reserve_changed') setNotice({ current: Number(body.current) });
         router.refresh();
       }
-    } catch { setError('Network error. Try again.'); } finally { setBusy(false); }
+    } catch { setError('Network error. Try again.'); } finally {
+      // Close on failure too: the warning and error render on the card, behind this dialog's overlay.
+      setShowRestoreConfirm(false); setBusy(false);
+    }
   }
 
   async function dismissNotice() {

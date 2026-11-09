@@ -1,5 +1,6 @@
 import { requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
 import { getSiteConnectionTokens } from '@/lib/tesla-client-factory';
+import { UserRepo } from '@/lib/user-repo';
 import { observePage, setLogContext } from '@/lib/observability';
 import { SiteRepo } from '@/lib/site-repo';
 import { SiteService } from '@/lib/site-service';
