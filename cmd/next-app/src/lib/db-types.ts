@@ -110,6 +110,8 @@ export interface TrmnlInstallation {
 
 export interface SiteWithTariffs extends Site {
   tariffs: Tariff[];
+  /** The member whose Tesla credentials these are (Site.tesla_connection_user_id); may differ from user_id. */
+  token_owner_id?: string | null;
   access_token?: string | null;
   refresh_token?: string | null;
   auth_status?: string | null;

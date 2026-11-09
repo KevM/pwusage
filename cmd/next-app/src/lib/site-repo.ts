@@ -206,6 +206,7 @@ export class SiteRepo {
                 last_live_claim_at: row.last_live_claim_at != null ? Number(row.last_live_claim_at) : undefined,
                 live_status_cache: row.live_status_cache ?? undefined,
                 json: options?.includeJson ? row.json : undefined,
+                token_owner_id: options?.includeTokens ? (row.token_owner_id as string | null) ?? null : undefined,
                 access_token: options?.includeTokens ? decryptToken((row.access_token as string | null) ?? null, 'access_token', row.token_owner_id as string) : undefined,
                 refresh_token: options?.includeTokens ? decryptToken((row.refresh_token as string | null) ?? null, 'refresh_token', row.token_owner_id as string) : undefined,
                 tesla_refresh_state: options?.includeTokens ? row.tesla_refresh_state as SiteWithTariffs['tesla_refresh_state'] : undefined,
