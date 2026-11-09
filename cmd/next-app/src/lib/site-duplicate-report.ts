@@ -10,7 +10,7 @@ export type DuplicateVerdict =
     | 'not-the-same-home'
     | 'secondary-has-no-days'
     | 'secondary-days-are-duplicates'
-    | 'overlapping-days-differ'
+    | 'secondary-has-better-days'
     | 'secondary-has-unique-data';
 
 export interface SiteSideReport {
@@ -29,6 +29,8 @@ export interface SiteDuplicateReport {
     primary: SiteSideReport;
     secondary: SiteSideReport;
     overlap: { identical: number; differing: number; onlySecondary: number };
+    /** Per overlapping day: which side holds the more complete record. */
+    quality: { primaryBetter: number; equal: number; secondaryBetter: number; secondaryBetterDays: string[] };
     verdict: DuplicateVerdict;
 }
 
@@ -51,6 +53,9 @@ interface OtherRowsRow {
     tags: string;
 }
 
+const SECONDARY_BETTER = `(s.sample_count > p.sample_count OR (s.status = 'complete' AND p.status IS DISTINCT FROM 'complete'))`;
+const PRIMARY_BETTER = `(p.sample_count > s.sample_count OR (p.status = 'complete' AND s.status IS DISTINCT FROM 'complete'))`;
+
 async function otherRows(db: ReportQueryable, siteId: string): Promise<OtherRowsRow> {
     const { rows } = await db.query<OtherRowsRow>(
         `-- other-rows
@@ -66,11 +71,13 @@ function chooseVerdict(
     sameHome: boolean,
     secondaryDays: number,
     overlap: SiteDuplicateReport['overlap'],
+    quality: SiteDuplicateReport['quality'],
 ): DuplicateVerdict {
     if (!sameHome) return 'not-the-same-home';
     if (secondaryDays === 0) return 'secondary-has-no-days';
     if (overlap.onlySecondary > 0) return 'secondary-has-unique-data';
-    if (overlap.differing > 0) return 'overlapping-days-differ';
+    // Byte-wise differences are expected between two fetches; only a more complete secondary matters.
+    if (quality.secondaryBetter > 0) return 'secondary-has-better-days';
     return 'secondary-days-are-duplicates';
 }
 
@@ -106,6 +113,33 @@ export async function reportSiteDuplicate(
         [primaryId, secondaryId]);
     const overlapRow = overlapRows.rows[0];
 
+    // A secondary day is "better" when it has more samples, or is complete where the primary is not.
+    const qualityRows = await db.query<{ primary_better: string; equal: string; secondary_better: string }>(
+        `-- day-quality
+         SELECT
+            count(*) FILTER (WHERE ${PRIMARY_BETTER}) AS primary_better,
+            count(*) FILTER (WHERE ${SECONDARY_BETTER}) AS secondary_better,
+            count(*) FILTER (WHERE NOT (${PRIMARY_BETTER}) AND NOT (${SECONDARY_BETTER})) AS equal
+         FROM "EnergyDayArchive" s
+         JOIN "EnergyDayArchive" p ON p.site_id = $1 AND p.day_start = s.day_start
+         WHERE s.site_id = $2`,
+        [primaryId, secondaryId]);
+    const betterDays = await db.query<{ day_start: string }>(
+        `-- better-days
+         SELECT s.day_start::text AS day_start
+         FROM "EnergyDayArchive" s
+         JOIN "EnergyDayArchive" p ON p.site_id = $1 AND p.day_start = s.day_start
+         WHERE s.site_id = $2 AND ${SECONDARY_BETTER}
+         ORDER BY s.day_start LIMIT 50`,
+        [primaryId, secondaryId]);
+    const qualityRow = qualityRows.rows[0];
+    const quality = {
+        primaryBetter: Number(qualityRow?.primary_better ?? 0),
+        equal: Number(qualityRow?.equal ?? 0),
+        secondaryBetter: Number(qualityRow?.secondary_better ?? 0),
+        secondaryBetterDays: betterDays.rows.map(r => r.day_start),
+    };
+
     const side = async (id: string): Promise<SiteSideReport> => {
         const day = totals.rows.find(r => r.site_id === id);
         const other = await otherRows(db, id);
@@ -134,6 +168,7 @@ export async function reportSiteDuplicate(
         primary: await side(primaryId),
         secondary: secondaryReport,
         overlap,
-        verdict: chooseVerdict(sameHome, secondaryReport.days, overlap),
+        quality,
+        verdict: chooseVerdict(sameHome, secondaryReport.days, overlap, quality),
     };
 }

@@ -24,6 +24,8 @@ describe('reportSiteDuplicate', () => {
             ],
             '-- day-overlap': [{ identical: '10', differing: '0', only_secondary: '0' }],
             '-- other-rows': [{ summaries: '30', trmnl: '0', tags: '0' }],
+            '-- day-quality': [{ primary_better: '10', equal: '0', secondary_better: '0' }],
+            '-- better-days': [],
         });
 
         const report = await reportSiteDuplicate(db, 'P', 'S');
@@ -47,6 +49,8 @@ describe('reportSiteDuplicate', () => {
             ],
             '-- day-overlap': [{ identical: '0', differing: '0', only_secondary: '3' }],
             '-- other-rows': [{ summaries: '3', trmnl: '1', tags: '2' }],
+            '-- day-quality': [{ primary_better: '0', equal: '0', secondary_better: '0' }],
+            '-- better-days': [],
         });
 
         const report = await reportSiteDuplicate(db, 'P', 'S');
@@ -55,7 +59,7 @@ describe('reportSiteDuplicate', () => {
         expect(report.verdict).toBe('secondary-has-unique-data');
     });
 
-    it('reports differing overlapping days as needing review', async () => {
+    it('drops the secondary when its days differ only byte-wise but the primary is at least as complete', async () => {
         const db = fakeDb({
             'FROM "Site" WHERE id = ANY': [
                 { id: 'P', timezone: 'UTC', tesla_hardware_id: 'HW' },
@@ -65,11 +69,36 @@ describe('reportSiteDuplicate', () => {
                 { site_id: 'P', days: '45', first_day: '2026-09-25', last_day: '2026-11-08' },
                 { site_id: 'S', days: '4', first_day: '2026-10-01', last_day: '2026-10-04' },
             ],
-            '-- day-overlap': [{ identical: '3', differing: '1', only_secondary: '0' }],
+            '-- day-overlap': [{ identical: '0', differing: '4', only_secondary: '0' }],
+            '-- day-quality': [{ primary_better: '1', equal: '3', secondary_better: '0' }],
+            '-- better-days': [],
             '-- other-rows': [{ summaries: '4', trmnl: '0', tags: '0' }],
         });
 
-        expect((await reportSiteDuplicate(db, 'P', 'S')).verdict).toBe('overlapping-days-differ');
+        const report = await reportSiteDuplicate(db, 'P', 'S');
+        expect(report.quality).toEqual({ primaryBetter: 1, equal: 3, secondaryBetter: 0, secondaryBetterDays: [] });
+        expect(report.verdict).toBe('secondary-days-are-duplicates');
+    });
+
+    it('lists the days where the secondary is more complete than the primary', async () => {
+        const db = fakeDb({
+            'FROM "Site" WHERE id = ANY': [
+                { id: 'P', timezone: 'UTC', tesla_hardware_id: 'HW' },
+                { id: 'S', timezone: 'UTC', tesla_hardware_id: 'HW' },
+            ],
+            '-- day-totals': [
+                { site_id: 'P', days: '45', first_day: '2026-09-25', last_day: '2026-11-08' },
+                { site_id: 'S', days: '4', first_day: '2026-10-01', last_day: '2026-10-04' },
+            ],
+            '-- day-overlap': [{ identical: '0', differing: '4', only_secondary: '0' }],
+            '-- day-quality': [{ primary_better: '0', equal: '3', secondary_better: '1' }],
+            '-- better-days': [{ day_start: '2026-10-02 05:00:00+00' }],
+            '-- other-rows': [{ summaries: '4', trmnl: '0', tags: '0' }],
+        });
+
+        const report = await reportSiteDuplicate(db, 'P', 'S');
+        expect(report.quality.secondaryBetterDays).toEqual(['2026-10-02 05:00:00+00']);
+        expect(report.verdict).toBe('secondary-has-better-days');
     });
 
     it('refuses to compare sites that are not the same home', async () => {
@@ -81,6 +110,8 @@ describe('reportSiteDuplicate', () => {
             '-- day-totals': [],
             '-- day-overlap': [{ identical: '0', differing: '0', only_secondary: '0' }],
             '-- other-rows': [{ summaries: '0', trmnl: '0', tags: '0' }],
+            '-- day-quality': [{ primary_better: '0', equal: '0', secondary_better: '0' }],
+            '-- better-days': [],
         });
 
         const report = await reportSiteDuplicate(db, 'P', 'S');
