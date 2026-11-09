@@ -494,10 +494,19 @@ Only rows with matching hardware need this. Today that is Harrison alone, with t
 1. Report groups by `tesla_hardware_id`, with members, day counts, tariff versions, tags and TRMNL devices.
 2. For a chosen pair, keep the row with more history. **Refuse if either has an active hold.** Flag rate plans that differ,
    because the secondary's are dropped.
-3. In one transaction: move the secondary's members to the primary, keeping each `tesla_energy_site_id`; repoint TRMNL
-   installations and tags; delete the secondary's `EnergyDayArchive` rows, then the secondary itself, which cascades its
-   rate plans, holds and activity registrations. A bare site delete fails (section 9).
-4. Days the primary lacks come back through gap healing, because members can still fetch them.
+3. **Copy days only the secondary has.** Gap healing can't be relied on for this: it covers 14 trailing days unless an
+   auth recovery extends the window, and a merge isn't one. Refuse if the rows' timezones differ, because day boundaries
+   wouldn't match. Then, before the transaction, decode the samples of each secondary day where the primary has no samples,
+   and write them to the primary with `writeDay`, keeping the secondary's `fetched_at` so a later real fetch still wins.
+   `writeDay` prices them with the primary's current rate plan, so no record or summary keeps a reference to the secondary's
+   rate plans. Each write commits on its own, so a failed run can simply be rerun.
+4. **Refuse if a day would lose samples.** That means a secondary day with more samples than the primary's. `writeDay`
+   ignores an older fetch over stored samples, so these can't be copied the same way. List them in the dry run. The owner
+   refetches them through the primary or names the days they accept losing.
+5. In one transaction: recheck steps 3 and 4 against current rows and refuse if anything remains, since crons may have added
+   days; then move the secondary's members to the primary, keeping each `tesla_energy_site_id`; repoint TRMNL installations
+   and tags; delete the secondary's `EnergyDayArchive` rows, then the secondary itself, which cascades its rate plans, holds
+   and activity registrations. A bare site delete fails (section 9).
 
 Run production merges only with the owner's approval, after a backup. Warn affected members that iOS solar layouts need
 setting up again.
@@ -565,7 +574,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Battery Saver | Two concurrent starts through duplicate rows send exactly one command; the claim is taken before the reserve read; an expired claim can be taken over and a stale owner can't release it; a failed `createHold` still restores; `reserve_sync_pending` spans rows; guard across rows; an expired hold that isn't restored yet still blocks a start through another row; an expired hold with nobody usable is retired and the start goes ahead; one with a usable member, a retry floor or a restore processing isn't retired; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
 | Deletion | Seeded with summaries that reference a rate plan: member leaves and the site survives; last member removes everything; simultaneous deletes; login racing deletion. |
-| Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; refuses with an active hold; dry run writes nothing. |
+| Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; a secondary-only day older than 14 days ends up on the primary, priced with its rate plan; a day added after the copy, a day with more samples on the secondary and differing timezones each refuse; a rerun after a failed copy finishes cleanly; refuses with an active hold; dry run writes nothing. |
 
 **Vitest, mocked:** access helpers for added and removed members, battery-hold route tokens and errors, `/profile`, `syncUserEmail`,
 reconnect wording, flag off matches current behaviour, and `DELETE /api/user` on a shared site.
