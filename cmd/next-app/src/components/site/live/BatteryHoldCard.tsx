@@ -8,7 +8,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
 import { planReserve } from '@/lib/battery-hold-rules';
-import { commandsDeniedText, holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
+import { commandsDeniedText, holdButtonLabel, holdCardView, holdReserveText, guardNoticeText } from './battery-hold-format';
 import { ConfirmHoldModal, type HoldChoice } from './ConfirmHoldModal';
 import { useToast } from '@/components/ui/Toast';
 
@@ -106,8 +106,9 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     try { await post({ action: 'dismiss' }); router.refresh(); } catch { /* notice already hidden */ }
   }
 
+  const view = holdCardView({ needsReauth, commandsDenied, hasHold: !!initialHold, hasTariff, soc });
   let body: React.ReactNode;
-  if (needsReauth) {
+  if (view.warning === 'needs_reauth') {
     body = (
       <Alert variant="warning">
         <AlertDescription>
@@ -116,13 +117,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </AlertDescription>
       </Alert>
     );
-  } else if (commandsDenied) {
-    body = (
-      <Alert variant="warning">
-        <AlertDescription>{commandsDeniedText()}</AlertDescription>
-      </Alert>
-    );
-  } else if (initialHold) {
+  } else if (view.controls === 'active' && initialHold) {
     const restores = initialHold.mode === 'timer'
       ? `turns off at ${new Date(initialHold.safety_expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
       : 'turns off when the job finishes, or after the safety window';
@@ -137,9 +132,9 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </div>
       </div>
     );
-  } else if (!hasTariff) {
+  } else if (view.controls === 'no_tariff') {
     body = <p className="text-sm text-gray-500">Battery Saver needs your rate plan. Refresh it from Tesla in your site settings, then try again.</p>;
-  } else if (soc === null) {
+  } else if (view.controls === 'no_soc' || soc === null) {
     body = <p className="text-sm text-gray-500">A recent battery charge reading is needed to turn on Battery Saver. Refresh to update it.</p>;
   } else {
     body = (
@@ -163,6 +158,11 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
             {guardNoticeText(notice.current)}{' '}
             <button onClick={dismissNotice} className="underline">Dismiss</button>
           </AlertDescription>
+        </Alert>
+      )}
+      {view.warning === 'commands_denied' && (
+        <Alert variant="warning" className="mb-3">
+          <AlertDescription>{commandsDeniedText()}</AlertDescription>
         </Alert>
       )}
       {body}

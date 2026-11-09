@@ -23,3 +23,24 @@ export function guardNoticeText(current: number): string {
 export function commandsDeniedText(): string {
   return 'Tesla did not allow this account to change the backup reserve. Check Powerwall access in Tesla’s app, then try again.';
 }
+
+export interface HoldCardView {
+  warning: 'needs_reauth' | 'commands_denied' | null;
+  controls: 'none' | 'active' | 'no_tariff' | 'no_soc' | 'start';
+}
+
+/**
+ * What the Battery Saver card shows. A command denial is only a warning: the
+ * controls stay so the user can retry once access is fixed in Tesla's app. A
+ * missing energy-command permission can't be retried here, so it replaces them.
+ */
+export function holdCardView(state: {
+  needsReauth: boolean; commandsDenied: boolean; hasHold: boolean; hasTariff: boolean; soc: number | null;
+}): HoldCardView {
+  if (state.needsReauth) return { warning: 'needs_reauth', controls: 'none' };
+  const warning = state.commandsDenied ? 'commands_denied' : null;
+  if (state.hasHold) return { warning, controls: 'active' };
+  if (!state.hasTariff) return { warning, controls: 'no_tariff' };
+  if (state.soc === null) return { warning, controls: 'no_soc' };
+  return { warning, controls: 'start' };
+}
