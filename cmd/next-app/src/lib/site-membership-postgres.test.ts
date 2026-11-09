@@ -16,7 +16,7 @@ const socket = process.env.SITE_MEMBERSHIP_TEST_SOCKET;
 const safeSocket = socket && /^\/(?:private\/)?tmp\/site-membership-pg-[a-zA-Z0-9]+$/.test(socket);
 if (socket && !safeSocket) throw new Error('Site membership tests require a disposable local socket');
 
-const migration = 'db-migrations/20261108203927_add_site_member.sql';
+const migration = 'db-migrations/20261109135834_add_site_member.sql';
 
 describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () => {
   const repo = new BatteryHoldRepo();
