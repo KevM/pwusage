@@ -34,6 +34,24 @@ export interface ParkDeps {
 }
 
 export async function parkBattery(
+  deps: ParkDeps,
+): Promise<ParkResult> {
+  const { repo, siteId } = deps;
+  const claimKey = await repo.getStartClaimKey(siteId);
+  const owner = randomUUID();
+  if (!await repo.claimStart(claimKey, owner)) {
+    return { status: 'error', message: 'Battery Saver is already updating.' };
+  }
+  try {
+    const existing = await repo.getActiveHoldForClaim(claimKey);
+    if (existing) return { status: 'already_active', hold: existing };
+    return await parkBatteryWithClaim(deps);
+  } finally {
+    await repo.releaseStart(claimKey, owner);
+  }
+}
+
+async function parkBatteryWithClaim(
   { client, repo, siteId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
 ): Promise<ParkResult> {
   if (mode === 'timer') {
@@ -41,9 +59,6 @@ export async function parkBattery(
       return { status: 'error', message: 'Valid duration in hours is required for timer mode.' };
     }
   }
-
-  const existing = await repo.getActiveHold(siteId);
-  if (existing) return { status: 'already_active', hold: existing };
 
   let live: { percentage_charged: number; load_power: number; timestamp: string };
   let info: { backup_reserve_percent: number };
