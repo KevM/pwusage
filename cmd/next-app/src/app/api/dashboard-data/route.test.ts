@@ -2,28 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
     const getAuthorizedSiteIds = vi.fn();
-    const getTeslaCredentials = vi.fn();
     const getSite = vi.fn();
-    const getLockedRefreshHandler = vi.fn();
     const getLiveStatus = vi.fn();
     return {
         getAuthorizedSiteIds,
-        getTeslaCredentials,
         getSite,
-        getLockedRefreshHandler,
         getLiveStatus
     };
 });
 
 vi.mock('@/lib/auth-checks', () => ({
     getAuthorizedSiteIds: mocks.getAuthorizedSiteIds,
-    getTeslaCredentials: mocks.getTeslaCredentials
-}));
-
-vi.mock('@/lib/tesla-token-repo', () => ({
-    TeslaTokenRepo: class {
-        getLockedRefreshHandler = mocks.getLockedRefreshHandler;
-    }
 }));
 
 vi.mock('@/lib/site-repo', () => ({
@@ -48,11 +37,6 @@ describe('/api/dashboard-data', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
-        mocks.getTeslaCredentials.mockResolvedValue({ access_token: 'a', refresh_token: 'r' });
-        mocks.getLockedRefreshHandler.mockReturnValue({
-            refreshHandler: vi.fn(),
-            errorHandler: vi.fn()
-        });
         mocks.getSite.mockResolvedValue({
             id: 'site-1',
             name: 'Home',

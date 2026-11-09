@@ -62,8 +62,7 @@ function createPinnedMemberClient(
     tokens: { access_token: string | null; refresh_token: string; fleet_api_base_url: string | null },
     options?: TeslaClientFactoryOptions
 ): TeslaClient {
-    const siteRepo = new SiteRepo();
-    const tokenRepo = new TeslaTokenRepo(siteRepo);
+    const tokenRepo = new TeslaTokenRepo();
     // Keep this client on the account selected at construction. A connection
     // move must not make an in-flight call adopt another member's grant.
     const handlers = tokenRepo.getLockedUserRefreshHandler(userId);
@@ -103,7 +102,7 @@ export async function createTeslaClientForUser(
     if (!userTokens?.refresh_token) {
         return null;
     }
-    const handlers = new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(userId);
+    const handlers = new TeslaTokenRepo().getLockedUserRefreshHandler(userId);
     return new TeslaClient({
         accessToken: userTokens.access_token || 'expired',
         beforeRequest: () => currentTeslaConnection(userId),
@@ -128,7 +127,7 @@ export function createTeslaClientForAccessToken(
     const onBaseUrlChange = options?.onBaseUrlChange
         ?? (options?.userId ? recordFleetBaseUrl(options.userId) : undefined);
     // An account's grant is only ever refreshed through its lease.
-    const handlers = options?.userId ? new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(options.userId) : undefined;
+    const handlers = options?.userId ? new TeslaTokenRepo().getLockedUserRefreshHandler(options.userId) : undefined;
     return new TeslaClient({
         accessToken,
         beforeRequest: options?.userId ? () => currentTeslaConnection(options.userId!) : undefined,

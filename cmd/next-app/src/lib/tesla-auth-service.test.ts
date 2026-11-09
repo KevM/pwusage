@@ -31,8 +31,6 @@ describe('TeslaAuthService', () => {
     };
 
     const mockTeslaTokenRepo = {
-        updateSiteTokens: vi.fn(),
-        releaseRefreshLock: vi.fn(),
         getLockedUserRefreshHandler: vi.fn(),
     };
 
@@ -157,10 +155,6 @@ describe('TeslaAuthService', () => {
         expect(mockSiteRepo.removeSitesMissingFromTesla).toHaveBeenCalledWith(
             'tesla-user-sub', ['98765'], expect.any(Date)
         );
-        // Login already persisted credentials before Fleet calls. Site linking must
-        // not overwrite a concurrent refresh or release another worker's lease.
-        expect(mockTeslaTokenRepo.updateSiteTokens).not.toHaveBeenCalled();
-        expect(mockTeslaTokenRepo.releaseRefreshLock).not.toHaveBeenCalled();
     });
 
     it('uses shared membership reconciliation for login when the cutover is enabled', async () => {
@@ -2356,7 +2350,7 @@ describe('TeslaAuthService regional Fleet host', () => {
             getByEmail: vi.fn().mockResolvedValue(null),
         };
         const siteRepo = { assignSiteToUser: vi.fn(), removeSitesMissingFromTesla: vi.fn() };
-        const teslaTokenRepo = { updateSiteTokens: vi.fn(), releaseRefreshLock: vi.fn() };
+        const teslaTokenRepo = { getLockedUserRefreshHandler: vi.fn() };
         const importerClients: TeslaClient[] = [];
         const importer = { ensureSite: vi.fn() };
         const service = new TeslaAuthService({

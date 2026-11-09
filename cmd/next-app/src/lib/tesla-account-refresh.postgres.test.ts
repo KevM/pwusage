@@ -47,9 +47,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         await pool.query(migration);
         await pool.query('CREATE TEMP TABLE "Site" (id text PRIMARY KEY, user_id text)');
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
-        repo = new TeslaTokenRepo({
-            getSite: async () => ({ user_id: 'owner' }), invalidateCache: () => {},
-        } as unknown as SiteRepo);
+        repo = new TeslaTokenRepo();
     });
     afterAll(async () => { await pool?.end(); });
     beforeEach(async () => {
@@ -106,7 +104,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
     it('a worker whose lease expired still saves the rotation it received', async () => {
         exchange.mockImplementation(async () => {
             await pool.query('UPDATE "User" SET refresh_lock_expires = $1', [Date.now() - 1]);
-            await expect(new TeslaTokenRepo({ getSite: async () => ({ user_id: 'owner' }), invalidateCache: () => {} } as unknown as SiteRepo)
+            await expect(new TeslaTokenRepo()
                 .getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
             return rotated;
         });
@@ -148,7 +146,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             is_active: true, tesla_refresh_state: 'reconnect_required',
         });
         await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
-        expect(await repo.getLockedRefreshHandler('site').refreshHandler('login-R')).toEqual(rotated);
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('login-R')).toEqual(rotated);
     });
 
     it('a lost save acknowledgement never replays the old generation', async () => {
@@ -234,14 +232,14 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         vi.stubEnv('TESLA_OAUTH_SECRET', 'synthetic-secret');
         const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('response lost after consumption'));
         const sessionVersion = (await new UserRepo().getAuthState('owner'))?.sessionVersion;
-        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow();
-        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow();
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(await new UserRepo().getAuthState('owner')).toMatchObject({ isActive: true, sessionVersion });
         await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() + 3600000 });
         expect((await pool.query('SELECT user_id FROM "Site" WHERE id = $1', ['site'])).rows[0].user_id).toBe('owner');
         fetchMock.mockResolvedValue(Response.json(rotated));
-        expect(await repo.getLockedRefreshHandler('site').refreshHandler('login-R')).toEqual(rotated);
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('login-R')).toEqual(rotated);
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(await new UserRepo().getAuthState('owner')).toMatchObject({ isActive: true, sessionVersion });
     });
@@ -252,13 +250,13 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({
             is_active: false, tesla_refresh_state: 'ready', tesla_credential_generation: 1,
         });
-        await expect(repo.getLockedRefreshHandler('site').refreshHandler('login-R')).rejects.toThrow();
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('login-R')).rejects.toThrow();
         expect(exchange).not.toHaveBeenCalled();
     });
 
     it('a browser constructed before a site refresh reuses its persisted replacement', async () => {
         const browser = await createTeslaClientForUser('owner');
-        expect(await repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
         const fetchMock = vi.spyOn(globalThis, 'fetch')
             .mockResolvedValueOnce(Response.json({ response: [] }));
         await browser?.getProducts();
@@ -281,7 +279,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
 
     it('restores missing access credentials using the stored refresh grant', async () => {
         await pool.query('UPDATE "User" SET access_token = NULL');
-        expect(await repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).toEqual(rotated);
+        expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).toEqual(rotated);
         expect(exchange).toHaveBeenCalledWith('refresh-A', expect.objectContaining({ exchangeId: expect.any(String) }));
         expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject(rotated);
     });
@@ -300,7 +298,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         exchange.mockRejectedValue(new TeslaRefreshError('credential_rejected'));
         await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow('credential_rejected');
         expect((await pool.query('SELECT * FROM "User"')).rows[0]).toMatchObject({ tesla_refresh_state: 'reconnect_required', is_active: true, is_refreshing: 0 });
-        await expect(repo.getLockedRefreshHandler('site').refreshHandler('refresh-A')).rejects.toThrow('Reconnect Tesla');
+        await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toThrow('Reconnect Tesla');
         expect(exchange).toHaveBeenCalledTimes(1);
     });
 

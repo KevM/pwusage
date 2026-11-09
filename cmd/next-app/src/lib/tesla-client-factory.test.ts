@@ -43,10 +43,6 @@ vi.mock('./tesla-token-repo', () => {
     return {
         TeslaTokenRepo: function TeslaTokenRepo() {
             return {
-                getLockedRefreshHandler: vi.fn().mockReturnValue({
-                    refreshHandler: vi.fn(),
-                    errorHandler: vi.fn()
-                }),
                 getLockedUserRefreshHandler: vi.fn().mockReturnValue({
                     refreshHandler: mockUserRefresh,
                     errorHandler: vi.fn()

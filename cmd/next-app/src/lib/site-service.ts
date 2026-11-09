@@ -130,7 +130,7 @@ export class SiteService {
         }
 
         const siteRepo = this.deps.siteRepo;
-        const teslaTokenRepo = this.deps.teslaTokenRepo || new TeslaTokenRepo(siteRepo);
+        const teslaTokenRepo = this.deps.teslaTokenRepo || new TeslaTokenRepo();
         const trmnlService = this.deps.trmnlService || new TrmnlService();
 
         let site = await siteRepo.getSite(siteId, { includeTokens: true });
