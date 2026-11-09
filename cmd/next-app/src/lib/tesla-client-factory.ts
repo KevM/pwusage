@@ -5,6 +5,8 @@ import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
 import { siteMembershipEnabled } from './site-membership-flag';
 import { requiresTeslaReconnect } from './tesla-refresh-outcome';
+import { createHash } from 'node:crypto';
+import { logEvent } from './observability';
 
 export interface TeslaClientFactoryOptions {
     onTokenUpdate?: () => void;
@@ -74,6 +76,11 @@ function createPinnedMemberClient(
             return current;
         },
         requireTeslaSiteMapping: true,
+        onFinalSiteRejection: siteMembershipEnabled()
+            ? status => logEvent('warn', 'site.connection.request-rejected', {
+                siteId, accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16), status,
+            })
+            : undefined,
         refreshToken: tokens.refresh_token,
         tokenRefreshHandler: handlers.refreshHandler,
         onTokenError: handlers.errorHandler,

@@ -13,7 +13,10 @@ const mockGetTokens = vi.fn();
 const mockSetFleetApiBaseUrl = vi.fn();
 const mockUserRefresh = vi.fn();
 const mockRepairConnection = vi.fn();
+const mockLogEvent = vi.hoisted(() => vi.fn());
 const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+
+vi.mock('./observability', () => ({ logEvent: mockLogEvent }));
 
 vi.mock('./user-repo', () => {
     return {
@@ -64,6 +67,20 @@ describe('TeslaClientFactory', () => {
     });
 
     describe('createTeslaClientForSite', () => {
+        it('logs only the final rejected site response with a hashed account', async () => {
+            vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            try {
+                mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true });
+                mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a', refresh_token: 'r', tesla_energy_site_id: 't', is_active: true, tesla_refresh_state: 'ready' });
+                const client = await createTeslaClientForSite('home');
+                vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 403 }));
+                await expect(client?.getLiveStatus('home')).rejects.toMatchObject({ status: 403 });
+                expect(mockLogEvent).toHaveBeenCalledWith('warn', 'site.connection.request-rejected',
+                    expect.objectContaining({ siteId: 'home', status: 403, accountId: expect.stringMatching(/^[a-f0-9]{16}$/) }));
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        });
         it('repairs an unusable connection before selecting a pinned account', async () => {
             vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
             try {

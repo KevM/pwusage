@@ -8,6 +8,8 @@ export const maxDuration = 60;
 import { NextRequest, NextResponse } from 'next/server';
 import { healTrailingGaps } from '@/lib/gap-heal';
 import { withIoDeadline } from '@/lib/io-deadline';
+import { SiteRepo } from '@/lib/site-repo';
+import { siteMembershipEnabled } from '@/lib/site-membership-flag';
 
 const HARD_DEADLINE_MS = 50_000;
 
@@ -19,7 +21,10 @@ async function handleGET(request: NextRequest) {
   try {
     logEvent('info', 'cron.heal-gaps.started');
     flushLogEvents();
-    const summary = await withIoDeadline(HARD_DEADLINE_MS, () => healTrailingGaps());
+    const summary = await withIoDeadline(HARD_DEADLINE_MS, async () => {
+      if (siteMembershipEnabled()) await new SiteRepo().repairAllConnections();
+      return healTrailingGaps();
+    });
     setLogContext({ siteIds: summary.sites.map(site => site.siteId) });
     logEvent('info', 'cron.heal-gaps.completed', {
       checked: summary.checked, stopped: summary.stopped,

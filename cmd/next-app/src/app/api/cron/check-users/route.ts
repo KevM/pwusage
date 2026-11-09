@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { UserRepo } from '@/lib/user-repo';
 import { reconcileDueMemberships } from '@/lib/site-membership-daily';
 import { siteMembershipEnabled } from '@/lib/site-membership-flag';
+import { SiteRepo } from '@/lib/site-repo';
 
 async function handleGET(request: NextRequest) {
     try {
@@ -19,6 +20,7 @@ async function handleGET(request: NextRequest) {
         const userRepo = new UserRepo();
         const shared = siteMembershipEnabled();
         const deadline = shared ? Date.now() + 50_000 : Infinity;
+        if (shared) await new SiteRepo().repairAllConnections();
         const memberships = shared ? await reconcileDueMemberships(deadline) : null;
         const result = await userRepo.verifyAllUserStatuses(deadline);
 

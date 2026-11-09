@@ -32,11 +32,12 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     await local.database.query(`CREATE TABLE "User" (
       id text PRIMARY KEY, is_active boolean DEFAULT true, access_token text, refresh_token text,
       auth_status text, tesla_refresh_state text DEFAULT 'ready', fleet_api_base_url text,
-      refresh_lock_expires bigint, tesla_refresh_retry_after bigint, auth_lost_at timestamptz
+      refresh_lock_expires bigint, tesla_refresh_retry_after bigint,
+      auth_lost_at timestamptz, auth_restored_at timestamptz
     )`);
     await local.database.query(`CREATE TABLE "Site" (
       id text PRIMARY KEY, user_id text REFERENCES "User"(id), json jsonb,
-      last_live_refresh_at timestamptz, name text NOT NULL DEFAULT 'Home',
+      last_live_refresh_at bigint, name text NOT NULL DEFAULT 'Home',
       installed timestamptz NOT NULL DEFAULT now(), timezone text NOT NULL DEFAULT 'UTC'
     )`);
     await local.database.query(`CREATE TABLE "TrmnlInstallation" (
@@ -120,7 +121,27 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       expect(row.tesla_connection_user_id).toBe('u2');
       expect(row.connection_lost_at).toBeInstanceOf(Date);
       expect(row.connection_restored_at).toBeInstanceOf(Date);
+      expect(await new UserRepo().getAuthRestoredAtForSite('s1')).toEqual(row.connection_restored_at);
       expect(await sites.repairConnection('s1')).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('repairs all broken sites independently and converts a millisecond live stamp', async () => {
+    const sites = new SiteRepo();
+    const liveAt = Date.now() - 60_000;
+    await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+      VALUES ('s1', 'u2', 'invited-id')`);
+    await local.database.query(`UPDATE "Site" SET last_live_refresh_at=$1 WHERE id='s1'`, [liveAt]);
+    await local.database.query(`UPDATE "User" SET auth_status='revoked' WHERE id='u1'`);
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      expect(await sites.repairAllConnections()).toBe(1);
+      const rows = (await local.database.query(`SELECT id, tesla_connection_user_id, connection_lost_at FROM "Site" ORDER BY id`)).rows;
+      expect(rows[0].tesla_connection_user_id).toBe('u2');
+      expect(rows[0].connection_lost_at.getTime()).toBeCloseTo(liveAt, -2);
+      expect(rows[1].tesla_connection_user_id).toBe('u2');
     } finally {
       vi.unstubAllEnvs();
     }
@@ -166,6 +187,25 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       const row = (await local.database.query(`SELECT status, restore_reason FROM "BatteryHold" WHERE id=$1`, [hold.id])).rows[0];
       expect(row).toEqual({ status: 'cancelled', restore_reason: 'no_members' });
       expect((await local.database.query(`SELECT id FROM "Site" WHERE id='s1'`)).rows).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps a sole dead member but removes one after another member is seen alive', async () => {
+    const sites = new SiteRepo();
+    await local.database.query(`UPDATE "User" SET auth_status='revoked',
+      auth_lost_at=now()-interval '15 days' WHERE id='u1'`);
+    await local.database.query(`UPDATE "SiteMember" SET last_seen_in_tesla_at=now()-interval '15 days'
+      WHERE site_id='s1' AND user_id='u1'`);
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      expect(await sites.removeDeadMember('s1', 'u1', 's1')).toBe(false);
+      await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+        VALUES ('s1', 'u2', 'invited-id')`);
+      expect(await sites.removeDeadMember('s1', 'u1', 's1')).toBe(true);
+      expect((await local.database.query(`SELECT user_id, tesla_connection_user_id FROM "Site" WHERE id='s1'`)).rows[0])
+        .toEqual({ user_id: 'u2', tesla_connection_user_id: 'u2' });
     } finally {
       vi.unstubAllEnvs();
     }
