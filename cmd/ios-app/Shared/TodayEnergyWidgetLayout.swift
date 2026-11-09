@@ -13,7 +13,7 @@ enum TodayEnergyWidgetLayout: Equatable {
         default: self = .large
         }
     }
-    static let singleMetricInsets = EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
+    static let singleMetricInsets = EdgeInsets(top: 15, leading: 15, bottom: 10, trailing: 15)
     static let mediumInsets = EdgeInsets(top: 13, leading: 16, bottom: 12, trailing: 16)
     static let largeInsets = EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
 }

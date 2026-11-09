@@ -139,7 +139,8 @@ export class SiteService {
         const accessToken = site?.access_token;
         const refreshToken = site?.refresh_token;
 
-        const ownerId = site?.user_id;
+        // The selected Tesla connection's member, which can differ from the legacy owner.
+        const ownerId = site?.token_owner_id ?? undefined;
         const handlers = ownerId ? teslaTokenRepo.getLockedUserRefreshHandler(ownerId) : null;
         // Tokens are absent when the site row is missing or the user has no
         // stored credentials. We still build the client and attempt ensureSite:

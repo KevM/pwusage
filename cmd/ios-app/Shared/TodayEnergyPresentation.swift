@@ -47,16 +47,17 @@ enum TodayEnergyPresentation {
             ? stateOfCharge.map { "Battery charge \(Int($0.rounded())) percent" } ?? "Battery charge unknown"
             : nil
         return [
-            MetricTile(title: "Home", value: energy(homeKwh), symbol: "house.fill", tint: .blue, compact: compact),
-            MetricTile(title: "Solar", value: energy(solarKwh), symbol: "sun.max.fill", tint: .orange,
-                       compact: compact),
+            MetricTile(title: "Home", value: energy(homeKwh), symbol: "house.fill",
+                       tint: TodayEnergyMetric.home.tint, compact: compact),
+            MetricTile(title: "Solar", value: energy(solarKwh), symbol: "sun.max.fill",
+                       tint: TodayEnergyMetric.solar.tint, compact: compact),
             MetricTile(title: "Grid", value: signedEnergy(gridNetKwh),
                        detail: gridNetKwh > 0 ? "Net import" : (gridNetKwh < 0 ? "Net export" : "Even"),
-                       symbol: "powerplug", tint: .gray, compact: compact),
+                       symbol: "powerplug", tint: TodayEnergyMetric.grid.tint, compact: compact),
             MetricTile(title: "Battery", value: signedEnergy(batteryNetKwh),
                        detail: batteryNetKwh > 0 ? "Net discharge" : (batteryNetKwh < 0 ? "Net charge" : "Even"),
                        symbol: showsStateOfCharge ? batterySymbol(stateOfCharge) : "battery.100percent",
-                       tint: .green, compact: compact,
+                       tint: TodayEnergyMetric.battery.tint, compact: compact,
                        symbolPrefix: showsStateOfCharge ? stateOfCharge.map { "\(Int($0.rounded()))%" } : nil,
                        spokenRole: chargeDescription)
         ]

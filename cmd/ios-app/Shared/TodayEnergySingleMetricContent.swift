@@ -16,7 +16,7 @@ struct TodayEnergySingleMetricContent: View {
                     let stale = snapshot.availability(at: date) == .stale
                     Label(stale ? "Stale" : time(source, timezone: snapshot.timezone),
                           systemImage: stale ? "clock.badge.exclamationmark" : "clock")
-                        .font(.system(size: 9)).foregroundStyle(stale ? .orange : .secondary)
+                        .font(.system(size: 9)).foregroundStyle(.white.opacity(stale ? 1 : secondaryOpacity))
                         .lineLimit(1).minimumScaleFactor(0.8)
                         .accessibilityLabel(
                             "\(stale ? "Stale. " : "")Updated \(time(source, timezone: snapshot.timezone))"
@@ -30,26 +30,31 @@ struct TodayEnergySingleMetricContent: View {
                                                              compact: true, showsStateOfCharge: true)[metric.index]
                 MetricTile(title: identity.title, value: "—", symbol: identity.symbol, tint: identity.tint,
                            compact: true, prominentValue: true,
-                           spokenRole: "Energy unavailable. Open pwusage to refresh.")
+                           spokenRole: "Energy unavailable. Open pwusage to refresh.", surface: .onFill)
             }
             if snapshot == nil || snapshot?.availability(at: date) == .missing {
-                Text("Open pwusage").font(.caption2).foregroundStyle(.secondary)
+                Text("Open pwusage").font(.caption2).foregroundStyle(.white.opacity(secondaryOpacity))
             } else if let snapshot {
                 HStack(spacing: 4) {
                     Text(snapshot.siteName).lineLimit(1).truncationMode(.tail)
                     if !snapshot.energy.todayComplete {
-                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Image(systemName: "exclamationmark.triangle.fill")
                             .accessibilityLabel("Some energy intervals are missing")
                     }
-                }.font(.caption2).foregroundStyle(.secondary)
+                }.font(.caption2).foregroundStyle(.white.opacity(secondaryOpacity))
             }
         }
+        .foregroundStyle(.white)
         .dynamicTypeSize(.xSmall ... .xLarge)
     }
+
+    /// Secondary text on the metric fill: white, slightly receded, still readable on the deep end.
+    private let secondaryOpacity = 0.8
 
     private var selectedTile: MetricTile? {
         guard var tile = TodayEnergyPresentation.tile(for: metric, snapshot: snapshot, at: date) else { return nil }
         tile.prominentValue = true
+        tile.surface = .onFill
         return tile
     }
 

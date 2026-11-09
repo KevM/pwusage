@@ -141,6 +141,16 @@ describe('UserRepo class methods (folded from module functions)', () => {
         expect(result?.refresh_token).toBe('r');
     });
 
+    it('getTokensForSiteMember decrypts using the pinned member id and returns null without a membership', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ access_token: encryptToken('a', 'access_token', 'u2'), refresh_token: encryptToken('r', 'refresh_token', 'u2'), tesla_energy_site_id: 'tesla-9' }]
+        });
+        const result = await new UserRepo().getTokensForSiteMember('site-1', 'u2');
+        expect(result).toMatchObject({ access_token: 'a', refresh_token: 'r', tesla_energy_site_id: 'tesla-9' });
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        expect(await new UserRepo().getTokensForSiteMember('site-1', 'u3')).toBeNull();
+    });
+
     it('getById and getByEmail decrypt tokens on the row', async () => {
         const row = () => ({ id: 'u1', access_token: encryptToken('a', 'access_token', 'u1'), refresh_token: encryptToken('r', 'refresh_token', 'u1') });
         queryMock.mockResolvedValueOnce({ rows: [row()] }).mockResolvedValueOnce({ rows: [row()] });
