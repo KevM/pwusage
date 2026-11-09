@@ -39,6 +39,9 @@ Three auth artifacts are used for different concerns:
 - Purpose: backend calls to Tesla Fleet API.
 - Not set in browser cookies in the current callback flow.
 - Resolved server-side from `sub`/site ownership.
+- A site can have several members, each with their own grant and their own Tesla `energy_site_id`
+  (`SiteMember`). Calls use the grant of the account they run as and that account's ID, never `Site.id`.
+  See `DesignDecisions.md` section 7.
 
 3. Trmnl installation token (`TrmnlInstallation.access_token`)
 - Purpose: verify plugin/device calls (markup and uninstall).
@@ -458,7 +461,7 @@ simulator and device verification in the native app implementation.
 - Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
 - Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
-- Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
+- Tesla backend API auth: tokens from `User` table, auto-refreshed server-side. On shared sites, reads use the site's connection user, a person's own commands use their own token, and only a Battery Saver restore may use another member's. Membership is reconciled against each user's Tesla product list at login and daily.
 
 ## Current Open Gaps
 

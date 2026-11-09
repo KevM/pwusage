@@ -6,6 +6,16 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Shared site membership: Phase 5 contract (2026-11-09, branch `codex/shared-site-membership`)
+
+Phases 1–4 landed ([design](docs/superpowers/specs/2026-11-08-shared-site-membership-design.md), section 11). Phase 5 is deliberately not pre-built: it depends on what the soak finds, and it ends in an irreversible column drop. Build it fresh against current `main`.
+
+- [ ] **Start the soak:** enable `SITE_MEMBERSHIP_ENABLED` on beta with real accounts, then production. Record the production enable date here. Earliest Phase 5 is 1–2 weeks after that.
+- [ ] **Soak signals to check before contracting:** `tesla.refresh.*` unchanged; `site.member.joined` / `removed` / `connection.moved` look sane; `site.connection.request-rejected` is rare; `check-users` egress within budget; the section 11 SQL check returns 0 rows; no flag-off rollback needed.
+- [ ] **Phase 5 PR 1 (draft, after soak):** remove the flag and the `Site.user_id` writes (keep `user_id` equal to the connection until this lands, so flag-off stays a clean rollback until then).
+- [ ] **Phase 5 PR 2 (separate, later):** migration dropping `Site.user_id`, in its own PR so it can be reverted independently of the code.
+- [ ] **Open Tesla answers that may change the soak read:** SUPPORT-2194 (ownership transfer, U4) and hardware ID surviving a gateway replacement (U5).
+
 ## iOS refresh rollout gates (2026-11-05, branch `codex/ios-refresh-egress`)
 
 - [ ] **Measure hosted egress before removing the manual cooldown:** run `mobile-route-egress-trace.test.ts` against a database with the Dev marker, record the headroom in [the plan](docs/plans/2026-11-05-ios-refresh-and-database-egress.md), and only then consider `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true` in production. Until then the 15-second floor stays.

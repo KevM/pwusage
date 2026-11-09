@@ -429,6 +429,41 @@ already-netted costs; they must not price raw seasonal balances themselves.
 
 ---
 
+## 7. Shared sites: `Site.id` is not a Tesla ID, and writes use the writer's own token
+
+Tesla gives every invited account its **own** `energy_site_id` for the same Powerwall, and a new one on each
+re-invite. One home therefore looks like several unrelated sites if the Tesla ID is the key. `Site.id` is
+pwusage's own ID: it starts as the first Tesla ID seen and never changes, but it may no longer exist at Tesla,
+even for the original member. `SiteMember (site_id, user_id, tesla_energy_site_id)` maps each person to their
+*current* Tesla ID, and `Site.tesla_hardware_id` recognises the home.
+
+Why it looks reducible but isn't:
+
+- **Never send `Site.id` to Tesla.** `TeslaClient` translates through a resolver for the pinned account, and an
+  unmapped ID throws instead of falling back. Falling back would work for most sites and silently 404 for
+  re-invited members.
+- **Keep the mapping out of the cached `Site` object.** Sites are cached per instance for 15 minutes and a
+  re-invite replaces the ID. The credentials query returns the pinned account's ID with its token.
+- **Clients are pinned to one account.** A client holding A's token must never read B's credentials or claim B's
+  refresh lease after the connection moves. Each grant keeps exactly one holder (section 1), so failover moves
+  the connection pointer and never copies tokens.
+- **Reads use the site's connection user, a person's own changes use theirs.** Only a Battery Saver restore may
+  borrow another member's token, so nobody can do through pwusage what Tesla wouldn't let their account do.
+- **Tesla's product list decides access.** A login with matching hardware joins only if an existing member's own
+  list still shows the site; otherwise it gets a fresh site so a new homeowner doesn't inherit the seller's
+  history. Joining automatically (no invite link) was a deliberate owner decision, and the "seller not yet
+  removed" window is a known, accepted risk.
+- **Reconcile never runs from a failed request.** It would overlap the token refresh already in flight, and a 403
+  can mean a missing scope. Removal is conditional on the mapping and `last_seen_in_tesla_at` not having moved,
+  so a stale list can't undo a re-invite.
+- **One Battery Saver start per physical Powerwall** (`BatteryHoldStartClaim`, keyed by hardware), because
+  duplicate rows for one home would otherwise each send a reserve command.
+
+Full rationale, test matrix and open questions:
+[`docs/superpowers/specs/2026-11-08-shared-site-membership-design.md`](./docs/superpowers/specs/2026-11-08-shared-site-membership-design.md).
+
+---
+
 ## Battery hold monitor claims and deadlines
 
 `BatteryHold` remains the only hold lifecycle. A processing owner and 120-second

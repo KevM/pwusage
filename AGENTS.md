@@ -39,7 +39,8 @@ There is deliberately no `CLAUDE.md`: Claude Code reads `AGENTS.md` directly, an
   OAuth flows, the web session cookie, Tesla token handling and TRMNL bearer auth, for both apps.
 - **Design rationale.** [`DesignDecisions.md`](./DesignDecisions.md) records *why* several
   non-obvious decisions exist — the cross-instance Tesla claim pattern, append-only tariff
-  versioning, the loose-pending TRMNL flow and the relative-flow battery provenance model (no SOC /
+  versioning, why `Site.id` is not a Tesla ID (shared sites map each member to their own Tesla ID),
+  the loose-pending TRMNL flow and the relative-flow battery provenance model (no SOC /
   no genesis seed). Read the relevant section before "simplifying" any of them: each looks
   reducible but is load-bearing.
 - **Cross-session work.** [`TODO.md`](./TODO.md) tracks deferred work that spans sessions. Check it
