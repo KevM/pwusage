@@ -13,13 +13,19 @@ export async function reconcileDueMemberships(deadlineMs: number): Promise<{ che
     const { rows } = await pool.query<{ id: string }>(`
         SELECT id FROM "User"
         WHERE is_active = true
+          AND NULLIF(refresh_token, '') IS NOT NULL
+          AND auth_status IS DISTINCT FROM 'revoked'
+          AND tesla_refresh_state IS DISTINCT FROM 'uncertain'
+          AND tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
           AND (memberships_checked_at IS NULL OR memberships_checked_at < now() - interval '24 hours')
-        ORDER BY memberships_checked_at NULLS FIRST, id LIMIT 50`);
+        ORDER BY memberships_attempted_at NULLS FIRST, memberships_checked_at NULLS FIRST, id LIMIT 50`);
     let checked = 0;
     let failed = 0;
     let deadRemoved = 0;
     for (const row of rows) {
         if (Date.now() >= deadlineMs - 5_000) break;
+        // Stamp every attempt, so accounts that keep failing rotate behind the rest of the queue.
+        await pool.query('UPDATE "User" SET memberships_attempted_at = now() WHERE id = $1', [row.id]);
         try {
             const client = await createTeslaClientForUser(row.id);
             if (!client) continue;

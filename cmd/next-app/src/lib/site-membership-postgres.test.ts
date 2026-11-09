@@ -8,9 +8,17 @@ vi.mock('./db', () => ({ pool: {
   query: (...args: unknown[]) => Reflect.apply(local.database.query, local.database, args),
   connect: () => local.database.connect(),
 } }));
+const daily = vi.hoisted(() => ({ client: vi.fn(), sync: vi.fn() }));
+vi.mock('./tesla-client-factory', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./tesla-client-factory')>(), createTeslaClientForUser: daily.client,
+}));
+vi.mock('./site-membership-service', () => ({
+  SiteMembershipService: class { syncLogin = daily.sync; },
+}));
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { BatteryHoldActivityRepo } from './battery-hold-activity-repo';
 import { SiteRepo } from './site-repo';
+import { reconcileDueMemberships } from './site-membership-daily';
 import { UserRepo } from './user-repo';
 import { SiteMembershipJoinRepo } from './site-membership-join-repo';
 import type { EnergySiteInfo } from './tesla-client';
@@ -58,6 +66,7 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     const sql = await readFile(migration, 'utf8');
     await local.database.query(sql);
     await local.database.query(sql);
+    await local.database.query(await readFile('db-migrations/20261109150459_add_memberships_attempted_at.sql', 'utf8'));
     backfill = (await local.database.query(`SELECT s.tesla_hardware_id, s.tesla_connection_user_id,
       m.tesla_energy_site_id FROM "Site" s JOIN "SiteMember" m ON m.site_id=s.id WHERE s.id='s1'`)).rows[0];
   });
@@ -259,6 +268,71 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       JOIN "SiteMember" m ON m.site_id=s.id WHERE s.id='new-tesla-id'`)).rows[0];
     expect(row).toEqual({ user_id: 'u1', tesla_connection_user_id: 'u1',
       tesla_hardware_id: 'new-hardware', json: {}, tesla_energy_site_id: 'new-tesla-id' });
+  });
+
+  it('rejoins a retained site row whose last member was removed, instead of colliding on its id', async () => {
+    const joins = new SiteMembershipJoinRepo();
+    await local.database.query(`INSERT INTO "Site" (id, json, tesla_hardware_id) VALUES ('retained-id', '{}', 'hw-retained')`);
+    const info = { id: 'hw-retained', site_name: 'Home' } as EnergySiteInfo;
+    const result = await joins.commitDecision({ userId: 'u1', teslaId: 'retained-id', info,
+      hardwareId: 'hw-retained', observedMembers: [], verifiedSiteId: null, fetchedAt: new Date() });
+    expect(result).toEqual({ kind: 'joined', siteId: 'retained-id' });
+    const row = (await local.database.query(`SELECT s.user_id, s.tesla_connection_user_id, m.tesla_energy_site_id
+      FROM "Site" s JOIN "SiteMember" m ON m.site_id = s.id WHERE s.id = 'retained-id'`)).rows[0];
+    expect(row).toEqual({ user_id: 'u1', tesla_connection_user_id: 'u1', tesla_energy_site_id: 'retained-id' });
+    await local.database.query(`INSERT INTO "Site" (id, json, tesla_hardware_id) VALUES ('other-hw-id', '{}', 'hw-a')`);
+    await expect(joins.commitDecision({ userId: 'u2', teslaId: 'other-hw-id', info: { id: 'hw-b' } as EnergySiteInfo,
+      hardwareId: 'hw-b', observedMembers: [], verifiedSiteId: null, fetchedAt: new Date() })).rejects.toThrow(/different Powerwall/);
+  });
+
+  it('does not let an older product list overwrite a newer re-invite mapping', async () => {
+    const joins = new SiteMembershipJoinRepo();
+    await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('u3', 'r3')`);
+    await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id, last_seen_in_tesla_at)
+      VALUES ('s1', 'u3', 'new-invite-id', now())`);
+    const info = { id: 'hardware-1', site_name: 'Home' } as EnergySiteInfo;
+    const observed = await joins.membersForHardware('hardware-1');
+    await joins.commitDecision({ userId: 'u3', teslaId: 'old-invite-id', info, hardwareId: 'hardware-1',
+      observedMembers: observed, verifiedSiteId: null, fetchedAt: new Date(Date.now() - 3_600_000) });
+    const row = (await local.database.query(`SELECT tesla_energy_site_id, last_seen_in_tesla_at > now() - interval '1 minute' AS fresh
+      FROM "SiteMember" WHERE site_id = 's1' AND user_id = 'u3'`)).rows[0];
+    expect(row).toEqual({ tesla_energy_site_id: 'new-invite-id', fresh: true });
+  });
+
+  describe('daily membership reconciliation', () => {
+    const farFuture = () => Date.now() + 10 * 60_000;
+    beforeEach(() => {
+      process.env.SITE_MEMBERSHIP_ENABLED = 'true';
+      daily.client.mockReset(); daily.sync.mockReset();
+      daily.client.mockResolvedValue({ getProducts: vi.fn().mockResolvedValue([]) });
+      daily.sync.mockResolvedValue([]);
+    });
+    afterAll(() => { delete process.env.SITE_MEMBERSHIP_ENABLED; });
+    const synced = () => daily.sync.mock.calls.map(call => call[0] as string);
+
+    it('skips accounts whose Tesla grant is definitively unusable instead of letting them fill the batch', async () => {
+      await local.database.query(`INSERT INTO "User" (id, refresh_token, auth_status)
+        SELECT 'dead' || n, NULL, 'active' FROM generate_series(1, 55) n`);
+      await local.database.query(`INSERT INTO "User" (id, refresh_token, auth_status) VALUES ('revoked1', 'r', 'revoked')`);
+      await local.database.query(`INSERT INTO "User" (id, refresh_token, tesla_refresh_state) VALUES ('stuck1', 'r', 'reconnect_required')`);
+      await reconcileDueMemberships(farFuture());
+      expect(synced().sort()).toEqual(['u1', 'u2']);
+    });
+
+    it('rotates failing accounts to the back so later accounts still get checked', async () => {
+      await local.database.query(`INSERT INTO "User" (id, refresh_token)
+        SELECT 'f' || lpad(n::text, 3, '0'), 'r' FROM generate_series(1, 50) n`);
+      await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('z-healthy', 'r')`);
+      await local.database.query(`UPDATE "User" SET refresh_token = NULL WHERE id IN ('u1', 'u2')`);
+      daily.client.mockImplementation(async (id: string) => {
+        if (id.startsWith('f')) throw new Error('Tesla rejected the grant');
+        return { getProducts: vi.fn().mockResolvedValue([]) };
+      });
+      await reconcileDueMemberships(farFuture());
+      expect(synced()).toEqual([]);
+      await reconcileDueMemberships(farFuture());
+      expect(synced()).toEqual(['z-healthy']);
+    });
   });
 
   it('lets only one worker claim hardware shared by duplicate rows', async () => {
