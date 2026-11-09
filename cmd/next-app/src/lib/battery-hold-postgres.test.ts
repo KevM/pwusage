@@ -20,6 +20,8 @@ describe.skipIf(!safeSocket)('BatteryHold isolated PostgreSQL claims', () => {
     for (const migration of ['20260525000000_add_battery_hold.sql', '20260525010000_battery_hold_enhancements.sql', '20260525020000_add_cancelled_observed_reserve.sql', '20261002135116_battery_hold_monitoring.sql', '20261014133344_battery_hold_monitor_claim.sql']) {
       await local.database.query(await readFile(`db-migrations/${migration}`, 'utf8'));
     }
+    // BatteryHold.started_by_user_id comes from the SiteMember migration, whose Site/User schema this fixture lacks.
+    await local.database.query('ALTER TABLE "BatteryHold" ADD COLUMN IF NOT EXISTS started_by_user_id text');
     repo = new BatteryHoldRepo();
   });
   afterAll(async () => { await local.database?.end(); });

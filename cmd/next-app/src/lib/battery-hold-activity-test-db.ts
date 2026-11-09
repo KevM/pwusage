@@ -33,6 +33,8 @@ export async function createActivityTestDatabase(database: string): Promise<Pool
   await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, is_active boolean DEFAULT true, roles text[])`);
   await pool.query(`CREATE TABLE "Site" (id text PRIMARY KEY, user_id text REFERENCES "User"(id))`);
   for (const migration of HOLD_MIGRATIONS) await pool.query(await readFile(`db-migrations/${migration}`, 'utf8'));
+  // BatteryHold.started_by_user_id comes from the SiteMember migration, whose Site schema this fixture lacks.
+  await pool.query('ALTER TABLE "BatteryHold" ADD COLUMN IF NOT EXISTS started_by_user_id text');
   for (const migration of (await readdir('db-migrations')).filter(f => ACTIVITY_SCHEMA_MIGRATION.test(f)).sort()) {
     const sql = await readFile(`db-migrations/${migration}`, 'utf8');
     await pool.query(sql);
