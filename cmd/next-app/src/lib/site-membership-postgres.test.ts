@@ -9,6 +9,7 @@ vi.mock('./db', () => ({ pool: {
   connect: () => local.database.connect(),
 } }));
 import { BatteryHoldRepo } from './battery-hold-repo';
+import { BatteryHoldActivityRepo } from './battery-hold-activity-repo';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
 import { SiteMembershipJoinRepo } from './site-membership-join-repo';
@@ -33,7 +34,8 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       id text PRIMARY KEY, is_active boolean DEFAULT true, access_token text, refresh_token text,
       auth_status text, tesla_refresh_state text DEFAULT 'ready', fleet_api_base_url text,
       refresh_lock_expires bigint, tesla_refresh_retry_after bigint,
-      auth_lost_at timestamptz, auth_restored_at timestamptz
+      auth_lost_at timestamptz, auth_restored_at timestamptz,
+      roles text[] NOT NULL DEFAULT '{}'::text[]
     )`);
     await local.database.query(`CREATE TABLE "Site" (
       id text PRIMARY KEY, user_id text REFERENCES "User"(id), json jsonb,
@@ -104,6 +106,20 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     expect((await users.getTokensForSite('s1'))?.tesla_energy_site_id).toBe('reinvite-1');
     expect(await sites.getSiteIdsForTeslaIds(['reinvite-1'])).toEqual(['s1']);
     expect(await sites.getSiteIdsForTeslaIds(['s1'])).toEqual([]);
+  });
+
+  it('authorizes every shared-site member, but not an unrelated account', async () => {
+    const activities = new BatteryHoldActivityRepo();
+    await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('u3', 'r3')`);
+    await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+      VALUES ('s1', 'u2', 'invited-id')`);
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      await expect(activities.userCanAccessSite('u2', 's1')).resolves.toBe(true);
+      await expect(activities.userCanAccessSite('u3', 's1')).resolves.toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('moves a broken connection to a usable member and leaves a healthy connection alone', async () => {
