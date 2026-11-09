@@ -153,6 +153,17 @@ extension DashboardCoordinator {
         _ = await waitForRequest(billTask)
     }
 
+    /// Recalculates the bill after something it depends on changed (the billing day). A request
+    /// already running was computed from the old inputs, so it is dropped and a fresh one runs.
+    func refreshBillDiscardingRunning() async {
+        if let running = billTask {
+            running.cancel()
+            await running.value
+            billTask = nil
+        }
+        await refreshBill(trigger: .userGesture)
+    }
+
     private func launchBillTaskIfNeeded(trigger: RefreshTrigger, requestTime: Date, generation: Int) {
         guard billTask == nil else { return }
         let cadence = cadenceNow()

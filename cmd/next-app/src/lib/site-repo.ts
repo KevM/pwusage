@@ -33,7 +33,7 @@ export interface SiteHistoryOverview {
     last_energy_at: Date | null;
 }
 
-const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
+const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, billing_start_day_confirmed_at, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
 
 /** A site gap-heal checks, with its owner's last auth outage window. */
@@ -132,7 +132,7 @@ export class SiteRepo {
         const siteSql = `
             SELECT
                 s.id, s.user_id, s.name, s.utility, s.updated, s.installed,
-                s.timezone, s.billing_start_day, s.timezone_display_mode, s.sankey_renderer,
+                s.timezone, s.billing_start_day, s.billing_start_day_confirmed_at, s.timezone_display_mode, s.sankey_renderer,
                 s.last_live_refresh_at, s.last_live_claim_at, s.live_status_cache${jsonCol}${tokenCols}
             FROM "Site" s
             ${userJoin}
@@ -189,6 +189,7 @@ export class SiteRepo {
                 installed: new Date(row.installed as string | Date),
                 timezone: row.timezone as string,
                 billing_start_day: row.billing_start_day as number,
+                billing_start_day_confirmed_at: (row.billing_start_day_confirmed_at as Date | null | undefined) ?? null,
                 timezone_display_mode: (row.timezone_display_mode as 'SITE' | 'BROWSER') ?? undefined,
                 sankey_renderer: (row.sankey_renderer as string) ?? undefined,
                 last_live_refresh_at: row.last_live_refresh_at != null ? Number(row.last_live_refresh_at) : undefined,
@@ -326,7 +327,7 @@ export class SiteRepo {
 
     // === Commands ===
     async updateSiteBillingDay(siteId: string, day: number) {
-        await pool.query('UPDATE "Site" SET billing_start_day = $1 WHERE id = $2', [day, siteId]);
+        await pool.query('UPDATE "Site" SET billing_start_day = $1, billing_start_day_confirmed_at = now() WHERE id = $2', [day, siteId]);
         siteCache.delete(siteId);
     }
 

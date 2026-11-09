@@ -50,7 +50,7 @@ describe('/api/sites', () => {
             get: vi.fn().mockReturnValue({ value: 'site-token' })
         });
         mocks.getAuthorizedSites.mockResolvedValue([
-            { id: 'site-1', name: 'Home', utility: 'Portland General Electric' }
+            { id: 'site-1', name: 'Home', utility: 'Portland General Electric', billing_start_day: 1, billing_start_day_confirmed_at: null }
         ]);
     });
 
@@ -60,8 +60,28 @@ describe('/api/sites', () => {
 
         expect(mocks.getAuthorizedSites).toHaveBeenCalledWith();
         expect(body).toEqual([
-            { id: 'site-1', name: 'Home', utility: 'Portland General Electric' }
+            { id: 'site-1', name: 'Home', utility: 'Portland General Electric', billingDay: 1, billingDayConfirmed: false }
         ]);
+    });
+
+    it('reports a chosen billing day as confirmed', async () => {
+        mocks.getAuthorizedSites.mockResolvedValue([
+            { id: 'site-2', name: 'Cabin', utility: null, billing_start_day: 31, billing_start_day_confirmed_at: new Date('2026-11-01T00:00:00Z') }
+        ]);
+
+        const body = await (await GET(new Request('http://localhost/api/sites'))).json();
+
+        expect(body).toEqual([
+            { id: 'site-2', name: 'Cabin', utility: 'Unknown Utility', billingDay: 31, billingDayConfirmed: true }
+        ]);
+    });
+
+    it('treats a missing or zero billing day as day 1', async () => {
+        mocks.getAuthorizedSites.mockResolvedValue([{ id: 'site-3', name: 'X', billing_start_day: 0 }]);
+
+        const body = await (await GET(new Request('http://localhost/api/sites'))).json();
+
+        expect(body[0]).toMatchObject({ billingDay: 1, billingDayConfirmed: false });
     });
 
     it('returns 401 when site authorization rejects a revoked user', async () => {

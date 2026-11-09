@@ -85,6 +85,10 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         return BatteryHoldCommandResult(status: .succeeded, hold: nil, current: nil)
     }
 
+    func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
+        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only")
+    }
+
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
     func logout() async throws {}
     func clearSiteAuthCookie() async {}

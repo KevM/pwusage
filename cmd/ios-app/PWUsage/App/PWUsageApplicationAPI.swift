@@ -1,5 +1,5 @@
 @MainActor
 protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI,
-    MobileAuthAPI {
+    MobileBillingDayAPI, MobileAuthAPI {
     func fetchSites() async throws -> [MobileSite]
 }

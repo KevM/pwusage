@@ -8,4 +8,9 @@ extension PWUsageApplicationAPI {
     ) async throws -> MobileSolarHistoryResponse {
         .disabled
     }
+
+    /// Fakes that predate the billing day have no server to save it to.
+    func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
+        throw PWUsageAPIError.invalidResponse
+    }
 }

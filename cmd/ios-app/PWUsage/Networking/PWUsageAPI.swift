@@ -140,6 +140,18 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         } catch { throw PWUsageAPIError.invalidResponse }
     }
 
+    func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
+        guard MobileBillingDay.validDays.contains(day) else { throw PWUsageAPIError.invalidResponse }
+        var request = URLRequest(url: try makeURL(path: "/api/mobile/billing-day"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(BillingDayRequest(siteId: siteID, day: day))
+        let data = try await perform(request)
+        do {
+            return try JSONDecoder().decode(MobileBillingDay.self, from: data)
+        } catch { throw PWUsageAPIError.invalidResponse }
+    }
+
     func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
         if case .park(let choice) = command, !choice.isValid { throw PWUsageAPIError.invalidResponse }
         var request = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "battery-hold"))
@@ -323,6 +335,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         return url
     }
 
+    private struct BillingDayRequest: Encodable { let siteId: String; let day: Int }
     private struct FillRequest: Encodable { let siteId: String; let from: String; let days: Int }
     private struct FillFailure: Decodable { let code: String?; let retryAt: Date?; let retryAfterSource: String? }
     private struct ErrorResponse: Decodable { let error: String?; let code: String? }

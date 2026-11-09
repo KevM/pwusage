@@ -15,6 +15,8 @@ struct SettingsView: View {
     var siteHistory: SiteHistoryStatus?
     var siteHistoryDebug: SiteHistoryDebugActions?
     var onLocationSaved: () -> Void = {}
+    /// Saves the site's billing day; the row is hidden in the demo, which cannot save.
+    var onSaveBillingDay: (Int) async throws -> Void = { _ in }
     var onRevealSeen: () -> Void = {}
 
     @State private var isConfirmingSignOut = false
@@ -41,6 +43,16 @@ struct SettingsView: View {
                 .accessibilityHint("Choose a different site")
             }
             Section {
+                if onExitDemo == nil {
+                    NavigationLink(value: SettingsDestination.billingDay) {
+                        LabeledContent {
+                            Text(BillingDayPresentation.rowValue(day: site.billingDay))
+                        } label: {
+                            Label(BillingDayPresentation.settingTitle, systemImage: "calendar")
+                        }
+                    }
+                    .accessibilityIdentifier("settings.billing-day")
+                }
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
@@ -78,6 +90,9 @@ struct SettingsView: View {
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
                     startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved,
                     onRevealSeen: onRevealSeen)
+            case .billingDay:
+                BillingDaySettingsView(site: site, save: onSaveBillingDay)
+                    .id(site.id)
             case .about:
                 AboutSheet()
             }
@@ -98,6 +113,7 @@ struct SettingsView: View {
 
 enum SettingsDestination: Hashable {
     case ratePlans
+    case billingDay
     /// `startsAtLocation` opens straight into the home location step.
     case solarSystem(startsAtLocation: Bool = false)
     case about
