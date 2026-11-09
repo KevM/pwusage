@@ -31,10 +31,6 @@ const original = { access_token: 'access-A', refresh_token: 'refresh-A' };
 const rotated = { access_token: 'access-B', refresh_token: 'refresh-B' };
 
 function setup() {
-    const siteRepo = {
-        getSite: vi.fn(async () => ({ user_id: 'owner' })),
-        invalidateCache: vi.fn(),
-    } as unknown as SiteRepo;
     return new TeslaTokenRepo();
 }
 
