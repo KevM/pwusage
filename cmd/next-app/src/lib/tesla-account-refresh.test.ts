@@ -1,6 +1,5 @@
 import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SiteRepo } from './site-repo';
 import { decryptToken, tokenFingerprint } from './token-crypto';
 
 /** The rotated pair as saved: encrypted for the row, plus the fingerprint. */
