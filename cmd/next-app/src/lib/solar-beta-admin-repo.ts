@@ -1,5 +1,6 @@
 import { pool } from './db';
 import { SOLAR_FORECAST_BETA_ROLE } from './solar-forecast-beta';
+import { siteMembershipEnabled } from './site-membership-flag';
 
 export interface SolarBetaSite {
     userId: string;
@@ -13,10 +14,13 @@ export interface SolarBetaSite {
 export class SolarBetaAdminRepo {
     /** Every site owned by a beta user. Locations and layouts live on the user's devices. */
     async listBetaSites(): Promise<SolarBetaSite[]> {
+        const siteJoin = siteMembershipEnabled()
+            ? 'JOIN "SiteMember" m ON m.user_id = u.id JOIN "Site" s ON s.id = m.site_id'
+            : 'JOIN "Site" s ON s.user_id = u.id';
         const { rows } = await pool.query(`
             SELECT u.id AS user_id, u.email, u.auth_status, s.id AS site_id, s.name AS site_name
             FROM "User" u
-            JOIN "Site" s ON s.user_id = u.id
+            ${siteJoin}
             WHERE $1 = ANY(COALESCE(u.roles, '{}'))
             ORDER BY u.email, s.name
         `, [SOLAR_FORECAST_BETA_ROLE]);
@@ -32,7 +36,9 @@ export class SolarBetaAdminRepo {
     /** The user who owns `siteId`, or whose email matches case-insensitively. */
     async findUserId(target: { siteId?: string; email?: string }): Promise<string | null> {
         const { rows } = target.siteId
-            ? await pool.query('SELECT user_id AS id FROM "Site" WHERE id = $1', [target.siteId])
+            ? await pool.query(siteMembershipEnabled()
+                ? 'SELECT user_id AS id FROM "SiteMember" WHERE site_id = $1 LIMIT 2'
+                : 'SELECT user_id AS id FROM "Site" WHERE id = $1', [target.siteId])
             : await pool.query('SELECT id FROM "User" WHERE lower(email) = $1 LIMIT 2', [target.email]);
         return rows.length === 1 ? rows[0].id ?? null : null;
     }

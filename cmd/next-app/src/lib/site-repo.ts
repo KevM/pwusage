@@ -4,6 +4,8 @@ import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { UPSERT_SITE_SQL } from './site-upsert-sql';
 import { decryptToken } from './token-crypto';
 import { siteMembershipEnabled } from './site-membership-flag';
+import { logEvent } from './observability';
+import { createHash } from 'node:crypto';
 
 // Use global cache to persist across reloads in dev
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
@@ -77,6 +79,51 @@ export class SiteRepo {
             WHERE tesla_energy_site_id = ANY($1::text[])
         `, [teslaIds]);
         return rows.map(row => row.id);
+    }
+
+    /** Move a broken site connection to a usable member, without disturbing a healthy grant. */
+    async repairConnection(siteId: string): Promise<string | null> {
+        if (!siteMembershipEnabled()) return null;
+        const { rows } = await pool.query<{ previous_user_id: string | null; user_id: string }>(`
+            WITH site_state AS (
+                SELECT s.id, s.tesla_connection_user_id AS previous_user_id,
+                       old.auth_lost_at AS previous_auth_lost_at, s.last_live_refresh_at
+                FROM "Site" s
+                LEFT JOIN "User" old ON old.id = s.tesla_connection_user_id
+                WHERE s.id = $1 AND (
+                    s.tesla_connection_user_id IS NULL OR old.id IS NULL
+                    OR old.is_active IS NOT TRUE OR old.refresh_token IS NULL
+                    OR old.refresh_token = '' OR old.auth_status = 'revoked'
+                    OR old.tesla_refresh_state IN ('uncertain', 'reconnect_required')
+                )
+            ), candidate AS (
+                SELECT m.user_id FROM site_state state
+                JOIN "SiteMember" m ON m.site_id = state.id
+                JOIN "User" u ON u.id = m.user_id
+                WHERE u.is_active = true AND NULLIF(u.refresh_token, '') IS NOT NULL
+                  AND u.auth_status IS DISTINCT FROM 'revoked'
+                  AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+                  AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+                ORDER BY (m.commands_denied_at IS NOT NULL), m.joined_at, m.user_id
+                LIMIT 1
+            ), moved AS (
+                UPDATE "Site" s SET tesla_connection_user_id = c.user_id,
+                    user_id = c.user_id,
+                    connection_lost_at = COALESCE(state.previous_auth_lost_at, state.last_live_refresh_at),
+                    connection_restored_at = now()
+                FROM site_state state, candidate c
+                WHERE s.id = state.id
+                  AND s.tesla_connection_user_id IS NOT DISTINCT FROM state.previous_user_id
+                  AND s.tesla_connection_user_id IS DISTINCT FROM c.user_id
+                RETURNING state.previous_user_id, c.user_id
+            ) SELECT previous_user_id, user_id FROM moved
+        `, [siteId]);
+        const moved = rows[0];
+        if (!moved) return null;
+        this.invalidateCache(siteId);
+        const accountId = (id: string | null) => id ? createHash('sha256').update(id).digest('hex').slice(0, 16) : null;
+        logEvent('info', 'site.connection.moved', { siteId, previousAccountId: accountId(moved.previous_user_id), accountId: accountId(moved.user_id) });
+        return moved.user_id;
     }
 
     async getSitesWithTariffs(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
