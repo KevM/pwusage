@@ -1,3 +1,6 @@
+-- Migration: add_site_member
+-- Created at: 2026-11-09T19:58:34.337Z
+
 -- A pwusage site is a home. Each Tesla account can have a different current
 -- energy_site_id for that home, including after a re-invitation.
 CREATE TABLE IF NOT EXISTS "SiteMember" (
