@@ -3,6 +3,7 @@ import { getRequestContext } from './request-context';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { UPSERT_SITE_SQL } from './site-upsert-sql';
 import { decryptToken } from './token-crypto';
+import { siteMembershipEnabled } from './site-membership-flag';
 
 // Use global cache to persist across reloads in dev
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
@@ -61,7 +62,10 @@ export class SiteRepo {
 
     async getSitesForUser(userId: string, options?: SiteQueryOptions): Promise<Site[]> {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
-        const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE user_id = $1`, [userId]);
+        const predicate = siteMembershipEnabled()
+            ? 'id IN (SELECT site_id FROM "SiteMember" WHERE user_id = $1)'
+            : 'user_id = $1';
+        const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE ${predicate} ORDER BY id`, [userId]);
         return rows as Site[];
     }
 
