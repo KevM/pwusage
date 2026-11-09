@@ -93,12 +93,12 @@ export async function createTeslaClientForUser(
     options?: TeslaClientFactoryOptions
 ): Promise<TeslaClient | null> {
     const userTokens = await new UserRepo().getTokens(userId);
-    if (!userTokens?.access_token) {
+    if (!userTokens?.refresh_token) {
         return null;
     }
     const handlers = new TeslaTokenRepo(new SiteRepo()).getLockedUserRefreshHandler(userId);
     return new TeslaClient({
-        accessToken: userTokens.access_token,
+        accessToken: userTokens.access_token || 'expired',
         beforeRequest: () => currentTeslaConnection(userId),
         refreshToken: userTokens.refresh_token || undefined,
         tokenRefreshHandler: handlers.refreshHandler,

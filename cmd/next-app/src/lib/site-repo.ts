@@ -134,6 +134,14 @@ export class SiteRepo {
         return result.rowCount === 1;
     }
 
+    /** A fresh-site placeholder survives a failed tariff import, so the next login can finish it. */
+    async needsInitialImport(siteId: string): Promise<boolean> {
+        const { rows } = await pool.query<{ missing: boolean }>(`
+            SELECT NOT EXISTS (SELECT 1 FROM "Tariff" WHERE site_id = $1 AND is_current) AS missing
+            FROM "Site" WHERE id = $1`, [siteId]);
+        return rows[0]?.missing === true;
+    }
+
     /** Remove only the membership checked by an older successful product list. Site history survives. */
     async removeMemberIfMissing(siteId: string, userId: string, teslaId: string, fetchedAt: Date): Promise<boolean> {
         const client = await pool.connect();
