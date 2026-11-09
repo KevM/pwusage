@@ -37,5 +37,8 @@ Branch: codex/shared-site-membership
 - [x] Create and locally rerun the membership schema migration.
 - [x] Add a physical-hardware Battery Saver start lease and reject starts while another row has an active hold.
 - [x] Resolve `/profile` from the signed-in account.
-- [ ] Finish Phase 1: stale-site reconciliation, account deletion (PR #319 has not landed), pinned clients, cross-row reserve settle check, dead-hold retirement, PostgreSQL regression tests.
+- [x] Pin site clients to their selected account; reconcile stale site rows after a successful Tesla product list; keep new hardware IDs; guard reserve settle across duplicate rows; retire expired holds only when nobody can restore; add disposable PostgreSQL regression tests.
+- [ ] Finish Phase 1: shared-safe account deletion (PR #319 is still documentation-only), fuller PostgreSQL coverage, remaining identity and TRMNL fixes.
 - [ ] Phases 2–5: Tesla ID translation, gated membership cutover, product and iOS states, merge tool, rollout and documentation.
+
+U2: The owner confirmed on 2026-11-08 that invited accounts can change the reserve with their own Tesla grant. This session did not rerun the beta script.

@@ -800,9 +800,12 @@ export class TeslaAuthService {
         }
 
         let products: FleetProduct[] = [];
+        const productsFetchedAt = new Date();
+        let productsFetched = false;
         try {
             console.log('[TeslaAuthService] Fetching products to ensure sites exist in DB...');
             products = await client.getProducts();
+            productsFetched = true;
         } catch (err) {
             const reason = err instanceof TeslaRegionError ? 'region' : 'upstream';
             console.error(`[TeslaAuthService] Failed to fetch Tesla products (${reason}):`, err);
@@ -838,10 +841,15 @@ export class TeslaAuthService {
                 }
             }
 
-            if (siteIds.length === 0 && !roles.includes('admin')) {
-                await storeLearnedBaseUrl();
-                return { status: 'fleet-api-failed', reason: 'sites' };
-            }
+        }
+
+        if (productsFetched) {
+            await siteRepo.removeSitesMissingFromTesla(userId, importableProducts.map(p => p.energy_site_id.toString()), productsFetchedAt);
+        }
+
+        if (importableProducts.length > 0 && siteIds.length === 0 && !roles.includes('admin')) {
+            await storeLearnedBaseUrl();
+            return { status: 'fleet-api-failed', reason: 'sites' };
         }
 
         await storeLearnedBaseUrl();

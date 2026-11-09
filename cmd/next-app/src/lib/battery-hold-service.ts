@@ -7,6 +7,7 @@ import { createTeslaClientForSite } from './tesla-client-factory';
 import type { BatteryHold } from './db';
 import { seedHoldMonitoring } from './battery-hold-monitoring';
 import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
+import { logEvent } from './observability';
 
 const START_RESERVE_SETTLE_MS = 60 * 1000;
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
@@ -44,8 +45,15 @@ export async function parkBattery(
   }
   try {
     const existing = await repo.getActiveHoldForClaim(claimKey);
-    if (existing) return { status: 'already_active', hold: existing };
-    return await parkBatteryWithClaim(deps);
+    if (existing) {
+      if (!await repo.retireUnrestorableHold(existing.id)) {
+        return existing.site_id === siteId
+          ? { status: 'already_active', hold: existing }
+          : { status: 'error', message: 'Battery Saver is already active on this Powerwall.' };
+      }
+      logEvent('warn', 'battery-hold.retired-no-usable-members', { siteId: existing.site_id });
+    }
+    return await parkBatteryWithClaim(deps, claimKey);
   } finally {
     await repo.releaseStart(claimKey, owner);
   }
@@ -53,6 +61,7 @@ export async function parkBattery(
 
 async function parkBatteryWithClaim(
   { client, repo, siteId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
+  claimKey: string,
 ): Promise<ParkResult> {
   if (mode === 'timer') {
     if (durationHours === undefined || durationHours === null || typeof durationHours !== 'number' || Number.isNaN(durationHours) || durationHours <= 0) {
@@ -65,7 +74,7 @@ async function parkBatteryWithClaim(
   let lastRestored: BatteryHold | null;
   try {
     [live, info, lastRestored] = await Promise.all([
-      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHold(siteId),
+      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHoldForClaim(claimKey),
     ]);
   } catch (e) {
     return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };

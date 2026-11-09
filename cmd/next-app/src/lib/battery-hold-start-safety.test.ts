@@ -18,6 +18,7 @@ function setup(reserve: unknown, restoredSecondsAgo: number | null = null) {
     claimStart: vi.fn().mockResolvedValue(true),
     releaseStart: vi.fn().mockResolvedValue(undefined),
     getActiveHoldForClaim: vi.fn().mockResolvedValue(null),
+    getLatestRestoredHoldForClaim: vi.fn().mockResolvedValue(previous),
     getActiveHold: vi.fn().mockResolvedValue(null),
     getLatestRestoredHold: vi.fn().mockResolvedValue(previous),
     createHold: vi.fn().mockResolvedValue({ id: 2 }),
@@ -32,6 +33,17 @@ describe('battery hold start safety', () => {
     expect(await parkBattery(deps)).toEqual({ status: 'reserve_sync_pending' });
     expect(client.setBackupReserve).not.toHaveBeenCalled();
     expect(repo.createHold).not.toHaveBeenCalled();
+  });
+  it('waits for a restore recorded on another row for the same hardware', async () => {
+    const { deps, client, repo } = setup(100, 30);
+    repo.getLatestRestoredHoldForClaim.mockResolvedValue({
+      id: 9, site_id: 'other-account-site', status: 'restored',
+      original_reserve: 20, target_reserve: 100,
+      restored_at: new Date(now.getTime() - 30_000),
+    } as BatteryHold);
+    expect(await parkBattery(deps)).toEqual({ status: 'reserve_sync_pending' });
+    expect(repo.getLatestRestoredHoldForClaim).toHaveBeenCalledWith('hardware-1');
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
   });
   it('starts normally once Tesla reports the restored reserve', async () => {
     const { deps, repo } = setup(20, 30);
