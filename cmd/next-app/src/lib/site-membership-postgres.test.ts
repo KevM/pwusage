@@ -30,10 +30,11 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     await local.database.query(`CREATE TABLE "User" (
       id text PRIMARY KEY, is_active boolean DEFAULT true, access_token text, refresh_token text,
       auth_status text, tesla_refresh_state text DEFAULT 'ready', fleet_api_base_url text,
-      refresh_lock_expires bigint, tesla_refresh_retry_after bigint
+      refresh_lock_expires bigint, tesla_refresh_retry_after bigint, auth_lost_at timestamptz
     )`);
     await local.database.query(`CREATE TABLE "Site" (
-      id text PRIMARY KEY, user_id text REFERENCES "User"(id), json jsonb
+      id text PRIMARY KEY, user_id text REFERENCES "User"(id), json jsonb,
+      last_live_refresh_at timestamptz
     )`);
     await local.database.query(`CREATE TABLE "TrmnlInstallation" (
       id bigserial PRIMARY KEY, site_id text REFERENCES "Site"(id)
@@ -97,6 +98,27 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     expect((await users.getTokensForSite('s1'))?.tesla_energy_site_id).toBe('reinvite-1');
     expect(await sites.getSiteIdsForTeslaIds(['reinvite-1'])).toEqual(['s1']);
     expect(await sites.getSiteIdsForTeslaIds(['s1'])).toEqual([]);
+  });
+
+  it('moves a broken connection to a usable member and leaves a healthy connection alone', async () => {
+    const sites = new SiteRepo();
+    await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+      VALUES ('s1', 'u2', 'invited-id')`);
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      expect(await sites.repairConnection('s1')).toBeNull();
+      await local.database.query(`UPDATE "User" SET auth_status='revoked', auth_lost_at=now()-interval '1 hour' WHERE id='u1'`);
+      expect(await sites.repairConnection('s1')).toBe('u2');
+      const row = (await local.database.query(`SELECT user_id, tesla_connection_user_id,
+        connection_lost_at, connection_restored_at FROM "Site" WHERE id='s1'`)).rows[0];
+      expect(row.user_id).toBe('u2');
+      expect(row.tesla_connection_user_id).toBe('u2');
+      expect(row.connection_lost_at).toBeInstanceOf(Date);
+      expect(row.connection_restored_at).toBeInstanceOf(Date);
+      expect(await sites.repairConnection('s1')).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('lets only one worker claim hardware shared by duplicate rows', async () => {

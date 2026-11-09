@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import {
     createTeslaClientForSite,
+    createTeslaClientForSiteMember,
     createTeslaClientForUser,
     createTeslaClientForAccessToken
 } from './tesla-client-factory';
@@ -11,6 +12,7 @@ const mockGetTokensForSiteMember = vi.fn();
 const mockGetTokens = vi.fn();
 const mockSetFleetApiBaseUrl = vi.fn();
 const mockUserRefresh = vi.fn();
+const mockRepairConnection = vi.fn();
 const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
 
 vi.mock('./user-repo', () => {
@@ -29,7 +31,7 @@ vi.mock('./user-repo', () => {
 vi.mock('./site-repo', () => {
     return {
         SiteRepo: function SiteRepo() {
-            return {};
+            return { repairConnection: mockRepairConnection };
         }
     };
 });
@@ -62,6 +64,29 @@ describe('TeslaClientFactory', () => {
     });
 
     describe('createTeslaClientForSite', () => {
+        it('repairs an unusable connection before selecting a pinned account', async () => {
+            vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            try {
+                mockGetTokensForSite.mockResolvedValueOnce({ refresh_token: null, user_id: 'old', is_active: true })
+                    .mockResolvedValueOnce({ access_token: 'new-token', refresh_token: 'new-refresh', user_id: 'new', is_active: true });
+                const client = await createTeslaClientForSite('home');
+                expect(client).toBeInstanceOf(TeslaClient);
+                expect(mockRepairConnection).toHaveBeenCalledWith('home');
+                expect(mockGetTokensForSite).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        });
+        it('pins an invited member without reading the connection grant', async () => {
+            mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'invite-token', refresh_token: 'invite-refresh', tesla_energy_site_id: 'invite-id', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSiteMember('home', 'invited');
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: {} }));
+            await client?.getLiveStatus('home');
+            expect(mockGetTokensForSite).not.toHaveBeenCalled();
+            expect(mockGetTokensForSiteMember).toHaveBeenCalledWith('home', 'invited');
+            expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toContain('/energy_sites/invite-id/live_status');
+            expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer invite-token' });
+        });
         it('checks current connection state again before using a constructed client', async () => {
             mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'ready' });
             mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a', refresh_token: 'r', tesla_energy_site_id: 'site-1', is_active: true, tesla_refresh_state: 'uncertain' });

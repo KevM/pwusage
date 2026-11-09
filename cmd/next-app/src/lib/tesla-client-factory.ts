@@ -3,6 +3,8 @@ import { TeslaClient, type TeslaClientConfig } from './tesla-client';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { TeslaTokenRepo } from './tesla-token-repo';
+import { siteMembershipEnabled } from './site-membership-flag';
+import { requiresTeslaReconnect } from './tesla-refresh-outcome';
 
 export interface TeslaClientFactoryOptions {
     onTokenUpdate?: () => void;
@@ -30,19 +32,43 @@ export async function createTeslaClientForSite(
     siteId: string,
     options?: TeslaClientFactoryOptions
 ): Promise<TeslaClient | null> {
-    const tokens = await new UserRepo().getTokensForSite(siteId);
+    let tokens = await new UserRepo().getTokensForSite(siteId);
+    if (siteMembershipEnabled() && (!tokens?.refresh_token || tokens.is_active !== true || requiresTeslaReconnect(tokens))) {
+        await new SiteRepo().repairConnection(siteId);
+        tokens = await new UserRepo().getTokensForSite(siteId);
+    }
     if (!tokens?.refresh_token) {
         return null;
     }
+    return createPinnedMemberClient(siteId, tokens.user_id, tokens, options);
+}
+
+/** Verify or command through a particular member's grant, regardless of the site's connection. */
+export async function createTeslaClientForSiteMember(
+    siteId: string,
+    userId: string,
+    options?: TeslaClientFactoryOptions
+): Promise<TeslaClient | null> {
+    const tokens = await new UserRepo().getTokensForSiteMember(siteId, userId);
+    if (!tokens?.refresh_token) return null;
+    return createPinnedMemberClient(siteId, userId, tokens, options);
+}
+
+function createPinnedMemberClient(
+    siteId: string,
+    userId: string,
+    tokens: { access_token: string | null; refresh_token: string; fleet_api_base_url: string | null },
+    options?: TeslaClientFactoryOptions
+): TeslaClient {
     const siteRepo = new SiteRepo();
     const tokenRepo = new TeslaTokenRepo(siteRepo);
     // Keep this client on the account selected at construction. A connection
     // move must not make an in-flight call adopt another member's grant.
-    const handlers = tokenRepo.getLockedUserRefreshHandler(tokens.user_id);
+    const handlers = tokenRepo.getLockedUserRefreshHandler(userId);
     return new TeslaClient({
         accessToken: tokens.access_token || 'expired',
         beforeRequest: async () => {
-            const current = await new UserRepo().getTokensForSiteMember(siteId, tokens.user_id);
+            const current = await new UserRepo().getTokensForSiteMember(siteId, userId);
             if (!current?.tesla_energy_site_id) throw new Error(`Tesla site mapping missing for ${siteId}`);
             assertTeslaConnection(current);
             return current;
@@ -53,7 +79,7 @@ export async function createTeslaClientForSite(
         onTokenError: handlers.errorHandler,
         onTokenUpdate: options?.onTokenUpdate,
         baseUrl: tokens.fleet_api_base_url,
-        onBaseUrlChange: options?.onBaseUrlChange ?? (tokens.user_id ? recordFleetBaseUrl(tokens.user_id) : undefined),
+        onBaseUrlChange: options?.onBaseUrlChange ?? recordFleetBaseUrl(userId),
         rateLimit: options?.rateLimit,
     });
 }

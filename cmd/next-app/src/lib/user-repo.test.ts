@@ -46,6 +46,23 @@ describe('UserRepo admin ordering', () => {
         const [sql] = queryMock.mock.calls[0] as [string];
         expect(sql).toContain(`SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE s.user_id = u.id`);
     });
+
+    it('includes each member in admin site summaries after the cutover', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            queryMock.mockResolvedValueOnce({ rows: [{ id: 'owner' }, { id: 'invited' }] });
+            queryMock.mockResolvedValueOnce({ rows: [
+                { id: 'home', user_id: 'owner' },
+                { id: 'home', user_id: 'invited' },
+            ] });
+            const users = await new UserRepo().getAllUsers();
+            expect(users.map(user => user.sites.map(site => site.id))).toEqual([['home'], ['home']]);
+            expect(queryMock.mock.calls[0][0]).toContain('"SiteMember" m');
+            expect(queryMock.mock.calls[1][0]).toContain('JOIN "SiteMember" m ON m.site_id = s.id');
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
 });
 
 describe('UserRepo email synchronization', () => {
@@ -208,6 +225,22 @@ describe('UserRepo.verifyUserStatus', () => {
     afterEach(() => { vi.restoreAllMocks(); });
 
     const UPDATE_STATUS_SQL = expect.stringContaining('WHERE id = $3 AND xmin::text = $4');
+
+    it('checks the member row and fences the status write to that membership', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            queryMock.mockResolvedValueOnce({ rows: [{ id: 'shared-home' }] })
+                .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+            const result = await new UserRepo().verifyUserStatus({ id: 'u1' }, {
+                createClient: async () => ({ getLiveStatus: async () => ({}) }) as never,
+            });
+            expect(result.status).toBe('active');
+            expect(queryMock.mock.calls[1][0]).toContain('FROM "SiteMember" WHERE user_id = $1');
+            expect(queryMock.mock.calls[2][0]).toContain('SELECT 1 FROM "SiteMember" WHERE site_id = $5 AND user_id = $3');
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
 
     it('does not turn a connection-required response into account ineligibility', async () => {
         queryMock.mockResolvedValueOnce({ rows: [{ id: 'site-1' }] }).mockResolvedValueOnce({ rowCount: 1, rows: [] });
