@@ -1,27 +1,29 @@
 import SwiftUI
 
-/// The Smart Shift bar title. Once the verdict scrolls under the bar the name slides up to a
-/// small top line and the recommendation rises in beneath it, like `HomeLiveTitle`.
+/// The Smart Shift bar title. Once the verdict scrolls under the bar it swaps the name for the
+/// recommendation, like `HomeLiveTitle` does with the scoreboard.
 struct SmartShiftBarTitle: View {
     let verdict: SmartShiftVerdict?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
+        // Stacked, not side by side: in portrait the toolbar buttons leave a narrow slot, so the
+        // job and time take the first line and the saving (or the name) the second. Both shrink
+        // and truncate rather than vanish.
         VStack(spacing: 0) {
-            Text("Smart Shift")
-                .font(verdict == nil ? .headline : .footnote.weight(.semibold))
-                .foregroundStyle(verdict == nil ? .primary : .secondary)
-                .lineLimit(1)
             if let verdict {
-                ViewThatFits(in: .horizontal) {
-                    line(verdict.title, saving: verdict.barSaving)
-                    line(verdict.title, saving: nil)
-                    // Nothing fits: the name alone, never a row pushed past the bar.
-                    EmptyView()
-                }
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
-                .id("smart-shift-recommendation")
+                Text(verdict.title)
+                    .font(.subheadline.weight(.semibold))
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
+                Text(verdict.barSaving ?? "Smart Shift")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(verdict.barSaving == nil ? Color.secondary : Color.emphasis)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            } else {
+                Text("Smart Shift")
+                    .font(.headline)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -38,21 +40,6 @@ struct SmartShiftBarTitle: View {
         guard let verdict else { return "Smart Shift" }
         return "Smart Shift, \(verdict.title)" + (verdict.barSaving.map { ", \($0)" } ?? "")
     }
-
-    private func line(_ title: String, saving: String?) -> some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-            if let saving {
-                Text(saving)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Color.emphasis)
-                    .lineLimit(1)
-            }
-        }
-        .fixedSize(horizontal: true, vertical: false)
-    }
 }
 
 #if DEBUG
@@ -67,7 +54,7 @@ struct SmartShiftBarTitle: View {
         VStack(spacing: 24) {
             SmartShiftBarTitle(verdict: nil)
             SmartShiftBarTitle(verdict: .barPreview(saving: "$0.42 cheaper"))
-            SmartShiftBarTitle(verdict: .barPreview(saving: "$0.42 cheaper")).frame(width: 190)
+            SmartShiftBarTitle(verdict: .barPreview(saving: "$0.42 cheaper")).frame(width: 150)
         }
         .padding()
     }
