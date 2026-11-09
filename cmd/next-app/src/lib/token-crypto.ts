@@ -12,6 +12,26 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:
  * rollout; writes always encrypt. See Authentication.md.
  */
 
+export type TokenCryptoErrorCode =
+    | 'KEYS_NOT_CONFIGURED'
+    | 'FINGERPRINT_KEY_NOT_CONFIGURED'
+    | 'KEY_INVALID'
+    | 'KEY_ID_UNKNOWN'
+    | 'ENVELOPE_MALFORMED'
+    | 'DECRYPT_FAILED';
+
+/**
+ * Structured `code` because the request logger exports an error's name and code but
+ * never its message (messages can carry secrets). Without it a key mismatch logs as a
+ * bare "Error". Messages here never include key or token material.
+ */
+export class TokenCryptoError extends Error {
+    constructor(readonly code: TokenCryptoErrorCode, message: string) {
+        super(message);
+        this.name = 'TokenCryptoError';
+    }
+}
+
 export type TokenColumn = 'access_token' | 'refresh_token';
 
 const PREFIX = 'enc:v1:';
@@ -28,7 +48,7 @@ const CANONICAL_KEY_BASE64 = /^[A-Za-z0-9+/]{43}=$/;
 
 function decodeKey(raw: string, label: string): Buffer {
     // Buffer.from skips invalid characters silently, so validate the text first.
-    if (!CANONICAL_KEY_BASE64.test(raw)) throw new Error(`${label} must be canonical base64 of 32 bytes`);
+    if (!CANONICAL_KEY_BASE64.test(raw)) throw new TokenCryptoError('KEY_INVALID', `${label} must be canonical base64 of 32 bytes`);
     return Buffer.from(raw, 'base64');
 }
 
@@ -45,11 +65,11 @@ let parsedKeys: { raw: string; keys: KeyEntry[] } | undefined;
  */
 function loadKeys(): KeyEntry[] {
     const raw = cleanEnv(process.env.TOKEN_ENCRYPTION_KEYS);
-    if (!raw) throw new Error('TOKEN_ENCRYPTION_KEYS is not set');
+    if (!raw) throw new TokenCryptoError('KEYS_NOT_CONFIGURED', 'TOKEN_ENCRYPTION_KEYS is not set');
     if (parsedKeys?.raw === raw) return parsedKeys.keys;
     const keys = raw.split(',').map(part => {
         const [id, encoded, ...rest] = part.trim().split(':');
-        if (!id || !encoded || rest.length) throw new Error('TOKEN_ENCRYPTION_KEYS entries must look like <keyId>:<base64 key>');
+        if (!id || !encoded || rest.length) throw new TokenCryptoError('KEY_INVALID', 'TOKEN_ENCRYPTION_KEYS entries must look like <keyId>:<base64 key>');
         return { id, key: decodeKey(encoded, `TOKEN_ENCRYPTION_KEYS key "${id}"`) };
     });
     parsedKeys = { raw, keys };
@@ -82,16 +102,21 @@ export function encryptToken(plaintext: string, column: TokenColumn, userId: str
 export function decryptToken<T extends string | null | undefined>(value: T, column: TokenColumn, userId: string): T {
     if (!value || !isEncryptedToken(value)) return value;
     const [keyId, ivB64, ctB64, ...rest] = (value as string).slice(PREFIX.length).split(':');
-    if (!keyId || !ivB64 || !ctB64 || rest.length) throw new Error('Malformed encrypted token envelope');
+    if (!keyId || !ivB64 || !ctB64 || rest.length) throw new TokenCryptoError('ENVELOPE_MALFORMED', 'Malformed encrypted token envelope');
     const entry = loadKeys().find(k => k.id === keyId);
-    if (!entry) throw new Error(`No TOKEN_ENCRYPTION_KEYS entry for key id "${keyId}"`);
+    if (!entry) throw new TokenCryptoError('KEY_ID_UNKNOWN', `No TOKEN_ENCRYPTION_KEYS entry for key id "${keyId}"`);
     const iv = Buffer.from(ivB64, 'base64');
     const ct = Buffer.from(ctB64, 'base64');
-    if (iv.length !== IV_BYTES || ct.length < TAG_BYTES) throw new Error('Malformed encrypted token envelope');
+    if (iv.length !== IV_BYTES || ct.length < TAG_BYTES) throw new TokenCryptoError('ENVELOPE_MALFORMED', 'Malformed encrypted token envelope');
     const decipher = createDecipheriv('aes-256-gcm', entry.key, iv);
     decipher.setAAD(aad(column, userId));
     decipher.setAuthTag(ct.subarray(ct.length - TAG_BYTES));
-    return Buffer.concat([decipher.update(ct.subarray(0, ct.length - TAG_BYTES)), decipher.final()]).toString('utf8') as T;
+    try {
+        return Buffer.concat([decipher.update(ct.subarray(0, ct.length - TAG_BYTES)), decipher.final()]).toString('utf8') as T;
+    } catch {
+        // GCM tag mismatch: tampered, wrong key material for this id, or wrong row/column.
+        throw new TokenCryptoError('DECRYPT_FAILED', 'Encrypted token failed authentication');
+    }
 }
 
 /**
@@ -112,6 +137,6 @@ export function sealToken(value: string | null, column: TokenColumn, userId: str
  */
 export function tokenFingerprint(token: string): string {
     const raw = cleanEnv(process.env.TOKEN_FINGERPRINT_KEY);
-    if (!raw) throw new Error('TOKEN_FINGERPRINT_KEY is not set');
+    if (!raw) throw new TokenCryptoError('FINGERPRINT_KEY_NOT_CONFIGURED', 'TOKEN_FINGERPRINT_KEY is not set');
     return createHmac('sha256', decodeKey(raw, 'TOKEN_FINGERPRINT_KEY')).update(token, 'utf8').digest('hex');
 }

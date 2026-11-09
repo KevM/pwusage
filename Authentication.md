@@ -271,7 +271,13 @@ corrupt ciphertext).
 2. Prepend, keeping the old key so existing rows still decrypt:
    `vercel env rm TOKEN_ENCRYPTION_KEYS production --yes`, then
    `printf 'k3:%s,k2:%s' "$NEW" "<old key>" | vercel env add TOKEN_ENCRYPTION_KEYS production --sensitive`.
-   Deploy and wait until it is live (new writes now use `k3`).
+   Deploy and wait until it is live (new writes now use `k3`). **Env var changes apply only
+   to new deployments, and saving the variable does not deploy.** Confirm the new
+   deployment id is actually serving (Vercel shows it Ready and Current, and Axiom shows
+   events from its id) before step 3. The backfill writes `k3` rows; a deployment still
+   running without `k3` cannot read them, and every Tesla token read fails (TRMNL
+   markup, crons, the app) until it is replaced. This caused a ~35 minute outage when
+   the first rotation was backfilled before the redeploy went live.
 3. Re-encrypt every row: from `cmd/next-app`, export `DATABASE_URL`, the same
    `TOKEN_ENCRYPTION_KEYS` (`k3:...,k2:...`) and the existing `TOKEN_FINGERPRINT_KEY`,
    then run `npx tsx scripts/encrypt-tesla-tokens.ts --dry-run` and the real run. Re-run
@@ -279,11 +285,15 @@ corrupt ciphertext).
    Dormant and revoked users never refresh, which is why the backfill is required.
 4. Verify (read-only), expecting 0:
    `SELECT count(*) FROM "User" WHERE (NULLIF(access_token,'') IS NOT NULL AND access_token NOT LIKE 'enc:v1:k3:%') OR (NULLIF(refresh_token,'') IS NOT NULL AND refresh_token NOT LIKE 'enc:v1:k3:%');`
-5. Retire the old key: set `TOKEN_ENCRYPTION_KEYS` to `k3:<new>` only and deploy.
+5. Retire the old key: set `TOKEN_ENCRYPTION_KEYS` to `k3:<new>` only and deploy, and
+   confirm the new deployment is serving as in step 2.
 6. Keep `k2` archived in 1Password for as long as the oldest database backup
    (`docs/database-backups.md`): a restored backup still holds `k2` rows.
 
-Failure modes:
+Failure modes (logs carry the `TokenCryptoError` code, since error messages are not
+exported: `KEY_ID_UNKNOWN` = the running deployment lacks a key a row was written with,
+usually an un-deployed env change; `DECRYPT_FAILED` = wrong key material for that id or a
+copied ciphertext; `KEYS_NOT_CONFIGURED` / `KEY_INVALID` = bad env value):
 - Reads throw `No TOKEN_ENCRYPTION_KEYS entry for key id`: a key was removed before the
   backfill finished. Re-add it, deploy, re-run the backfill.
 - A key is lost: rows under it are unrecoverable. Rotate to a new key id so those rows are

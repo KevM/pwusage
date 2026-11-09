@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+    TokenCryptoError,
     decryptToken,
     encryptToken,
     isEncryptedToken,
@@ -100,6 +101,30 @@ describe('token-crypto', () => {
         setEnv(`k2:${KEY_B}`);
         expect(encryptToken('t', 'access_token', 'u')).toMatch(/^enc:v1:k2:/);
         expect(() => decryptToken(a, 'access_token', 'u')).toThrow(/k1/);
+    });
+
+    describe('error codes (exported to logs, which drop error messages)', () => {
+        const codeOf = (fn: () => unknown) => {
+            try { fn(); } catch (e) { return e instanceof TokenCryptoError ? e.code : `not-TokenCryptoError:${String(e)}`; }
+            return 'did-not-throw';
+        };
+
+        it('reports why decryption failed', () => {
+            const enc = encryptToken('t', 'access_token', 'u');
+            setEnv(`k2:${KEY_B}`);
+            expect(codeOf(() => decryptToken(enc, 'access_token', 'u'))).toBe('KEY_ID_UNKNOWN');
+            setEnv(`k1:${KEY_A}`);
+            expect(codeOf(() => decryptToken(enc, 'access_token', 'other'))).toBe('DECRYPT_FAILED');
+            expect(codeOf(() => decryptToken('enc:v1:k1:bad', 'access_token', 'u'))).toBe('ENVELOPE_MALFORMED');
+        });
+
+        it('reports configuration problems', () => {
+            setEnv(undefined, null);
+            expect(codeOf(() => encryptToken('t', 'access_token', 'u'))).toBe('KEYS_NOT_CONFIGURED');
+            expect(codeOf(() => tokenFingerprint('t'))).toBe('FINGERPRINT_KEY_NOT_CONFIGURED');
+            setEnv(`k1:${Buffer.alloc(16).toString('base64')}`);
+            expect(codeOf(() => encryptToken('t', 'access_token', 'u'))).toBe('KEY_INVALID');
+        });
     });
 
     describe('sealToken', () => {
