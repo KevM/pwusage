@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
+import { commandsDeniedText, holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
 
 describe('holdButtonLabel', () => {
   it('shows the floored charge level at or below 80', () => {
@@ -23,5 +23,11 @@ describe('holdReserveText', () => {
 describe('guardNoticeText', () => {
   it('explains Battery Saver stopped and the reserve was left as-is', () => {
     expect(guardNoticeText(50)).toBe('Battery Saver stopped. Your reserve was changed outside pwusage to 50%, so we left it as-is.');
+  });
+});
+
+describe('commandsDeniedText', () => {
+  it('explains a Tesla command denial without asking the member to reconnect', () => {
+    expect(commandsDeniedText()).toBe('Tesla did not allow this account to change the backup reserve. Check Powerwall access in Tesla’s app, then try again.');
   });
 });

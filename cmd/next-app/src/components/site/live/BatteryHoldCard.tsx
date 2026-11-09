@@ -8,7 +8,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
 import { planReserve } from '@/lib/battery-hold-rules';
-import { holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
+import { commandsDeniedText, holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
 import { ConfirmHoldModal, type HoldChoice } from './ConfirmHoldModal';
 import { useToast } from '@/components/ui/Toast';
 
@@ -39,6 +39,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
+  const [commandsDenied, setCommandsDenied] = useState(false);
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
@@ -73,6 +74,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409 && body?.error === 'needs_reauth') { setNeedsReauth(true); return { ok: false, body }; }
+    if (res.status === 403 && body?.error === 'commands_denied') { setCommandsDenied(true); return { ok: false, body }; }
     if (res.status === 409 && body?.error === 'reserve_sync_pending') { setError('Tesla is still reporting the reserve from the last Battery Saver. Wait a moment, then try starting again.'); return { ok: false, body }; }
     if (res.status === 422 && body?.error === 'needs_choice') { setError('A reserve choice is required.'); return { ok: false, body }; }
     if (!res.ok) { setError('Something went wrong. Try again.'); return { ok: false, body }; }
@@ -80,7 +82,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   }
 
   async function park(choice: HoldChoice) {
-    setBusy(true); setError(null); setNeedsReauth(false);
+    setBusy(true); setError(null); setNeedsReauth(false); setCommandsDenied(false);
     try {
       const { ok } = await post({ action: 'park', ...choice });
       if (ok) { setShowHoldModal(false); router.refresh(); }
@@ -88,7 +90,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   }
 
   async function restore() {
-    setBusy(true); setError(null); setNeedsReauth(false);
+    setBusy(true); setError(null); setNeedsReauth(false); setCommandsDenied(false);
     try {
       const { ok, body } = await post({ action: 'restore' });
       if (ok) {
@@ -112,6 +114,12 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
           Battery Saver needs the energy command permission.{' '}
           <a href="/login" className="underline">Reconnect your Tesla account</a>.
         </AlertDescription>
+      </Alert>
+    );
+  } else if (commandsDenied) {
+    body = (
+      <Alert variant="warning">
+        <AlertDescription>{commandsDeniedText()}</AlertDescription>
       </Alert>
     );
   } else if (initialHold) {

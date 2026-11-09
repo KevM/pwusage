@@ -18,3 +18,8 @@ export function holdReserveText(target: number): string {
 export function guardNoticeText(current: number): string {
   return `Battery Saver stopped. Your reserve was changed outside pwusage to ${current}%, so we left it as-is.`;
 }
+
+/** Copy when Tesla accepts the account but refuses its backup-reserve command. */
+export function commandsDeniedText(): string {
+  return 'Tesla did not allow this account to change the backup reserve. Check Powerwall access in Tesla’s app, then try again.';
+}
