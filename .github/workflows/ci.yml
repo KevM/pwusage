@@ -350,7 +350,7 @@ jobs:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
         run: |
           MIGRATION_DB_URL=$(echo "$DEV_DATABASE_URL" | sed 's/:6543/:5432/')
-          supabase migration up --db-url "$MIGRATION_DB_URL"
+          supabase migration up --yes --db-url "$MIGRATION_DB_URL"
 
       # After migrations. A safety net now: the export already sends only 45 days.
       - name: Prune Dev Copy
