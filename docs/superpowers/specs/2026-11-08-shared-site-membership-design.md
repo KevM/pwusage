@@ -367,10 +367,19 @@ check alone would let two starts through duplicate rows both pass and both send.
    `INSERT … ON CONFLICT (claim_key) DO UPDATE SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at WHERE
    "BatteryHoldStartClaim".expires_at <= now()`. A loser gets the existing "Battery Saver is already updating" response and
    sends nothing.
-2. **Check under the claim.** Refuse if any `Site` with the same key has an active hold that isn't past `safety_expires_at`.
-   Ignoring expired holds stops a previous owner's dead hold from blocking a new owner. Also apply the existing
-   `reserve_sync_pending` check across those rows, because a restore through another row can leave `site_info` showing the old
-   target as if it were the original reserve.
+2. **Check under the claim.** Refuse if any `Site` with the same key has an active hold, even one past `safety_expires_at`.
+   That deadline only schedules the restore (`evaluateHold`). The reserve stays raised until the restore finishes, so a new
+   start would save the raised value as its original. Same-site starts already behave this way through `getActiveHold`. Also
+   apply the existing `reserve_sync_pending` check across those rows, because a restore through another row can leave
+   `site_info` showing the old target as if it were the original reserve.
+
+   **Retiring a dead hold.** One case must not block forever: a previous owner's hold that nobody can restore. A start
+   may retire a hold only if it's past `safety_expires_at`, no restore is processing it, and its row has nobody usable
+   (section 6.4): no usable member, or before Phase 3, no usable `user_id` holder. A retry floor or in-flight refresh still
+   counts as usable, so a Tesla blip can't retire a hold. A conditional update sets status `cancelled` and reason
+   `no_usable_members`, and logs `battery-hold.retired-no-usable-members` with `siteId`. If it matches no row, the start
+   refuses. As with `no_members`, this sends no command, so the raised reserve becomes the new hold's original. That's the
+   accepted cost: the old value can no longer be restored by anyone, and the person starting can see and change the reserve.
 3. **Read the reserve, send the command, and create the hold** as today, including the compensating restore.
 4. **Release in `finally`,** conditioned on `owner`. If the release fails, expiry takes over.
 
@@ -553,7 +562,7 @@ migration file, and require PostgreSQL 15+. Use a short socket path, as that scr
 | Translation | Each Tesla call sends the token owner's ID; unmapped throws; no call ever sends `Site.id` unless it is that member's mapping. |
 | Reconcile | Listed; re-invited; missing; empty; failed call; removing the last member ends an active hold with `no_members` and sends no Tesla command, while a remaining member keeps it active; a removed sole member who returns gets a fresh site; a stale list can't remove a mapping a re-invite login just updated; a failed site request starts no reconcile and logs `site.connection.request-rejected` only after the retry, including a final 404; recently imported connection user is still reconciled; dead grant removal only when another member works. |
 | Failover | Two workers give one winner; retry floor doesn't move it; no token columns copied; outage stamps reach back. |
-| Battery Saver | Two concurrent starts through duplicate rows send exactly one command; the claim is taken before the reserve read; an expired claim can be taken over and a stale owner can't release it; a failed `createHold` still restores; `reserve_sync_pending` spans rows; guard across rows; expired hold ignored; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
+| Battery Saver | Two concurrent starts through duplicate rows send exactly one command; the claim is taken before the reserve read; an expired claim can be taken over and a stale owner can't release it; a failed `createHold` still restores; `reserve_sync_pending` spans rows; guard across rows; an expired hold that isn't restored yet still blocks a start through another row; an expired hold with nobody usable is retired and the start goes ahead; one with a usable member, a retry floor or a restore processing isn't retired; typed 403 moves on; timeout doesn't; no candidates leaves it active; stale monitor can't restore a replacement. |
 | Verification | Probe uses that user's grant and ID. |
 | Deletion | Seeded with summaries that reference a rate plan: member leaves and the site survives; last member removes everything; simultaneous deletes; login racing deletion. |
 | Merge | Seeded with summaries that reference a rate plan: moves members, TRMNL and tags; deletes the secondary; refuses with an active hold; dry run writes nothing. |
