@@ -11,6 +11,8 @@ vi.mock('./db', () => ({ pool: {
 import { BatteryHoldRepo } from './battery-hold-repo';
 import { SiteRepo } from './site-repo';
 import { UserRepo } from './user-repo';
+import { SiteMembershipJoinRepo } from './site-membership-join-repo';
+import type { EnergySiteInfo } from './tesla-client';
 
 const socket = process.env.SITE_MEMBERSHIP_TEST_SOCKET;
 const safeSocket = socket && /^\/(?:private\/)?tmp\/site-membership-pg-[a-zA-Z0-9]+$/.test(socket);
@@ -34,7 +36,8 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     )`);
     await local.database.query(`CREATE TABLE "Site" (
       id text PRIMARY KEY, user_id text REFERENCES "User"(id), json jsonb,
-      last_live_refresh_at timestamptz
+      last_live_refresh_at timestamptz, name text NOT NULL DEFAULT 'Home',
+      installed timestamptz NOT NULL DEFAULT now(), timezone text NOT NULL DEFAULT 'UTC'
     )`);
     await local.database.query(`CREATE TABLE "TrmnlInstallation" (
       id bigserial PRIMARY KEY, site_id text REFERENCES "Site"(id)
@@ -151,6 +154,40 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it('joins a verified home, updates a re-invite, and retries when the checked set changes', async () => {
+    const joins = new SiteMembershipJoinRepo();
+    await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('u3', 'r3'), ('u4', 'r4')`);
+    const info = { id: 'hardware-1', site_name: 'Home' } as EnergySiteInfo;
+    const fetchedAt = new Date();
+    const observed = await joins.membersForHardware('hardware-1');
+    const joined = await joins.commitDecision({ userId: 'u3', teslaId: 'invited-id', info,
+      hardwareId: 'hardware-1', observedMembers: observed, verifiedSiteId: 's1', fetchedAt });
+    expect(joined).toEqual({ kind: 'joined', siteId: 's1' });
+    expect((await joins.membersForUser('u3')).find(member => member.site_id === 's1')?.tesla_energy_site_id).toBe('invited-id');
+    const reinvite = await joins.commitDecision({ userId: 'u3', teslaId: 'new-invite-id', info,
+      hardwareId: 'hardware-1', observedMembers: observed, verifiedSiteId: null, fetchedAt });
+    expect(reinvite).toEqual({ kind: 'reinvite', siteId: 's1' });
+    expect((await joins.membersForUser('u3')).find(member => member.site_id === 's1')?.tesla_energy_site_id).toBe('new-invite-id');
+
+    const stale = await joins.commitDecision({ userId: 'u4', teslaId: 'third-id', info,
+      hardwareId: 'hardware-1', observedMembers: observed, verifiedSiteId: 's1', fetchedAt });
+    expect(stale).toEqual({ kind: 'retry' });
+    expect((await local.database.query(`SELECT count(*)::int AS n FROM "SiteMember" WHERE user_id='u4'`)).rows[0].n).toBe(0);
+  });
+
+  it('creates a fresh site and mapping under the hardware lock', async () => {
+    const joins = new SiteMembershipJoinRepo();
+    const info = { id: 'new-hardware', site_name: 'New Home', installation_time_zone: 'America/Chicago' } as EnergySiteInfo;
+    const result = await joins.commitDecision({ userId: 'u1', teslaId: 'new-tesla-id', info,
+      hardwareId: 'new-hardware', observedMembers: [], verifiedSiteId: null, fetchedAt: new Date() });
+    expect(result).toEqual({ kind: 'fresh', siteId: 'new-tesla-id' });
+    const row = (await local.database.query(`SELECT s.user_id, s.tesla_connection_user_id,
+      s.tesla_hardware_id, s.json, m.tesla_energy_site_id FROM "Site" s
+      JOIN "SiteMember" m ON m.site_id=s.id WHERE s.id='new-tesla-id'`)).rows[0];
+    expect(row).toEqual({ user_id: 'u1', tesla_connection_user_id: 'u1',
+      tesla_hardware_id: 'new-hardware', json: {}, tesla_energy_site_id: 'new-tesla-id' });
   });
 
   it('lets only one worker claim hardware shared by duplicate rows', async () => {

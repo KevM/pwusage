@@ -19,6 +19,8 @@ import {
 } from './tesla-token-endpoint';
 import { parseRefreshedTokens } from './tesla-auth';
 import { DEFAULT_FLEET_BASE_URL } from './tesla-region';
+import { siteMembershipEnabled } from './site-membership-flag';
+import { SiteMembershipService } from './site-membership-service';
 
 
 // Whitelist of allowed Tesla OAuth issuers.
@@ -823,7 +825,17 @@ export class TeslaAuthService {
             (product): product is FleetProduct & { energy_site_id: number } => Boolean(product.energy_site_id)
         );
 
-        if (importableProducts.length > 0) {
+        if (siteMembershipEnabled() && productsFetched) {
+            const importer = this.deps.importerCreator
+                ? this.deps.importerCreator(client)
+                : new Importer(client);
+            try {
+                siteIds.push(...await new SiteMembershipService(client, importer).syncLogin(userId, products, productsFetchedAt));
+            } catch (err) {
+                console.error('[TeslaAuthService] Failed to reconcile shared site memberships:', err);
+                return { status: 'fleet-api-failed', reason: 'sites' };
+            }
+        } else if (importableProducts.length > 0) {
             const importer = this.deps.importerCreator
                 ? this.deps.importerCreator(client)
                 : new Importer(client);
@@ -843,7 +855,7 @@ export class TeslaAuthService {
 
         }
 
-        if (productsFetched) {
+        if (productsFetched && !siteMembershipEnabled()) {
             await siteRepo.removeSitesMissingFromTesla(userId, importableProducts.map(p => p.energy_site_id.toString()), productsFetchedAt);
         }
 

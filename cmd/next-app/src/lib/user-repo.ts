@@ -401,7 +401,7 @@ export class UserRepo {
         }
     }
 
-    async verifyAllUserStatuses() {
+    async verifyAllUserStatuses(deadlineMs = Infinity) {
         const users = await this.getAllUsers();
         logEvent('info', 'tesla.user-verification.batch-started', { userCount: users.length });
         let activeCount = 0;
@@ -412,6 +412,7 @@ export class UserRepo {
         const staleThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
         for (const user of users) {
+            if (Date.now() >= deadlineMs - 5_000) break;
             // Optimization: Skip if checked recently AND active
             const lastChecked = user.last_checked_at ? new Date(user.last_checked_at) : null;
             const isStale = !lastChecked || lastChecked < staleThreshold;

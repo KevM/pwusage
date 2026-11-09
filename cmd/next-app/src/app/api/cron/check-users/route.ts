@@ -3,6 +3,8 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { UserRepo } from '@/lib/user-repo';
+import { reconcileDueMemberships } from '@/lib/site-membership-daily';
+import { siteMembershipEnabled } from '@/lib/site-membership-flag';
 
 async function handleGET(request: NextRequest) {
     try {
@@ -15,13 +17,17 @@ async function handleGET(request: NextRequest) {
         logEvent('info', 'cron.check-users.started');
         flushLogEvents();
         const userRepo = new UserRepo();
-        const result = await userRepo.verifyAllUserStatuses();
+        const shared = siteMembershipEnabled();
+        const deadline = shared ? Date.now() + 50_000 : Infinity;
+        const memberships = shared ? await reconcileDueMemberships(deadline) : null;
+        const result = await userRepo.verifyAllUserStatuses(deadline);
 
-        logEvent('info', 'cron.check-users.completed', { summary: result });
+        logEvent('info', 'cron.check-users.completed', { summary: result, ...(shared ? { memberships } : {}) });
 
         return NextResponse.json({
             success: true,
-            summary: result
+            summary: result,
+            ...(shared ? { memberships } : {})
         });
 
     } catch (error) {
