@@ -84,8 +84,8 @@ struct LoadTimingView: View {
     /// False once the verdict headline scrolls away, which moves it into the bar under the title.
     @State var heroIsVisible = true
     @State var heroTracking = ScrollHero.Tracking()
-    /// The verdict on screen, kept for the bar, which sits outside the once-per-pass evaluation.
-    @State var barVerdict: SmartShiftVerdict?
+    /// The verdict headline on screen, kept for the bar, which sits outside the once-per-pass evaluation.
+    @State var barRecommendation: String?
     nonisolated static let scrollContentSpace = "smartShiftScrollContent"
 
     /// `profileStore` is an autoclosure so a caller that builds one on every
@@ -189,7 +189,7 @@ struct LoadTimingView: View {
         .inlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .principal) {
-                SmartShiftBarTitle(verdict: heroIsVisible ? nil : barVerdict)
+                SmartShiftBarTitle(recommendation: heroIsVisible ? nil : barRecommendation)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -254,8 +254,8 @@ struct LoadTimingView: View {
                     onOpenSolarSettings: { isSolarForecastSheetPresented = true },
                     onHeroFrameChange: heroFrameChanged)
                     .id(state.profile?.id)
-                    .onChange(of: verdict, initial: true) { _, updated in barVerdict = updated }
-                    .onDisappear { barVerdict = nil }
+                    .onChange(of: verdict.title, initial: true) { _, title in barRecommendation = title }
+                    .onDisappear { barRecommendation = nil }
                 jobRows(hint: state.hint)
             case .blocked(let message):
                 if let profile = selectedProfile {

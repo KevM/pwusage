@@ -74,7 +74,6 @@ extension SmartShiftPresentation {
             return SmartShiftVerdict(
                 title: title,
                 subtitle: subtitle,
-                barSaving: claimsSaving ? "\(money(comparison.savings)) cheaper" : nil,
                 choices: choices,
                 chartTitle: "Distance to net zero",
                 chartSubtitle: "kWh owed or banked by \(shortDate(comparison.projectionEnd))",

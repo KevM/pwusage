@@ -181,20 +181,6 @@ extension SmartShiftPresentationTests {
         #expect(try why(owed) == "It's Off-Peak; this run is bought at the full rate.")
     }
 
-    @Test func barSavingIsTheShortSavingClaim() throws {
-        let verdict = try Self.verdict(Self.make(profile: Self.pump))
-        #expect(verdict.barSaving == "\(Self.money(1.89)) cheaper")
-    }
-
-    @Test func barSavingIsAbsentWithoutASavingClaim() throws {
-        let comparison = Self.comparison(recommendedStart: Self.now)
-        let nowBest = try Self.verdict(Self.make(profile: Self.pump,
-                                                 result: .init(comparison: comparison, unavailableReason: nil)))
-        #expect(nowBest.barSaving == nil)
-        let (unsafe, now) = Self.unsafeNow()
-        #expect(try Self.cycleVerdict(unsafe, now: now).barSaving == nil)
-    }
-
     @Test func whyLineWhenNowRunsIntoAnotherPeriod() throws {
         // 14 kWh over 4.4 h from 05:00 runs from Off-Peak into Peak; the later start stays in Off-Peak.
         let start = Self.at(5)

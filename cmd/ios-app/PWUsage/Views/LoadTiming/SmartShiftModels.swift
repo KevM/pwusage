@@ -62,8 +62,6 @@ struct SmartShiftVerdict: Equatable {
 
     let title: String
     let subtitle: String
-    /// The saving alone ("$0.42 cheaper"), for the navigation bar; nil when the headline claims none.
-    let barSaving: String?
     let choices: [SmartShiftChoice]
     let chartTitle: String
     let chartSubtitle: String
