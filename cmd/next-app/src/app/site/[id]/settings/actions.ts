@@ -3,16 +3,17 @@
 import { SiteRepo } from '@/lib/site-repo';
 import { revalidatePath } from 'next/cache';
 import { verifySiteAccess } from '@/lib/auth-checks';
+import { parseBillingDay } from '@/lib/billing-cycle';
 
 export async function updateBillingStartDay(formData: FormData) {
     const siteId = formData.get('siteId') as string;
-    const day = parseInt(formData.get('billingStartDay') as string, 10);
+    const day = parseBillingDay(formData.get('billingStartDay'));
 
     if (!siteId) {
         throw new Error('Missing site ID');
     }
 
-    if (isNaN(day) || day < 1 || day > 31) {
+    if (day === null) {
         throw new Error('Invalid day');
     }
 

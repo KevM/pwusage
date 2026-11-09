@@ -34,6 +34,8 @@ export interface Site {
   timezone: string;
   json: unknown | null; // pg jsonb returns object
   billing_start_day: number;
+  /** When a person chose the day (web or iOS). Null while it is still the column default. */
+  billing_start_day_confirmed_at?: Date | null;
   timezone_display_mode?: 'SITE' | 'BROWSER';
   sankey_renderer?: string;
   import_lock_id?: string | null;

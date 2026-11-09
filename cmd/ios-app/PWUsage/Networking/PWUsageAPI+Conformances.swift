@@ -3,6 +3,7 @@
 // line each in three files.
 extension PWUsageAPI: MobileDashboardDataAPI, MobileLivePowerDataAPI, MobileConditionalDashboardDataAPI {}
 extension PWUsageAPI: MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI, MobileSolarHistoryFillAPI {}
+extension PWUsageAPI: MobileBillingDayAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}

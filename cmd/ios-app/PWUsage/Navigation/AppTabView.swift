@@ -85,6 +85,14 @@ struct AppTabView: View {
             }
             .presentationDetents(model.sites.count > 4 ? [.medium, .large] : [.medium])
         }
+        .sheet(item: billingDayPromptBinding) { prompted in
+            BillingDayPromptSheet(
+                site: prompted,
+                save: { try await model.saveBillingDay($0, siteID: prompted.id) },
+                onNotNow: model.dismissBillingDayPrompt
+            )
+            .presentationDetents([.large])
+        }
         .sheet(isPresented: $model.isDemoSheetPresented) {
             DemoModeSheet(
                 onSignIn: { demoMode?.exitAndSignIn() },
@@ -120,8 +128,17 @@ struct AppTabView: View {
                          siteHistory: coordinator.solarLayoutStatus == .disabled ? nil : model.siteHistoryStatus,
                          siteHistoryDebug: siteHistoryDebug,
                          onLocationSaved: model.homeLocationSaved,
+                         onSaveBillingDay: { try await model.saveBillingDay($0, siteID: site.id) },
                          onRevealSeen: model.solarSystemRevealSeen)
         }
+    }
+
+    /// A swipe down is the same as Not now: the sheet clears the prompt for this run.
+    private var billingDayPromptBinding: Binding<MobileSite?> {
+        Binding(
+            get: { model.billingDayPromptSite },
+            set: { if $0 == nil { model.dismissBillingDayPrompt() } }
+        )
     }
 
     private var siteHistoryDebug: SiteHistoryDebugActions? {

@@ -25,6 +25,13 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         holdCommands.append(command)
         return .init(status: .succeeded, hold: nil, current: nil)
     }
+    private(set) var billingDayCalls: [(siteID: String, day: Int)] = []
+    var billingDayError: Error?
+    func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
+        billingDayCalls.append((siteID, day))
+        if let billingDayError { throw billingDayError }
+        return MobileBillingDay(billingDay: day, billingDayConfirmed: true)
+    }
     var sites: [MobileSite]
     /// Consumed one entry per `fetchSites` before `sites` is used, so a test can
     /// hand successive attempts different site lists.

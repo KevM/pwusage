@@ -21,6 +21,8 @@ final class PWUsageAppModel: ObservableObject {
     @Published var isSigningOut = false
     @Published var signInMessage: String?
     @Published var isSitePickerPresented = false
+    /// Which sites the billing day prompt has already been put off for, this run. See `BillingDayPromptState`.
+    @Published var billingDayPrompt = BillingDayPromptState()
     @Published var accountScopeID: String?
     /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
     /// launch moves it for one visit, like the saved site.
@@ -200,6 +202,7 @@ final class PWUsageAppModel: ObservableObject {
             // account lookup failure), foregrounding an authorized session retries it.
             // A running engine makes this a no-op.
             startSolarCloudSync()
+            if selectedSiteNeedsBillingDay { Task { await refreshBillingDays() } }
         } else if isActive, hasBootstrapAttempted, coordinator != nil, siteRequestCount == 0 {
             Task { await reloadSitesAfterSignIn() }
         }

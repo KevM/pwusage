@@ -229,6 +229,27 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         expect(queryMock).toHaveBeenCalledTimes(2);
     });
 
+    it('maps billing_start_day_confirmed_at to null when unset and to a Date when set', async () => {
+        const confirmedAt = new Date('2026-11-01T00:00:00Z');
+        mockSiteLoad([
+            makeSiteRow({ id: 'site-1', billing_start_day_confirmed_at: null }),
+            makeSiteRow({ id: 'site-2', billing_start_day: 15, billing_start_day_confirmed_at: confirmedAt }),
+        ]);
+
+        const repo = new SiteRepo();
+        const sites = await repo.getSitesWithTariffs(['site-1', 'site-2']);
+
+        expect(sites.find(s => s.id === 'site-1')?.billing_start_day_confirmed_at).toBeNull();
+        expect(sites.find(s => s.id === 'site-2')?.billing_start_day_confirmed_at).toEqual(confirmedAt);
+    });
+
+    it('selects the confirmation column in slim site rows', async () => {
+        mockSiteLoad([makeSiteRow()]);
+        const repo = new SiteRepo();
+        await repo.getSitesWithTariffs(['site-1']);
+        expect(queryMock.mock.calls[0][0]).toContain('s.billing_start_day_confirmed_at');
+    });
+
     it('assembles a site with one tariff, one season, two schedules', async () => {
         const base = makeTariffJoinRow({
             season_id: 10,
@@ -364,6 +385,16 @@ describe('SiteRepo.getSitesWithTariffs', () => {
 describe('SiteRepo new commands and queries', () => {
     beforeEach(() => {
         queryMock.mockReset();
+    });
+
+    it('updateSiteBillingDay sets the day and the confirmation timestamp together', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new SiteRepo();
+        await repo.updateSiteBillingDay('site-1', 31);
+        expect(queryMock).toHaveBeenCalledWith(
+            'UPDATE "Site" SET billing_start_day = $1, billing_start_day_confirmed_at = now() WHERE id = $2',
+            [31, 'site-1']
+        );
     });
 
     it('assignSiteToUser updates Site.user_id', async () => {
