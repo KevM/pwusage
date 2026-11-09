@@ -44,6 +44,8 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       '20260525010000_battery_hold_enhancements.sql',
       '20260525020000_add_cancelled_observed_reserve.sql',
       '20261014133344_battery_hold_monitor_claim.sql',
+      '20261015110716_battery_hold_activities.sql',
+      '20261015124139_battery_hold_activity_ended_token.sql',
     ]) await local.database.query(await readFile(`db-migrations/${file}`, 'utf8'));
     await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('u1', 'r1')`);
     await local.database.query(`INSERT INTO "Site" (id, user_id, json) VALUES ('s1', 'u1', '{"id":"hardware-1"}')`);
@@ -55,7 +57,7 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
   });
   afterAll(async () => { await local.database?.end(); });
   beforeEach(async () => {
-    await local.database.query(`TRUNCATE "BatteryHoldStartClaim", "BatteryHold", "TrmnlInstallation", "SiteMember", "Site", "User" CASCADE`);
+    await local.database.query(`TRUNCATE "BatteryHoldStartClaim", "BatteryHoldActivity", "BatteryHold", "TrmnlInstallation", "SiteMember", "Site", "User" CASCADE`);
     await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('u1', 'r1'), ('u2', 'r2')`);
     await local.database.query(`INSERT INTO "Site" (id, user_id, json, tesla_hardware_id) VALUES
       ('s1', 'u1', '{"id":"hardware-1"}', 'hardware-1'),
@@ -116,6 +118,36 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       expect(row.connection_lost_at).toBeInstanceOf(Date);
       expect(row.connection_restored_at).toBeInstanceOf(Date);
       expect(await sites.repairConnection('s1')).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('removes only an older missing mapping and clears the departing member’s devices', async () => {
+    const sites = new SiteRepo();
+    const stale = new Date(Date.now() - 60_000);
+    const current = new Date(Date.now() + 60_000);
+    await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+      VALUES ('s1', 'u2', 'invited-id')`);
+    const hold = await repo.createHold({ siteId: 's1', originalReserve: 20, targetReserve: 100,
+      parkedSoc: 80, baselineLoadW: 500, safetyExpiresAt: current });
+    await local.database.query(`INSERT INTO "BatteryHoldActivity"
+      (hold_id, user_id, registration_id, push_token, apns_environment, expires_at)
+      VALUES ($1, 'u1', $2, 'push-token', 'sandbox', $3)`, [hold.id, randomUUID(), current]);
+    await local.database.query(`INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id)
+      VALUES ('s1', 'u1')`);
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      expect(await sites.removeMemberIfMissing('s1', 'u1', 's1', stale)).toBe(false);
+      expect(await sites.touchMember('s1', 'u1', 's1', current)).toBe(true);
+      expect(await sites.removeMemberIfMissing('s1', 'u1', 's1', new Date(Date.now() + 120_000))).toBe(true);
+      expect(await sites.removeMemberIfMissing('s1', 'u1', 's1', new Date(Date.now() + 180_000))).toBe(false);
+      const members = (await local.database.query(`SELECT user_id FROM "SiteMember" WHERE site_id='s1'`)).rows;
+      expect(members.map(row => row.user_id)).toEqual(['u2']);
+      const activity = (await local.database.query(`SELECT delivery_state, push_token FROM "BatteryHoldActivity"`)).rows[0];
+      expect(activity).toEqual({ delivery_state: 'disabled', push_token: null });
+      expect((await local.database.query(`SELECT count(*)::int AS n FROM "TrmnlInstallation"`)).rows[0].n).toBe(0);
+      expect((await local.database.query(`SELECT status FROM "BatteryHold" WHERE id=$1`, [hold.id])).rows[0].status).toBe('active');
     } finally {
       vi.unstubAllEnvs();
     }
