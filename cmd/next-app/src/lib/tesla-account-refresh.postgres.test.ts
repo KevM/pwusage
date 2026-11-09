@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
-import type { SiteRepo } from './site-repo';
 
 const { query, exchange } = vi.hoisted(() => ({ query: vi.fn(), exchange: vi.fn() }));
 vi.mock('./db', () => ({ pool: { query } }));

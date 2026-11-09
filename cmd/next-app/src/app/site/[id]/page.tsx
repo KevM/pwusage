@@ -116,6 +116,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
 
     const connection = await new UserRepo().getTokensForSite(id);
     const reconnectRequired = !connection || requiresTeslaReconnect(connection);
+    const memberEmails = await new UserRepo().getSiteMemberEmails(id);
 
     return (
         <PageShell maxWidth="7xl" padding="compact">
@@ -165,7 +166,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                     />
                 }
                 settingsSlot={
-                    <SettingsView site={site} installation={installation} />
+                    <SettingsView site={site} installation={installation} memberEmails={memberEmails} />
                 }
             >
                 {/* Fallback or shared content could go here if needed */}

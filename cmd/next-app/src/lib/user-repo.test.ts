@@ -63,6 +63,37 @@ describe('UserRepo admin ordering', () => {
             vi.unstubAllEnvs();
         }
     });
+
+    it('lists only shared-site member emails after the cutover', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            queryMock.mockResolvedValueOnce({ rows: [
+                { email: 'alex@example.com' },
+                { email: 'sam@example.com' },
+            ] });
+
+            await expect(new UserRepo().getSiteMemberEmails('home')).resolves.toEqual([
+                'alex@example.com',
+                'sam@example.com',
+            ]);
+            expect(queryMock).toHaveBeenCalledWith(
+                expect.stringContaining('JOIN "SiteMember" m ON m.user_id = u.id'),
+                ['home'],
+            );
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('does not query member emails before the cutover', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'false');
+        try {
+            await expect(new UserRepo().getSiteMemberEmails('home')).resolves.toEqual([]);
+            expect(queryMock).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
 });
 
 describe('UserRepo email synchronization', () => {

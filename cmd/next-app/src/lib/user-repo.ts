@@ -149,6 +149,19 @@ export class UserRepo {
         return usersWithSites;
     }
 
+    /** Emails of the people Tesla currently grants access to this shared site. */
+    async getSiteMemberEmails(siteId: string): Promise<string[]> {
+        if (!siteMembershipEnabled()) return [];
+        const { rows } = await pool.query<{ email: string }>(`
+            SELECT u.email
+            FROM "User" u
+            JOIN "SiteMember" m ON m.user_id = u.id
+            WHERE m.site_id = $1 AND u.email IS NOT NULL
+            ORDER BY lower(u.email), u.id
+        `, [siteId]);
+        return rows.map(row => row.email);
+    }
+
     async getUserEmail(userId: string): Promise<string | null> {
         const res = await pool.query('SELECT email FROM "User" WHERE id = $1', [userId]);
         return res.rows.length > 0 ? res.rows[0].email : null;
