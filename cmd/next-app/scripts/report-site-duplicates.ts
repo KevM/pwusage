@@ -24,8 +24,8 @@ function args(name: string): string[] {
 const VERDICTS: Record<string, string> = {
     'not-the-same-home': 'NOT the same home (hardware differs or is missing): do not merge',
     'secondary-has-no-days': 'secondary has no archived days: the existing merge script can handle it',
-    'secondary-days-are-duplicates': 'every secondary day already exists identically on the primary: its days can be dropped',
-    'overlapping-days-differ': 'some overlapping days differ: compare them before dropping or copying',
+    'secondary-days-are-duplicates': 'the primary has every secondary day and is at least as complete: the secondary days can be dropped',
+    'secondary-has-better-days': 'some secondary days are more complete than the primary\'s: copy those days first',
     'secondary-has-unique-data': 'secondary has days the primary lacks: they must be copied before the merge',
 };
 
@@ -52,6 +52,11 @@ async function main() {
         console.log(`  same home: ${report.sameHome}, same timezone: ${report.sameTimezone}`);
         console.log(`  secondary days: ${report.overlap.identical} identical on primary, ` +
             `${report.overlap.differing} differ, ${report.overlap.onlySecondary} only on secondary`);
+        console.log(`  completeness on overlapping days: primary better ${report.quality.primaryBetter}, ` +
+            `equal ${report.quality.equal}, secondary better ${report.quality.secondaryBetter}`);
+        if (report.quality.secondaryBetterDays.length) {
+            console.log(`  secondary-better days: ${report.quality.secondaryBetterDays.join(', ')}`);
+        }
         console.log(`  verdict: ${VERDICTS[report.verdict]}`);
     }
     process.exit(0);
