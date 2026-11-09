@@ -116,6 +116,8 @@ export interface SeasonPeriod {
 export interface StoredTeslaCredentials {
     access_token?: string | null;
     refresh_token?: string | null;
+    /** Tesla's current energy_site_id for the pinned account, not Site.id. */
+    tesla_energy_site_id?: string | null;
 }
 
 export interface TeslaClientConfig {
@@ -125,6 +127,8 @@ export interface TeslaClientConfig {
      * credentials; a rotated pair is adopted so a stale copy never reaches Tesla.
      */
     beforeRequest?: () => Promise<StoredTeslaCredentials | null | void>;
+    /** Site clients require a membership mapping on every site request. */
+    requireTeslaSiteMapping?: boolean;
     refreshToken?: string;
     onTokenUpdate?: (accessToken: string, refreshToken: string) => void;
     onTokenError?: (error: Error) => void;
@@ -331,7 +335,15 @@ export class TeslaClient {
         this.config.refreshToken = stored.refresh_token;
     }
 
-    private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+    private sitePath(siteId: string, suffix: string): (stored: StoredTeslaCredentials | null | void) => string {
+        return (stored) => {
+            const teslaId = this.config.requireTeslaSiteMapping ? stored?.tesla_energy_site_id : siteId;
+            if (!teslaId) throw new Error(`Tesla site mapping missing for ${siteId}`);
+            return `/api/1/energy_sites/${encodeURIComponent(teslaId)}/${suffix}`;
+        };
+    }
+
+    private async fetch<T>(path: string | ((stored: StoredTeslaCredentials | null | void) => string), options?: RequestInit): Promise<T> {
         // The host this request last went to. Concurrent requests share this.baseUrl,
         // so a 421 is judged against the host that answered it, not the current one.
         let requestBaseUrl = this.baseUrl;
@@ -340,12 +352,13 @@ export class TeslaClient {
         let sentAccessToken = this.config.accessToken;
         let sentRefreshToken = this.config.refreshToken;
         const makeRequest = async () => {
-            if (this.config.beforeRequest) this.adoptStoredCredentials(await this.config.beforeRequest());
+            const stored = this.config.beforeRequest ? await this.config.beforeRequest() : undefined;
+            if (this.config.beforeRequest) this.adoptStoredCredentials(stored);
             const token = this.config.accessToken;
             sentAccessToken = token;
             sentRefreshToken = this.config.refreshToken;
             requestBaseUrl = this.baseUrl;
-            const url = `${requestBaseUrl}${path}`;
+            const url = `${requestBaseUrl}${typeof path === 'string' ? path : path(stored)}`;
             const headers = {
                 "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json",
@@ -488,7 +501,7 @@ export class TeslaClient {
     }
 
     async getEnergySiteInfo(siteId: string): Promise<EnergySiteInfo> {
-        const result = await this.fetch<{ response: EnergySiteInfo }>(`/api/1/energy_sites/${siteId}/site_info`);
+        const result = await this.fetch<{ response: EnergySiteInfo }>(this.sitePath(siteId, 'site_info'));
         return result.response;
     }
 
@@ -507,7 +520,7 @@ export class TeslaClient {
         console.log(`[TeslaClient] Params: start_date=${s}, end_date=${e}`);
 
         const teslaStart = Date.now();
-        const result = await this.fetch<unknown>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        const result = await this.fetch<unknown>(this.sitePath(siteId, `calendar_history?${query.toString()}`));
         console.log(`[TeslaClient] History fetch duration: ${Date.now() - teslaStart}ms`);
 
         console.log(`[TeslaClient] History Response for ${start.toISOString()}-${end.toISOString()} (${period}):`, JSON.stringify(result).substring(0, 200));
@@ -525,7 +538,7 @@ export class TeslaClient {
             time_zone: timeZone
         });
 
-        const result = await this.fetch<unknown>(`/api/1/energy_sites/${siteId}/calendar_history?${query.toString()}`);
+        const result = await this.fetch<unknown>(this.sitePath(siteId, `calendar_history?${query.toString()}`));
         const rows = calendarTimeSeries<RawSoeHistoryEntry>(result, 'soe');
 
         return rows
@@ -544,7 +557,7 @@ export class TeslaClient {
 
     async getLiveStatus(siteId: string): Promise<EnergySiteLiveStatus> {
         const teslaStart = Date.now();
-        const result = await this.fetch<{ response: EnergySiteLiveStatus }>(`/api/1/energy_sites/${siteId}/live_status`);
+        const result = await this.fetch<{ response: EnergySiteLiveStatus }>(this.sitePath(siteId, 'live_status'));
         console.log(`[TeslaClient] Live Status fetch duration: ${Date.now() - teslaStart}ms`);
         return result.response;
     }
@@ -596,7 +609,7 @@ export class TeslaClient {
         }
 
         const result = await this.fetch<{ response: EnergyCommandResponse }>(
-            `/api/1/energy_sites/${siteId}/backup`,
+            this.sitePath(siteId, 'backup'),
             {
                 method: "POST",
                 body: JSON.stringify({ backup_reserve_percent: backupReservePercent }),

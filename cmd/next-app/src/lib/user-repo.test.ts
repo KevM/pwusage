@@ -130,7 +130,8 @@ describe('UserRepo class methods (folded from module functions)', () => {
         const result = await repo.getTokensForSite('site-1');
         expect(result?.user_id).toBe('u1');
         expect(queryMock.mock.calls[0][0]).toContain('FROM "User" u');
-        expect(queryMock.mock.calls[0][0]).toContain('JOIN "Site" s ON s.user_id = u.id');
+        expect(queryMock.mock.calls[0][0]).toContain('JOIN "Site" s ON s.tesla_connection_user_id = u.id');
+        expect(queryMock.mock.calls[0][0]).toContain('JOIN "SiteMember" m ON m.site_id = s.id AND m.user_id = u.id');
         expect(queryMock.mock.calls[0][1]).toEqual(['site-1']);
     });
 

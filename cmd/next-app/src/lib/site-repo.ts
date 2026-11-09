@@ -64,6 +64,16 @@ export class SiteRepo {
         return rows as Site[];
     }
 
+    /** Legacy no-JWT callers prove access with Tesla's product list. */
+    async getSiteIdsForTeslaIds(teslaIds: string[]): Promise<string[]> {
+        if (teslaIds.length === 0) return [];
+        const { rows } = await pool.query<SiteIdRow>(`
+            SELECT DISTINCT site_id AS id FROM "SiteMember"
+            WHERE tesla_energy_site_id = ANY($1::text[])
+        `, [teslaIds]);
+        return rows.map(row => row.id);
+    }
+
     async getSitesWithTariffs(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         if (siteIds.length === 0) return [];
 
