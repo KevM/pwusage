@@ -98,6 +98,7 @@ export interface TrmnlInstallation {
   id: number;
   uuid: string | null;
   site_id: string;
+  installed_by_user_id?: string | null;
   plugin_setting_id: number | null;
   created_at: Date;
   json?: unknown;
