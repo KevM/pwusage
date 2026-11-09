@@ -30,7 +30,7 @@
             TodayEnergyWidgetFamilyContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
                                            date: TodayEnergyPreviewFixtures.date, family: .systemSmall, metric: metric)
                 .frame(width: 158, height: 158)
-                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .background(TodayEnergyMetricFill(metric: metric))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
     }
