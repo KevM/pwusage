@@ -2,7 +2,8 @@
 set -euo pipefail
 # Disposable local PostgreSQL only; never load .env or DATABASE_URL.
 pg_bin="${SITE_MEMBERSHIP_PG_BIN:-$(pg_config --bindir)}"
-test_root=/private/tmp
+test_root=/tmp
+if [[ -d /private/tmp ]]; then test_root=/private/tmp; fi
 socket="$(mktemp -d "$test_root/site-membership-pg-XXXXXXXX")"
 chmod 700 "$socket"
 started=false

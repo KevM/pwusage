@@ -47,8 +47,11 @@ export async function parkBattery(
     return { status: 'error', message: 'Battery Saver is already updating.' };
   }
   try {
-    const existing = await repo.getActiveHoldForClaim(claimKey);
-    if (existing) {
+    // Duplicate site rows can each carry an active hold, and the lookup returns
+    // only the newest. Retire one at a time and look again, so a start never
+    // commands the Powerwall while another hold still controls it.
+    for (let existing = await repo.getActiveHoldForClaim(claimKey); existing;
+         existing = await repo.getActiveHoldForClaim(claimKey)) {
       if (!await repo.retireUnrestorableHold(existing.id)) {
         return existing.site_id === siteId
           ? { status: 'already_active', hold: existing }
