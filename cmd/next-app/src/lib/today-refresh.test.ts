@@ -48,6 +48,7 @@ const tokens = {
 
 const userRepoMock = {
     getTokensForSite: vi.fn(),
+    getTokens: vi.fn(),
 };
 
 const siteRepoMock = {
@@ -72,6 +73,7 @@ const tokenRefreshHandlers = {
 
 const teslaTokenRepoMock = {
     getLockedRefreshHandler: vi.fn(),
+    getLockedUserRefreshHandler: vi.fn(),
 };
 
 const teslaClientMock = {
@@ -129,6 +131,7 @@ describe('refreshTodayData', () => {
         delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
 
         userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        userRepoMock.getTokens.mockResolvedValue({ ...tokens, is_active: true, tesla_refresh_state: 'ready' });
         siteRepoMock.acquireImportLock.mockResolvedValue(true);
         siteRepoMock.releaseImportLock.mockResolvedValue(true);
         siteRepoMock.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
@@ -144,6 +147,7 @@ describe('refreshTodayData', () => {
         siteRepoMock.releaseLiveRefreshClaim.mockResolvedValue(undefined);
         energyRepoMock.getLatestEnergyData.mockResolvedValue(null);
         teslaTokenRepoMock.getLockedRefreshHandler.mockReturnValue(tokenRefreshHandlers);
+        teslaTokenRepoMock.getLockedUserRefreshHandler.mockReturnValue(tokenRefreshHandlers);
         teslaClientMock.getLiveStatus.mockResolvedValue({ percentage_charged: 72 });
         importerMock.refreshTodayRecords.mockResolvedValue({ rows: [], rowsPersisted: 0 });
     });
@@ -262,12 +266,14 @@ describe('refreshTodayData latch', () => {
         vi.unstubAllEnvs();
         delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
         userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        userRepoMock.getTokens.mockResolvedValue({ ...tokens, is_active: true, tesla_refresh_state: 'ready' });
         siteRepoMock.acquireImportLock.mockResolvedValue(true);
         siteRepoMock.releaseImportLock.mockResolvedValue(true);
         siteRepoMock.getImportStatus.mockResolvedValue({ isImporting: false, lastImportAt: 0 });
         siteRepoMock.getSite.mockResolvedValue({ id: 'site-1', timezone: 'America/Chicago' });
         createEnergyRepoMock.mockReturnValue(energyRepoMock);
         teslaTokenRepoMock.getLockedRefreshHandler.mockReturnValue(tokenRefreshHandlers);
+        teslaTokenRepoMock.getLockedUserRefreshHandler.mockReturnValue(tokenRefreshHandlers);
         energyRepoMock.getLatestEnergyData.mockResolvedValue({ timestamp: latest });
         importerMock.refreshTodayRecords.mockResolvedValue({ rows: [], rowsPersisted: 0 });
         vi.useFakeTimers({ toFake: ['Date'] });
@@ -403,6 +409,7 @@ describe('refreshLiveStatus', () => {
         delete (globalThis as unknown as { __todayRefreshState?: Map<string, unknown> }).__todayRefreshState;
 
         userRepoMock.getTokensForSite.mockResolvedValue(tokens);
+        userRepoMock.getTokens.mockResolvedValue({ ...tokens, is_active: true, tesla_refresh_state: 'ready' });
         siteRepoMock.getSite.mockResolvedValue({
             id: 'site-1',
             live_status_cache: null,
@@ -412,6 +419,7 @@ describe('refreshLiveStatus', () => {
         siteRepoMock.claimLiveRefresh.mockResolvedValue(true);
         siteRepoMock.releaseLiveRefreshClaim.mockResolvedValue(undefined);
         teslaTokenRepoMock.getLockedRefreshHandler.mockReturnValue(tokenRefreshHandlers);
+        teslaTokenRepoMock.getLockedUserRefreshHandler.mockReturnValue(tokenRefreshHandlers);
         teslaClientMock.getLiveStatus.mockResolvedValue({ percentage_charged: 72 });
     });
 

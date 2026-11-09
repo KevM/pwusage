@@ -61,11 +61,23 @@ describe('TeslaClientFactory', () => {
     describe('createTeslaClientForSite', () => {
         it('checks current connection state again before using a constructed client', async () => {
             mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'ready' });
+            mockGetTokens.mockResolvedValue({ access_token: 'a', refresh_token: 'r', is_active: true, tesla_refresh_state: 'uncertain' });
             const client = await createTeslaClientForSite('site-1');
-            mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'uncertain' });
             const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: [] }));
             await expect(client?.getProducts()).rejects.toMatchObject({ code: 'TESLA_CONNECTION_REQUIRED' });
             expect(fetchMock).not.toHaveBeenCalled();
+            expect(mockGetTokens).toHaveBeenCalledWith('u');
+        });
+
+        it('does not adopt another account after the site connection moves', async () => {
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', user_id: 'account-a', is_active: true, tesla_refresh_state: 'ready' });
+            mockGetTokens.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSite('site-1');
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'b-token', refresh_token: 'b-refresh', user_id: 'account-b', is_active: true, tesla_refresh_state: 'ready' });
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: [] }));
+            await client?.getProducts();
+            expect(mockGetTokens).toHaveBeenCalledWith('account-a');
+            expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer a-token' });
         });
 
         it('returns null if no tokens or no refresh_token exists for site', async () => {
@@ -81,7 +93,8 @@ describe('TeslaClientFactory', () => {
         it('returns TeslaClient when refresh_token exists', async () => {
             mockGetTokensForSite.mockResolvedValue({
                 access_token: 'acc-token',
-                refresh_token: 'ref-token'
+                refresh_token: 'ref-token',
+                user_id: 'user-1'
             });
 
             const client = await createTeslaClientForSite('site-1');

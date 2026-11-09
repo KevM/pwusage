@@ -70,6 +70,37 @@ export class BatteryHoldRepo {
     return rows.length ? mapRow(rows[0]) : null;
   }
 
+  async getLatestRestoredHoldForClaim(key: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT h.* FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      WHERE COALESCE(s.tesla_hardware_id, 'site:' || s.id) = $1
+        AND h.status = 'restored' AND h.restored_at IS NOT NULL
+      ORDER BY h.restored_at DESC, h.id DESC LIMIT 1
+    `, [key]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
+  /** Retire only an expired hold whose Powerwall has no usable member grant. */
+  async retireUnrestorableHold(id: number): Promise<boolean> {
+    const result = await pool.query(`
+      UPDATE "BatteryHold" h
+      SET status = 'cancelled', restore_reason = 'no_usable_members', restored_at = clock_timestamp()
+      WHERE h.id = $1 AND h.status = 'active'
+        AND h.safety_expires_at <= clock_timestamp()
+        AND (h.processing_expires_at IS NULL OR h.processing_expires_at <= clock_timestamp())
+        AND NOT EXISTS (
+          SELECT 1 FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
+          WHERE m.site_id = h.site_id AND u.is_active = true
+            AND u.refresh_token IS NOT NULL
+            AND u.auth_status IS DISTINCT FROM 'revoked'
+            AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+            AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+        )
+    `, [id]);
+    return result.rowCount === 1;
+  }
+
   async clearRestoreAttempt(id: number, owner: string): Promise<boolean> {
     const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = NULL, restore_reason = NULL
       WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid

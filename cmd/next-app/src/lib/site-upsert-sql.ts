@@ -7,8 +7,8 @@
  * Tesla's value stays visible in `json`.
  */
 export const UPSERT_SITE_SQL = `
-    INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json)
-    VALUES ($1, $2, $3, NOW(), $4, $5, $6)
+    INSERT INTO "Site"(id, name, utility, updated, installed, timezone, json, tesla_hardware_id)
+    VALUES ($1, $2, $3, NOW(), $4, $5, $6, $6::jsonb ->> 'id')
     ON CONFLICT(id) DO UPDATE SET
         name = CASE WHEN EXCLUDED.name = 'Unnamed Site' AND "Site".name IS NOT NULL AND "Site".name != '' THEN "Site".name ELSE EXCLUDED.name END,
         utility = EXCLUDED.utility,
@@ -16,5 +16,6 @@ export const UPSERT_SITE_SQL = `
         timezone = CASE WHEN EXCLUDED.timezone = 'UTC' AND "Site".timezone IS NOT NULL AND "Site".timezone != '' THEN "Site".timezone
             WHEN EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id = "Site".id) THEN "Site".timezone
             ELSE EXCLUDED.timezone END,
-        json = EXCLUDED.json
+        json = EXCLUDED.json,
+        tesla_hardware_id = COALESCE(EXCLUDED.tesla_hardware_id, "Site".tesla_hardware_id)
     RETURNING timezone`;
