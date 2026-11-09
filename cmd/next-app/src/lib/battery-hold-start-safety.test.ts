@@ -16,6 +16,7 @@ function setup(reserve: unknown, restoredSecondsAgo: number | null = null) {
   const repo = {
     getStartClaimKey: vi.fn().mockResolvedValue('hardware-1'),
     claimStart: vi.fn().mockResolvedValue(true),
+    renewStart: vi.fn().mockResolvedValue(true),
     releaseStart: vi.fn().mockResolvedValue(undefined),
     getActiveHoldForClaim: vi.fn().mockResolvedValue(null),
     getLatestRestoredHoldForClaim: vi.fn().mockResolvedValue(previous),
