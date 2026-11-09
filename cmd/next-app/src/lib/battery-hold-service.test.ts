@@ -1,7 +1,9 @@
 import { TeslaAuthError } from './tesla-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeTargetReserve, parkBattery, restoreBattery } from './battery-hold-service';
+import { computeTargetReserve, parkBattery, restoreBattery, type ParkDeps } from './battery-hold-service';
 import type { BatteryHold } from './db';
+import type { BatteryHoldRepo } from './battery-hold-repo';
+import type { TeslaClient } from './tesla-client';
 
 const activity = vi.hoisted(() => ({ reconcile: vi.fn() }));
 vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: activity.reconcile }));
@@ -34,6 +36,11 @@ function fakeRepo(active: BatteryHold | null) {
   };
 }
 
+/** Present the fakes as the dependency types parkBattery declares, without `any`. */
+function asDeps(repo: ReturnType<typeof fakeRepo>, client: ReturnType<typeof fakeClient>): Pick<ParkDeps, 'repo' | 'client'> {
+  return { repo: repo as unknown as BatteryHoldRepo, client: client as unknown as TeslaClient };
+}
+
 function fakeClient(over: Record<string, unknown> = {}) {
   return {
     getLiveStatus: vi.fn().mockResolvedValue({ percentage_charged: 90, load_power: 450 }),
@@ -59,8 +66,7 @@ describe('parkBattery', () => {
     const repo = fakeRepo(null);
     repo.claimStart.mockResolvedValue(false);
     const client = fakeClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's' });
     expect(result).toEqual({ status: 'error', message: 'Battery Saver is already updating.' });
     expect(client.getEnergySiteInfo).not.toHaveBeenCalled();
     expect(client.setBackupReserve).not.toHaveBeenCalled();
@@ -70,8 +76,7 @@ describe('parkBattery', () => {
   it('refuses a hold on another site row for the same Powerwall', async () => {
     const repo = fakeRepo({ id: 9, site_id: 'other-site' } as BatteryHold);
     const client = fakeClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's' });
     expect(result).toEqual({ status: 'error', message: 'Battery Saver is already active on this Powerwall.' });
     expect(client.setBackupReserve).not.toHaveBeenCalled();
     expect(repo.releaseStart).toHaveBeenCalled();
@@ -80,12 +85,27 @@ describe('parkBattery', () => {
   it('can start after atomically retiring an expired hold with no usable member', async () => {
     const repo = fakeRepo({ id: 9, site_id: 'other-site' } as BatteryHold);
     repo.retireUnrestorableHold.mockResolvedValue(true);
+    repo.getActiveHoldForClaim.mockResolvedValueOnce({ id: 9, site_id: 'other-site' } as BatteryHold).mockResolvedValue(null);
     const client = fakeClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', reserveChoice: 100 });
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's', reserveChoice: 100 });
     expect(result.status).toBe('ok');
     expect(repo.retireUnrestorableHold).toHaveBeenCalledWith(9);
     expect(client.setBackupReserve).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks for other active holds after retiring one and refuses while any remains', async () => {
+    const repo = fakeRepo(null);
+    repo.getActiveHoldForClaim
+      .mockResolvedValueOnce({ id: 9, site_id: 'other-site' } as BatteryHold)
+      .mockResolvedValueOnce({ id: 8, site_id: 's' } as BatteryHold);
+    repo.retireUnrestorableHold.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's' });
+    expect(result).toMatchObject({ status: 'already_active', hold: { id: 8 } });
+    expect(repo.retireUnrestorableHold).toHaveBeenNthCalledWith(1, 9);
+    expect(repo.retireUnrestorableHold).toHaveBeenNthCalledWith(2, 8);
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.releaseStart).toHaveBeenCalled();
   });
 
   it('parks at an explicit 100 choice in the ambiguous band and records the hold', async () => {
