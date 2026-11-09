@@ -8,6 +8,10 @@ vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities:
 
 function fakeRepo(active: BatteryHold | null) {
   return {
+    getStartClaimKey: vi.fn().mockResolvedValue('hardware-1'),
+    claimStart: vi.fn().mockResolvedValue(true),
+    releaseStart: vi.fn().mockResolvedValue(undefined),
+    getActiveHoldForClaim: vi.fn().mockResolvedValue(active),
     getActiveHold: vi.fn().mockResolvedValue(active),
     claimHold: vi.fn().mockResolvedValue(true),
     releaseHold: vi.fn().mockResolvedValue(undefined),
@@ -49,6 +53,18 @@ describe('computeTargetReserve', () => {
 });
 
 describe('parkBattery', () => {
+  it('sends no Tesla command when another start owns the hardware claim', async () => {
+    const repo = fakeRepo(null);
+    repo.claimStart.mockResolvedValue(false);
+    const client = fakeClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await parkBattery({ client: client as any, repo: repo as any, siteId: 's' });
+    expect(result).toEqual({ status: 'error', message: 'Battery Saver is already updating.' });
+    expect(client.getEnergySiteInfo).not.toHaveBeenCalled();
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.releaseStart).not.toHaveBeenCalled();
+  });
+
   it('parks at an explicit 100 choice in the ambiguous band and records the hold', async () => {
     const repo = fakeRepo(null);
     const client = fakeClient();
