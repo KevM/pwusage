@@ -49,6 +49,16 @@ export async function reconcileDueMemberships(deadlineMs: number): Promise<{ che
               AND (u.is_active IS NOT TRUE OR NULLIF(u.refresh_token, '') IS NULL
                    OR u.auth_status = 'revoked'
                    OR u.tesla_refresh_state IN ('uncertain', 'reconnect_required'))
+              -- Same survivor rule as removeDeadMember, applied before LIMIT so memberships it would
+              -- refuse (sole members) cannot fill the batch; removeDeadMember still rechecks transactionally.
+              AND EXISTS (SELECT 1 FROM "SiteMember" other
+                  JOIN "User" survivor ON survivor.id = other.user_id
+                  WHERE other.site_id = m.site_id AND other.user_id <> m.user_id
+                    AND other.last_seen_in_tesla_at >= now() - interval '2 days'
+                    AND survivor.is_active = true AND NULLIF(survivor.refresh_token, '') IS NOT NULL
+                    AND survivor.auth_status IS DISTINCT FROM 'revoked'
+                    AND survivor.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+                    AND survivor.tesla_refresh_state IS DISTINCT FROM 'reconnect_required')
             ORDER BY m.last_seen_in_tesla_at LIMIT 50`);
         const sites = new SiteRepo();
         for (const member of stale.rows) {

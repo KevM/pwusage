@@ -319,6 +319,21 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       expect(synced().sort()).toEqual(['u1', 'u2']);
     });
 
+    it('does not let dead memberships that cannot be removed monopolize the cleanup batch', async () => {
+      await local.database.query(`INSERT INTO "User" (id, refresh_token, auth_lost_at)
+        SELECT 'dead' || n, NULL, now() - interval '30 days' FROM generate_series(1, 55) n`);
+      await local.database.query(`INSERT INTO "Site" (id, user_id) SELECT 'dsite' || n, 'dead' || n FROM generate_series(1, 55) n`);
+      await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id, last_seen_in_tesla_at)
+        SELECT 'dsite' || n, 'dead' || n, 'dsite' || n, now() - interval '20 days' FROM generate_series(1, 55) n`);
+      await local.database.query(`UPDATE "User" SET auth_status = 'revoked', auth_lost_at = now() - interval '30 days' WHERE id = 'u1'`);
+      await local.database.query(`DELETE FROM "SiteMember" WHERE site_id = 's1'`);
+      await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id, last_seen_in_tesla_at) VALUES
+        ('s1', 'u1', 's1', now() - interval '15 days'), ('s1', 'u2', 'invited-id', now())`);
+      const result = await reconcileDueMemberships(farFuture());
+      expect(result.deadRemoved).toBe(1);
+      expect((await local.database.query(`SELECT count(*)::int AS n FROM "SiteMember" WHERE site_id = 's1' AND user_id = 'u1'`)).rows[0].n).toBe(0);
+    });
+
     it('rotates failing accounts to the back so later accounts still get checked', async () => {
       await local.database.query(`INSERT INTO "User" (id, refresh_token)
         SELECT 'f' || lpad(n::text, 3, '0'), 'r' FROM generate_series(1, 50) n`);

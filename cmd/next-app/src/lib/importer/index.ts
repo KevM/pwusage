@@ -430,6 +430,12 @@ export class Importer {
                 console.warn(`[Import] Site ${siteId} reports timezone ${info.installation_time_zone} but keeps ${storedTimezone}: its day records are keyed to the stored timezone`);
             }
 
+            // Equal (or absent) tariff content proves nothing when no tariff was ever stored: a fresh
+            // placeholder has json = {}, and a failed first import leaves json current without a tariff.
+            if (!tariffsChanged && await this.siteRepo.needsInitialImport(siteId)) {
+                tariffsChanged = true;
+            }
+
             if (tariffsChanged) {
                 console.log(`Tariff content changed for site ${siteId}, updating tariffs...`);
                 const parsed = info.tariff_content_v2
