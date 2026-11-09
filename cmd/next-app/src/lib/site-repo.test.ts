@@ -321,9 +321,11 @@ describe('SiteRepo.getSitesWithTariffs', () => {
         expect(site.json).toEqual({ components: { battery: true } });
     });
 
-    it('decrypts stored tokens with includeTokens, using the owning user id', async () => {
+    it('decrypts stored tokens with includeTokens, using the joined token owner id', async () => {
+        // The AAD user is the User row the tokens were read from, not necessarily s.user_id.
         mockSiteLoad([makeSiteRow({
-            user_id: 'user-1',
+            user_id: 'someone-else',
+            token_owner_id: 'user-1',
             access_token: encryptToken('plain-access', 'access_token', 'user-1'),
             refresh_token: encryptToken('plain-refresh', 'refresh_token', 'user-1'),
         })]);
@@ -332,6 +334,8 @@ describe('SiteRepo.getSitesWithTariffs', () => {
 
         expect(site.access_token).toBe('plain-access');
         expect(site.refresh_token).toBe('plain-refresh');
+        const [siteSql] = queryMock.mock.calls[0] as [string];
+        expect(siteSql).toContain('u.id AS token_owner_id');
     });
 
     it('always hits DB when includeTokens is requested, bypassing the cache', async () => {

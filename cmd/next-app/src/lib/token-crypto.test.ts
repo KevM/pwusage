@@ -3,6 +3,7 @@ import {
     decryptToken,
     encryptToken,
     isEncryptedToken,
+    sealToken,
     tokenFingerprint,
 } from './token-crypto';
 
@@ -76,6 +77,47 @@ describe('token-crypto', () => {
     it('still reads plaintext when no key is configured', () => {
         setEnv(undefined);
         expect(decryptToken('plain', 'access_token', 'u')).toBe('plain');
+    });
+
+    it('tolerates surrounding whitespace or quotes in the env value', () => {
+        setEnv(`  "k1:${KEY_A}"  `);
+        const enc = encryptToken('t', 'access_token', 'u');
+        expect(decryptToken(enc, 'access_token', 'u')).toBe('t');
+    });
+
+    it('rejects keys that are not canonical base64', () => {
+        // A typo that Buffer.from would silently skip still decodes to 32 bytes.
+        setEnv(`k1:${KEY_A.slice(0, 10)}!${KEY_A.slice(10)}`);
+        expect(() => encryptToken('t', 'access_token', 'u')).toThrow(/base64/);
+        setEnv(`k1:${KEY_A.replace(/=$/, '')}`);
+        expect(() => encryptToken('t', 'access_token', 'u')).toThrow(/base64/);
+        setEnv(undefined, `${FP_KEY}!`);
+        expect(() => tokenFingerprint('x')).toThrow(/base64/);
+    });
+
+    it('picks up env changes between calls despite parse caching', () => {
+        const a = encryptToken('t', 'access_token', 'u');
+        setEnv(`k2:${KEY_B}`);
+        expect(encryptToken('t', 'access_token', 'u')).toMatch(/^enc:v1:k2:/);
+        expect(() => decryptToken(a, 'access_token', 'u')).toThrow(/k1/);
+    });
+
+    describe('sealToken', () => {
+        it('encrypts plaintext, leaves null/empty and active-key envelopes untouched', () => {
+            expect(sealToken(null, 'access_token', 'u')).toBeNull();
+            expect(sealToken('', 'access_token', 'u')).toBe('');
+            const enc = sealToken('plain', 'access_token', 'u');
+            expect(isEncryptedToken(enc)).toBe(true);
+            expect(sealToken(enc, 'access_token', 'u')).toBe(enc);
+        });
+
+        it('re-encrypts an envelope written under a non-active key', () => {
+            const old = encryptToken('t', 'refresh_token', 'u');
+            setEnv(`k2:${KEY_B},k1:${KEY_A}`);
+            const resealed = sealToken(old, 'refresh_token', 'u');
+            expect(resealed).toMatch(/^enc:v1:k2:/);
+            expect(decryptToken(resealed, 'refresh_token', 'u')).toBe('t');
+        });
     });
 
     describe('tokenFingerprint', () => {

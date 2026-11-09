@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { backfillTeslaTokens, type BackfillQueryable } from './tesla-token-backfill';
-import { decryptToken, encryptToken, isEncryptedToken, tokenFingerprint } from './token-crypto';
+import { activeKeyId, decryptToken, encryptToken, isEncryptedToken, tokenFingerprint } from './token-crypto';
 
 interface Row { id: string; access_token: string | null; refresh_token: string | null }
 
@@ -49,6 +49,32 @@ describe('backfillTeslaTokens', () => {
         expect(params[2]).toBe(tokenFingerprint('rt'));
     });
 
+    it('selects rows sealed under a non-active key and re-encrypts them under the active one', async () => {
+        const { db, query } = fakeDb([[{ id: 'u1', access_token: 'at', refresh_token: 'rt' }]]);
+        await backfillTeslaTokens(db, { batchSize: 10 });
+        const select = query.mock.calls.find(([sql]) => String(sql).trimStart().startsWith('SELECT'));
+        // Active-key prefix is a parameter and matched with starts_with (no LIKE wildcards in key ids).
+        expect(select?.[0]).toMatch(/NOT starts_with\(access_token, \$3\)/);
+        expect(select?.[0]).toMatch(/NOT starts_with\(refresh_token, \$3\)/);
+
+        const original = process.env.TOKEN_ENCRYPTION_KEYS;
+        const oldKey = original as string;
+        const oldRefresh = encryptToken('rt', 'refresh_token', 'u1');
+        process.env.TOKEN_ENCRYPTION_KEYS = `rotated:${Buffer.alloc(32, 5).toString('base64')},${oldKey}`;
+        try {
+            const rotated = fakeDb([[{ id: 'u1', access_token: null, refresh_token: oldRefresh }]]);
+            await backfillTeslaTokens(rotated.db, { batchSize: 10 });
+            const [[, params]] = updates(rotated.query) as [[string, string[]]];
+            expect(params[1]).toMatch(/^enc:v1:rotated:/);
+            expect(decryptToken(params[1], 'refresh_token', 'u1')).toBe('rt');
+            expect(params[2]).toBe(tokenFingerprint('rt'));
+            // The write is still guarded by the envelope that was read.
+            expect(params[5]).toBe(oldRefresh);
+        } finally {
+            process.env.TOKEN_ENCRYPTION_KEYS = original;
+        }
+    });
+
     it('handles null refresh tokens and pages through batches by id', async () => {
         const { db, query } = fakeDb([
             [{ id: 'u1', access_token: 'at', refresh_token: null }, { id: 'u2', access_token: 'a2', refresh_token: 'r2' }],
@@ -61,7 +87,7 @@ describe('backfillTeslaTokens', () => {
         expect(first[1]).toBeNull();
         expect(first[2]).toBeNull();
         const selects = query.mock.calls.filter(([sql]) => String(sql).trimStart().startsWith('SELECT'));
-        expect(selects[1][1]).toEqual(['u2', 2]);
+        expect(selects[1][1]).toEqual(['u2', 2, `enc:v1:${activeKeyId()}:`]);
     });
 
     it('dry run writes nothing', async () => {

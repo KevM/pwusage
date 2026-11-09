@@ -250,10 +250,13 @@ Tesla token encryption:
   keys, **first is active**) and `TOKEN_FINGERPRINT_KEY` (separate 32-byte base64 key).
   Both are required wherever tokens are written. Generate with
   `openssl rand -base64 32`.
-- Rotate encryption keys by prepending a new `id:key`; old ids keep decrypting. Re-run
-  `scripts/encrypt-tesla-tokens.ts` after removing an old key only once nothing still
-  uses it (the script re-encrypts only plaintext, so a rotated row re-encrypts on its
-  next token refresh).
+- Rotate encryption keys by prepending a new `id:key`; old ids keep decrypting. Then run
+  `scripts/encrypt-tesla-tokens.ts`: it re-encrypts every row still under a non-active key
+  (dormant and revoked users never refresh, so they would otherwise stay on the old key).
+  Remove the old key from `TOKEN_ENCRYPTION_KEYS` only after a re-run reports nothing
+  left to update.
+- `TOKEN_ENCRYPTION_KEYS` values must be canonical base64 of 32 bytes; surrounding
+  whitespace or quotes are tolerated, typos are rejected.
 - Reads decrypt, and pass legacy plaintext through so deploying before the backfill is
   safe. Writes always encrypt. The backfill `scripts/encrypt-tesla-tokens.ts` is
   idempotent and guarded by the exact old values, so a concurrent rotation wins.
@@ -280,7 +283,7 @@ Tesla token refresh behavior:
   with a two-minute floor, then the same grant is retried. Only definitive
   credential rejection becomes `reconnect_required` with `auth_status=revoked`.
   During a retry floor, Fleet requests fail fast with `TeslaRefreshBackoffError`.
-- The dev/beta database copy clears `User` Tesla tokens: a second holder of a
+- The dev/beta database copy clears `User` Tesla tokens (and `refresh_token_fp`): a second holder of a
   single-use grant races prod (see `docs/dev-database-copy.md`).
 - `is_active` is account eligibility, independent of Tesla health. Refresh and
   verification never deactivate an account. OAuth replaces credentials and

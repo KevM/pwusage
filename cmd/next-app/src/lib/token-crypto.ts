@@ -23,21 +23,42 @@ interface KeyEntry {
     key: Buffer;
 }
 
+/** A 32-byte key is exactly 43 base64 characters plus one `=`; anything else is a typo. */
+const CANONICAL_KEY_BASE64 = /^[A-Za-z0-9+/]{43}=$/;
+
 function decodeKey(raw: string, label: string): Buffer {
-    const key = Buffer.from(raw, 'base64');
-    if (key.length !== 32) throw new Error(`${label} must decode to 32 bytes (base64)`);
-    return key;
+    // Buffer.from skips invalid characters silently, so validate the text first.
+    if (!CANONICAL_KEY_BASE64.test(raw)) throw new Error(`${label} must be canonical base64 of 32 bytes`);
+    return Buffer.from(raw, 'base64');
 }
 
-/** `TOKEN_ENCRYPTION_KEYS=id1:base64key,id2:base64key`; the first entry is active. */
+/** Env values pasted into dashboards often carry whitespace or quotes. */
+function cleanEnv(value: string | undefined): string | undefined {
+    return value?.trim().replace(/^(["'])([\s\S]*)\1$/, '$2').trim();
+}
+
+let parsedKeys: { raw: string; keys: KeyEntry[] } | undefined;
+
+/**
+ * `TOKEN_ENCRYPTION_KEYS=id1:base64key,id2:base64key`; the first entry is active.
+ * Parsed once per distinct env value: list reads decrypt many rows.
+ */
 function loadKeys(): KeyEntry[] {
-    const raw = process.env.TOKEN_ENCRYPTION_KEYS?.trim();
+    const raw = cleanEnv(process.env.TOKEN_ENCRYPTION_KEYS);
     if (!raw) throw new Error('TOKEN_ENCRYPTION_KEYS is not set');
-    return raw.split(',').map(part => {
+    if (parsedKeys?.raw === raw) return parsedKeys.keys;
+    const keys = raw.split(',').map(part => {
         const [id, encoded, ...rest] = part.trim().split(':');
         if (!id || !encoded || rest.length) throw new Error('TOKEN_ENCRYPTION_KEYS entries must look like <keyId>:<base64 key>');
         return { id, key: decodeKey(encoded, `TOKEN_ENCRYPTION_KEYS key "${id}"`) };
     });
+    parsedKeys = { raw, keys };
+    return keys;
+}
+
+/** The id that new writes are encrypted under. */
+export function activeKeyId(): string {
+    return loadKeys()[0].id;
 }
 
 function aad(column: TokenColumn, userId: string): Buffer {
@@ -74,12 +95,23 @@ export function decryptToken<T extends string | null | undefined>(value: T, colu
 }
 
 /**
+ * Bring a stored value to the current standard: plaintext is encrypted, and an
+ * envelope written under a non-active key is re-encrypted under the active one.
+ * Null, empty and active-key envelopes come back unchanged. Used by the backfill.
+ */
+export function sealToken(value: string | null, column: TokenColumn, userId: string): string | null {
+    if (!value) return value;
+    if (value.startsWith(`${PREFIX}${activeKeyId()}:`)) return value;
+    return encryptToken(decryptToken(value, column, userId), column, userId);
+}
+
+/**
  * Deterministic HMAC-SHA256 of a token, keyed by `TOKEN_FINGERPRINT_KEY` (separate
  * from the encryption keys). Random-IV ciphertext never matches itself, so the
  * single-use refresh-token compare-and-swap compares this instead.
  */
 export function tokenFingerprint(token: string): string {
-    const raw = process.env.TOKEN_FINGERPRINT_KEY?.trim();
+    const raw = cleanEnv(process.env.TOKEN_FINGERPRINT_KEY);
     if (!raw) throw new Error('TOKEN_FINGERPRINT_KEY is not set');
     return createHmac('sha256', decodeKey(raw, 'TOKEN_FINGERPRINT_KEY')).update(token, 'utf8').digest('hex');
 }
