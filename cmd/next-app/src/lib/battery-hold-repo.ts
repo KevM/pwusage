@@ -34,6 +34,42 @@ function mapRow(row: {
 }
 
 export class BatteryHoldRepo {
+  async getStartClaimKey(siteId: string): Promise<string> {
+    const { rows } = await pool.query<{ claim_key: string }>(`
+      SELECT COALESCE(tesla_hardware_id, 'site:' || id) AS claim_key
+      FROM "Site" WHERE id = $1
+    `, [siteId]);
+    if (!rows[0]) throw new Error('Site not found');
+    return rows[0].claim_key;
+  }
+
+  async claimStart(key: string, owner: string): Promise<boolean> {
+    const result = await pool.query(`
+      INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at)
+      VALUES ($1, $2::uuid, clock_timestamp() + interval '90 seconds')
+      ON CONFLICT (claim_key) DO UPDATE
+      SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at
+      WHERE "BatteryHoldStartClaim".expires_at <= clock_timestamp()
+    `, [key, owner]);
+    return result.rowCount === 1;
+  }
+
+  async releaseStart(key: string, owner: string): Promise<void> {
+    await pool.query(`DELETE FROM "BatteryHoldStartClaim"
+      WHERE claim_key = $1 AND owner = $2::uuid`, [key, owner]);
+  }
+
+  async getActiveHoldForClaim(key: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT h.* FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      WHERE COALESCE(s.tesla_hardware_id, 'site:' || s.id) = $1
+        AND h.status = 'active'
+      ORDER BY h.created_at DESC LIMIT 1
+    `, [key]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
   async clearRestoreAttempt(id: number, owner: string): Promise<boolean> {
     const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = NULL, restore_reason = NULL
       WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid

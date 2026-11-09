@@ -14,6 +14,10 @@ function setup(reserve: unknown, restoredSecondsAgo: number | null = null) {
     setBackupReserve: vi.fn().mockResolvedValue({ Code: 200 }),
   };
   const repo = {
+    getStartClaimKey: vi.fn().mockResolvedValue('hardware-1'),
+    claimStart: vi.fn().mockResolvedValue(true),
+    releaseStart: vi.fn().mockResolvedValue(undefined),
+    getActiveHoldForClaim: vi.fn().mockResolvedValue(null),
     getActiveHold: vi.fn().mockResolvedValue(null),
     getLatestRestoredHold: vi.fn().mockResolvedValue(previous),
     createHold: vi.fn().mockResolvedValue({ id: 2 }),
