@@ -77,7 +77,7 @@ extension TodayEnergyWidgetTests {
                 let view = TodayEnergySingleMetricContent(snapshot: selection.snapshot,
                                                           date: TodayEnergyPreviewFixtures.date,
                                                           metric: selection.metric)
-                    .padding(10).frame(width: 141, height: 141)
+                    .padding(TodayEnergyWidgetLayout.singleMetricInsets).frame(width: 141, height: 141)
                     .background(TodayEnergyMetricFill(metric: selection.metric))
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .environment(\.dynamicTypeSize, .xxxLarge)
