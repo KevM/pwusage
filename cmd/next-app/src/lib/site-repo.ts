@@ -147,6 +147,7 @@ export class SiteRepo {
     async removeMemberIfMissing(siteId: string, userId: string, teslaId: string, fetchedAt: Date): Promise<boolean> {
         const client = await pool.connect();
         let removed = false;
+        let endedHold = false;
         try {
             await client.query('BEGIN');
             await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
@@ -165,10 +166,11 @@ export class SiteRepo {
                     WHERE h.id = a.hold_id AND h.site_id = $1 AND a.user_id = $2`, [siteId, userId]);
                 await client.query(`DELETE FROM "TrmnlInstallation"
                     WHERE site_id = $1 AND installed_by_user_id = $2`, [siteId, userId]);
-                await client.query(`UPDATE "BatteryHold" h
+                const ended = await client.query(`UPDATE "BatteryHold" h
                     SET status = 'cancelled', restore_reason = 'no_members', restored_at = now()
                     WHERE h.site_id = $1 AND h.status = 'active'
                       AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = $1)`, [siteId]);
+                endedHold = (ended.rowCount ?? 0) > 0;
             }
             await client.query('COMMIT');
         } catch (error) {
@@ -182,6 +184,7 @@ export class SiteRepo {
             logEvent('info', 'site.member.removed', {
                 siteId, accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16),
             });
+            if (endedHold) logEvent('warn', 'battery-hold.ended-no-members', { siteId });
             await this.repairConnection(siteId);
         }
         return removed;

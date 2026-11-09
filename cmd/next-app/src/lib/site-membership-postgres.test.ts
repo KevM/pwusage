@@ -156,6 +156,21 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     }
   });
 
+  it('ends an active hold when the last member leaves without sending a command', async () => {
+    const sites = new SiteRepo();
+    const hold = await repo.createHold({ siteId: 's1', originalReserve: 20, targetReserve: 100,
+      parkedSoc: 80, baselineLoadW: 500, safetyExpiresAt: new Date(Date.now() + 60_000) });
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      expect(await sites.removeMemberIfMissing('s1', 'u1', 's1', new Date(Date.now() + 60_000))).toBe(true);
+      const row = (await local.database.query(`SELECT status, restore_reason FROM "BatteryHold" WHERE id=$1`, [hold.id])).rows[0];
+      expect(row).toEqual({ status: 'cancelled', restore_reason: 'no_members' });
+      expect((await local.database.query(`SELECT id FROM "Site" WHERE id='s1'`)).rows).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('joins a verified home, updates a re-invite, and retries when the checked set changes', async () => {
     const joins = new SiteMembershipJoinRepo();
     await local.database.query(`INSERT INTO "User" (id, refresh_token) VALUES ('u3', 'r3'), ('u4', 'r4')`);
@@ -215,5 +230,30 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     expect((await repo.getActiveHoldForClaim('hardware-1'))).toBeNull();
     const row = (await local.database.query(`SELECT status, restore_reason FROM "BatteryHold" WHERE id=$1`, [hold.id])).rows[0];
     expect(row).toEqual({ status: 'cancelled', restore_reason: 'no_usable_members' });
+  });
+
+  it('stores the starter and command-permission state on their member row', async () => {
+    const hold = await repo.createHold({ siteId: 's1', originalReserve: 20, targetReserve: 100,
+      parkedSoc: 80, baselineLoadW: 500, safetyExpiresAt: new Date(Date.now() + 60_000),
+      startedByUserId: 'u1' });
+    expect(hold.started_by_user_id).toBe('u1');
+    await repo.markCommandsDenied('s1', 'u1');
+    expect((await local.database.query(`SELECT commands_denied_at FROM "SiteMember" WHERE site_id='s1'`)).rows[0].commands_denied_at).toBeInstanceOf(Date);
+    await repo.clearCommandsDenied('s1', 'u1');
+    expect((await local.database.query(`SELECT commands_denied_at FROM "SiteMember" WHERE site_id='s1'`)).rows[0].commands_denied_at).toBeNull();
+  });
+
+  it('orders usable restore grants, moving recently denied members to the end', async () => {
+    await local.database.query(`INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id)
+      VALUES ('s1', 'u2', 'invited-id')`);
+    const hold = await repo.createHold({ siteId: 's1', originalReserve: 20, targetReserve: 100,
+      parkedSoc: 80, baselineLoadW: 500, safetyExpiresAt: new Date(Date.now() + 60_000),
+      startedByUserId: 'u2' });
+    expect(await repo.getRestoreCandidates(hold.id)).toEqual(['u2', 'u1']);
+    expect(await repo.getRestoreCandidates(hold.id, 'u1')).toEqual(['u1', 'u2']);
+    await repo.markCommandsDenied('s1', 'u2');
+    expect(await repo.getRestoreCandidates(hold.id)).toEqual(['u1', 'u2']);
+    await local.database.query(`UPDATE "User" SET auth_status='revoked' WHERE id='u1'`);
+    expect(await repo.getRestoreCandidates(hold.id)).toEqual(['u2']);
   });
 });
