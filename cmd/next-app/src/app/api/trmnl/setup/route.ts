@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { TrmnlService } from '@/lib/trmnl-service';
-import { verifySiteAccess } from '@/lib/auth-checks';
+import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { SiteRepo } from '@/lib/site-repo';
 import { withRequestContext } from '@/lib/request-context';
 import {
@@ -31,6 +31,8 @@ export async function POST(request: Request) {
             console.log(`[TrmnlSetup] Unauthorized access to site ${site_id}`);
             return NextResponse.json({ error: 'Unauthorized access to site' }, { status: 403 });
         }
+        const installer = await getCurrentUser();
+        if (!installer) return NextResponse.json({ error: 'Sign in to connect a TRMNL device' }, { status: 401 });
 
         const repo = new SiteRepo();
         const site = await repo.getSite(site_id);
@@ -94,7 +96,8 @@ export async function POST(request: Request) {
                         null,
                         pluginSettingId,
                         defaultInstallationJson,
-                        accessToken
+                        accessToken,
+                        installer.id
                     );
                     return NextResponse.json({ success: true, status: 'pending_webhook' });
                 }
@@ -104,7 +107,7 @@ export async function POST(request: Request) {
                 // The next Webhook to arrive (which will be for this new plugin) will claim it.
                 // This assumes single-user / sequential installation flow, which is true for this personal app.
                 console.warn('[TrmnlSetup] Unable to identify user/plugin. Saving generic Pending record for Webhook to claim.');
-                await service.createInstallation(site_id, null, null, defaultInstallationJson, accessToken);
+                await service.createInstallation(site_id, null, null, defaultInstallationJson, accessToken, installer.id);
                 return NextResponse.json({ success: true, status: 'pending_loose' });
 
                 /*
@@ -123,7 +126,8 @@ export async function POST(request: Request) {
             deviceUuid,
             pluginSettingId,
             defaultInstallationJson,
-            accessToken
+            accessToken,
+            installer.id
         );
 
         return NextResponse.json({ success: true });

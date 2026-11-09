@@ -4,8 +4,8 @@ import { TrmnlInstallationRepo } from './trmnl-installation-repo';
 export class TrmnlService {
     private dbRepo = new TrmnlInstallationRepo();
 
-    async createInstallation(siteId: string, uuid: string | null = null, pluginSettingId: number | null = null, details: unknown = null, accessToken: string | null = null): Promise<number> {
-        return this.dbRepo.create(siteId, uuid, pluginSettingId, details, accessToken);
+    async createInstallation(siteId: string, uuid: string | null = null, pluginSettingId: number | null = null, details: unknown = null, accessToken: string | null = null, installedByUserId: string | null = null): Promise<number> {
+        return this.dbRepo.create(siteId, uuid, pluginSettingId, details, accessToken, installedByUserId);
     }
 
     async updateInstallation(uuid: string, pluginSettingId: number) {
