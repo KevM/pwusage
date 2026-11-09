@@ -657,7 +657,7 @@ describe('SiteRepo history migration status', () => {
 
         await expect(new SiteRepo().getHistoryOverview()).resolves.toEqual([row]);
         const [sql] = queryMock.mock.calls[0] as [string];
-        expect(sql).toContain('LEFT JOIN "User" u ON u.id = s.user_id');
+        expect(sql).toContain('LEFT JOIN "User" u ON u.id = s.tesla_connection_user_id');
         // Empty day records (Tesla answered with no samples) are not archived days.
         expect(sql).toContain(`FROM "EnergyDayArchive" WHERE status IS DISTINCT FROM 'empty' GROUP BY site_id`);
         expect(sql).toContain('COALESCE(a.archived_days, 0)');
