@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { encryptToken } from './token-crypto';
 
 const { queryMock } = vi.hoisted(() => ({
     queryMock: vi.fn()
@@ -318,6 +319,19 @@ describe('SiteRepo.getSitesWithTariffs', () => {
 
         expect(queryMock).toHaveBeenCalledTimes(2);
         expect(site.json).toEqual({ components: { battery: true } });
+    });
+
+    it('decrypts stored tokens with includeTokens, using the owning user id', async () => {
+        mockSiteLoad([makeSiteRow({
+            user_id: 'user-1',
+            access_token: encryptToken('plain-access', 'access_token', 'user-1'),
+            refresh_token: encryptToken('plain-refresh', 'refresh_token', 'user-1'),
+        })]);
+
+        const [site] = await new SiteRepo().getSitesWithTariffs(['site-1'], { includeTokens: true });
+
+        expect(site.access_token).toBe('plain-access');
+        expect(site.refresh_token).toBe('plain-refresh');
     });
 
     it('always hits DB when includeTokens is requested, bypassing the cache', async () => {

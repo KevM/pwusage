@@ -16,6 +16,7 @@ vi.mock('./db', () => ({
 import { UserRepo } from './user-repo';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { TeslaAuthError } from './tesla-client';
+import { decryptToken, encryptToken, isEncryptedToken, tokenFingerprint } from './token-crypto';
 
 describe('UserRepo admin ordering', () => {
     beforeEach(() => {
@@ -91,24 +92,6 @@ describe('UserRepo class methods (folded from module functions)', () => {
         queryMock.mockReset();
     });
 
-    it('getByAccessToken returns user row', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [{ id: 'u1', email: 'a@b.c', roles: ['user'] }] });
-        const repo = new UserRepo();
-        const result = await repo.getByAccessToken('tok-123');
-        expect(result?.id).toBe('u1');
-        expect(queryMock).toHaveBeenCalledWith(
-            'SELECT id, email, roles FROM "User" WHERE access_token = $1',
-            ['tok-123']
-        );
-    });
-
-    it('getByAccessToken returns null on no rows', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [] });
-        const repo = new UserRepo();
-        const result = await repo.getByAccessToken('nope');
-        expect(result).toBeNull();
-    });
-
     it('getTokens returns access + refresh tokens', async () => {
         queryMock.mockResolvedValueOnce({
             rows: [{ access_token: 'a', refresh_token: 'r' }]
@@ -120,6 +103,33 @@ describe('UserRepo class methods (folded from module functions)', () => {
             expect.stringContaining('SELECT access_token, refresh_token, fleet_api_base_url'),
             ['u1']
         );
+    });
+
+    it('getTokens decrypts encrypted tokens and passes legacy plaintext through', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ access_token: encryptToken('a', 'access_token', 'u1'), refresh_token: encryptToken('r', 'refresh_token', 'u1') }]
+        });
+        const repo = new UserRepo();
+        expect(await repo.getTokens('u1')).toEqual({ access_token: 'a', refresh_token: 'r' });
+        queryMock.mockResolvedValueOnce({ rows: [{ access_token: 'legacy-a', refresh_token: 'legacy-r' }] });
+        expect(await repo.getTokens('u1')).toEqual({ access_token: 'legacy-a', refresh_token: 'legacy-r' });
+    });
+
+    it('getTokensForSite decrypts using the owning user id', async () => {
+        queryMock.mockResolvedValueOnce({
+            rows: [{ access_token: encryptToken('a', 'access_token', 'u1'), refresh_token: encryptToken('r', 'refresh_token', 'u1'), user_id: 'u1' }]
+        });
+        const result = await new UserRepo().getTokensForSite('site-1');
+        expect(result?.access_token).toBe('a');
+        expect(result?.refresh_token).toBe('r');
+    });
+
+    it('getById and getByEmail decrypt tokens on the row', async () => {
+        const row = () => ({ id: 'u1', access_token: encryptToken('a', 'access_token', 'u1'), refresh_token: encryptToken('r', 'refresh_token', 'u1') });
+        queryMock.mockResolvedValueOnce({ rows: [row()] }).mockResolvedValueOnce({ rows: [row()] });
+        const repo = new UserRepo();
+        expect((await repo.getById('u1'))?.refresh_token).toBe('r');
+        expect((await repo.getByEmail('a@b.c'))?.access_token).toBe('a');
     });
 
     it('getTokensForSite joins User and Site', async () => {
@@ -184,17 +194,27 @@ describe('UserRepo new commands', () => {
         });
         expect(queryMock.mock.calls[0][0]).toContain('INSERT INTO "User"');
         expect(queryMock.mock.calls[0][0]).toContain('ON CONFLICT (id) DO UPDATE');
-        expect(queryMock.mock.calls[0][1]).toEqual(['u1', 'a@b.c', 'at', 'rt', expiresAt, null]);
+        const params = queryMock.mock.calls[0][1];
+        expect(queryMock.mock.calls[0][0]).toContain('refresh_token_fp');
+        expect(params.slice(0, 2)).toEqual(['u1', 'a@b.c']);
+        expect(isEncryptedToken(params[2])).toBe(true);
+        expect(isEncryptedToken(params[3])).toBe(true);
+        expect(decryptToken(params[2], 'access_token', 'u1')).toBe('at');
+        expect(decryptToken(params[3], 'refresh_token', 'u1')).toBe('rt');
+        expect(params.slice(4, 6)).toEqual([expiresAt, null]);
+        expect(params[6]).toBe(tokenFingerprint('rt'));
     });
 
     it('updateTokens updates access and refresh tokens', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new UserRepo();
         await repo.updateTokens('u1', 'newA', 'newR');
-        expect(queryMock).toHaveBeenCalledWith(
-            'UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3',
-            ['newA', 'newR', 'u1']
-        );
+        const [sql, params] = queryMock.mock.calls[0];
+        expect(sql).toBe('UPDATE "User" SET access_token = $1, refresh_token = $2, refresh_token_fp = $4 WHERE id = $3');
+        expect(decryptToken(params[0], 'access_token', 'u1')).toBe('newA');
+        expect(decryptToken(params[1], 'refresh_token', 'u1')).toBe('newR');
+        expect(isEncryptedToken(params[0]) && isEncryptedToken(params[1])).toBe(true);
+        expect(params.slice(2)).toEqual(['u1', tokenFingerprint('newR')]);
     });
 });
 
@@ -334,8 +354,8 @@ describe('UserRepo Fleet API base URL', () => {
         await repo.upsertOnTeslaAuth({ ...base, fleetApiBaseUrl: 'https://evil.example.com' });
 
         expect(queryMock.mock.calls[0][0]).toContain('fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url)');
-        expect(queryMock.mock.calls[0][1]).toEqual(['u', null, 'a', 'r', 1, EU]);
-        expect(queryMock.mock.calls[1][1]).toEqual(['u', null, 'a', 'r', 1, null]);
+        expect(queryMock.mock.calls[0][1][5]).toBe(EU);
+        expect(queryMock.mock.calls[1][1][5]).toBeNull();
     });
 
     it('returns the stored host with tokens', async () => {

@@ -39,6 +39,8 @@ Three auth artifacts are used for different concerns:
 - Purpose: backend calls to Tesla Fleet API.
 - Not set in browser cookies in the current callback flow.
 - Resolved server-side from `sub`/site ownership.
+- Encrypted at rest (see "Tesla token encryption" below). Read and write them only
+  through the repos (`UserRepo`, `SiteRepo`, `TeslaTokenRepo`), never with raw SQL.
 
 3. Trmnl installation token (`TrmnlInstallation.access_token`)
 - Purpose: verify plugin/device calls (markup and uninstall).
@@ -238,6 +240,27 @@ Middleware/proxy (`src/proxy.ts`):
 - Tokens without `sv` (legacy) are treated as `sv: 0`: they refresh and migrate
   to the current DB version only while the DB version is still 0.
 
+Tesla token encryption:
+- `User.access_token` and `User.refresh_token` are stored as
+  `enc:v1:<keyId>:<iv>:<ciphertext+tag>` (AES-256-GCM, AAD `User:<column>:<userId>`),
+  so a value cannot be replayed into another row or column. Implementation:
+  `cmd/next-app/src/lib/token-crypto.ts`.
+- Keys come from environment variables, not the database, so database access or a
+  backup alone cannot decrypt: `TOKEN_ENCRYPTION_KEYS` (`id:base64,id:base64`, 32-byte
+  keys, **first is active**) and `TOKEN_FINGERPRINT_KEY` (separate 32-byte base64 key).
+  Both are required wherever tokens are written. Generate with
+  `openssl rand -base64 32`.
+- Rotate encryption keys by prepending a new `id:key`; old ids keep decrypting. Re-run
+  `scripts/encrypt-tesla-tokens.ts` after removing an old key only once nothing still
+  uses it (the script re-encrypts only plaintext, so a rotated row re-encrypts on its
+  next token refresh).
+- Reads decrypt, and pass legacy plaintext through so deploying before the backfill is
+  safe. Writes always encrypt. The backfill `scripts/encrypt-tesla-tokens.ts` is
+  idempotent and guarded by the exact old values, so a concurrent rotation wins.
+- Random-IV ciphertext cannot be compared, so the refresh compare-and-swap uses
+  `User.refresh_token_fp` (HMAC-SHA256 of the refresh token). See `DesignDecisions.md`.
+- TRMNL tokens are not covered; they remain a separate follow-up.
+
 Tesla token refresh behavior:
 - All production refresh callers share the account-level coordinator. Its atomic
   lease claim records `in_flight`, a UUID attempt ID, generation, and start time
@@ -249,7 +272,7 @@ Tesla token refresh behavior:
   401 by the credentials they sent, so only one of them refreshes.
 - Rotated credentials, the next generation and the lease release are saved in
   one statement, guarded by the original generation, attempt ID and refresh
-  credential (not the lease clock), with one retry. Newer OAuth login wins over
+  credential fingerprint (not the lease clock), with one retry. Newer OAuth login wins over
   stale completions. Acknowledgement loss cannot authorize another exchange of
   the previous generation.
 - `not_dispatched` and `configuration_rejected` return to `ready` with a

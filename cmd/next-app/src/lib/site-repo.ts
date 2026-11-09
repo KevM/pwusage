@@ -2,6 +2,7 @@ import { pool, Site, SiteWithTariffs, Tariff, TariffSeason } from './db';
 import { getRequestContext } from './request-context';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { UPSERT_SITE_SQL } from './site-upsert-sql';
+import { decryptToken } from './token-crypto';
 
 // Use global cache to persist across reloads in dev
 const globalForCache = global as unknown as { siteCache: Map<string, { data: SiteWithTariffs; expires: number }> };
@@ -194,8 +195,8 @@ export class SiteRepo {
                 last_live_claim_at: row.last_live_claim_at != null ? Number(row.last_live_claim_at) : undefined,
                 live_status_cache: row.live_status_cache ?? undefined,
                 json: options?.includeJson ? row.json : undefined,
-                access_token: options?.includeTokens ? (row.access_token as string | null) ?? null : undefined,
-                refresh_token: options?.includeTokens ? (row.refresh_token as string | null) ?? null : undefined,
+                access_token: options?.includeTokens ? decryptToken((row.access_token as string | null) ?? null, 'access_token', row.user_id as string) : undefined,
+                refresh_token: options?.includeTokens ? decryptToken((row.refresh_token as string | null) ?? null, 'refresh_token', row.user_id as string) : undefined,
                 tesla_refresh_state: options?.includeTokens ? row.tesla_refresh_state as SiteWithTariffs['tesla_refresh_state'] : undefined,
                 refresh_lock_expires: options?.includeTokens ? Number(row.refresh_lock_expires) : undefined,
                 auth_status: options?.includeTokens ? (row.auth_status as string | null) ?? null : undefined,

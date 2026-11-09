@@ -151,6 +151,9 @@ record's segment timeline.
   - Required: `DATABASE_URL` (PostgreSQL URL, or `file:pwusage.db` for SQLite) and
     `NEXT_PUBLIC_APP_URL` (public app URL, for example `https://pwusage.fm.rodeo`).
   - Tesla OAuth: `TESLA_CLIENT_ID`, `TESLA_CLIENT_SECRET`.
+  - Tesla token encryption at rest: `TOKEN_ENCRYPTION_KEYS` (`keyId:base64`, comma-separated,
+    first is active) and `TOKEN_FINGERPRINT_KEY` (32-byte base64). Required wherever tokens are
+    written; see [`Authentication.md`](../../Authentication.md).
   - TRMNL: `TRMNL_CLIENT_ID`, `TRMNL_CLIENT_SECRET`, `TRMNL_API_URL`.
   - Battery-hold Live Activities (APNs, optional): `APNS_KEY_ID`, `APNS_TEAM_ID`,
     `APNS_PRIVATE_KEY` (the `.p8` PEM) and optional `APNS_BUNDLE_ID`. Unset means the delivery cron
@@ -162,7 +165,8 @@ record's segment timeline.
 
 - **Session**: `site_auth` HTTP-only JWT cookie (user id plus authorized site ids).
 - **Authorization**: `verifySiteAccess(siteId)` checks that the user owns the site.
-- **Tesla tokens**: stored on `User`, refreshed automatically on a 401.
+- **Tesla tokens**: stored encrypted on `User` (`src/lib/token-crypto.ts`; reads decrypt, writes
+  encrypt, refresh compare-and-swap uses `refresh_token_fp`), refreshed automatically on a 401.
 - **TRMNL**: bearer token in `TrmnlInstallation.access_token`.
 - Details: [`Authentication.md`](../../Authentication.md).
 

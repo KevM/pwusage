@@ -1,0 +1,102 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+    decryptToken,
+    encryptToken,
+    isEncryptedToken,
+    tokenFingerprint,
+} from './token-crypto';
+
+const KEY_A = Buffer.alloc(32, 1).toString('base64');
+const KEY_B = Buffer.alloc(32, 2).toString('base64');
+const FP_KEY = Buffer.alloc(32, 9).toString('base64');
+
+function setEnv(keys: string | undefined, fp: string | null | undefined = FP_KEY) {
+    if (keys === undefined) delete process.env.TOKEN_ENCRYPTION_KEYS;
+    else process.env.TOKEN_ENCRYPTION_KEYS = keys;
+    if (fp === null || fp === undefined) delete process.env.TOKEN_FINGERPRINT_KEY;
+    else process.env.TOKEN_FINGERPRINT_KEY = fp;
+}
+
+describe('token-crypto', () => {
+    const saved = { keys: process.env.TOKEN_ENCRYPTION_KEYS, fp: process.env.TOKEN_FINGERPRINT_KEY };
+    beforeEach(() => setEnv(`k1:${KEY_A}`));
+    afterEach(() => setEnv(saved.keys, saved.fp));
+
+    it('round-trips and uses the versioned envelope', () => {
+        const enc = encryptToken('secret-token', 'refresh_token', 'user-1');
+        expect(enc).toMatch(/^enc:v1:k1:[^:]+:[^:]+$/);
+        expect(enc).not.toContain('secret-token');
+        expect(decryptToken(enc, 'refresh_token', 'user-1')).toBe('secret-token');
+    });
+
+    it('uses a random IV so equal plaintexts differ', () => {
+        expect(encryptToken('x', 'access_token', 'u')).not.toBe(encryptToken('x', 'access_token', 'u'));
+    });
+
+    it('rejects tampered ciphertext', () => {
+        const enc = encryptToken('secret-token', 'refresh_token', 'user-1');
+        const parts = enc.split(':');
+        const ct = Buffer.from(parts[4], 'base64');
+        ct[0] ^= 1;
+        parts[4] = ct.toString('base64');
+        expect(() => decryptToken(parts.join(':'), 'refresh_token', 'user-1')).toThrow();
+    });
+
+    it('rejects a different row or column (AAD binding)', () => {
+        const enc = encryptToken('secret-token', 'refresh_token', 'user-1');
+        expect(() => decryptToken(enc, 'refresh_token', 'user-2')).toThrow();
+        expect(() => decryptToken(enc, 'access_token', 'user-1')).toThrow();
+    });
+
+    it('passes plaintext through on read for rollout, and preserves null', () => {
+        expect(decryptToken('plain-token', 'access_token', 'user-1')).toBe('plain-token');
+        expect(decryptToken(null, 'access_token', 'user-1')).toBeNull();
+        expect(decryptToken('', 'access_token', 'user-1')).toBe('');
+        expect(isEncryptedToken('plain-token')).toBe(false);
+    });
+
+    it('rotates keys: first is active, older keys still decrypt', () => {
+        const old = encryptToken('t', 'access_token', 'u');
+        setEnv(`k2:${KEY_B},k1:${KEY_A}`);
+        const fresh = encryptToken('t', 'access_token', 'u');
+        expect(fresh).toMatch(/^enc:v1:k2:/);
+        expect(decryptToken(old, 'access_token', 'u')).toBe('t');
+        expect(decryptToken(fresh, 'access_token', 'u')).toBe('t');
+        setEnv(`k2:${KEY_B}`);
+        expect(() => decryptToken(old, 'access_token', 'u')).toThrow(/k1/);
+    });
+
+    it('fails closed when no key is configured or a key is malformed', () => {
+        setEnv(undefined);
+        expect(() => encryptToken('t', 'access_token', 'u')).toThrow(/TOKEN_ENCRYPTION_KEYS/);
+        setEnv(`k1:${Buffer.alloc(16).toString('base64')}`);
+        expect(() => encryptToken('t', 'access_token', 'u')).toThrow(/32 bytes/);
+    });
+
+    it('still reads plaintext when no key is configured', () => {
+        setEnv(undefined);
+        expect(decryptToken('plain', 'access_token', 'u')).toBe('plain');
+    });
+
+    describe('tokenFingerprint', () => {
+        it('is deterministic, hex, and not the token', () => {
+            const fp = tokenFingerprint('refresh-1');
+            expect(fp).toMatch(/^[0-9a-f]{64}$/);
+            expect(tokenFingerprint('refresh-1')).toBe(fp);
+            expect(tokenFingerprint('refresh-2')).not.toBe(fp);
+        });
+
+        it('depends on its own key, not the encryption key', () => {
+            const fp = tokenFingerprint('refresh-1');
+            setEnv(`k9:${KEY_B}`);
+            expect(tokenFingerprint('refresh-1')).toBe(fp);
+            setEnv(`k1:${KEY_A}`, Buffer.alloc(32, 7).toString('base64'));
+            expect(tokenFingerprint('refresh-1')).not.toBe(fp);
+        });
+
+        it('fails closed without a fingerprint key', () => {
+            setEnv(`k1:${KEY_A}`, null);
+            expect(() => tokenFingerprint('x')).toThrow(/TOKEN_FINGERPRINT_KEY/);
+        });
+    });
+});

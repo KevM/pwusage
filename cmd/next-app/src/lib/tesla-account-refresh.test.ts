@@ -1,6 +1,17 @@
 import { TeslaRefreshError } from './tesla-refresh-outcome';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SiteRepo } from './site-repo';
+import { decryptToken, tokenFingerprint } from './token-crypto';
+
+/** The rotated pair as saved: encrypted for the row, plus the fingerprint. */
+function expectRotationSaved(query: { mock: { calls: unknown[][] } }, userId: string): string[] {
+    const save = query.mock.calls.find(([sql]) => String(sql).includes('SET access_token = $1, refresh_token = $2'));
+    const params = save?.[1] as string[];
+    expect(decryptToken(params[0], 'access_token', userId)).toBe(rotated.access_token);
+    expect(decryptToken(params[1], 'refresh_token', userId)).toBe(rotated.refresh_token);
+    expect(params[6]).toBe(tokenFingerprint(rotated.refresh_token));
+    return params;
+}
 
 const { query, exchange, logEvent, after } = vi.hoisted(() => ({
     query: vi.fn(), exchange: vi.fn(), logEvent: vi.fn(), after: vi.fn(),
@@ -73,8 +84,10 @@ describe('account refresh coordination', () => {
         const result = await setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token);
         expect(result).toEqual(rotated);
         expect(exchange).toHaveBeenCalledWith(original.refresh_token, expect.objectContaining({ exchangeId: expect.any(String), accountId: expect.any(String) }));
-        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET access_token = \$1, refresh_token = \$2/),
-            expect.arrayContaining([rotated.access_token, rotated.refresh_token, 'owner', original.refresh_token]));
+        const params = expectRotationSaved(query, 'owner');
+        expect(params[2]).toBe('owner');
+        expect(params[3]).toBe(tokenFingerprint(original.refresh_token));
+        expect(params[7]).toBe(original.refresh_token);
         expect(query.mock.calls.findIndex(([sql]) => sql.includes('SET access_token')))
             .toBeLessThan(query.mock.calls.findIndex(([sql]) => sql.includes('SET is_refreshing = 0')));
     });
@@ -195,7 +208,7 @@ describe('account refresh coordination', () => {
         query.mockResolvedValue({ rowCount: 1, rows: [{ ...login, is_refreshing: 0, auth_status: 'active' }] });
         expect(await setup().getLockedUserRefreshHandler('owner').refreshHandler(original.refresh_token)).toEqual(login);
         const save = query.mock.calls.find(([sql]) => sql.includes('SET access_token'));
-        expect(save?.[0]).toMatch(/AND refresh_token = \$4/);
+        expect(save?.[0]).toMatch(/refresh_token_fp = \$4 OR \(refresh_token_fp IS NULL AND refresh_token = \$8\)/);
         expect(save?.[0]).toMatch(/AND tesla_credential_generation = \$5 AND tesla_refresh_attempt_id = \$6/);
     });
 
@@ -282,8 +295,7 @@ describe('account refresh coordination', () => {
         finish(rotated);
         expect(await operation).toEqual(rotated);
         await lifecycle;
-        expect(query).toHaveBeenCalledWith(expect.stringMatching(/SET access_token = \$1, refresh_token = \$2/),
-            expect.arrayContaining([rotated.access_token, rotated.refresh_token]));
+        expectRotationSaved(query, 'owner');
     });
 
     it('never releases a replacement worker\'s lease', async () => {
