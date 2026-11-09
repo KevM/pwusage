@@ -31,7 +31,7 @@ struct SmartShiftBankChart: View {
         .frame(height: geometry.totalHeight(of: bars, nameHeights: nameHeights))
         .accessibilityElement(children: .contain)
         .dynamicTypeSize(...Self.largestText)
-        .frame(maxWidth: 500)
+        .frame(maxWidth: .infinity)
     }
 
     private func netZeroLabel(_ geometry: SmartShiftBarGeometry) -> some View {
