@@ -4,7 +4,9 @@ import { computeTargetReserve, parkBattery, restoreBattery } from './battery-hol
 import type { BatteryHold } from './db';
 
 const activity = vi.hoisted(() => ({ reconcile: vi.fn() }));
+const memberClients = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('./battery-hold-activity-repo', () => ({ reconcileBatteryHoldActivities: activity.reconcile }));
+vi.mock('./tesla-client-factory', () => ({ createTeslaClientForSite: vi.fn(), createTeslaClientForSiteMember: memberClients.create }));
 
 function fakeRepo(active: BatteryHold | null) {
   return {
@@ -19,6 +21,8 @@ function fakeRepo(active: BatteryHold | null) {
     releaseHold: vi.fn().mockResolvedValue(undefined),
     ownsHold: vi.fn().mockResolvedValue(true),
     recordRestoreAttempt: vi.fn().mockResolvedValue(true),
+    clearRestoreAttempt: vi.fn().mockResolvedValue(true),
+    getRestoreCandidates: vi.fn().mockResolvedValue([]),
     getLatestRestoredHold: vi.fn().mockResolvedValue(null),
     createHold: vi.fn(async (p) => ({
       id: 1, site_id: p.siteId, status: 'active',
@@ -31,6 +35,8 @@ function fakeRepo(active: BatteryHold | null) {
     markRestored: vi.fn().mockResolvedValue(true),
     markCancelled: vi.fn().mockResolvedValue(true),
     recordMonitoring: vi.fn().mockResolvedValue(undefined),
+    markCommandsDenied: vi.fn().mockResolvedValue(undefined),
+    clearCommandsDenied: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -55,6 +61,20 @@ describe('computeTargetReserve', () => {
 });
 
 describe('parkBattery', () => {
+  it('records the starter and returns commands_denied for their own Tesla 403', async () => {
+    const repo = fakeRepo(null);
+    const denied = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(new TeslaAuthError('Denied', 403)) });
+    const result = await parkBattery({ client: denied as never, repo: repo as never, siteId: 's', userId: 'invited', reserveChoice: 100 });
+    expect(result).toEqual({ status: 'commands_denied' });
+    expect(repo.markCommandsDenied).toHaveBeenCalledWith('s', 'invited');
+    expect(repo.createHold).not.toHaveBeenCalled();
+
+    const allowed = fakeClient();
+    const success = await parkBattery({ client: allowed as never, repo: repo as never, siteId: 's', userId: 'invited', reserveChoice: 100 });
+    expect(success.status).toBe('ok');
+    expect(repo.createHold).toHaveBeenCalledWith(expect.objectContaining({ startedByUserId: 'invited' }));
+    expect(repo.clearCommandsDenied).toHaveBeenCalledWith('s', 'invited');
+  });
   it('sends no Tesla command when another start owns the hardware claim', async () => {
     const repo = fakeRepo(null);
     repo.claimStart.mockResolvedValue(false);
@@ -225,6 +245,45 @@ describe('parkBattery', () => {
 });
 
 describe('restoreBattery', () => {
+  it('uses another member only after a typed rejection and cleared attempt', async () => {
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100,
+        created_at: new Date() } as BatteryHold);
+      repo.getRestoreCandidates.mockResolvedValue(['starter', 'standby']);
+      const first = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(new TeslaAuthError('Denied', 403)) });
+      const second = fakeClient();
+      memberClients.create.mockImplementation(async (_siteId: string, userId: string) => userId === 'starter' ? first : second);
+      const result = await restoreBattery({ client: fakeClient() as never, repo: repo as never,
+        siteId: 's', reason: 'manual', actorUserId: 'starter' });
+      expect(result.status).toBe('ok');
+      expect(repo.getRestoreCandidates).toHaveBeenCalledWith(5, 'starter');
+      expect(repo.clearRestoreAttempt).toHaveBeenCalledTimes(1);
+      expect(repo.recordRestoreAttempt).toHaveBeenCalledTimes(2);
+      expect(repo.markCommandsDenied).toHaveBeenCalledWith('s', 'starter');
+      expect(second.setBackupReserve).toHaveBeenCalledWith('s', 20);
+    } finally {
+      vi.unstubAllEnvs(); memberClients.create.mockReset();
+    }
+  });
+
+  it('stops after an uncertain shared restore outcome', async () => {
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100,
+        created_at: new Date() } as BatteryHold);
+      repo.getRestoreCandidates.mockResolvedValue(['starter', 'standby']);
+      const first = fakeClient({ setBackupReserve: vi.fn().mockRejectedValue(new Error('timeout')) });
+      memberClients.create.mockResolvedValue(first);
+      const result = await restoreBattery({ client: fakeClient() as never, repo: repo as never,
+        siteId: 's', reason: 'manual' });
+      expect(result.status).toBe('error');
+      expect(memberClients.create).toHaveBeenCalledTimes(1);
+      expect(repo.clearRestoreAttempt).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs(); memberClients.create.mockReset();
+    }
+  });
   it('restores to original_reserve when the current reserve matches the parked target', async () => {
     const repo = fakeRepo({ id: 5, original_reserve: 20, target_reserve: 100, created_at: new Date() } as unknown as BatteryHold);
     const client = fakeClient({ getEnergySiteInfo: vi.fn().mockResolvedValue({ backup_reserve_percent: 100 }) });

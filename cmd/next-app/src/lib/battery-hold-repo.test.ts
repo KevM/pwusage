@@ -61,7 +61,7 @@ describe('BatteryHoldRepo', () => {
     });
     expect(hold.target_reserve).toBe(100);
     const [, params] = queryMock.mock.calls[0];
-    expect(params).toEqual(['site-1', 20, 100, 90.5, 450, new Date('2026-05-25T10:00:00Z'), 'timer']);
+    expect(params).toEqual(['site-1', 20, 100, 90.5, 450, new Date('2026-05-25T10:00:00Z'), 'timer', null]);
   });
 
   it('createHold defaults mode to auto when omitted', async () => {
