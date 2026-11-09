@@ -79,8 +79,12 @@ final class MobileAuthServiceTests {
     @Test("Callback server error and ASWebAuthentication cancellation are distinct")
     func callbackServerErrorAndASWebAuthenticationCancellationAreDistinct() async throws {
         let serverError = try #require(URL(string: "pwusage://auth/callback?error=no_sites&state=expected"))
-        #expect(throws: MobileAuthService.AuthError.serverRejectedLogin) {
+        #expect(throws: MobileAuthService.AuthError.noSites) {
             try MobileAuthService.parseCallback(serverError, expectedState: "expected")
+        }
+        let otherError = try #require(URL(string: "pwusage://auth/callback?error=product_import_failed&state=expected"))
+        #expect(throws: MobileAuthService.AuthError.serverRejectedLogin) {
+            try MobileAuthService.parseCallback(otherError, expectedState: "expected")
         }
 
         let service = try makeService()
