@@ -61,16 +61,6 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
     };
 });
 
-export async function getTeslaCredentials() {
-    const siteIds = await getAuthorizedSiteIds();
-    if (siteIds.length === 0) {
-        return null;
-    }
-    // We assume all sites provided in a single site_auth token belong to the same Tesla User
-    // So we grab credentials from the first one.
-    return new UserRepo().getTokensForSite(siteIds[0]);
-}
-
 /** The signed-in user's roles from the DB-checked auth state; [] when signed out. */
 export const getCurrentRoles = cache(async (): Promise<string[]> => {
     const auth = await resolveAuth();
