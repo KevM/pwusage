@@ -167,6 +167,8 @@ Delete items as they land.
 
 ## TRMNL: Loose Pending Installation Flow Note
 
+- [ ] **Replace most-recent loose-pending matching before multi-user rollout:** two household members installing devices together can claim the wrong pending row. The opaque token check still authenticates the webhook, but matching by the most recent row is ambiguous.
+
 - **Note (2026-07-01):** The loose-pending fallback flow (installation row with NULL `uuid` and NULL `plugin_setting_id`, claimed by the next webhook within 15 minutes) has been retained. Database inspection confirmed that loose installations still occur (most recent on June 23, 2026). This fallback remains necessary to handle cases where `plugin_setting_id` is missing from the callback URL during manual setups or when the TRMNL API `fetchMe` fails. Revisit and remove this flow if loose installs stop appearing after the manual-install path is fixed.
 
 ## Remove Temporal polyfill after Vercel supports Node 26 (2026-10-01: blocked on Vercel, not on Node)

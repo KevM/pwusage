@@ -64,7 +64,7 @@ describe('TrmnlInstallationRepo', () => {
         expect(id).toBe(10);
         expect(queryMock).toHaveBeenCalledWith(
             expect.stringContaining('INSERT INTO "TrmnlInstallation"'),
-            ['site-1', 'uuid-1', 456, { name: 'test' }, 'token-abc']
+            ['site-1', 'uuid-1', 456, { name: 'test' }, 'token-abc', null]
         );
     });
 
