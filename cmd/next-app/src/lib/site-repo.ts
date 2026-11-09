@@ -133,7 +133,7 @@ export class SiteRepo {
     private async loadSitesFromDB(siteIds: string[], options?: SiteQueryOptions): Promise<SiteWithTariffs[]> {
         const jsonCol = options?.includeJson ? ', s.json' : '';
         const tokenCols = options?.includeTokens ? ', u.id AS token_owner_id, u.access_token, u.refresh_token, u.auth_status, u.fleet_api_base_url, u.tesla_refresh_state, u.refresh_lock_expires' : '';
-        const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.user_id' : '';
+        const userJoin = options?.includeTokens ? 'LEFT JOIN "User" u ON u.id = s.tesla_connection_user_id' : '';
         // Site-level columns are fetched one row per site, separately from the
         // tariff tree. Selecting them through the Site × Tariff × Season ×
         // Schedule join repeats the wide values (json blob, Tesla tokens,
@@ -560,7 +560,7 @@ export class SiteRepo {
                 COALESCE(a.archived_days, 0)::int AS archived_days,
                 a.first_archived_day, a.last_archived_day, e.last_energy_at
             FROM "Site" s
-            LEFT JOIN "User" u ON u.id = s.user_id
+            LEFT JOIN "User" u ON u.id = s.tesla_connection_user_id
             LEFT JOIN (
                 SELECT site_id, count(*) AS archived_days,
                     min(day_start) AS first_archived_day, max(day_start) AS last_archived_day
