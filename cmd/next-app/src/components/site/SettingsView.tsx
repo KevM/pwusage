@@ -23,6 +23,7 @@ import { coercePositiveInt } from '@/lib/trmnl-component-config';
 interface SettingsViewProps {
     site: SiteWithTariffs;
     installation: TrmnlInstallation | null | undefined;
+    memberEmails: string[];
 }
 
 function parseInstallationJson(value: unknown): Record<string, unknown> | null {
@@ -73,7 +74,7 @@ function extractPluginSettingId(installation: TrmnlInstallation | null | undefin
     return null;
 }
 
-export function SettingsView({ site, installation }: SettingsViewProps) {
+export function SettingsView({ site, installation, memberEmails }: SettingsViewProps) {
     const router = useRouter();
     const { toast } = useToast();
     const [previewHtml, setPreviewHtml] = useState('');
@@ -195,6 +196,24 @@ export function SettingsView({ site, installation }: SettingsViewProps) {
                     </div>
                 </CardContent>
             </Card>
+
+            {memberEmails.length > 1 ? (
+                <Card>
+                    <CardHeader>
+                        <CardTitle>People with Access</CardTitle>
+                        <CardDescription>
+                            Tesla manages access to this Powerwall. Everyone listed can view this site’s shared history and settings.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <ul className="space-y-2" aria-label="People with access">
+                            {memberEmails.map(email => (
+                                <li key={email} className="text-sm text-gray-700 dark:text-gray-200">{email}</li>
+                            ))}
+                        </ul>
+                    </CardContent>
+                </Card>
+            ) : null}
 
             <Card>
                 <CardHeader

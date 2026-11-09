@@ -8,7 +8,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { Button } from '@/components/ui/Button';
 import { Alert, AlertDescription } from '@/components/ui/Alert';
 import { planReserve } from '@/lib/battery-hold-rules';
-import { holdButtonLabel, holdReserveText, guardNoticeText } from './battery-hold-format';
+import { commandsDeniedText, holdButtonLabel, holdCardView, holdReserveText, guardNoticeText } from './battery-hold-format';
 import { ConfirmHoldModal, type HoldChoice } from './ConfirmHoldModal';
 import { useToast } from '@/components/ui/Toast';
 
@@ -39,6 +39,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
+  const [commandsDenied, setCommandsDenied] = useState(false);
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
@@ -73,6 +74,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     });
     const body = await res.json().catch(() => ({}));
     if (res.status === 409 && body?.error === 'needs_reauth') { setNeedsReauth(true); return { ok: false, body }; }
+    if (res.status === 403 && body?.error === 'commands_denied') { setCommandsDenied(true); return { ok: false, body }; }
     if (res.status === 409 && body?.error === 'reserve_sync_pending') { setError('Tesla is still reporting the reserve from the last Battery Saver. Wait a moment, then try starting again.'); return { ok: false, body }; }
     if (res.status === 422 && body?.error === 'needs_choice') { setError('A reserve choice is required.'); return { ok: false, body }; }
     if (!res.ok) { setError('Something went wrong. Try again.'); return { ok: false, body }; }
@@ -80,23 +82,28 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
   }
 
   async function park(choice: HoldChoice) {
-    setBusy(true); setError(null); setNeedsReauth(false);
+    setBusy(true); setError(null); setNeedsReauth(false); setCommandsDenied(false);
     try {
       const { ok } = await post({ action: 'park', ...choice });
-      if (ok) { setShowHoldModal(false); router.refresh(); }
-    } catch { setError('Network error. Try again.'); } finally { setBusy(false); }
+      if (ok) router.refresh();
+    } catch { setError('Network error. Try again.'); } finally {
+      // Close on failure too: the warning and error render on the card, behind this dialog's overlay.
+      setShowHoldModal(false); setBusy(false);
+    }
   }
 
   async function restore() {
-    setBusy(true); setError(null); setNeedsReauth(false);
+    setBusy(true); setError(null); setNeedsReauth(false); setCommandsDenied(false);
     try {
       const { ok, body } = await post({ action: 'restore' });
       if (ok) {
-        setShowRestoreConfirm(false);
         if (body?.status === 'reserve_changed') setNotice({ current: Number(body.current) });
         router.refresh();
       }
-    } catch { setError('Network error. Try again.'); } finally { setBusy(false); }
+    } catch { setError('Network error. Try again.'); } finally {
+      // Close on failure too: the warning and error render on the card, behind this dialog's overlay.
+      setShowRestoreConfirm(false); setBusy(false);
+    }
   }
 
   async function dismissNotice() {
@@ -104,8 +111,9 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
     try { await post({ action: 'dismiss' }); router.refresh(); } catch { /* notice already hidden */ }
   }
 
+  const view = holdCardView({ needsReauth, commandsDenied, hasHold: !!initialHold, hasTariff, soc });
   let body: React.ReactNode;
-  if (needsReauth) {
+  if (view.warning === 'needs_reauth') {
     body = (
       <Alert variant="warning">
         <AlertDescription>
@@ -114,7 +122,7 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </AlertDescription>
       </Alert>
     );
-  } else if (initialHold) {
+  } else if (view.controls === 'active' && initialHold) {
     const restores = initialHold.mode === 'timer'
       ? `turns off at ${new Date(initialHold.safety_expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
       : 'turns off when the job finishes, or after the safety window';
@@ -129,9 +137,9 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
         </div>
       </div>
     );
-  } else if (!hasTariff) {
+  } else if (view.controls === 'no_tariff') {
     body = <p className="text-sm text-gray-500">Battery Saver needs your rate plan. Refresh it from Tesla in your site settings, then try again.</p>;
-  } else if (soc === null) {
+  } else if (view.controls === 'no_soc' || soc === null) {
     body = <p className="text-sm text-gray-500">A recent battery charge reading is needed to turn on Battery Saver. Refresh to update it.</p>;
   } else {
     body = (
@@ -155,6 +163,11 @@ export function BatteryHoldCard({ siteId, soc, hasTariff, initialHold, initialNo
             {guardNoticeText(notice.current)}{' '}
             <button onClick={dismissNotice} className="underline">Dismiss</button>
           </AlertDescription>
+        </Alert>
+      )}
+      {view.warning === 'commands_denied' && (
+        <Alert variant="warning" className="mb-3">
+          <AlertDescription>{commandsDeniedText()}</AlertDescription>
         </Alert>
       )}
       {body}

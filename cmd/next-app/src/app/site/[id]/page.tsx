@@ -1,5 +1,6 @@
 import { requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
 import { getSiteConnectionTokens } from '@/lib/tesla-client-factory';
+import { UserRepo } from '@/lib/user-repo';
 import { observePage, setLogContext } from '@/lib/observability';
 import { SiteRepo } from '@/lib/site-repo';
 import { SiteService } from '@/lib/site-service';
@@ -116,6 +117,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
 
     const connection = await getSiteConnectionTokens(id);
     const reconnectRequired = !connection || requiresTeslaReconnect(connection);
+    const memberEmails = await new UserRepo().getSiteMemberEmails(id);
 
     return (
         <PageShell maxWidth="7xl" padding="compact">
@@ -165,7 +167,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                     />
                 }
                 settingsSlot={
-                    <SettingsView site={site} installation={installation} />
+                    <SettingsView site={site} installation={installation} memberEmails={memberEmails} />
                 }
             >
                 {/* Fallback or shared content could go here if needed */}
