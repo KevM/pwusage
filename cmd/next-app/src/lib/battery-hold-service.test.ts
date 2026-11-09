@@ -1,6 +1,6 @@
 import { TeslaAuthError } from './tesla-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeTargetReserve, parkBattery, restoreBattery, type ParkDeps } from './battery-hold-service';
+import { computeTargetReserve, parkBattery, restoreBattery, START_COMMAND_DEADLINE_MS, START_LEASE_MS, type ParkDeps } from './battery-hold-service';
 import type { BatteryHold } from './db';
 import type { BatteryHoldRepo } from './battery-hold-repo';
 import type { TeslaClient } from './tesla-client';
@@ -12,6 +12,7 @@ function fakeRepo(active: BatteryHold | null) {
   return {
     getStartClaimKey: vi.fn().mockResolvedValue('hardware-1'),
     claimStart: vi.fn().mockResolvedValue(true),
+    renewStart: vi.fn().mockResolvedValue(true),
     releaseStart: vi.fn().mockResolvedValue(undefined),
     getActiveHoldForClaim: vi.fn().mockResolvedValue(active),
     getLatestRestoredHoldForClaim: vi.fn().mockResolvedValue(null),
@@ -106,6 +107,33 @@ describe('parkBattery', () => {
     expect(repo.retireUnrestorableHold).toHaveBeenNthCalledWith(2, 8);
     expect(client.setBackupReserve).not.toHaveBeenCalled();
     expect(repo.releaseStart).toHaveBeenCalled();
+  });
+
+  it('renews the start lease before commanding Tesla and refuses when the lease was lost', async () => {
+    const repo = fakeRepo(null);
+    repo.renewStart.mockResolvedValue(false);
+    const client = fakeClient();
+    const result = await parkBattery({ ...asDeps(repo, client), siteId: 's', reserveChoice: 100 });
+    expect(result).toEqual({ status: 'error', message: 'Battery Saver is already updating.' });
+    expect(client.setBackupReserve).not.toHaveBeenCalled();
+    expect(repo.createHold).not.toHaveBeenCalled();
+    expect(repo.releaseStart).toHaveBeenCalled();
+  });
+
+  it('commands Tesla only after the lease renewal, and gives up before the lease can lapse', async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = fakeRepo(null);
+      const client = fakeClient({ setBackupReserve: vi.fn(() => new Promise(() => {})) });
+      const pending = parkBattery({ ...asDeps(repo, client), siteId: 's', reserveChoice: 100 });
+      await vi.advanceTimersByTimeAsync(START_COMMAND_DEADLINE_MS + 1);
+      const result = await pending;
+      expect(result.status).toBe('error');
+      expect(repo.renewStart.mock.invocationCallOrder[0]).toBeLessThan(client.setBackupReserve.mock.invocationCallOrder[0]);
+      expect(START_COMMAND_DEADLINE_MS).toBeLessThan(START_LEASE_MS);
+      expect(repo.createHold).not.toHaveBeenCalled();
+      expect(repo.releaseStart).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 
   it('parks at an explicit 100 choice in the ambiguous band and records the hold', async () => {
