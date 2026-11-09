@@ -250,11 +250,7 @@ Tesla token encryption:
   keys, **first is active**) and `TOKEN_FINGERPRINT_KEY` (separate 32-byte base64 key).
   Both are required wherever tokens are written. Generate with
   `openssl rand -base64 32`.
-- Rotate encryption keys by prepending a new `id:key`; old ids keep decrypting. Then run
-  `scripts/encrypt-tesla-tokens.ts`: it re-encrypts every row still under a non-active key
-  (dormant and revoked users never refresh, so they would otherwise stay on the old key).
-  Remove the old key from `TOKEN_ENCRYPTION_KEYS` only after a re-run reports nothing
-  left to update.
+- Rotating encryption keys: see "Rotating `TOKEN_ENCRYPTION_KEYS`" below.
 - `TOKEN_ENCRYPTION_KEYS` values must be canonical base64 of 32 bytes; surrounding
   whitespace or quotes are tolerated, typos are rejected.
 - Reads decrypt, and pass legacy plaintext through so deploying before the backfill is
@@ -263,6 +259,41 @@ Tesla token encryption:
 - Random-IV ciphertext cannot be compared, so the refresh compare-and-swap uses
   `User.refresh_token_fp` (HMAC-SHA256 of the refresh token). See `DesignDecisions.md`.
 - TRMNL tokens are not covered; they remain a separate follow-up.
+
+Rotating `TOKEN_ENCRYPTION_KEYS` (runbook; example `k2` to `k3`):
+
+Production and Preview/beta have separate keys; repeat per environment. Vercel never
+shows a sensitive value again, so **save every key in 1Password before sending it to
+Vercel** and use a new key id each time (a reused id makes a lost key look like a
+corrupt ciphertext).
+
+1. Generate: `NEW=$(openssl rand -base64 32)`; save `k3:$NEW` in 1Password.
+2. Prepend, keeping the old key so existing rows still decrypt:
+   `vercel env rm TOKEN_ENCRYPTION_KEYS production --yes`, then
+   `printf 'k3:%s,k2:%s' "$NEW" "<old key>" | vercel env add TOKEN_ENCRYPTION_KEYS production --sensitive`.
+   Deploy and wait until it is live (new writes now use `k3`).
+3. Re-encrypt every row: from `cmd/next-app`, export `DATABASE_URL`, the same
+   `TOKEN_ENCRYPTION_KEYS` (`k3:...,k2:...`) and the existing `TOKEN_FINGERPRINT_KEY`,
+   then run `npx tsx scripts/encrypt-tesla-tokens.ts --dry-run` and the real run. Re-run
+   until `scanned=0`. `raced` rows were rewritten by a live refresh and need nothing.
+   Dormant and revoked users never refresh, which is why the backfill is required.
+4. Verify (read-only), expecting 0:
+   `SELECT count(*) FROM "User" WHERE (NULLIF(access_token,'') IS NOT NULL AND access_token NOT LIKE 'enc:v1:k3:%') OR (NULLIF(refresh_token,'') IS NOT NULL AND refresh_token NOT LIKE 'enc:v1:k3:%');`
+5. Retire the old key: set `TOKEN_ENCRYPTION_KEYS` to `k3:<new>` only and deploy.
+6. Keep `k2` archived in 1Password for as long as the oldest database backup
+   (`docs/database-backups.md`): a restored backup still holds `k2` rows.
+
+Failure modes:
+- Reads throw `No TOKEN_ENCRYPTION_KEYS entry for key id`: a key was removed before the
+  backfill finished. Re-add it, deploy, re-run the backfill.
+- A key is lost: rows under it are unrecoverable. Rotate to a new key id so those rows are
+  identifiable, then null the affected users' `access_token`, `refresh_token` and
+  `refresh_token_fp` and set `tesla_refresh_state = 'reconnect_required'`,
+  `auth_status = 'revoked'` so they sign in again.
+
+`TOKEN_FINGERPRINT_KEY` cannot be rotated: the backfill does not recompute existing
+fingerprints, so changing it makes every refresh compare-and-swap fail. Supporting it
+would need a code change (recompute `refresh_token_fp` from the decrypted token).
 
 Tesla token refresh behavior:
 - All production refresh callers share the account-level coordinator. Its atomic
