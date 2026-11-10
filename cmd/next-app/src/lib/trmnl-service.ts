@@ -36,6 +36,16 @@ export class TrmnlService {
         return installation;
     }
 
+    async getInstallationsBySiteId(siteId: string, options: { includeTokens?: boolean } = {}): Promise<TrmnlInstallation[]> {
+        const installations = await this.dbRepo.findAllBySiteId(siteId);
+        if (options.includeTokens) return installations;
+        return installations.map(installation => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { access_token: _at, refresh_token: _rt, ...safe } = installation;
+            return safe as TrmnlInstallation;
+        });
+    }
+
     async deleteInstallation(uuid: string) {
         await this.dbRepo.delete(uuid);
     }

@@ -38,6 +38,18 @@ describe('TrmnlInstallationRepo', () => {
         );
     });
 
+    it('findAllBySiteId returns every install for the site, best first, without a limit', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 2 }, { id: 1 }] });
+        const repo = new TrmnlInstallationRepo();
+        const result = await repo.findAllBySiteId('site-abc');
+        expect(result).toEqual([{ id: 2 }, { id: 1 }]);
+        const [sql, params] = queryMock.mock.calls[0];
+        expect(sql).toMatch(/WHERE site_id = \$1/);
+        expect(sql).toMatch(/ORDER BY \(plugin_setting_id IS NOT NULL\) DESC, created_at DESC, id DESC/);
+        expect(sql).not.toMatch(/LIMIT/);
+        expect(params).toEqual(['site-abc']);
+    });
+
     it('findPendingByPluginId queries correct criteria', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();

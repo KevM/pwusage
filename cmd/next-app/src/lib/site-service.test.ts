@@ -315,7 +315,7 @@ describe('SiteService Security', () => {
         };
 
         const mockTrmnlService = {
-            getInstallationBySiteId: vi.fn().mockResolvedValue({ id: 'inst-123' })
+            getInstallationsBySiteId: vi.fn().mockResolvedValue([{ id: 'inst-123' }, { id: 'inst-456' }])
         };
 
         const mockImporter = {
@@ -330,7 +330,7 @@ describe('SiteService Security', () => {
                 refreshHandler: vi.fn(),
                 errorHandler: vi.fn()
             });
-            mockTrmnlService.getInstallationBySiteId.mockResolvedValue({ id: 'inst-123' });
+            mockTrmnlService.getInstallationsBySiteId.mockResolvedValue([{ id: 'inst-123' }, { id: 'inst-456' }]);
         });
 
         it('returns unauthorized when validateSiteAccess fails', async () => {
@@ -461,6 +461,7 @@ describe('SiteService Security', () => {
                 expect(result.dateRangeLabel).toBeDefined();
                 expect(result.usage).toEqual([{ some: 'usage' }]);
                 expect(result.installation).toEqual({ id: 'inst-123' });
+                expect(result.installations).toEqual([{ id: 'inst-123' }, { id: 'inst-456' }]);
             }
         });
 
