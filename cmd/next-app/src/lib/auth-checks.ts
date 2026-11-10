@@ -1,6 +1,6 @@
 import { cache } from 'react';
 import { cookies } from 'next/headers';
-import { verifySiteToken } from './auth-jwt';
+import { tokenPredatesAccount, verifySiteToken } from './auth-jwt';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { logSessionRejection } from './observability';
@@ -50,6 +50,11 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
     if ((decoded.sv ?? 0) < authState.sessionVersion) {
         logSessionRejection('revoked-session', decoded.sub);
         console.warn(`[AuthChecks] Blocking revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
+        return null;
+    }
+
+    if (tokenPredatesAccount(decoded.orig_iat, authState.createdAtSeconds)) {
+        logSessionRejection('revoked-session', decoded.sub);
         return null;
     }
 

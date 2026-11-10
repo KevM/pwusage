@@ -93,17 +93,11 @@ export class AccountDeletionRepo {
                 return { deletedSiteIds: [], survivingSiteIds: [] };
             }
 
-            const sites = await client.query<{
-                id: string;
-                claim_key: string;
-                has_other_member: boolean;
-                has_other_usable_member: boolean;
-            }>(`
-                SELECT s.id,
-                    COALESCE(s.tesla_hardware_id, 'site:' || s.id) AS claim_key,
-                    EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id <> $1) AS has_other_member,
-                    ${OTHER_USABLE_MEMBER_EXISTS} AS has_other_usable_member
-                FROM "Site" s
+            // Lock the sites in their own statement. Membership predicates are computed
+            // afterwards, in a fresh snapshot, so a concurrent member's committed deletion
+            // is visible and cannot leave has_other_usable_member stale.
+            await client.query(`
+                SELECT s.id FROM "Site" s
                 WHERE s.id IN (
                     SELECT site_id FROM "SiteMember" WHERE user_id = $1
                     UNION
@@ -113,9 +107,27 @@ export class AccountDeletionRepo {
                 FOR UPDATE
             `, [userId]);
 
+            const sites = await client.query<{
+                id: string;
+                claim_key: string;
+                has_other_usable_member: boolean;
+            }>(`
+                SELECT s.id,
+                    COALESCE(s.tesla_hardware_id, 'site:' || s.id) AS claim_key,
+                    ${OTHER_USABLE_MEMBER_EXISTS} AS has_other_usable_member
+                FROM "Site" s
+                WHERE s.id IN (
+                    SELECT site_id FROM "SiteMember" WHERE user_id = $1
+                    UNION
+                    SELECT id FROM "Site" WHERE user_id = $1
+                )
+                ORDER BY s.id
+            `, [userId]);
+
             const allSiteIds = sites.rows.map(row => row.id);
             const sitesNeedingRestore = sites.rows.filter(row => !row.has_other_usable_member).map(row => row.id);
-            const soleSiteClaimKeys = sites.rows.filter(row => !row.has_other_member).map(row => row.claim_key);
+            // A start claim matters wherever no other usable member could restore, not only on sole-member sites.
+            const unrestorableClaimKeys = sites.rows.filter(row => !row.has_other_usable_member).map(row => row.claim_key);
 
             if (sitesNeedingRestore.length > 0) {
                 const activeHolds = await client.query(
@@ -125,10 +137,10 @@ export class AccountDeletionRepo {
                 if (activeHolds.rows.length > 0) throw new ActiveBatterySaverError();
             }
 
-            if (soleSiteClaimKeys.length > 0) {
+            if (unrestorableClaimKeys.length > 0) {
                 const activeClaims = await client.query(
                     `SELECT 1 FROM "BatteryHoldStartClaim" WHERE claim_key = ANY($1::text[]) AND expires_at > clock_timestamp() LIMIT 1`,
-                    [soleSiteClaimKeys],
+                    [unrestorableClaimKeys],
                 );
                 if (activeClaims.rows.length > 0) throw new ActiveBatterySaverError();
             }

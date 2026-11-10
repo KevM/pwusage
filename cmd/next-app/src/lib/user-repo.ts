@@ -28,6 +28,8 @@ export interface UserAuthState {
     isActive: boolean;
     sessionVersion: number;
     roles: string[];
+    /** Account creation time (epoch seconds); null when unknown. */
+    createdAtSeconds?: number | null;
 }
 
 interface VerificationState extends TeslaConnectionState {
@@ -81,13 +83,14 @@ export class UserRepo {
      * and roles; the site_auth JWT is only a cache of these claims.
      */
     async getAuthState(userId: string): Promise<UserAuthState | null> {
-        const res = await pool.query('SELECT is_active, session_version, roles FROM "User" WHERE id = $1', [userId]);
+        const res = await pool.query('SELECT is_active, session_version, roles, EXTRACT(EPOCH FROM created_at) AS created_at_seconds FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
         const row = res.rows[0];
         return {
             isActive: row.is_active === true,
             sessionVersion: row.session_version ?? 0,
-            roles: row.roles || []
+            roles: row.roles || [],
+            createdAtSeconds: row.created_at_seconds == null ? null : Number(row.created_at_seconds)
         };
     }
 

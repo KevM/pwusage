@@ -177,6 +177,20 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       expect(await countFor('Site', 'id', 'site-c')).toBe(1);
     });
 
+    it('refuses while a start claim is held on a shared site whose other member cannot restore', async () => {
+      const db = local.database;
+      await seedAccount('claimer', 'site-claim');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'unusable\', NULL, \'revoked\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-claim\', \'unusable\', \'tesla-claim-2\')');
+      await db.query(
+        `INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at) VALUES ('hw-site-claim', $1::uuid, clock_timestamp() + interval '1 minute')`,
+        [randomUUID()],
+      );
+
+      await expect(new AccountDeletionRepo().deleteAccount('claimer')).rejects.toBeInstanceOf(ActiveBatterySaverError);
+      expect(await countFor('User', 'id', 'claimer')).toBe(1);
+    });
+
     it('finishes without error when the account is already gone', async () => {
       await expect(new AccountDeletionRepo().deleteAccount('missing')).resolves.toEqual({
         deletedSiteIds: [],
