@@ -22,4 +22,12 @@ extension PWUsageApplicationAPI {
     func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
         throw PWUsageAPIError.invalidResponse
     }
+
+    func fetchTrmnlScreens(uuid: String) async throws -> [TrmnlManagedScreen] {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func saveTrmnlScreens(_ screens: [TrmnlManagedScreen], for device: TrmnlDevice, siteID: String) async throws {
+        throw PWUsageAPIError.invalidResponse
+    }
 }

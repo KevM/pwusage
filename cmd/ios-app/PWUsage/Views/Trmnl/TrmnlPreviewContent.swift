@@ -2,7 +2,7 @@ import SwiftUI
 
 /// One preview page: the screen, or a placeholder of the same shape while it loads or when it cannot.
 struct TrmnlPreviewContent: View {
-    let state: TrmnlSettingsModel.Preview
+    let state: TrmnlPreviewState
 
     var body: some View {
         switch state {
