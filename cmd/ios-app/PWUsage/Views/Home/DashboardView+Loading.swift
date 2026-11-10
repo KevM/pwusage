@@ -41,13 +41,16 @@ extension DashboardView {
             }
             Divider()
             LivePowerFlowCards(flow: DashboardPresentation.powerFlow(.init(
-                solarPower: 4000, loadPower: 1000, batteryPower: -3000, gridPower: 0,
+                // Four nonzero flows: the tallest layout the card commonly takes.
+                solarPower: 3900, loadPower: 1400, batteryPower: -1800, gridPower: -700,
                 sourceTime: .now, isUnavailable: false)))
         }
     }
 
     var todayPlaceholder: some View {
-        adaptiveGrid(TodayEnergyPresentation.tiles(homeKwh: 0, solarKwh: 0, gridNetKwh: 0, batteryNetKwh: 0))
+        // Nonzero nets, so the grid and battery tiles keep their direction line.
+        adaptiveGrid(TodayEnergyPresentation.tiles(homeKwh: 21.6, solarKwh: 15.2, gridNetKwh: 9.8,
+                                                   batteryNetKwh: -3.4))
     }
 
     var billPlaceholder: some View {

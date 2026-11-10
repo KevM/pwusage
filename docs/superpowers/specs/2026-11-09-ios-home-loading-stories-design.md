@@ -166,8 +166,10 @@ From a read of the current code:
 - The 10 s Slow timer is per card, measured from when that card entered Waiting.
 - **Failure with fresh data on hand.** A card goes Broken only when its request fails *and* it has
   nothing within the 15-minute limit to show. If a refresh fails while the card holds fresh data, it
-  stays Loaded and the existing stale-readings banner covers it. Once that data passes 15 minutes,
-  the card turns Broken; it does not fall back to greyed old values.
+  stays Loaded and the existing stale-readings banner covers it.
+- **The freshness rule applies on arrival only** (launch, site switch, return from the background,
+  re-auth). A reading shown during a session stays shown as it ages, covered by the stale banner,
+  so a card never flips back to its story mid-session (the bill refreshes only every 30 minutes).
 - **Reading age is fetch time.** Age is measured from when the response was fetched (`lastSuccess`
   / cache `savedAt`), not from the data's own timestamps. Today's `energyDataThrough` normally lags
   well past 15 minutes, so using it would almost always show the story.
