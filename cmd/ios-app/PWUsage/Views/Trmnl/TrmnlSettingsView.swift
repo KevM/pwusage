@@ -51,10 +51,9 @@ struct TrmnlSettingsView: View {
         case .loading:
             ProgressView()
                 .frame(maxWidth: .infinity)
-                .aspectRatio(TrmnlPreviewWebView.aspectRatio, contentMode: .fit)
+                .aspectRatio(TrmnlPreview.screenSize.width / TrmnlPreview.screenSize.height, contentMode: .fit)
         case .ready(let document):
-            TrmnlPreviewWebView(document: document)
-                .aspectRatio(TrmnlPreviewWebView.aspectRatio, contentMode: .fit)
+            TrmnlPreview(document: document)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
                 .accessibilityLabel("Preview of your Trmnl screen")

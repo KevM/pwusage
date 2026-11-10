@@ -6,7 +6,7 @@ import WebKit
 struct TrmnlScreensWebView: UIViewRepresentable {
     /// Marks the document before it paints, so the web app hides its site header and footer, which
     /// the sheet's own bar makes redundant. Sent to every page the view loads.
-    static let embeddedMarkerScript = "document.documentElement.setAttribute('data-embedded', '')"
+    nonisolated static let embeddedMarkerScript = "document.documentElement.setAttribute('data-embedded', '')"
 
     let url: URL
 
