@@ -25,7 +25,8 @@ extension DashboardView {
     }
 
     func liveScoreboard(now: Date) -> DashboardPresentation.LiveScoreboard? {
-        liveReadings(now: now).flatMap {
+        guard livePhase(at: now) == .loaded else { return nil }
+        return liveReadings(now: now).flatMap {
             DashboardPresentation.liveScoreboard(flow: $0.flow, stateOfCharge: $0.charge)
         }
     }
@@ -34,26 +35,25 @@ extension DashboardView {
         let livePowerIsCurrent = !coordinator.livePowerIsUnavailable && power.map {
             DashboardPresentation.liveFreshnessNotice($0.sources.liveStatusAt, now: now) == nil
         } == true
+        let isLoaded = livePhase(at: now) == .loaded
         return VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Live power")
-            if let power, let readings = liveReadings(now: now) {
-                StatusCard {
-                    VStack(alignment: .leading, spacing: 18) {
-                        batteryHeader(power: power, charge: readings.charge, isCurrent: livePowerIsCurrent)
-                        Divider()
-                        LivePowerFlowCards(flow: readings.flow)
+            Group {
+                if isLoaded, let power, let readings = liveReadings(now: now) {
+                    StatusCard {
+                        VStack(alignment: .leading, spacing: 18) {
+                            batteryHeader(power: power, charge: readings.charge, isCurrent: livePowerIsCurrent)
+                            Divider()
+                            LivePowerFlowCards(flow: readings.flow)
+                        }
                     }
+                } else {
+                    HomeWaitingCard(card: .live, phase: livePhase(at:)) { livePlaceholder }
                 }
-            } else if coordinator.live.isUnavailable {
-                EmptyCard(
-                    symbol: "bolt.slash",
-                    title: "Live readings unavailable",
-                    message: "Try again when your connection is available."
-                )
-            } else {
-                LoadingCard(title: "Loading live readings")
             }
+            .transition(cardTransition)
         }
+        .animation(cardAnimation, value: isLoaded)
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .named(Self.scrollContentSpace))
         } action: {

@@ -89,10 +89,12 @@ extension DashboardCoordinator {
            source >= (power.response?.sources.liveStatusAt ?? .distantPast) {
             power.response = MobileLivePowerResponse(snapshot: response)
             power.isUnavailable = false
+            power.freshReadingWait = nil
         }
         let snapshot = power.response.map { MobileLiveResponse(snapshot: response, power: $0) } ?? response
         cache?.storeLive(snapshot, at: successTime)
         live.isUnavailable = false
+        live.freshReadingWait = nil
         teslaConnectionRestored()
     }
 

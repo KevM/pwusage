@@ -188,140 +188,105 @@ struct DashboardView: View {
             sectionHeading(
                 coordinator.live.isRestored ? "Energy · \(live?.site.localDate ?? "Last visit")" : "Today so far"
             )
-            if let live, live.sources.energyDataThrough == nil {
-                EmptyCard(symbol: "chart.bar", title: "No energy data yet", message: missingEnergyMessage)
-            } else if let today = live?.today {
-                StatusCard {
-                    VStack(alignment: .leading, spacing: 16) {
-                        adaptiveGrid(TodayEnergyPresentation.tiles(
-                            homeKwh: today.homeKwh, solarKwh: today.solarKwh,
-                            gridNetKwh: today.gridNetKwh, batteryNetKwh: today.batteryNetKwh
-                        ))
-                    }
+            Group {
+                if summaryPhase(at: .now) == .loaded, let live {
+                    todayContent(live)
+                } else {
+                    HomeWaitingCard(card: .today, phase: summaryPhase(at:)) { todayPlaceholder }
                 }
-            } else {
-                EmptyCard(symbol: "chart.bar", title: "Energy data unavailable",
-                          message: "No energy samples are available yet.")
             }
+            .transition(cardTransition)
         }
+        .animation(cardAnimation, value: summaryPhase(at: .now) == .loaded)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.today")
+    }
+
+    @ViewBuilder private func todayContent(_ live: MobileLiveResponse) -> some View {
+        if live.sources.energyDataThrough == nil {
+            EmptyCard(symbol: "chart.bar", title: "No energy data yet", message: missingEnergyMessage)
+        } else {
+            StatusCard {
+                adaptiveGrid(TodayEnergyPresentation.tiles(
+                    homeKwh: live.today.homeKwh, solarKwh: live.today.solarKwh,
+                    gridNetKwh: live.today.gridNetKwh, batteryNetKwh: live.today.batteryNetKwh
+                ))
+            }
+        }
     }
 
     private var billNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Current Bill")
-            if let bill {
-                Button { onOpenTab(.bill) } label: {
-                    StatusCard(theme: .bill, fillAlignment: .leading) {
-                        HStack(spacing: 16) {
-                            Image(systemName: AppTab.bill.systemImage)
-                                .symbolVariant(.fill)
-                                .font(.title2.weight(.semibold))
-                                .foregroundStyle(Color.emphasis)
-                                .frame(width: 48, height: 48)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(DashboardPresentation.currency(bill.currentBill.estimatedCost,
-                                                                    code: bill.currentBill.currency))
-                                    .font(.title2.weight(.bold))
-                                    .foregroundStyle(.primary)
-                                    .monospacedDigit()
-                                let cycleStart = DashboardPresentation.date(
-                                    bill.currentBill.cycleStart, timeZoneIdentifier: siteTimeZone)
-                                let cycleEnd = DashboardPresentation.date(
-                                    bill.currentBill.cycleEnd, timeZoneIdentifier: siteTimeZone)
-                                Text("\(cycleStart) – \(cycleEnd)")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .accessibilityHidden(true)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityHint("Opens the Bill tab")
-                    .accessibilityIdentifier("home.bill")
-                }
-                .buttonStyle(.plain)
-                .pointerHoverEffect()
-            } else {
-                StatusCard(theme: .bill) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                        Text(coordinator.bill.isUnavailable ? "Bill estimate unavailable" : "Bill estimate is loading")
-                            .font(.body.weight(.medium))
-                        Spacer()
-                    }
+            Group {
+                if billPhase(at: .now) == .loaded, let bill {
+                    billButton(bill)
+                } else {
+                    HomeWaitingCard(card: .bill, phase: billPhase(at:), theme: .bill) { billPlaceholder }
                 }
             }
+            .transition(cardTransition)
         }
+        .animation(cardAnimation, value: billPhase(at: .now) == .loaded)
+    }
+
+    private func billButton(_ bill: MobileBillResponse) -> some View {
+        let cycleStart = DashboardPresentation.date(bill.currentBill.cycleStart, timeZoneIdentifier: siteTimeZone)
+        let cycleEnd = DashboardPresentation.date(bill.currentBill.cycleEnd, timeZoneIdentifier: siteTimeZone)
+        return Button { onOpenTab(.bill) } label: {
+            StatusCard(theme: .bill, fillAlignment: .leading) {
+                billCardContent(
+                    cost: DashboardPresentation.currency(bill.currentBill.estimatedCost,
+                                                         code: bill.currentBill.currency),
+                    cycle: "\(cycleStart) – \(cycleEnd)"
+                )
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityHint("Opens the Bill tab")
+            .accessibilityIdentifier("home.bill")
+        }
+        .buttonStyle(.plain)
+        .pointerHoverEffect()
     }
 
     private var loadTimingNavigation: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading("Smart Shift")
-            let summary = DashboardPresentation.loadTimingSummary(
-                live?.activeLoadTiming,
-                hasTariff: DashboardPresentation.hasActiveTariff(label: live?.activeTariff),
-                currencyCode: bill?.currentBill.currency
-            )
-            Button { onOpenTab(.smartShift) } label: {
-                StatusCard(theme: .loadTiming, fillAlignment: .leading) {
-                    HStack(spacing: 14) {
-                        Image(systemName: AppTab.smartShift.systemImage)
-                            .symbolVariant(.fill)
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(Color.emphasis)
-                            .frame(width: 48, height: 48)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(summary.title)
-                                .font(.headline)
-                                .foregroundStyle(.primary)
-                            if let rate = summary.rate {
-                                Text(rate)
-                                    .font(.subheadline.weight(.semibold))
-                                    .monospacedDigit()
-                                    .foregroundStyle(.primary)
-                            }
-                            if let balance = summary.balance {
-                                Text(balance)
-                                    .font(.footnote)
-                                    .foregroundStyle(summary.isBanked ? .green : .secondary)
-                            }
-                            if let message = summary.message {
-                                Text(message)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
+            Group {
+                if summaryPhase(at: .now) == .loaded, let live {
+                    smartShiftButton(live)
+                } else {
+                    HomeWaitingCard(card: .smartShift, phase: summaryPhase(at:), theme: .loadTiming) {
+                        smartShiftPlaceholder
                     }
-                    .contentShape(Rectangle())
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(summary.accessibilityLabel)
-                .accessibilityHint("Opens Smart Shift")
             }
-            .buttonStyle(.plain)
-            .pointerHoverEffect()
+            .transition(cardTransition)
         }
+        .animation(cardAnimation, value: summaryPhase(at: .now) == .loaded)
+    }
+
+    private func smartShiftButton(_ live: MobileLiveResponse) -> some View {
+        let summary = DashboardPresentation.loadTimingSummary(
+            live.activeLoadTiming,
+            hasTariff: DashboardPresentation.hasActiveTariff(label: live.activeTariff),
+            currencyCode: bill?.currentBill.currency
+        )
+        return Button { onOpenTab(.smartShift) } label: {
+            StatusCard(theme: .loadTiming, fillAlignment: .leading) {
+                smartShiftCardContent(summary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(summary.accessibilityLabel)
+            .accessibilityHint("Opens Smart Shift")
+        }
+        .buttonStyle(.plain)
+        .pointerHoverEffect()
     }
 
     var siteTimeZone: String { bill?.site.timezone ?? live?.site.timezone ?? "UTC" }
 
-    private func adaptiveGrid(_ tiles: [MetricTile]) -> some View {
+    func adaptiveGrid(_ tiles: [MetricTile]) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             AnyView(VStack(spacing: 10) {
                 ForEach(tiles.indices, id: \.self) { tiles[$0] }

@@ -99,11 +99,20 @@ enum SolarForecastUnavailableReason: Equatable {
     case siteMismatch
 }
 
+/// Home is waiting for a fresh reading from one endpoint: the one it holds, if any,
+/// was too old to show on arrival. Cleared by a success.
+struct FreshReadingWait: Equatable {
+    let since: Date
+    var hasFailed = false
+}
+
 struct DashboardEndpointState<Response: Equatable>: Equatable {
     var response: Response?
     var lastSuccess: Date?
     var isRestored = false
     var isUnavailable = false
+    /// Set on arrival when `response` is missing or too old for Home to show.
+    var freshReadingWait: FreshReadingWait?
     /// Monotonic cadence for this endpoint. It lives with the endpoint so
     /// `reset()` clears both the data and the retry window together.
     var cadence = EndpointCadence()
@@ -113,6 +122,7 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
         isRestored = false
         lastSuccess = nil
         isUnavailable = false
+        freshReadingWait = nil
         cadence.reset()
     }
 }
