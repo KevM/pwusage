@@ -374,6 +374,7 @@ describe('TeslaAuthService', () => {
 
         mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
         mockUserRepo.upsertOnTeslaAuth.mockRejectedValue(new Error('database unavailable'));
+        mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['user'] });
 
         const service = new TeslaAuthService({
             userRepo: mockUserRepo as unknown as UserRepo,
@@ -395,7 +396,6 @@ describe('TeslaAuthService', () => {
 
         expect(result).toEqual({ status: 'db-error' });
         expect(mockTeslaClient.getProducts).not.toHaveBeenCalled();
-        expect(mockUserRepo.getById).not.toHaveBeenCalled();
     });
 
     it('lets an admin sign in when products cannot be fetched', async () => {
@@ -723,6 +723,88 @@ describe('TeslaAuthService', () => {
         expect(mockSiteRepo.removeSitesMissingFromTesla).toHaveBeenCalledWith(
             'tesla-user-sub', [], expect.any(Date)
         );
+    });
+
+    describe('first sign-in without energy products', () => {
+        const callback: TeslaCallbackParams = {
+            code: 'c', state: 's', savedState: 's', savedNonce: 'n', callbackUrl: 'http://localhost/callback',
+        };
+        const serviceFor = () => new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange: async () => ({ id_token: 'id', access_token: 'access_123', refresh_token: 'refresh_123', expires_in: 3600 }),
+            verifyIdToken: async () => ({ nonce: 'n', sub: 'new-sub', email: 'new@example.com' }),
+        });
+
+        beforeEach(() => {
+            mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'new@example.com' });
+            mockTeslaClient.getBaseUrl.mockReturnValue(DEFAULT_FLEET_BASE_URL);
+            mockUserRepo.getByEmail.mockResolvedValue(null);
+        });
+
+        it('does not create a user or store tokens for a new account whose product list is empty', async () => {
+            mockUserRepo.getById.mockResolvedValue(null);
+            mockTeslaClient.getProducts.mockResolvedValue([]);
+            expect(await serviceFor().handleTeslaCallback(callback)).toEqual({ status: 'no-energy-products' });
+            expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+            expect(mockSiteRepo.assignSiteToUser).not.toHaveBeenCalled();
+            expect(mockSharedSyncLogin).not.toHaveBeenCalled();
+        });
+
+        it('treats a vehicle-only product list as having no energy products', async () => {
+            mockUserRepo.getById.mockResolvedValue(null);
+            mockTeslaClient.getProducts.mockResolvedValue([{ id: 1, vin: 'VIN', vehicle_id: 2 }]);
+            expect(await serviceFor().handleTeslaCallback(callback)).toEqual({ status: 'no-energy-products' });
+            expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+        });
+
+        it('still stores a new account that has an energy product, fetching products once', async () => {
+            mockUserRepo.getById.mockResolvedValueOnce(null).mockResolvedValue({ id: 'new-sub', roles: ['user'] });
+            mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 555, resource_type: 'battery' }]);
+            mockSiteRepo.assignSiteToUser.mockResolvedValue(undefined);
+            mockImporter.ensureSite.mockResolvedValue(undefined);
+            const result = await serviceFor().handleTeslaCallback(callback);
+            expect(result).toMatchObject({ status: 'success', userId: 'new-sub', siteIds: ['555'] });
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+            expect(mockTeslaClient.getProducts).toHaveBeenCalledTimes(1);
+        });
+
+        it('keeps the row and tokens of an existing user whose product list is now empty', async () => {
+            mockUserRepo.getById.mockResolvedValue({ id: 'new-sub', roles: ['user'] });
+            mockTeslaClient.getProducts.mockResolvedValue([]);
+            const result = await serviceFor().handleTeslaCallback(callback);
+            expect(result).toMatchObject({ status: 'success', userId: 'new-sub', siteIds: [], roles: ['user'] });
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+        });
+
+        it('keeps an existing admin with no products signing in', async () => {
+            mockUserRepo.getById.mockResolvedValue({ id: 'new-sub', roles: ['admin'] });
+            mockTeslaClient.getProducts.mockResolvedValue([]);
+            const result = await serviceFor().handleTeslaCallback(callback);
+            expect(result).toMatchObject({ status: 'success', roles: ['admin'] });
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ['upstream', new Error('Fleet down'), 'upstream'],
+            ['region', new TeslaRegionError('partner-not-registered', 'https://fleet-api.prd.eu.vn.cloud.tesla.com'), 'region'],
+        ])('stores a new account and reports fleet-api-failed when the lookup fails (%s)', async (_name, error, reason) => {
+            mockUserRepo.getById.mockResolvedValueOnce(null).mockResolvedValue({ id: 'new-sub', roles: ['user'] });
+            mockTeslaClient.getProducts.mockRejectedValue(error);
+            expect(await serviceFor().handleTeslaCallback(callback)).toEqual({ status: 'fleet-api-failed', reason });
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 'new-sub', refreshToken: 'refresh_123',
+            }));
+        });
+
+        it('reports db-error when the existing-user check cannot be made', async () => {
+            mockUserRepo.getById.mockRejectedValue(new Error('db down'));
+            expect(await serviceFor().handleTeslaCallback(callback)).toEqual({ status: 'db-error' });
+            expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+        });
     });
 
     it('(a) unknown-kid -> userInfo ok (realistic TeslaUserInfo shape) -> authenticated (success)', async () => {

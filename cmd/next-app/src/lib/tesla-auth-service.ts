@@ -428,6 +428,9 @@ export type TeslaCallbackResult =
     | { status: 'invalid-id-token' }
     | { status: 'nonce-mismatch' }
     | { status: 'db-error' }
+    // A brand-new account whose Fleet product list loaded but holds no energy
+    // product. Nothing was stored: no User row, no tokens, no session.
+    | { status: 'no-energy-products' }
     | {
         status: 'fleet-api-failed';
         reason: 'region' | 'upstream' | 'sites';
@@ -756,6 +759,44 @@ export class TeslaAuthService {
             fleetApiBaseUrl: client.getBaseUrl(),
         });
 
+        let products: FleetProduct[] = [];
+        let productsFetchedAt = new Date();
+        let productsFetched = false;
+        let productsError: unknown;
+        const fetchProducts = async () => {
+            console.log('[TeslaAuthService] Fetching products to ensure sites exist in DB...');
+            productsFetchedAt = new Date();
+            try {
+                products = await client.getProducts();
+                productsFetched = true;
+            } catch (err) {
+                productsError = err;
+            }
+        };
+
+        // A brand-new account is only stored once we know it has an energy
+        // product, so a Tesla account that owns none (for example after a
+        // Powerwall changes hands) never leaves a User row or tokens behind. An
+        // existing account is always stored, so it can still sign in to manage
+        // or delete itself. A failed lookup is not "no products": it falls
+        // through to the persist below so a rotated refresh token is kept.
+        let accountExists: boolean;
+        try {
+            accountExists = Boolean(await userRepo.getById(userId));
+        } catch (dbError) {
+            console.error('[TeslaAuthService] Failed to look up the Tesla account:', dbError);
+            return { status: 'db-error' };
+        }
+        if (!accountExists) {
+            await fetchProducts();
+            if (productsFetched && !products.some(product => Boolean(product.energy_site_id))) {
+                logEvent('info', 'tesla.sign-in.no-energy-products-not-stored', {
+                    accountId: accountFingerprint(userId), productCount: products.length,
+                });
+                return { status: 'no-energy-products' };
+            }
+        }
+
         // Persist before any product import: a Fleet failure must not discard a
         // rotated refresh token, and it must not be reported as a successful login.
         try {
@@ -802,14 +843,9 @@ export class TeslaAuthService {
             return { status: 'db-error' };
         }
 
-        let products: FleetProduct[] = [];
-        const productsFetchedAt = new Date();
-        let productsFetched = false;
-        try {
-            console.log('[TeslaAuthService] Fetching products to ensure sites exist in DB...');
-            products = await client.getProducts();
-            productsFetched = true;
-        } catch (err) {
+        if (accountExists) await fetchProducts();
+        if (productsError !== undefined) {
+            const err = productsError;
             const reason = err instanceof TeslaRegionError ? 'region' : 'upstream';
             console.error(`[TeslaAuthService] Failed to fetch Tesla products (${reason}):`, err);
             logEvent('warn', 'tesla.sign-in.products-failed', {

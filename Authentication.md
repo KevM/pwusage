@@ -104,8 +104,17 @@ Route: `GET /auth/tesla-callback`
 
 User and site provisioning:
 - Builds stable user id from ID token `sub` (fallback email).
+- Looks up whether the `User` row already exists. A **new** account has its
+  Fleet products fetched first: if the list loads but holds no energy product,
+  nothing is stored (no `User` row, no tokens, no session) and the web callback
+  redirects to `/no-sites?reason=no-products` (the native app gets `no_sites`).
+  Existing users are always stored, so one who lost every product (for example
+  after a change of ownership) can still sign in and manage or delete the
+  account. A failed Fleet lookup is not "no products": the account is stored so
+  the rotated refresh token survives, and the result is `fleet-api-failed`.
+  The never-stored Tesla grant is simply dropped; nothing else depends on it.
 - Upserts `User` row with Tesla tokens.
-- Calls Tesla `getProducts()` and ensures each energy site exists.
+- Calls Tesla `getProducts()` (once; reused from the new-account check) and ensures each energy site exists.
 - Links each site to the user (`Site.user_id`).
 - Persists latest Tesla tokens on user.
 
@@ -134,7 +143,7 @@ Login diagnostics:
   The step that failed has its own event: `tesla.sign-in.products-failed`,
   `tesla.sign-in.membership-sync-failed` and `tesla.sign-in.site-assign-failed`
   (with `siteId`) carry `errorName`, `errorCode`, `constraint` and `errorStatus`
-  from `errorFields()`, never the error message. `tesla.sign-in.no-sites` and
+  from `errorFields()`, never the error message. `tesla.sign-in.no-energy-products-not-stored` (a new product-less account was not stored), `tesla.sign-in.no-sites` and
   `tesla.sign-in.sites-resolved` report `productCount`, `importableCount`,
   `resolvedCount` and which path ran (`membershipEnabled`). All use the hashed
   `accountId`.
