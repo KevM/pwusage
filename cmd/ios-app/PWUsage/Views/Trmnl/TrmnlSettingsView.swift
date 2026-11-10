@@ -60,8 +60,11 @@ struct TrmnlSettingsView: View {
                         .tag(Optional(device.id))
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: devices.count > 1 ? .always : .never))
+            .tabViewStyle(.page(indexDisplayMode: .never))
             .aspectRatio(TrmnlPreview.screenSize.width / TrmnlPreview.screenSize.height, contentMode: .fit)
+            if devices.count > 1, let selected = devices.firstIndex(where: { $0.id == model.selectedDeviceID }) {
+                TrmnlPageDots(count: devices.count, selected: selected)
+            }
             if let device = model.selectedDevice {
                 Text(TrmnlPresentation.caption(for: device)).font(.footnote).foregroundStyle(.secondary)
             }
