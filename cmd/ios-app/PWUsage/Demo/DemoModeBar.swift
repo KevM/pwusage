@@ -4,17 +4,27 @@ import SwiftUI
 /// home for their own. Tapping it offers the ways out.
 struct DemoModeBar: View {
     let onTap: () -> Void
+    /// The label sits in the bottom inset instead of above it, which would double the bar's thickness.
+    @State private var bottomInset: CGFloat = 0
+    @State private var labelHeight: CGFloat = 0
 
     var body: some View {
         Button(action: onTap) {
             Text("In Demo Mode")
-                .font(.subheadline.weight(.semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(Color.onEmphasis)
-                .frame(maxWidth: .infinity, minHeight: 36)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color.emphasis.ignoresSafeArea(edges: .bottom))
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { bottomInset = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { labelHeight = $0 }
+        // Layout height drops to zero when the inset can hold the label, so the bar is just the inset.
+        .padding(.bottom, -min(bottomInset, labelHeight))
+        // Fill the corners too: on a device with rounded or inset window edges (Duo)
+        // the label stays inside the safe area while the color runs to the edge.
+        .background(Color.emphasis.ignoresSafeArea(edges: [.bottom, .horizontal]))
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Shows options for leaving the demo")
     }
