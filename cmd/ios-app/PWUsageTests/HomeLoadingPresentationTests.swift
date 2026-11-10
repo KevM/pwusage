@@ -51,6 +51,17 @@ struct HomeLoadingPresentationTests {
         #expect(line(0, .broken) == "Couldn’t reach your Powerwall.")
     }
 
+    @Test("The Live placeholder uses the held flow, or a balanced two-row sample")
+    func livePlaceholderFlow() {
+        let held = DashboardPresentation.powerFlow(.init(
+            solarPower: 0, loadPower: 900, batteryPower: 900, gridPower: 0,
+            sourceTime: .now, isUnavailable: false))
+        #expect(HomeLoadingPresentation.placeholderFlow(held: held) == held)
+        let sample = HomeLoadingPresentation.placeholderFlow(held: nil)
+        #expect(sample.supplying.count == 2)
+        #expect(sample.receiving.count == 2)
+    }
+
     @Test("VoiceOver reads a waiting card as loading and a broken one with its next step")
     func voiceOverLabels() {
         #expect(HomeLoadingPresentation.accessibilityLabel(for: .bill, phase: .waiting(isSlow: false))

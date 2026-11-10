@@ -155,6 +155,24 @@ extension DashboardCoordinatorTests {
         #expect(api.summary.billSiteIDs.count == 1)
     }
 
+    @Test("A brief interruption keeps readings the person was just looking at, however old their fetch")
+    func briefInterruptionKeepsReadings() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        // Power polls each minute; the summary and bill stay on their 30 minute cadence.
+        for _ in 0 ..< 20 {
+            clock.advance(minutes: 1)
+            await coordinator.refreshDue()
+        }
+        coordinator.scenePhaseChanged(isActive: false)
+        coordinator.scenePhaseChanged(isActive: true)
+        #expect(coordinator.live.freshReadingWait == nil)
+        #expect(coordinator.bill.freshReadingWait == nil)
+    }
+
     @Test("Returning after more than 15 minutes holds the readings in memory")
     func foregroundAfterGapHoldsReadings() async throws {
         let clock = DashboardTestClock()

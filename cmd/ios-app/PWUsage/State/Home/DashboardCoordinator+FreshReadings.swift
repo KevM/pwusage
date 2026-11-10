@@ -6,10 +6,17 @@ import Foundation
 extension DashboardCoordinator {
     static let freshReadingLimit: TimeInterval = 15 * 60
 
-    func holdStaleReadings(at date: Date) {
-        live.freshReadingWait = Self.wait(response: live.response, lastSuccess: live.lastSuccess, at: date)
-        bill.freshReadingWait = Self.wait(response: bill.response, lastSuccess: bill.lastSuccess, at: date)
-        power.freshReadingWait = Self.wait(response: power.response, lastSuccess: power.lastSuccess, at: date)
+    /// `seenUntil` is when the person was last looking at Home's readings, if they
+    /// were: a reading's age then counts from the later of its fetch and that time.
+    func holdStaleReadings(at date: Date, seenUntil: Date? = nil) {
+        func shownSince(_ lastSuccess: Date?) -> Date? {
+            guard let lastSuccess else { return nil }
+            return max(lastSuccess, seenUntil ?? lastSuccess)
+        }
+        live.freshReadingWait = Self.wait(response: live.response, lastSuccess: shownSince(live.lastSuccess), at: date)
+        bill.freshReadingWait = Self.wait(response: bill.response, lastSuccess: shownSince(bill.lastSuccess), at: date)
+        power.freshReadingWait = Self.wait(
+            response: power.response, lastSuccess: shownSince(power.lastSuccess), at: date)
     }
 
     /// A pull to refresh sends every failed card back to waiting.

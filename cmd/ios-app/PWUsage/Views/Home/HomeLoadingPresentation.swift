@@ -93,6 +93,15 @@ enum HomeLoadingPresentation {
         }
     }
 
+    /// The flow the waiting Live card sizes itself from: the held reading's, whose
+    /// shape most likely matches the one arriving, or else a balanced two-by-two
+    /// sample, the shape most evenings and charging afternoons take.
+    static func placeholderFlow(held: DashboardPresentation.PowerFlow?) -> DashboardPresentation.PowerFlow {
+        held ?? DashboardPresentation.powerFlow(.init(
+            solarPower: 2000, loadPower: 2500, batteryPower: 1000, gridPower: -500,
+            sourceTime: .now, isUnavailable: false))
+    }
+
     static func accessibilityLabel(for card: HomeCard, phase: HomeCardPhase) -> String {
         switch phase {
         case .waiting: "\(card.title), loading"

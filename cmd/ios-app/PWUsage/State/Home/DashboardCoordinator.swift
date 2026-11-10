@@ -119,6 +119,8 @@ final class DashboardCoordinator: ObservableObject {
     let cadenceNow: () -> ContinuousClock.Instant
     let timerInterval: Duration?
     var sceneIsActive = false
+    /// When the app last left the foreground: the readings were on screen until then.
+    var leftForegroundAt: Date?
     var timerTask: Task<Void, Never>?
     /// Identity of the running timer loop, so a loop that exits can clear its
     /// own handle without clobbering a newer loop started in the meantime.
@@ -266,7 +268,8 @@ final class DashboardCoordinator: ObservableObject {
             guard !isForeground else { return }
             isForeground = true
             refreshSettled = false
-            holdStaleReadings(at: now())
+            // A glance at Control Center is not time away: age counts from when they left.
+            holdStaleReadings(at: now(), seenUntil: leftForegroundAt)
             startTimer()
             Task {
                 guard isForeground else { return }
@@ -275,6 +278,7 @@ final class DashboardCoordinator: ObservableObject {
             }
         } else {
             sceneIsActive = false
+            if isForeground { leftForegroundAt = now() }
             isForeground = false
             batteryHold.isCurrent = false
             stopTimer()

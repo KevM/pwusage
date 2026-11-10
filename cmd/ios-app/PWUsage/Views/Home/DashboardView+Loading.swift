@@ -40,10 +40,7 @@ extension DashboardView {
                     .font(.system(size: 44, weight: .bold))
             }
             Divider()
-            LivePowerFlowCards(flow: DashboardPresentation.powerFlow(.init(
-                // Four nonzero flows: the tallest layout the card commonly takes.
-                solarPower: 3900, loadPower: 1400, batteryPower: -1800, gridPower: -700,
-                sourceTime: .now, isUnavailable: false)))
+            LivePowerFlowCards(flow: HomeLoadingPresentation.placeholderFlow(held: liveReadings(now: .now)?.flow))
         }
     }
 
