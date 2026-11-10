@@ -7,8 +7,8 @@ struct TrmnlScreensEditorView: View {
     static let wideBreakpoint: CGFloat = 700
     /// The controls column takes about a third of a wide viewport, within these bounds; the preview gets the rest.
     static let controlsWidthRange: ClosedRange<CGFloat> = 300 ... 420
-    /// What sits under a preview (page dots and caption), which the preview's height leaves room for.
-    static let previewFooterHeight: CGFloat = 72
+    /// The space kept around the preview beside the controls.
+    static let previewMargin: CGFloat = 12
     /// A pinned preview keeps to this width so it leaves room for the controls beneath it.
     static let pinnedPreviewMaxWidth: CGFloat = 340
 
@@ -50,19 +50,23 @@ struct TrmnlScreensEditorView: View {
         }
     }
 
-    /// The preview takes the largest 5 by 3 frame the space beside the controls allows.
+    /// The preview takes the largest 5 by 3 frame the space beside the controls allows, so it fills the
+    /// height; where it sits in the rotation is shown above the controls instead of under it.
     private var wide: some View {
         GeometryReader { proxy in
             let controlsWidth = min(max(proxy.size.width * 0.36, Self.controlsWidthRange.lowerBound),
                                     Self.controlsWidthRange.upperBound)
             HStack(alignment: .top, spacing: 0) {
                 GeometryReader { column in
-                    let byHeight = (column.size.height - Self.previewFooterHeight) * TrmnlPreview.aspectRatio
-                    TrmnlScreenCarousel(editor: editor)
-                        .frame(maxWidth: max(0, min(column.size.width - 32, byHeight)))
+                    let room = CGSize(
+                        width: column.size.width - 2 * Self.previewMargin,
+                        height: column.size.height - 2 * Self.previewMargin)
+                    TrmnlScreenCarousel(editor: editor, showsPosition: false)
+                        .frame(maxWidth: max(0, min(room.width, room.height * TrmnlPreview.aspectRatio)))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 List {
+                    Section { TrmnlScreenPosition(editor: editor) }
                     deviceSection
                     controlSections
                     linksSection

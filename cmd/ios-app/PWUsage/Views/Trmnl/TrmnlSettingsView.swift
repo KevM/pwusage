@@ -11,12 +11,15 @@ struct TrmnlSettingsView: View {
     @Bindable var model: TrmnlSettingsModel
     @State private var editor: TrmnlScreensEditorModel?
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     var body: some View {
         content
             .navigationTitle(TrmnlPresentation.title)
             .inlineNavigationTitle()
             .toolbar { toolbarItems }
+            // A phone in landscape has little height, and the preview wants all of it.
+            .toolbarVisibility(verticalSizeClass == .compact ? .hidden : .automatic, for: .tabBar)
             .task { await model.load() }
             .task(id: model.selectedDeviceID) { await openEditor() }
             .onChange(of: scenePhase) { _, phase in
