@@ -1,9 +1,8 @@
 import Foundation
 import Observation
 
-/// What the Trmnl screen shows: the site's devices, and a preview of the screen each one is on. Devices
-/// load first because the previews are of their screens; a preview that is slow or fails never hides
-/// the devices, and each device's preview loads only once a person lands on it.
+/// The Trmnl screen's devices. One device at a time is edited (see `TrmnlScreensEditorModel`); a site with
+/// none shows the default screen as a preview of what a device would get.
 @MainActor
 @Observable
 final class TrmnlSettingsModel {
@@ -13,25 +12,13 @@ final class TrmnlSettingsModel {
         case failed
     }
 
-    enum Preview: Equatable {
-        case loading
-        case ready(document: String)
-        case unavailable
-    }
-
     private(set) var devices = Devices.loading
-    /// The device whose preview is showing; nil until devices load, and when there are none.
+    /// The device being edited; nil until devices load, and when there are none.
     var selectedDeviceID: Int?
+    private(set) var defaultPreview = TrmnlPreviewState.loading
 
-    private var previews: [PreviewKey: Preview] = [:]
     private let siteID: String
     private let api: any MobileTrmnlAPI
-
-    /// A device's own screen, or the site's default screen when no device is connected.
-    private enum PreviewKey: Hashable {
-        case site
-        case device(Int)
-    }
 
     init(siteID: String, api: any MobileTrmnlAPI) {
         self.siteID = siteID
@@ -50,16 +37,14 @@ final class TrmnlSettingsModel {
         return devices.count
     }
 
-    /// The preview for `device`, or for the site's default screen when nil.
-    func preview(for device: TrmnlDevice?) -> Preview {
-        previews[Self.key(for: device)] ?? .loading
+    func makeEditor(for device: TrmnlDevice) -> TrmnlScreensEditorModel {
+        TrmnlScreensEditorModel(device: device, siteID: siteID, api: api)
     }
 
     /// Loads everything afresh, as on opening the screen or pulling to refresh.
     func load() async {
-        previews = [:]
         await reloadDevices()
-        await loadSelectedPreview()
+        if case .loaded(let devices) = devices, devices.isEmpty { await loadDefaultPreview() }
     }
 
     /// Fetches the devices again, for when a person comes back from adding one on trmnl.com. A
@@ -75,24 +60,11 @@ final class TrmnlSettingsModel {
         }
     }
 
-    func loadSelectedPreview() async {
-        await loadPreview(for: selectedDevice)
-    }
-
-    private func loadPreview(for device: TrmnlDevice?) async {
-        let key = Self.key(for: device)
-        if case .ready = previews[key] { return }
+    func loadDefaultPreview() async {
         do {
-            previews[key] = .loading
-            previews[key] = try await .ready(document: api.fetchTrmnlPreview(
-                siteID: siteID, screen: device?.screen.componentConfig))
+            defaultPreview = try await .ready(document: api.fetchTrmnlPreview(siteID: siteID, screen: nil))
         } catch {
-            // A page swiped away mid-load starts again when it comes back.
-            previews[key] = Task.isCancelled ? nil : .unavailable
+            defaultPreview = Task.isCancelled ? .loading : .unavailable
         }
-    }
-
-    private static func key(for device: TrmnlDevice?) -> PreviewKey {
-        device.map { .device($0.id) } ?? .site
     }
 }

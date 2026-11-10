@@ -18,6 +18,15 @@ struct TrmnlPresentationTests {
         #expect(TrmnlPresentation.connectedLabel(for: undated) == nil)
     }
 
+    @Test("The caption says where the screen is in the rotation, and when it is the one on the device")
+    func screenCaption() {
+        #expect(TrmnlPresentation.screenCaption(index: 1, count: 3, isShowingNow: false) == "Screen 2 of 3")
+        #expect(TrmnlPresentation.screenCaption(index: 0, count: 2, isShowingNow: true)
+            == "Screen 1 of 2 · On the device now")
+        #expect(TrmnlPresentation.deleteConfirmation(screenName: "Screen 2")
+            == "Delete Screen 2? This cannot be undone.")
+    }
+
     @Test("The Settings row counts devices")
     func deviceCountLabel() {
         #expect(TrmnlPresentation.deviceCountLabel(1) == "1 device")
@@ -31,14 +40,11 @@ struct TrmnlPresentationTests {
         #expect(TrmnlPresentation.caption(for: .fixture()) == "Device abcdef12")
     }
 
-    @Test("Links open the plugin on trmnl.com and the web app's screens page")
-    func links() throws {
+    @Test("Links open the plugin on trmnl.com")
+    func links() {
         #expect(TrmnlPresentation.openURL(for: device).absoluteString == "https://trmnl.com/plugin_settings/77/edit")
         #expect(TrmnlPresentation.addURL.absoluteString
             == "https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage")
-        let origin = try #require(URL(string: "https://pwusage.example"))
-        #expect(TrmnlPresentation.screensURL(origin: origin, device: device).absoluteString
-            == "https://pwusage.example/trmnl/manage?uuid=abcdef12-0000-4000-8000-000000000000")
     }
 
     @Test("The add button offers another device once one is connected")
@@ -51,6 +57,7 @@ struct TrmnlPresentationTests {
     func copyIsCalm() {
         let strings = [
             TrmnlPresentation.previewUnavailable, TrmnlPresentation.devicesFailure,
+            TrmnlPresentation.saveFailure, TrmnlPresentation.screensLoadFailure,
             TrmnlPresentation.emptyTitle, TrmnlPresentation.emptyMessage
         ]
         for string in strings {

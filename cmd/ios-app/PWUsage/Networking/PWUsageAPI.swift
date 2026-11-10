@@ -299,7 +299,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         try await perform(URLRequest(url: url))
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
+    func perform(_ request: URLRequest) async throws -> Data {
         let (data, http) = try await send(request)
         return try check(http, data: data)
     }

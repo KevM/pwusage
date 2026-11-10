@@ -1,88 +1,79 @@
 import SwiftUI
 
-/// What Settings needs to open the Trmnl screen: where to read from and where the web app lives.
+/// What Settings needs to open the Trmnl screen: where to read and save.
 struct TrmnlSettingsAccess {
     let api: any MobileTrmnlAPI
-    let origin: URL
 }
 
-/// Settings > Trmnl: a preview of the site's screen and its connected devices.
+/// Settings > Trmnl: edits the screens of the site's connected devices, one device at a time, with a
+/// live preview of each. A site with no device gets the explainer and a way to add one.
 struct TrmnlSettingsView: View {
-    let origin: URL
     @Bindable var model: TrmnlSettingsModel
-    @State private var screensDevice: TrmnlDevice?
+    @State private var editor: TrmnlScreensEditorModel?
+    /// A device switch waiting on an answer about unsaved changes.
+    @State private var pendingDeviceID: Int?
+    @State private var isConfirmingLeave = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        List {
-            Section(TrmnlPresentation.previewHeader) { previewRow }
-            devicesSections
-            Section {
-                Link(destination: TrmnlPresentation.addURL) {
-                    Label(TrmnlPresentation.addButtonTitle(deviceCount: deviceCount), systemImage: "plus.circle")
-                }
-                .accessibilityIdentifier("trmnl.add")
+        content
+            .navigationTitle(TrmnlPresentation.title)
+            .inlineNavigationTitle()
+            .navigationBarBackButtonHidden(hasUnsavedChanges)
+            .toolbar { toolbarItems }
+            .task { await model.load() }
+            .task(id: model.selectedDeviceID) { await openEditor() }
+            .onChange(of: scenePhase) { _, phase in
+                // Back from trmnl.com, where a device may have just been added.
+                if phase == .active { Task { await model.reloadDevices() } }
             }
-        }
-        .navigationTitle(TrmnlPresentation.title)
-        .inlineNavigationTitle()
-        .task { await model.load() }
-        .task(id: model.selectedDeviceID) { await model.loadSelectedPreview() }
-        .refreshable { await model.load() }
-        .onChange(of: scenePhase) { _, phase in
-            // Back from trmnl.com, where a device may have just been added.
-            if phase == .active { Task { await model.reloadDevices() } }
-        }
-        .sheet(item: $screensDevice) {
-            TrmnlScreensSheet(url: TrmnlPresentation.screensURL(origin: origin, device: $0))
-        }
-    }
-
-    private var deviceCount: Int {
-        if case .loaded(let devices) = model.devices { devices.count } else { 0 }
-    }
-
-    @ViewBuilder private var previewRow: some View {
-        if case .loaded(let devices) = model.devices, !devices.isEmpty {
-            carousel(devices)
-        } else {
-            TrmnlPreviewContent(state: model.preview(for: nil))
-        }
-    }
-
-    /// One page per device, each showing the screen that device is on. Swiping moves the highlight to
-    /// the device's row below.
-    private func carousel(_ devices: [TrmnlDevice]) -> some View {
-        VStack(spacing: 8) {
-            TabView(selection: $model.selectedDeviceID) {
-                ForEach(devices) { device in
-                    TrmnlPreviewContent(state: model.preview(for: device))
-                        .tag(Optional(device.id))
+            .confirmationDialog(
+                TrmnlPresentation.discardTitle, isPresented: $isConfirmingLeave, titleVisibility: .visible
+            ) {
+                Button(TrmnlPresentation.discardTitle, role: .destructive) { dismiss() }
+            }
+            .confirmationDialog(
+                TrmnlPresentation.discardTitle, isPresented: pendingSwitchBinding, titleVisibility: .visible
+            ) {
+                Button(TrmnlPresentation.discardTitle, role: .destructive) {
+                    model.selectedDeviceID = pendingDeviceID
+                    pendingDeviceID = nil
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .aspectRatio(TrmnlPreview.screenSize.width / TrmnlPreview.screenSize.height, contentMode: .fit)
-            if devices.count > 1, let selected = devices.firstIndex(where: { $0.id == model.selectedDeviceID }) {
-                TrmnlPageDots(count: devices.count, selected: selected)
-            }
-            if let device = model.selectedDevice {
-                Text(TrmnlPresentation.caption(for: device)).font(.footnote).foregroundStyle(.secondary)
-            }
-        }
     }
 
-    @ViewBuilder private var devicesSections: some View {
+    private var hasUnsavedChanges: Bool { editor?.hasUnsavedChanges == true }
+
+    private var pendingSwitchBinding: Binding<Bool> {
+        Binding(get: { pendingDeviceID != nil }, set: { if !$0 { pendingDeviceID = nil } })
+    }
+
+    // MARK: Content
+
+    @ViewBuilder private var content: some View {
         switch model.devices {
         case .loading:
-            EmptyView()
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed:
-            Section(TrmnlPresentation.devicesHeader) {
+            List {
                 Label(TrmnlPresentation.devicesFailure, systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Button("Try Again") { Task { await model.reloadDevices() } }
+                Button("Try Again") { Task { await model.load() } }
             }
         case .loaded(let devices) where devices.isEmpty:
+            emptyState
+        case .loaded(let devices):
+            deviceEditor(devices)
+        }
+    }
+
+    private var emptyState: some View {
+        List {
+            Section(TrmnlPresentation.previewHeader) {
+                TrmnlPreviewContent(state: model.defaultPreview)
+            }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(TrmnlPresentation.emptyTitle).font(.headline)
@@ -90,36 +81,73 @@ struct TrmnlSettingsView: View {
                 }
                 .accessibilityElement(children: .combine)
             }
-        case .loaded(let devices):
-            Section(TrmnlPresentation.devicesHeader) {
-                ForEach(devices) { device in
-                    deviceRow(device)
-                        .listRowBackground(device.id == model.selectedDeviceID ? Color.emphasis.opacity(0.15) : nil)
-                        .contentShape(Rectangle())
-                        .onTapGesture { withAnimation { model.selectedDeviceID = device.id } }
-                        .accessibilityAddTraits(device.id == model.selectedDeviceID ? .isSelected : [])
+            Section {
+                Link(destination: TrmnlPresentation.addURL) {
+                    Label(TrmnlPresentation.addTitle, systemImage: "plus.circle")
+                }
+                .accessibilityIdentifier("trmnl.add")
+            }
+        }
+        .refreshable { await model.load() }
+    }
+
+    @ViewBuilder private func deviceEditor(_ devices: [TrmnlDevice]) -> some View {
+        if let editor {
+            switch editor.loadState {
+            case .loading:
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .failed:
+                List {
+                    Label(TrmnlPresentation.screensLoadFailure, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Try Again") { Task { await editor.load() } }
+                }
+            case .ready:
+                TrmnlScreensEditorView(editor: editor, devices: devices, onSelectDevice: requestSelect)
+            }
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // MARK: Toolbar
+
+    @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
+        if hasUnsavedChanges {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { isConfirmingLeave = true }
+            }
+        }
+        if let editor, editor.loadState == .ready {
+            ToolbarItem(placement: .confirmationAction) {
+                if editor.saveState == .saving {
+                    ProgressView()
+                } else {
+                    Button(TrmnlPresentation.saveTitle) { Task { _ = await editor.save() } }
+                        .disabled(!editor.hasUnsavedChanges)
+                        .accessibilityIdentifier("trmnl.save")
                 }
             }
         }
     }
 
-    private func deviceRow(_ device: TrmnlDevice) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(TrmnlPresentation.name(for: device)).font(.body.weight(.semibold))
-                if let connected = TrmnlPresentation.connectedLabel(for: device) {
-                    Text(connected).font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            HStack(spacing: 10) {
-                Button(TrmnlPresentation.screensTitle) { screensDevice = device }
-                    .emphasisProminentButton()
-                Link(TrmnlPresentation.openTitle, destination: TrmnlPresentation.openURL(for: device))
-                    .buttonStyle(.bordered)
-            }
-            .controlSize(.small)
+    // MARK: Switching devices
+
+    private func requestSelect(_ id: Int) {
+        guard id != model.selectedDeviceID else { return }
+        if hasUnsavedChanges { pendingDeviceID = id } else { model.selectedDeviceID = id }
+    }
+
+    private func openEditor() async {
+        guard let device = model.selectedDevice else {
+            editor = nil
+            return
         }
-        .padding(.vertical, 4)
+        guard editor?.device.id != device.id else { return }
+        let opened = model.makeEditor(for: device)
+        editor = opened
+        await opened.load()
     }
 }
 
@@ -136,36 +164,34 @@ struct TrmnlSettingsView: View {
             align-items:center;justify-content:center}</style></head><body>Cedar House 4.2 kW</body></html>
             """
         }
+
+        func fetchTrmnlScreens(uuid _: String) async throws -> [TrmnlManagedScreen] {
+            [TrmnlManagedScreen(id: "screen-1", name: "Screen 1", componentConfig: .newScreen),
+             TrmnlManagedScreen(id: "screen-2", name: "Screen 2", componentConfig: .newScreen)]
+        }
+
+        func saveTrmnlScreens(_: [TrmnlManagedScreen], for _: TrmnlDevice, siteID _: String) async throws {}
     }
 
-    private func sampleDevice(id: Int, uuid: String, screenIndex: Int, screenCount: Int) -> TrmnlDevice {
+    private func sampleDevice(id: Int, uuid: String) -> TrmnlDevice {
         TrmnlDevice(
             id: id, uuid: uuid, pluginSettingId: id + 6, connectedAt: .now,
-            screen: TrmnlScreen(
-                name: "Screen \(screenIndex + 1)", index: screenIndex, count: screenCount,
-                componentConfig: TrmnlComponentConfig(
-                    showLiveGrid: true, showLiveSolar: true, showLiveBattery: true, showEnergyChart: false,
-                    showBatterySoc: false, showEstimatedBill: true, showLoadTiming: false, batterySocMode: "glyph")))
+            screen: TrmnlScreen(name: "Screen 1", index: 0, count: 2, componentConfig: .newScreen))
     }
 
     #Preview("Trmnl devices") {
         NavigationStack {
-            TrmnlSettingsView(
-                origin: URL(filePath: "/"),
-                model: TrmnlSettingsModel(
-                    siteID: "preview-home",
-                    api: TrmnlPreviewAPI(devices: [
-                        sampleDevice(id: 1, uuid: "abcdef12-0000", screenIndex: 1, screenCount: 3),
-                        sampleDevice(id: 2, uuid: "12345678-0000", screenIndex: 0, screenCount: 1)
-                    ])))
+            TrmnlSettingsView(model: TrmnlSettingsModel(
+                siteID: "preview-home",
+                api: TrmnlPreviewAPI(devices: [
+                    sampleDevice(id: 1, uuid: "abcdef12-0000"), sampleDevice(id: 2, uuid: "12345678-0000")
+                ])))
         }
     }
 
     #Preview("Trmnl first time") {
         NavigationStack {
-            TrmnlSettingsView(
-                origin: URL(filePath: "/"),
-                model: TrmnlSettingsModel(siteID: "preview-home", api: TrmnlPreviewAPI(devices: [])))
+            TrmnlSettingsView(model: TrmnlSettingsModel(siteID: "preview-home", api: TrmnlPreviewAPI(devices: [])))
         }
     }
 #endif

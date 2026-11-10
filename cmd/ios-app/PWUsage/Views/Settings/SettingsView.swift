@@ -111,8 +111,8 @@ struct SettingsView: View {
                 BillingDaySettingsView(site: site, save: onSaveBillingDay)
                     .id(site.id)
             case .trmnl:
-                if let trmnl, let trmnlModel {
-                    TrmnlSettingsView(origin: trmnl.origin, model: trmnlModel)
+                if trmnl != nil, let trmnlModel {
+                    TrmnlSettingsView(model: trmnlModel)
                         .id(site.id)
                 }
             case .about:
