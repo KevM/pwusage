@@ -6,15 +6,23 @@ import Testing
 struct TrmnlPresentationTests {
     private let device = TrmnlDevice(
         id: 2, uuid: "abcdef12-0000-4000-8000-000000000000", pluginSettingId: 77,
-        connectedAt: Date(timeIntervalSince1970: 1_793_718_000))
+        connectedAt: Date(timeIntervalSince1970: 1_793_718_000),
+        screen: TrmnlDevice.fixture().screen)
 
     @Test("A device is named by the start of its uuid and dated in UTC")
     func nameAndDate() {
         #expect(TrmnlPresentation.name(for: device) == "Device abcdef12")
         let label = TrmnlPresentation.connectedLabel(for: device, locale: Locale(identifier: "en_US"))
         #expect(label == "Connected Nov 3, 2026")
-        let undated = TrmnlDevice(id: 1, uuid: "x", pluginSettingId: 1, connectedAt: nil)
+        let undated = TrmnlDevice.fixture(id: 1, uuid: "x")
         #expect(TrmnlPresentation.connectedLabel(for: undated) == nil)
+    }
+
+    @Test("The caption names the device and, when it rotates, the screen it is on")
+    func caption() {
+        let rotating = TrmnlDevice.fixture(screenIndex: 1, screenCount: 3)
+        #expect(TrmnlPresentation.caption(for: rotating) == "Device abcdef12 · Screen 2 of 3")
+        #expect(TrmnlPresentation.caption(for: .fixture()) == "Device abcdef12")
     }
 
     @Test("Links open the plugin on trmnl.com and the web app's screens page")

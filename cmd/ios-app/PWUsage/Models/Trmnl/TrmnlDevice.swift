@@ -1,5 +1,26 @@
 import Foundation
 
+/// Which parts of the site's data a Trmnl screen shows. Sent back unchanged to preview the screen.
+struct TrmnlComponentConfig: Codable, Equatable, Sendable {
+    let showLiveGrid: Bool
+    let showLiveSolar: Bool
+    let showLiveBattery: Bool
+    let showEnergyChart: Bool
+    let showBatterySoc: Bool
+    let showEstimatedBill: Bool
+    let showLoadTiming: Bool
+    let batterySocMode: String
+}
+
+/// The screen a device last fetched, out of the screens it rotates through.
+struct TrmnlScreen: Codable, Equatable, Sendable {
+    let name: String
+    /// Zero-based position in the rotation.
+    let index: Int
+    let count: Int
+    let componentConfig: TrmnlComponentConfig
+}
+
 /// A Trmnl device that finished connecting to a site.
 struct TrmnlDevice: Codable, Equatable, Identifiable, Sendable {
     let id: Int
@@ -8,6 +29,7 @@ struct TrmnlDevice: Codable, Equatable, Identifiable, Sendable {
     let pluginSettingId: Int
     /// Nil when the server could not date the install.
     let connectedAt: Date?
+    let screen: TrmnlScreen
 }
 
 struct TrmnlDevicesResponse: Decodable, Equatable, Sendable {
@@ -22,6 +44,6 @@ struct TrmnlPreviewResponse: Decodable, Equatable, Sendable {
 
 protocol MobileTrmnlAPI: Sendable {
     func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice]
-    /// The HTML document of the site's Trmnl screen.
-    func fetchTrmnlPreview(siteID: String) async throws -> String
+    /// The HTML document of a Trmnl screen for the site: the one `screen` describes, or the default when nil.
+    func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String
 }

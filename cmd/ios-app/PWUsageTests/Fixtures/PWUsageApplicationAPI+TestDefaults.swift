@@ -19,7 +19,7 @@ extension PWUsageApplicationAPI {
     /// Fakes that predate Trmnl management have no devices to list.
     func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice] { [] }
 
-    func fetchTrmnlPreview(siteID: String) async throws -> String {
+    func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
         throw PWUsageAPIError.invalidResponse
     }
 }

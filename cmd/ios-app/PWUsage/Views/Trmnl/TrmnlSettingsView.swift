@@ -32,6 +32,7 @@ struct TrmnlSettingsView: View {
         .navigationTitle(TrmnlPresentation.title)
         .inlineNavigationTitle()
         .task { await model.load() }
+        .task(id: model.selectedDeviceID) { await model.loadSelectedPreview() }
         .refreshable { await model.load() }
         .onChange(of: scenePhase) { _, phase in
             // Back from trmnl.com, where a device may have just been added.
@@ -47,18 +48,28 @@ struct TrmnlSettingsView: View {
     }
 
     @ViewBuilder private var previewRow: some View {
-        switch model.preview {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .aspectRatio(TrmnlPreview.screenSize.width / TrmnlPreview.screenSize.height, contentMode: .fit)
-        case .ready(let document):
-            TrmnlPreview(document: document)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
-                .accessibilityLabel("Preview of your Trmnl screen")
-        case .unavailable:
-            Text(TrmnlPresentation.previewUnavailable).font(.footnote).foregroundStyle(.secondary)
+        if case .loaded(let devices) = model.devices, !devices.isEmpty {
+            carousel(devices)
+        } else {
+            TrmnlPreviewContent(state: model.preview(for: nil))
+        }
+    }
+
+    /// One page per device, each showing the screen that device is on. Swiping moves the highlight to
+    /// the device's row below.
+    private func carousel(_ devices: [TrmnlDevice]) -> some View {
+        VStack(spacing: 8) {
+            TabView(selection: $model.selectedDeviceID) {
+                ForEach(devices) { device in
+                    TrmnlPreviewContent(state: model.preview(for: device))
+                        .tag(Optional(device.id))
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: devices.count > 1 ? .always : .never))
+            .aspectRatio(TrmnlPreview.screenSize.width / TrmnlPreview.screenSize.height, contentMode: .fit)
+            if let device = model.selectedDevice {
+                Text(TrmnlPresentation.caption(for: device)).font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -83,7 +94,13 @@ struct TrmnlSettingsView: View {
             }
         case .loaded(let devices):
             Section(TrmnlPresentation.devicesHeader) {
-                ForEach(devices) { deviceRow($0) }
+                ForEach(devices) { device in
+                    deviceRow(device)
+                        .listRowBackground(device.id == model.selectedDeviceID ? Color.emphasis.opacity(0.15) : nil)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation { model.selectedDeviceID = device.id } }
+                        .accessibilityAddTraits(device.id == model.selectedDeviceID ? .isSelected : [])
+                }
             }
         }
     }
@@ -114,7 +131,7 @@ struct TrmnlSettingsView: View {
 
         func fetchTrmnlDevices(siteID _: String) async throws -> [TrmnlDevice] { devices }
 
-        func fetchTrmnlPreview(siteID _: String) async throws -> String {
+        func fetchTrmnlPreview(siteID _: String, screen _: TrmnlComponentConfig?) async throws -> String {
             """
             <!doctype html><html><head><meta name="viewport" content="width=800">
             <style>body{margin:0;width:800px;height:480px;font:48px sans-serif;display:flex;
@@ -123,14 +140,24 @@ struct TrmnlSettingsView: View {
         }
     }
 
+    private func sampleDevice(id: Int, uuid: String, screenIndex: Int, screenCount: Int) -> TrmnlDevice {
+        TrmnlDevice(
+            id: id, uuid: uuid, pluginSettingId: id + 6, connectedAt: .now,
+            screen: TrmnlScreen(
+                name: "Screen \(screenIndex + 1)", index: screenIndex, count: screenCount,
+                componentConfig: TrmnlComponentConfig(
+                    showLiveGrid: true, showLiveSolar: true, showLiveBattery: true, showEnergyChart: false,
+                    showBatterySoc: false, showEstimatedBill: true, showLoadTiming: false, batterySocMode: "glyph")))
+    }
+
     #Preview("Trmnl devices") {
         NavigationStack {
             TrmnlSettingsView(
                 siteID: "preview-home",
                 access: TrmnlSettingsAccess(
                     api: TrmnlPreviewAPI(devices: [
-                        TrmnlDevice(id: 1, uuid: "abcdef12-0000", pluginSettingId: 7, connectedAt: .now),
-                        TrmnlDevice(id: 2, uuid: "12345678-0000", pluginSettingId: 8, connectedAt: nil)
+                        sampleDevice(id: 1, uuid: "abcdef12-0000", screenIndex: 1, screenCount: 3),
+                        sampleDevice(id: 2, uuid: "12345678-0000", screenIndex: 0, screenCount: 1)
                     ]),
                     origin: URL(filePath: "/")))
         }

@@ -8,14 +8,23 @@ struct TrmnlDeviceContractTests {
     func decodesDevices() throws {
         let json = """
         {"devices":[
-          {"id":2,"uuid":"aaaaaaaa-1111","pluginSettingId":20,"connectedAt":"2026-11-03T15:00:00.000Z"},
-          {"id":3,"uuid":"bbbbbbbb-2222","pluginSettingId":30,"connectedAt":null}
+          {"id":2,"uuid":"aaaaaaaa-1111","pluginSettingId":20,"connectedAt":"2026-11-03T15:00:00.000Z",
+           "screen":{"name":"Bill","index":1,"count":3,"componentConfig":{"showLiveGrid":false,"showLiveSolar":false,
+           "showLiveBattery":false,"showEnergyChart":false,"showBatterySoc":false,"showEstimatedBill":true,
+           "showLoadTiming":false,"batterySocMode":"chart"}}},
+          {"id":3,"uuid":"bbbbbbbb-2222","pluginSettingId":30,"connectedAt":null,
+           "screen":{"name":"Screen 1","index":0,"count":1,"componentConfig":{"showLiveGrid":true,"showLiveSolar":true,
+           "showLiveBattery":true,"showEnergyChart":false,"showBatterySoc":false,"showEstimatedBill":false,
+           "showLoadTiming":false,"batterySocMode":"glyph"}}}
         ]}
         """
         let response = try MobileContractDecoder.make().decode(TrmnlDevicesResponse.self, from: Data(json.utf8))
         #expect(response.devices.map(\.id) == [2, 3])
         #expect(response.devices[0].connectedAt == Date(timeIntervalSince1970: 1_793_718_000))
         #expect(response.devices[1].connectedAt == nil)
+        #expect(response.devices[0].screen.name == "Bill")
+        #expect(response.devices[0].screen.componentConfig.showEstimatedBill)
+        #expect(response.devices[0].screen.componentConfig.batterySocMode == "chart")
     }
 
     @Test("A preview answer without a document still decodes")

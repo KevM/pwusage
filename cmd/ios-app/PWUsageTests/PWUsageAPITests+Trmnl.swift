@@ -8,11 +8,20 @@ extension PWUsageAPITests {
         var recorded: URLRequest?
         StubURLProtocol.requestHandler = { request in
             recorded = request
-            let json = #"{"devices":[{"id":4,"uuid":"abcdef12-0000","pluginSettingId":9,"connectedAt":null}]}"#
+            let json = """
+            {"devices":[{"id":4,"uuid":"abcdef12-0000","pluginSettingId":9,"connectedAt":null,
+              "screen":{"name":"Screen 2","index":1,"count":3,"componentConfig":{"showLiveGrid":true,
+              "showLiveSolar":true,"showLiveBattery":true,"showEnergyChart":false,"showBatterySoc":false,
+              "showEstimatedBill":false,"showLoadTiming":false,"batterySocMode":"glyph"}}}]}
+            """
             return (try Self.fillResponse(request, status: 200), Data(json.utf8))
         }
         let devices = try await api.fetchTrmnlDevices(siteID: "site 1")
-        #expect(devices == [TrmnlDevice(id: 4, uuid: "abcdef12-0000", pluginSettingId: 9, connectedAt: nil)])
+        #expect(devices.count == 1)
+        #expect(devices.first?.id == 4)
+        #expect(devices.first?.screen.index == 1)
+        #expect(devices.first?.screen.count == 3)
+        #expect(devices.first?.screen.componentConfig == .fixture())
         #expect(recorded?.httpMethod == "GET")
         #expect(recorded?.url?.path == "/api/site/site 1/trmnl-devices")
         #expect(recorded?.url?.absoluteString.contains("site%201") == true)
@@ -38,7 +47,7 @@ extension PWUsageAPITests {
             let json = #"{"markup":"<p/>","document":"<!doctype html><p/>"}"#
             return (try Self.fillResponse(request, status: 200), Data(json.utf8))
         }
-        let document = try await api.fetchTrmnlPreview(siteID: "site-1")
+        let document = try await api.fetchTrmnlPreview(siteID: "site-1", screen: nil)
         #expect(document == "<!doctype html><p/>")
         #expect(recorded?.url?.path == "/api/trmnl/markup")
         let query = URLComponents(url: try #require(recorded?.url), resolvingAgainstBaseURL: false)?.queryItems
@@ -50,6 +59,23 @@ extension PWUsageAPITests {
         StubURLProtocol.requestHandler = { request in
             (try Self.fillResponse(request, status: 200), Data(#"{"markup":"<p/>"}"#.utf8))
         }
-        await #expect(throws: PWUsageAPIError.invalidResponse) { _ = try await api.fetchTrmnlPreview(siteID: "s") }
+        await #expect(throws: PWUsageAPIError.invalidResponse) {
+            _ = try await api.fetchTrmnlPreview(siteID: "s", screen: nil)
+        }
+    }
+
+    @Test("A device's screen is sent as the component config to preview")
+    func previewSendsComponentConfig() async throws {
+        var recorded: URLRequest?
+        StubURLProtocol.requestHandler = { request in
+            recorded = request
+            return (try Self.fillResponse(request, status: 200), Data(#"{"document":"<p/>"}"#.utf8))
+        }
+        _ = try await api.fetchTrmnlPreview(siteID: "site-1", screen: .fixture(showEstimatedBill: true))
+        let query = URLComponents(url: try #require(recorded?.url), resolvingAgainstBaseURL: false)?.queryItems
+        let json = try #require(query?.first { $0.name == "component_config" }?.value)
+        let sent = try JSONDecoder().decode(TrmnlComponentConfig.self, from: Data(json.utf8))
+        #expect(sent == .fixture(showEstimatedBill: true))
+        #expect(query?.first { $0.name == "site_id" }?.value == "site-1")
     }
 }

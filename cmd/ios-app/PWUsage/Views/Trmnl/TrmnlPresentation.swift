@@ -22,6 +22,13 @@ enum TrmnlPresentation {
         "Device \(device.uuid.prefix(8))"
     }
 
+    /// Under a preview: which device it is, and which of its screens when it rotates through several.
+    static func caption(for device: TrmnlDevice) -> String {
+        let screen = device.screen
+        guard screen.count > 1 else { return name(for: device) }
+        return "\(name(for: device)) · Screen \(screen.index + 1) of \(screen.count)"
+    }
+
     /// The day the device connected, read in UTC like the web app so both name the same day.
     static func connectedLabel(for device: TrmnlDevice, locale: Locale = .current) -> String? {
         guard let date = device.connectedAt else { return nil }

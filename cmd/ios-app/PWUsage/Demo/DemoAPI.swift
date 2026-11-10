@@ -92,7 +92,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
     /// The demo hides Trmnl settings, so nothing asks for devices.
     func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice] { [] }
 
-    func fetchTrmnlPreview(siteID: String) async throws -> String {
+    func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
         throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo has no Trmnl")
     }
 
