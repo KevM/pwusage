@@ -76,7 +76,7 @@ extension DashboardCoordinator {
         let importIsPending = live.response?.historyRefresh?.status == .pending
         let usesShortInterval = !usesLivePowerEndpoint || (revalidatingHistory && historyIsStale) || importIsPending
         let interval = usesShortInterval ? Self.liveInterval : Self.summaryInterval
-        guard trigger.skipsCadence
+        guard trigger.skipsCadence || liveAwaitsFetch
             || live.cadence.isDue(at: cadenceNow(), interval: .seconds(interval)) else { return }
         refreshSettled = false
         let siteID = selectedSiteID
@@ -174,9 +174,9 @@ extension DashboardCoordinator {
         switch trigger {
         case .userGesture, .automaticRecovery: due = true
         case .screenAppearance:
-            due = bill.cadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval))
+            due = billAwaitsFetch || bill.cadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval))
         case .scheduled:
-            due = bill.cadence.isDue(at: cadence, interval: .seconds(Self.billInterval))
+            due = billAwaitsFetch || bill.cadence.isDue(at: cadence, interval: .seconds(Self.billInterval))
                 || (energyDataIsAgingForForecast(at: requestTime)
                     && bill.cadence.isDue(at: cadence, interval: .seconds(Self.billMinimumInterval)))
         }
@@ -209,7 +209,7 @@ extension DashboardCoordinator {
             return
         }
         let due = power.cadence.isDue(at: cadenceNow(), interval: .seconds(Self.livePowerInterval))
-        guard force || (due && livePowerIsVisible) else { return }
+        guard force || ((due || powerAwaitsFetch) && livePowerIsVisible) else { return }
         let generation = siteGeneration
         let siteID = selectedSiteID
         powerTask = Task {

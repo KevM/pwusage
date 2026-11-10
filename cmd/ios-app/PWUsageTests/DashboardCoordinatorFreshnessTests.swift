@@ -105,6 +105,56 @@ extension DashboardCoordinatorTests {
         #expect(cache.snapshot.live["site-1"]?.savedAt == fetchedAt)
     }
 
+    @Test("Returning after a gap fetches the summary and bill despite their 30 minute cadence")
+    func returnAfterGapFetchesWaitingEndpoints() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        coordinator.scenePhaseChanged(isActive: false)
+        clock.advance(minutes: 20)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled && coordinator.bill.freshReadingWait == nil }
+        #expect(api.summary.liveSiteIDs.count == 2)
+        #expect(api.summary.billSiteIDs.count == 2)
+    }
+
+    @Test("Returning within 15 minutes keeps the readings and sends no extra summary or bill")
+    func quickReturnKeepsReadings() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        coordinator.scenePhaseChanged(isActive: false)
+        // Under the summary's 5 minute stale-history interval, so only the freshness
+        // rule could cause an extra request here.
+        clock.advance(minutes: 4)
+        coordinator.scenePhaseChanged(isActive: true)
+        #expect(coordinator.live.freshReadingWait == nil)
+        #expect(coordinator.bill.freshReadingWait == nil)
+        try await eventually { coordinator.refreshSettled }
+        #expect(api.summary.liveSiteIDs.count == 1)
+        #expect(api.summary.billSiteIDs.count == 1)
+    }
+
+    @Test("A failed wait goes back to the normal cadence instead of retrying every poll")
+    func failedWaitUsesNormalCadence() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        api.summary.billError = URLError(.notConnectedToInternet)
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(coordinator.bill.freshReadingWait?.hasFailed == true)
+        for _ in 0 ..< 3 {
+            clock.advance(minutes: 1)
+            await coordinator.refreshDue()
+        }
+        #expect(api.summary.billSiteIDs.count == 1)
+    }
+
     @Test("Returning after more than 15 minutes holds the readings in memory")
     func foregroundAfterGapHoldsReadings() async throws {
         let clock = DashboardTestClock()

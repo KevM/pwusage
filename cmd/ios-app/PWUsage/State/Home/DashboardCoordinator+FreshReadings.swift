@@ -27,6 +27,17 @@ extension DashboardCoordinator {
         }
     }
 
+    /// Whether this endpoint must be fetched now, whatever its cadence: Home is
+    /// waiting on it and the wait has not failed. A failed wait returns to the
+    /// normal cadence, so a dead connection is not retried on every poll.
+    private static func awaitsFetch(_ wait: FreshReadingWait?) -> Bool {
+        wait.map { !$0.hasFailed } ?? false
+    }
+
+    var liveAwaitsFetch: Bool { Self.awaitsFetch(live.freshReadingWait) }
+    var billAwaitsFetch: Bool { Self.awaitsFetch(bill.freshReadingWait) }
+    var powerAwaitsFetch: Bool { Self.awaitsFetch(power.freshReadingWait) }
+
     private static func wait(response: (some Equatable)?, lastSuccess: Date?, at date: Date) -> FreshReadingWait? {
         guard response != nil, let lastSuccess,
               date.timeIntervalSince(lastSuccess) <= freshReadingLimit else {
