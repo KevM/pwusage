@@ -84,6 +84,22 @@ struct TrmnlSettingsModelTests {
         #expect(model.selectedDeviceID == 1)
     }
 
+    @Test("The Settings row has a device count only once one is connected")
+    func connectedDeviceCount() async {
+        let api = FakeTrmnlAPI(devices: .success([]))
+        let model = TrmnlSettingsModel(siteID: "s", api: api)
+        #expect(model.connectedDeviceCount == nil)
+        await model.reloadDevices()
+        #expect(model.connectedDeviceCount == nil)
+        api.devices = .success([first, second])
+        await model.reloadDevices()
+        #expect(model.connectedDeviceCount == 2)
+        api.devices = .failure(URLError(.timedOut))
+        await model.reloadDevices()
+        #expect(model.connectedDeviceCount == 2)
+        #expect(api.previewRequests.isEmpty)
+    }
+
     @Test("Pulling to refresh fetches the previews again")
     func refreshRefetches() async {
         let api = FakeTrmnlAPI(devices: .success([first]))

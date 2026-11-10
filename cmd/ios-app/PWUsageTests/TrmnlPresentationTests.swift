@@ -18,6 +18,12 @@ struct TrmnlPresentationTests {
         #expect(TrmnlPresentation.connectedLabel(for: undated) == nil)
     }
 
+    @Test("The Settings row counts devices")
+    func deviceCountLabel() {
+        #expect(TrmnlPresentation.deviceCountLabel(1) == "1 device")
+        #expect(TrmnlPresentation.deviceCountLabel(3) == "3 devices")
+    }
+
     @Test("The caption names the device and, when it rotates, the screen it is on")
     func caption() {
         let rotating = TrmnlDevice.fixture(screenIndex: 1, screenCount: 3)

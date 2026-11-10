@@ -9,14 +9,9 @@ struct TrmnlSettingsAccess {
 /// Settings > Trmnl: a preview of the site's screen and its connected devices.
 struct TrmnlSettingsView: View {
     let origin: URL
-    @State private var model: TrmnlSettingsModel
+    @Bindable var model: TrmnlSettingsModel
     @State private var screensDevice: TrmnlDevice?
     @Environment(\.scenePhase) private var scenePhase
-
-    init(siteID: String, access: TrmnlSettingsAccess) {
-        origin = access.origin
-        _model = State(initialValue: TrmnlSettingsModel(siteID: siteID, api: access.api))
-    }
 
     var body: some View {
         List {
@@ -153,21 +148,21 @@ struct TrmnlSettingsView: View {
     #Preview("Trmnl devices") {
         NavigationStack {
             TrmnlSettingsView(
-                siteID: "preview-home",
-                access: TrmnlSettingsAccess(
+                origin: URL(filePath: "/"),
+                model: TrmnlSettingsModel(
+                    siteID: "preview-home",
                     api: TrmnlPreviewAPI(devices: [
                         sampleDevice(id: 1, uuid: "abcdef12-0000", screenIndex: 1, screenCount: 3),
                         sampleDevice(id: 2, uuid: "12345678-0000", screenIndex: 0, screenCount: 1)
-                    ]),
-                    origin: URL(filePath: "/")))
+                    ])))
         }
     }
 
     #Preview("Trmnl first time") {
         NavigationStack {
             TrmnlSettingsView(
-                siteID: "preview-home",
-                access: TrmnlSettingsAccess(api: TrmnlPreviewAPI(devices: []), origin: URL(filePath: "/")))
+                origin: URL(filePath: "/"),
+                model: TrmnlSettingsModel(siteID: "preview-home", api: TrmnlPreviewAPI(devices: [])))
         }
     }
 #endif

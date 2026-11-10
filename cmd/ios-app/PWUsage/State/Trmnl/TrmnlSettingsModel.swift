@@ -43,6 +43,13 @@ final class TrmnlSettingsModel {
         return devices.first { $0.id == selectedDeviceID }
     }
 
+    /// How many devices are connected, for the Settings row; nil until some are, so the row stays quiet
+    /// while loading, on a failure and for a site with none.
+    var connectedDeviceCount: Int? {
+        guard case .loaded(let devices) = devices, !devices.isEmpty else { return nil }
+        return devices.count
+    }
+
     /// The preview for `device`, or for the site's default screen when nil.
     func preview(for device: TrmnlDevice?) -> Preview {
         previews[Self.key(for: device)] ?? .loading

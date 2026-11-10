@@ -22,6 +22,8 @@ struct SettingsView: View {
     var trmnl: TrmnlSettingsAccess?
 
     @State private var isConfirmingSignOut = false
+    /// Loaded when Settings opens, for the row's device count, and handed to the Trmnl screen.
+    @State private var trmnlModel: TrmnlSettingsModel?
 
     var body: some View {
         List {
@@ -70,7 +72,13 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.solar-system")
                 if trmnl != nil {
                     NavigationLink(value: SettingsDestination.trmnl) {
-                        Label(TrmnlPresentation.title, systemImage: "rectangle.on.rectangle")
+                        LabeledContent {
+                            if let count = trmnlModel?.connectedDeviceCount {
+                                Text(TrmnlPresentation.deviceCountLabel(count))
+                            }
+                        } label: {
+                            Label(TrmnlPresentation.title, systemImage: "rectangle.on.rectangle")
+                        }
                     }
                     .accessibilityIdentifier("settings.trmnl")
                 }
@@ -88,6 +96,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .inlineNavigationTitle()
+        .task(id: site.id) { await loadTrmnlDevices() }
         .navigationDestination(for: SettingsDestination.self) { destination in
             switch destination {
             case .ratePlans:
@@ -102,14 +111,22 @@ struct SettingsView: View {
                 BillingDaySettingsView(site: site, save: onSaveBillingDay)
                     .id(site.id)
             case .trmnl:
-                if let trmnl {
-                    TrmnlSettingsView(siteID: site.id, access: trmnl)
+                if let trmnl, let trmnlModel {
+                    TrmnlSettingsView(origin: trmnl.origin, model: trmnlModel)
                         .id(site.id)
                 }
             case .about:
                 AboutSheet()
             }
         }
+    }
+
+    /// Counts the site's Trmnl devices for the row. Only devices: the previews wait for the Trmnl screen.
+    private func loadTrmnlDevices() async {
+        guard let trmnl else { return }
+        let model = TrmnlSettingsModel(siteID: site.id, api: trmnl.api)
+        trmnlModel = model
+        await model.reloadDevices()
     }
 
     private var signOutSection: some View {

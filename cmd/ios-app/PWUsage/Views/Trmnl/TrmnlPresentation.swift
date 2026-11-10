@@ -18,6 +18,10 @@ enum TrmnlPresentation {
         deviceCount == 0 ? addTitle : addAnotherTitle
     }
 
+    static func deviceCountLabel(_ count: Int) -> String {
+        count == 1 ? "1 device" : "\(count) devices"
+    }
+
     static func name(for device: TrmnlDevice) -> String {
         "Device \(device.uuid.prefix(8))"
     }
