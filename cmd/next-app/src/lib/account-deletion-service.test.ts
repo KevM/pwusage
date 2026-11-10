@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     invalidateCache: vi.fn(),
     repairConnection: vi.fn(),
     createClient: vi.fn(),
+    createMemberClient: vi.fn(),
     restoreBattery: vi.fn(),
     getSitesForDeletion: vi.fn(),
     repoDelete: vi.fn(),
@@ -22,6 +23,9 @@ vi.mock('./battery-hold-repo', () => ({
 vi.mock('./battery-hold-service', () => ({
     createSiteTeslaClient: mocks.createClient,
     restoreBattery: mocks.restoreBattery,
+}));
+vi.mock('./tesla-client-factory', () => ({
+    createTeslaClientForSiteMember: mocks.createMemberClient,
 }));
 vi.mock('./account-deletion-repo', () => {
     class ActiveBatterySaverError extends Error {}
@@ -48,6 +52,7 @@ describe('account deletion service', () => {
             { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: null },
         ]);
         mocks.createClient.mockResolvedValue({ tesla: true });
+        mocks.createMemberClient.mockResolvedValue(null);
         mocks.repoDelete.mockResolvedValue({ deletedSiteIds: ['site-1'], survivingSiteIds: [] });
         mocks.repairConnection.mockResolvedValue(null);
     });
@@ -110,6 +115,19 @@ describe('account deletion service', () => {
             actorUserId: 'user-1',
             reason: 'manual',
         }));
+    });
+
+    it('restores with the departing member\'s own grant before the site connection', async () => {
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+        ]);
+        const memberClient = { member: true };
+        mocks.createMemberClient.mockResolvedValue(memberClient);
+        mocks.restoreBattery.mockResolvedValue({ status: 'ok' });
+        await deleteAccount('user-1');
+        expect(mocks.createMemberClient).toHaveBeenCalledWith('site-1', 'user-1');
+        expect(mocks.createClient).not.toHaveBeenCalled();
+        expect(mocks.restoreBattery).toHaveBeenCalledWith(expect.objectContaining({ client: memberClient }));
     });
 
     it('keeps the account when Tesla needs reconnecting', async () => {

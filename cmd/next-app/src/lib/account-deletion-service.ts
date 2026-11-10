@@ -3,6 +3,7 @@ import { BatteryHoldRepo } from './battery-hold-repo';
 import { createSiteTeslaClient, restoreBattery, type RestoreResult } from './battery-hold-service';
 import { accountFingerprint, logEvent } from './observability';
 import { SiteRepo } from './site-repo';
+import { createTeslaClientForSiteMember } from './tesla-client-factory';
 
 export interface AccountDeletionSite {
     id: string;
@@ -29,7 +30,9 @@ export async function getAccountDeletionSites(userId: string): Promise<AccountDe
 }
 
 async function restoreSiteBatterySaver(siteId: string, userId: string, repo: BatteryHoldRepo): Promise<RestoreResult> {
-    const client = await createSiteTeslaClient(siteId);
+    // The departing member's own grant first: on a shared site the connection user may be
+    // read-only (commands denied) while the leaving member can still send commands.
+    const client = (await createTeslaClientForSiteMember(siteId, userId)) ?? (await createSiteTeslaClient(siteId));
     if (!client) return { status: 'needs_reauth' };
     return restoreBattery({ client, repo, siteId, actorUserId: userId, reason: 'manual' });
 }

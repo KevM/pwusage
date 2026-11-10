@@ -53,8 +53,7 @@ async function seedAccount(userId: string, siteId: string, name = 'Home'): Promi
   const db = local.database;
   await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES ($1, $2, \'active\')', [userId, `rt-${userId}`]);
   await db.query(
-    'INSERT INTO "Site" (id, user_id, name, tesla_hardware_id, tesla_connection_user_id) VALUES ($1, $2, $3, $4, None)'
-      .replace('None', 'NULL'),
+    'INSERT INTO "Site" (id, user_id, name, tesla_hardware_id, tesla_connection_user_id) VALUES ($1, $2, $3, $4, NULL)',
     [siteId, userId, name, `hw-${siteId}`],
   );
   await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES ($1, $2, $1)', [siteId, userId]);
