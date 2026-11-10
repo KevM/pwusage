@@ -185,7 +185,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         _ = try await perform(request)
     }
 
-    private func makeSiteURL(siteID: String, suffix: String) throws -> URL {
+    func makeSiteURL(siteID: String, suffix: String) throws -> URL {
         let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/%?#"))
         guard !siteID.isEmpty, let encodedID = siteID.addingPercentEncoding(withAllowedCharacters: allowed),
               var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
@@ -295,7 +295,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         try await request(url: makeURL(path: path))
     }
 
-    private func request(url: URL) async throws -> Data {
+    func request(url: URL) async throws -> Data {
         try await perform(URLRequest(url: url))
     }
 
@@ -323,7 +323,7 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         return data
     }
 
-    private func makeURL(path: String, siteID: String? = nil, extra: [URLQueryItem] = []) throws -> URL {
+    func makeURL(path: String, siteID: String? = nil, extra: [URLQueryItem] = []) throws -> URL {
         guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
             throw PWUsageAPIError.invalidResponse
         }

@@ -38,6 +38,8 @@ final class PWUsageAppModel: ObservableObject {
 
     let authService: MobileAuthService
     let api: any PWUsageApplicationAPI
+    /// Where the web app lives, for the pages the app shows in a sheet.
+    let apiOrigin: URL
     let userDefaults: UserDefaults
     let cache: DashboardCache?
     /// Replaced on each external route (widget, Battery Saver control) so every
@@ -104,6 +106,7 @@ final class PWUsageAppModel: ObservableObject {
         self.controlSiteStore = controlSiteStore
         self.liveActivities = liveActivities
         self.api = api
+        apiOrigin = configuration.apiOrigin
         self.userDefaults = userDefaults
         self.cache = cache
         self.forecastService = forecastService

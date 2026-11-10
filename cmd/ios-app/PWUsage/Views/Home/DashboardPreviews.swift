@@ -57,6 +57,10 @@
         ) async throws -> MobileSolarHistoryResponse {
             .enabled(timeZone: .gmt, days: [], nextFrom: nil)
         }
+        func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice] { [] }
+        func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
+            throw URLError(.notConnectedToInternet)
+        }
         func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
             MobileBillingDay(billingDay: day, billingDayConfirmed: true)
         }

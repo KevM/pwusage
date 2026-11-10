@@ -136,7 +136,8 @@ struct AppTabView: View {
                          siteHistoryDebug: siteHistoryDebug,
                          onLocationSaved: model.homeLocationSaved,
                          onSaveBillingDay: { try await model.saveBillingDay($0, siteID: site.id) },
-                         onRevealSeen: model.solarSystemRevealSeen)
+                         onRevealSeen: model.solarSystemRevealSeen,
+                         trmnl: model.isDemo ? nil : TrmnlSettingsAccess(api: model.api, origin: model.apiOrigin))
         }
     }
 
