@@ -43,6 +43,21 @@ describe('SiteMembershipService login reconciliation', () => {
         expect(importer.ensureSite).toHaveBeenCalledWith('10');
     });
 
+    it('immediately removes an observed member whose live product list omits their mapped site', async () => {
+        const departed = { site_id: 'old-home', user_id: 'seller', tesla_energy_site_id: '10',
+            is_active: true, refresh_token: 'r', auth_status: 'active', tesla_refresh_state: 'ready' };
+        members.membersForHardware.mockResolvedValueOnce([departed]).mockResolvedValueOnce([]);
+        members.commitDecision.mockResolvedValue({ kind: 'fresh', siteId: '20' });
+        clientForUser.mockResolvedValue({ getProducts: async () => [] });
+
+        expect(await service().syncLogin('buyer', [product(20)], fetchedAt)).toEqual(['20']);
+        expect(sites.removeMemberIfMissing).toHaveBeenCalledWith('old-home', 'seller', '10', expect.any(Date));
+        expect(members.commitDecision).toHaveBeenCalledWith(expect.objectContaining({
+            verifiedSiteId: null, observedMembers: [], teslaId: '20', hardwareId: 'hardware-1',
+        }));
+        expect(importer.ensureSite).toHaveBeenCalledWith('20');
+    });
+
     it('joins only after an existing member’s own product list confirms their mapping', async () => {
         const member = { site_id: 'home', user_id: 'owner', tesla_energy_site_id: '10',
             is_active: true, refresh_token: 'r', auth_status: 'active', tesla_refresh_state: 'ready' };

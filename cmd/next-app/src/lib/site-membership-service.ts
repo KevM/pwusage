@@ -67,8 +67,9 @@ export class SiteMembershipService {
     private async resolveProduct(userId: string, teslaId: string, info: EnergySiteInfo,
         hardwareId: string | null, fetchedAt: Date) {
         for (let attempt = 0; attempt < 2; attempt++) {
-            const observedMembers = hardwareId ? await this.members.membersForHardware(hardwareId) : [];
+            let observedMembers = hardwareId ? await this.members.membersForHardware(hardwareId) : [];
             let verifiedSiteId: string | null = null;
+            let removedAny = false;
             let checked = 0;
             for (const member of observedMembers) {
                 if (member.user_id === userId || !usable(member)) continue;
@@ -76,11 +77,18 @@ export class SiteMembershipService {
                 checked++;
                 const client = await this.clientForUser(member.user_id);
                 if (!client) throw new Error('Usable site member has no Tesla client');
+                const checkedAt = new Date();
                 const products = await client.getProducts();
                 if (products.some(product => String(product.energy_site_id) === member.tesla_energy_site_id)) {
                     verifiedSiteId = member.site_id;
                     break;
                 }
+                // A live list proves this member no longer has the Powerwall in Tesla.
+                if (await this.sites.removeMemberIfMissing(member.site_id, member.user_id,
+                    member.tesla_energy_site_id, checkedAt)) removedAny = true;
+            }
+            if (!verifiedSiteId && removedAny && hardwareId) {
+                observedMembers = await this.members.membersForHardware(hardwareId);
             }
             const decision = await this.members.commitDecision({ userId, teslaId, info,
                 hardwareId, observedMembers, verifiedSiteId, fetchedAt });
