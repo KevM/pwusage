@@ -29,7 +29,7 @@ export interface SiteServiceDeps {
     getAuthState?: (userId: string) => Promise<UserAuthState | null>;
     energyRepo?: Pick<EnergyRepo, 'hasData' | 'getUsageByTOU'>;
     teslaTokenRepo?: Pick<TeslaTokenRepo, 'getLockedUserRefreshHandler'>;
-    trmnlService?: Pick<TrmnlService, 'getInstallationBySiteId'>;
+    trmnlService?: Pick<TrmnlService, 'getInstallationsBySiteId'>;
     teslaClientCreator?: (config: TeslaClientConfig) => TeslaClient;
     importerCreator?: (client: TeslaClient) => Pick<Importer, 'ensureSite'>;
 }
@@ -43,6 +43,7 @@ export type SitePageDataResult =
         status: 'ready';
         site: SiteWithTariffs;
         installation: TrmnlInstallation | undefined;
+        installations: TrmnlInstallation[];
         billingDay: number;
         prevDateStr: string;
         nextDateStr: string;
@@ -276,12 +277,14 @@ export class SiteService {
 
         const isCurrentPeriod = siteNow >= start && siteNow < end;
 
-        const installation = await trmnlService.getInstallationBySiteId(finalSite.id, { includeTokens: false });
+        const installations = await trmnlService.getInstallationsBySiteId(finalSite.id, { includeTokens: false });
+        const installation = installations[0];
 
         return {
             status: 'ready',
             site: finalSite,
             installation,
+            installations,
             billingDay,
             prevDateStr: formatSiteDate(prevDate, finalSite.timezone),
             nextDateStr: formatSiteDate(nextDate, finalSite.timezone),

@@ -31,6 +31,16 @@ export class TrmnlInstallationRepo {
         return { installation, site };
     }
 
+    /** Every install on the site, in the order findBySiteId picks from (finished installs first, then newest). */
+    async findAllBySiteId(siteId: string): Promise<TrmnlInstallation[]> {
+        const { rows } = await pool.query(`
+            SELECT * FROM "TrmnlInstallation"
+            WHERE site_id = $1
+            ORDER BY (plugin_setting_id IS NOT NULL) DESC, created_at DESC, id DESC
+        `, [siteId]);
+        return rows as TrmnlInstallation[];
+    }
+
     async findBySiteId(siteId: string): Promise<TrmnlInstallation | undefined> {
         const { rows } = await pool.query(`
             SELECT * FROM "TrmnlInstallation" 

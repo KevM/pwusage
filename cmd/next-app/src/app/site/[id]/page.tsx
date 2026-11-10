@@ -97,7 +97,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
 
     const {
         site,
-        installation,
+        installations,
         billingDay,
         prevDateStr,
         nextDateStr,
@@ -167,7 +167,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                     />
                 }
                 settingsSlot={
-                    <SettingsView site={site} installation={installation} memberEmails={memberEmails} />
+                    <SettingsView site={site} installations={installations} memberEmails={memberEmails} />
                 }
             >
                 {/* Fallback or shared content could go here if needed */}

@@ -22,7 +22,7 @@ import { coercePositiveInt } from '@/lib/trmnl-component-config';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
-    installation: TrmnlInstallation | null | undefined;
+    installations: TrmnlInstallation[];
     memberEmails: string[];
 }
 
@@ -74,7 +74,14 @@ function extractPluginSettingId(installation: TrmnlInstallation | null | undefin
     return null;
 }
 
-export function SettingsView({ site, installation, memberEmails }: SettingsViewProps) {
+function formatDeviceDate(value: Date | string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+        ? ''
+        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+export function SettingsView({ site, installations, memberEmails }: SettingsViewProps) {
     const router = useRouter();
     const { toast } = useToast();
     const [previewHtml, setPreviewHtml] = useState('');
@@ -83,7 +90,13 @@ export function SettingsView({ site, installation, memberEmails }: SettingsViewP
     const [previewScale, setPreviewScale] = useState<number>(0.5);
     const [refreshLoading, setRefreshLoading] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-    const pluginSettingId = extractPluginSettingId(installation);
+    // Only devices that finished connecting; pending rows have nothing to open yet.
+    const devices = installations.flatMap(installation => {
+        const pluginSettingId = extractPluginSettingId(installation);
+        return installation.uuid && pluginSettingId
+            ? [{ id: installation.id, uuid: installation.uuid, pluginSettingId, createdAt: installation.created_at }]
+            : [];
+    });
 
     // Callback ref to render QR code with centered logo as soon as canvas mounts
     const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
@@ -256,28 +269,42 @@ export function SettingsView({ site, installation, memberEmails }: SettingsViewP
                         />
                     </div>
 
+                    {devices.length > 0 ? (
+                        <ul className="mb-4 divide-y divide-gray-200 dark:divide-slate-800 rounded-lg border border-gray-200 dark:border-slate-800" aria-label="Connected Trmnl devices">
+                            {devices.map(device => (
+                                <li key={device.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <p className="font-medium text-gray-900 dark:text-white">Device {device.uuid.slice(0, 8)}</p>
+                                        <p className="text-xs text-gray-500">Connected {formatDeviceDate(device.createdAt)}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <a href={`/trmnl/manage?uuid=${encodeURIComponent(device.uuid)}`}>
+                                            <Button renderAs="span" variant="outline" size="sm">Screens</Button>
+                                        </a>
+                                        <a
+                                            href={`https://trmnl.com/plugin_settings/${device.pluginSettingId}/edit`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                        >
+                                            <Button renderAs="span" size="sm">Open in Trmnl</Button>
+                                        </a>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : null}
+
                     <div className="flex gap-4 flex-col sm:flex-row">
-                        {installation ? (
-                            <a
-                                href={pluginSettingId
-                                    ? `https://trmnl.com/plugin_settings/${pluginSettingId}/edit`
-                                    : 'https://trmnl.com/dashboard'}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex-1"
-                            >
-                                <Button className="w-full" size="lg">Manage Trmnl Plugin</Button>
-                            </a>
-                        ) : (
-                            <a
-                                href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex-1"
-                            >
-                                <Button className="w-full" size="lg">Add Trmnl Plugin</Button>
-                            </a>
-                        )}
+                        <a
+                            href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1"
+                        >
+                            <Button className="w-full" size="lg">
+                                {devices.length > 0 ? 'Add another device' : 'Add Trmnl Plugin'}
+                            </Button>
+                        </a>
                         <a
                             href="https://trmnl.com"
                             target="_blank"
