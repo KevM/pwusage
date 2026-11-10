@@ -145,9 +145,10 @@ struct TrmnlSettingsView: View {
             return
         }
         guard editor?.device.id != device.id else { return }
-        let opened = model.makeEditor(for: device)
+        let opened = model.editor(for: device)
         editor = opened
-        await opened.load()
+        // A kept draft still has edits to send; a fresh editor has nothing yet and loads the server's screens.
+        if opened.loadState == .ready { _ = await opened.flush() } else { await opened.load() }
     }
 }
 

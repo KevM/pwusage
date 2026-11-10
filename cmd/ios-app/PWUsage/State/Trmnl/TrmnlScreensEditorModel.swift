@@ -22,6 +22,10 @@ final class TrmnlScreensEditorModel {
         case failed
     }
 
+    /// Waits out a quiet period. Injected so tests control when a wait ends instead of racing a clock.
+    typealias Sleep = @MainActor @Sendable (Duration) async throws -> Void
+    static let realSleep: Sleep = { try await Task.sleep(for: $0) }
+
     let device: TrmnlDevice
 
     private(set) var loadState = Load.loading
@@ -44,11 +48,13 @@ final class TrmnlScreensEditorModel {
     private let previewDelay: Duration
     private let saveDelay: Duration
     private let makeScreenID: () -> String
+    private let sleep: Sleep
 
     init(
         device: TrmnlDevice, siteID: String, api: any MobileTrmnlAPI,
         previewDelay: Duration = .milliseconds(500), saveDelay: Duration = .milliseconds(1500),
-        makeScreenID: @escaping () -> String = { "screen-\(Int(Date().timeIntervalSince1970 * 1000))" }
+        makeScreenID: @escaping () -> String = { "screen-\(Int(Date().timeIntervalSince1970 * 1000))" },
+        sleep: @escaping Sleep = TrmnlScreensEditorModel.realSleep
     ) {
         self.device = device
         self.siteID = siteID
@@ -56,6 +62,7 @@ final class TrmnlScreensEditorModel {
         self.previewDelay = previewDelay
         self.saveDelay = saveDelay
         self.makeScreenID = makeScreenID
+        self.sleep = sleep
     }
 
     var hasUnsavedChanges: Bool {
@@ -163,8 +170,8 @@ final class TrmnlScreensEditorModel {
 
     private func scheduleSave() {
         pendingSave?.cancel()
-        pendingSave = Task { [saveDelay] in
-            try? await Task.sleep(for: saveDelay)
+        pendingSave = Task { [saveDelay, sleep] in
+            try? await sleep(saveDelay)
             guard !Task.isCancelled else { return }
             _ = await save()
         }
@@ -198,8 +205,8 @@ final class TrmnlScreensEditorModel {
 
     private func schedulePreview() {
         pendingPreview?.cancel()
-        pendingPreview = Task { [previewDelay] in
-            try? await Task.sleep(for: previewDelay)
+        pendingPreview = Task { [previewDelay, sleep] in
+            try? await sleep(previewDelay)
             guard !Task.isCancelled else { return }
             await loadSelectedPreview()
         }

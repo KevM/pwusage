@@ -13,14 +13,15 @@ struct TrmnlScreensEditorModelTests {
 
     private func make(
         screens: [TrmnlManagedScreen]? = nil, delay: Duration = .milliseconds(40),
-        saveDelay: Duration = .milliseconds(60)
+        saveDelay: Duration = .milliseconds(60), sleeper: ManualSleeper? = nil
     ) -> (TrmnlScreensEditorModel, FakeScreensAPI) {
         let api = FakeScreensAPI(screens: screens ?? [screen("a"), screen("b", bill: true)])
         var nextID = 0
         let model = TrmnlScreensEditorModel(
             device: device, siteID: "site-1", api: api, previewDelay: delay, saveDelay: saveDelay,
             makeScreenID: { nextID += 1
-                return "new-\(nextID)" })
+                return "new-\(nextID)" },
+            sleep: sleeper?.sleep ?? TrmnlScreensEditorModel.realSleep)
         return (model, api)
     }
 
@@ -60,17 +61,22 @@ struct TrmnlScreensEditorModelTests {
         #expect(final.showEnergyChart && final.showLoadTiming && !final.showLiveGrid)
     }
 
-    @Test("Each further edit pushes the preview out again")
+    @Test("Each further edit pushes the preview out again, and only the last wait goes ahead")
     func editsExtendTheWait() async throws {
-        let (model, api) = make(delay: .milliseconds(120))
+        let sleeper = ManualSleeper()
+        let wait = Duration.seconds(20)
+        let (model, api) = make(delay: wait, saveDelay: .seconds(30), sleeper: sleeper)
         await model.load()
         try await eventually { api.previewRequests.count == 1 }
         model.update { $0.showLoadTiming = true }
-        try await Task.sleep(for: .milliseconds(70))
         model.update { $0.showEnergyChart = true }
-        try await Task.sleep(for: .milliseconds(70))
+        try await eventually { sleeper.waitingCount(for: wait) == 1 }
+        #expect(sleeper.requestedCount(for: wait) == 2)
         #expect(api.previewRequests.count == 1)
+        sleeper.finish(wait)
         try await eventually { api.previewRequests.count == 2 }
+        let final = try #require(api.previewRequests.last)
+        #expect(final.showLoadTiming && final.showEnergyChart)
     }
 
     @Test("Going back to a state already previewed reuses it without a request")
@@ -176,16 +182,21 @@ struct TrmnlScreensEditorModelTests {
         try await staysTrue(for: .milliseconds(150)) { api.saves.count == 1 }
     }
 
-    @Test("Each further edit pushes the save out again")
+    @Test("Each further edit pushes the save out again, and only the last wait goes ahead")
     func editsExtendTheSaveWait() async throws {
-        let (model, api) = make(saveDelay: .milliseconds(150))
+        let sleeper = ManualSleeper()
+        let wait = Duration.seconds(30)
+        let (model, api) = make(delay: .seconds(20), saveDelay: wait, sleeper: sleeper)
         await model.load()
         model.update { $0.showEnergyChart = true }
-        try await Task.sleep(for: .milliseconds(90))
         model.update { $0.showLoadTiming = true }
-        try await Task.sleep(for: .milliseconds(90))
+        try await eventually { sleeper.waitingCount(for: wait) == 1 }
+        #expect(sleeper.requestedCount(for: wait) == 2)
         #expect(api.saves.isEmpty)
+        sleeper.finish(wait)
         try await eventually { api.saves.count == 1 }
+        let saved = try #require(api.saves.first)
+        #expect(saved.screens[1].componentConfig.showEnergyChart && saved.screens[1].componentConfig.showLoadTiming)
     }
 
     @Test("Adding, deleting and moving a screen save at once")
@@ -291,5 +302,51 @@ private final class FakeScreensAPI: MobileTrmnlAPI, @unchecked Sendable {
         if saveLatency > .zero { try await Task.sleep(for: saveLatency) }
         if let saveFailure { throw saveFailure }
         saves.append(Saved(screens: screens, device: device, siteID: siteID))
+    }
+}
+
+/// Stands in for the clock: a wait ends only when the test says so, or when the model cancels it.
+@MainActor
+final class ManualSleeper {
+    private struct Waiter {
+        let id: Int
+        let duration: Duration
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private var waiters: [Waiter] = []
+    private var requests: [Duration] = []
+    private var nextID = 0
+
+    var sleep: TrmnlScreensEditorModel.Sleep {
+        { [self] duration in try await wait(duration) }
+    }
+
+    func waitingCount(for duration: Duration) -> Int { waiters.filter { $0.duration == duration }.count }
+    func requestedCount(for duration: Duration) -> Int { requests.filter { $0 == duration }.count }
+
+    /// Ends every wait of `duration` still going, as the clock reaching it would.
+    func finish(_ duration: Duration) {
+        let ending = waiters.filter { $0.duration == duration }
+        waiters.removeAll { $0.duration == duration }
+        for waiter in ending { waiter.continuation.resume() }
+    }
+
+    private func wait(_ duration: Duration) async throws {
+        let id = nextID
+        nextID += 1
+        requests.append(duration)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append(Waiter(id: id, duration: duration, continuation: continuation))
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancel(id) }
+        }
+    }
+
+    private func cancel(_ id: Int) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(throwing: CancellationError())
     }
 }

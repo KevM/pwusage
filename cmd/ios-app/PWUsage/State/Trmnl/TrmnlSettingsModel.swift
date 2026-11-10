@@ -17,6 +17,7 @@ final class TrmnlSettingsModel {
     var selectedDeviceID: Int?
     private(set) var defaultPreview = TrmnlPreviewState.loading
 
+    private var editors: [Int: TrmnlScreensEditorModel] = [:]
     private let siteID: String
     private let api: any MobileTrmnlAPI
 
@@ -37,8 +38,13 @@ final class TrmnlSettingsModel {
         return devices.count
     }
 
-    func makeEditor(for device: TrmnlDevice) -> TrmnlScreensEditorModel {
-        TrmnlScreensEditorModel(device: device, siteID: siteID, api: api)
+    /// The editor for `device`. One with edits the server does not have yet is kept and handed back, so leaving the
+    /// screen while offline does not lose them; otherwise a fresh one loads what the server has now.
+    func editor(for device: TrmnlDevice) -> TrmnlScreensEditorModel {
+        if let kept = editors[device.id], kept.hasUnsavedChanges { return kept }
+        let fresh = TrmnlScreensEditorModel(device: device, siteID: siteID, api: api)
+        editors[device.id] = fresh
+        return fresh
     }
 
     /// Loads everything afresh, as on opening the screen or pulling to refresh.

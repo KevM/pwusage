@@ -76,7 +76,23 @@ struct TrmnlSettingsModelTests {
     @Test("An editor is made for a device on the same site")
     func makesEditor() {
         let model = TrmnlSettingsModel(siteID: "s", api: FakeTrmnlAPI(devices: .success([])))
-        #expect(model.makeEditor(for: first).device == first)
+        #expect(model.editor(for: first).device == first)
+    }
+
+    @Test("Reopening a device gets a fresh editor, but one holding unsaved edits is kept")
+    func keepsUnsavedDrafts() async {
+        let api = FakeTrmnlAPI(devices: .success([]))
+        let model = TrmnlSettingsModel(siteID: "s", api: api)
+        let opened = model.editor(for: first)
+        await opened.load()
+        #expect(model.editor(for: first) !== opened)
+
+        let draft = model.editor(for: first)
+        await draft.load()
+        draft.update { $0.showEnergyChart = true }
+        #expect(draft.hasUnsavedChanges)
+        #expect(model.editor(for: first) === draft)
+        #expect(model.editor(for: second) !== draft)
     }
 }
 
@@ -102,7 +118,9 @@ private final class FakeTrmnlAPI: MobileTrmnlAPI, @unchecked Sendable {
         return "<doc/>"
     }
 
-    func fetchTrmnlScreens(uuid _: String) async throws -> [TrmnlManagedScreen] { [] }
+    func fetchTrmnlScreens(uuid _: String) async throws -> [TrmnlManagedScreen] {
+        [TrmnlManagedScreen(id: "a", name: "Screen 1", componentConfig: .fixture())]
+    }
 
     func saveTrmnlScreens(_: [TrmnlManagedScreen], for _: TrmnlDevice, siteID _: String) async throws {}
 }
