@@ -35,9 +35,12 @@ describe('GET /api/site/[id]/trmnl-devices', () => {
         const res = await GET(request as never, ctx as never);
         expect(res.status).toBe(200);
         expect(res.headers.get('Cache-Control')).toBe('private, no-store');
-        expect(await res.json()).toEqual({
-            devices: [{ id: 1, uuid: 'aaaaaaaa-1', pluginSettingId: 11, connectedAt: '2026-11-03T15:00:00.000Z' }]
+        const { devices } = await res.json();
+        expect(devices).toHaveLength(1);
+        expect(devices[0]).toMatchObject({
+            id: 1, uuid: 'aaaaaaaa-1', pluginSettingId: 11, connectedAt: '2026-11-03T15:00:00.000Z'
         });
+        expect(devices[0].screen).toMatchObject({ index: 0, count: 1 });
         expect(listMock).toHaveBeenCalledWith('site-1', { includeTokens: false });
     });
 });

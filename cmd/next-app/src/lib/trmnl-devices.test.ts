@@ -42,7 +42,7 @@ describe('toTrmnlDevices', () => {
             installation({ id: 5, uuid: 'dddddddd-0000', json: { plugin_setting_id: 50 } })
         ]);
         expect(devices.map(d => d.id)).toEqual([2, 5]);
-        expect(devices[0]).toEqual({
+        expect(devices[0]).toMatchObject({
             id: 2,
             uuid: 'bbbbbbbb-0000',
             pluginSettingId: 20,
@@ -57,5 +57,37 @@ describe('toTrmnlDevices', () => {
         ]);
         expect(fromString.connectedAt).toBe('2026-11-03T15:00:00.000Z');
         expect(invalid.connectedAt).toBeNull();
+    });
+});
+
+describe('toTrmnlDevices current screen', () => {
+    const screens = [
+        { id: 'a', name: 'Overview', componentConfig: { showLiveGrid: true } },
+        { id: 'b', name: 'Bill', componentConfig: { showEstimatedBill: true } },
+        { id: 'c', name: 'Chart', componentConfig: { showEnergyChart: true } }
+    ];
+
+    function withRotation(carouselIndex: unknown) {
+        return installation({
+            plugin_setting_id: 5,
+            json: { component_screens: screens, carousel_index: carouselIndex }
+        });
+    }
+
+    it('reports the screen last sent, because the stored index points at the next one', () => {
+        const [device] = toTrmnlDevices([withRotation(2)]);
+        expect(device.screen).toMatchObject({ name: 'Bill', index: 1, count: 3 });
+        expect(device.screen.componentConfig.showEstimatedBill).toBe(true);
+    });
+
+    it('wraps to the last screen when the rotation is back at the start', () => {
+        const [device] = toTrmnlDevices([withRotation(0)]);
+        expect(device.screen).toMatchObject({ name: 'Chart', index: 2, count: 3 });
+    });
+
+    it('falls back to the default screen for an install that was never configured', () => {
+        const [device] = toTrmnlDevices([installation({ plugin_setting_id: 5, json: null })]);
+        expect(device.screen).toMatchObject({ index: 0, count: 1 });
+        expect(device.screen.componentConfig).toHaveProperty('batterySocMode');
     });
 });
