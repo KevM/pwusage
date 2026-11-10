@@ -6,6 +6,8 @@ struct TrmnlScreensEditorView: View {
     /// The width from which the preview and the controls sit side by side.
     static let wideBreakpoint: CGFloat = 700
     static let controlsWidth: CGFloat = 420
+    /// A pinned preview keeps to this width so it leaves room for the controls beneath it.
+    static let pinnedPreviewMaxWidth: CGFloat = 340
 
     @Bindable var editor: TrmnlScreensEditorModel
     let devices: [TrmnlDevice]
@@ -28,12 +30,20 @@ struct TrmnlScreensEditorView: View {
         editor.screens.indices.contains(editor.selectedIndex) ? editor.screens[editor.selectedIndex].name : ""
     }
 
+    /// The preview stays pinned above the controls, so it is in view while a switch below it is changed.
     private var compact: some View {
-        List {
-            Section(TrmnlPresentation.previewHeader) { TrmnlScreenCarousel(editor: editor) }
-            deviceSection
-            controlSections
-            linksSection
+        VStack(spacing: 0) {
+            TrmnlScreenCarousel(editor: editor)
+                .frame(maxWidth: Self.pinnedPreviewMaxWidth)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Color(.systemGroupedBackground))
+            List {
+                deviceSection
+                controlSections
+                linksSection
+            }
         }
     }
 
