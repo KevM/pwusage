@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getAuthorizedSiteIds, getCurrentUser, hasValidSession } from '@/lib/auth-checks';
 import { SiteRepo } from '@/lib/site-repo';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
+import Link from 'next/link';
 import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
 import { NoSupportedProducts } from '@/components/NoSupportedProducts';
 import { NoPowerwallYet } from '@/components/no-powerwall-yet';
@@ -114,6 +115,11 @@ export default observePage('/products', async function ProductsPage({ searchPara
                     <DashboardCards initialProducts={products} />
                 ) : (
                     <NoSupportedProducts />
+                )}
+                {!hasEnergyProducts && (
+                    <p className="text-sm text-muted-foreground">
+                        Not planning to use pwusage? <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete your account</Link>.
+                    </p>
                 )}
             </div>
         </PageShell>

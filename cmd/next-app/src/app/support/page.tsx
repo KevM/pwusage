@@ -38,7 +38,7 @@ export default function SupportPage() {
                     <p>Solar forecasts are built in and automatic. The app estimates your rooftop solar production using your household usage history and weather reports, with no external account or API key required. If a solar forecast is unavailable or your panel layout is still being determined, Smart Shift falls back to your historical solar production patterns.</p>
                 </SectionCard>
                 <SectionCard title="Account and privacy requests" bodyClassName="space-y-4">
-                    <p>For an account-data or deletion request, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
+                    <p>To delete your account, go to <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. For other account-data requests, or if you cannot sign in, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
                     <p>Read our <Link href="/privacy" className="text-primary underline">privacy policy</Link> for details about account information, energy history, and local app data.</p>
                 </SectionCard>
                 <SectionCard title="TRMNL display help">

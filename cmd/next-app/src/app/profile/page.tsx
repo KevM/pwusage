@@ -157,6 +157,16 @@ export default observePage('/profile', async function ProfilePage() {
 
                 </div>
             </SectionCard>
+
+            <SectionCard
+                className="mt-6"
+                title="Delete Account"
+                description="Permanently delete your pwusage account and sole-member sites."
+            >
+                <Link href="/account-delete" prefetch={false}>
+                    <Button renderAs="span" variant="danger">Delete Account</Button>
+                </Link>
+            </SectionCard>
         </PageShell>
     );
 });

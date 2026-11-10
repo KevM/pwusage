@@ -257,6 +257,22 @@ describe('GET /auth/tesla-callback', () => {
         expect(mocks.redirect).toHaveBeenCalledWith('/no-sites');
     });
 
+    it('sets site_auth and redirects to /account-delete when a zero-site user signs in to delete their account', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({
+            status: 'success',
+            siteIds: [],
+            roles: [],
+            userId: 'user-123',
+        });
+        mocks.getCookie.mockImplementation((name: string) => name === 'auth_callback' ? { value: '/account-delete' } : undefined);
+
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
+
+        expect(mocks.cookieSet).toHaveBeenCalledWith('site_auth', 'signed-site-token', expect.any(Object));
+        expect(mocks.redirect).toHaveBeenCalledWith('/account-delete');
+    });
+
     it('redirects to saved callback only when it is safe relative path', async () => {
         mocks.handleTeslaCallback.mockResolvedValue({
             status: 'success',
