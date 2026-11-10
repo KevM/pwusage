@@ -486,6 +486,96 @@ describe('TeslaAuthService', () => {
         expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
     });
 
+    describe('sign-in diagnostics', () => {
+        interface Scenario {
+            products?: Array<{ energy_site_id: number; resource_type: string }>;
+            productsError?: Error;
+            assignError?: Error;
+            syncError?: Error;
+            membership?: boolean;
+        }
+
+        async function signIn(scenario: Scenario) {
+            const spies = {
+                info: vi.spyOn(console, 'info').mockImplementation(() => undefined),
+                warn: vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+                error: vi.spyOn(console, 'error').mockImplementation(() => undefined),
+                log: vi.spyOn(console, 'log').mockImplementation(() => undefined),
+            };
+            if (scenario.membership) vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'user@example.com' });
+            if (scenario.productsError) mockTeslaClient.getProducts.mockRejectedValue(scenario.productsError);
+            else mockTeslaClient.getProducts.mockResolvedValue(scenario.products ?? []);
+            mockUserRepo.getById.mockResolvedValue({ id: 'tesla-user-sub', roles: ['user'] });
+            if (scenario.assignError) mockSiteRepo.assignSiteToUser.mockRejectedValue(scenario.assignError);
+            if (scenario.syncError) mockSharedSyncLogin.mockRejectedValue(scenario.syncError);
+            else mockSharedSyncLogin.mockResolvedValue(['shared-home']);
+            const service = new TeslaAuthService({
+                userRepo: mockUserRepo as unknown as UserRepo,
+                siteRepo: mockSiteRepo as unknown as SiteRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+                importerCreator: vi.fn().mockReturnValue(mockImporter),
+                tokenExchange: vi.fn().mockResolvedValue({ id_token: 'id', access_token: 'access', refresh_token: 'refresh', expires_in: 3600 }),
+                verifyIdToken: vi.fn().mockResolvedValue({ nonce: 'nonce', sub: 'tesla-user-sub', email: 'user@example.com' }),
+            });
+            const result = await service.handleTeslaCallback({ code: 'code', state: 'state', savedState: 'state',
+                savedNonce: 'nonce', callbackUrl: 'http://localhost/callback' });
+            const logged = (level: 'info' | 'warn', event: string): Record<string, unknown> | undefined =>
+                spies[level].mock.calls.find(call => call[0] === event)?.[1] as Record<string, unknown> | undefined;
+            return { result, logged };
+        }
+
+        afterEach(() => {
+            vi.restoreAllMocks();
+            vi.unstubAllEnvs();
+        });
+
+        it('logs why the product list could not be loaded', async () => {
+            const { logged } = await signIn({ productsError: new Error('Tesla Fleet API Down') });
+            expect(logged('warn', 'tesla.sign-in.products-failed')).toMatchObject({
+                reason: 'upstream', errorName: 'Error', accountId: expect.stringMatching(/^[0-9a-f]{16}$/),
+            });
+        });
+
+        it('logs the database constraint when a site cannot be linked', async () => {
+            const { result, logged } = await signIn({
+                products: [{ energy_site_id: 2534048291823253, resource_type: 'battery' }],
+                assignError: Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'SiteMember_tesla_energy_site_id_key' }),
+            });
+            expect(result).toEqual({ status: 'fleet-api-failed', reason: 'sites' });
+            expect(logged('warn', 'tesla.sign-in.site-assign-failed')).toMatchObject({
+                siteId: '2534048291823253', errorCode: '23505', constraint: 'SiteMember_tesla_energy_site_id_key',
+            });
+            expect(logged('warn', 'tesla.sign-in.no-sites')).toMatchObject({
+                productCount: 1, importableCount: 1, membershipEnabled: false,
+            });
+        });
+
+        it('logs the failure when shared membership reconciliation throws', async () => {
+            const { result, logged } = await signIn({
+                membership: true,
+                products: [{ energy_site_id: 20, resource_type: 'battery' }],
+                syncError: Object.assign(new Error('Retained site belongs to a different Powerwall'), { code: 'XX000' }),
+            });
+            expect(result).toEqual({ status: 'fleet-api-failed', reason: 'sites' });
+            expect(logged('warn', 'tesla.sign-in.membership-sync-failed')).toMatchObject({
+                errorName: 'Error', errorCode: 'XX000', productCount: 1,
+            });
+        });
+
+        it('logs how many sites a successful sign-in resolved and which path ran', async () => {
+            const { result, logged } = await signIn({
+                membership: true,
+                products: [{ energy_site_id: 20, resource_type: 'battery' }, { energy_site_id: 21, resource_type: 'solar' }],
+            });
+            expect(result).toMatchObject({ status: 'success', siteIds: ['shared-home'] });
+            expect(logged('info', 'tesla.sign-in.sites-resolved')).toMatchObject({
+                productCount: 2, importableCount: 2, resolvedCount: 1, membershipEnabled: true,
+            });
+        });
+    });
+
     it('reports a region failure instead of invalid-id-token when degraded getUserInfo hits an unregistered region', async () => {
         const { KidNotFoundError } = await import('./tesla-auth-service');
         const tokenExchange = vi.fn().mockResolvedValue({

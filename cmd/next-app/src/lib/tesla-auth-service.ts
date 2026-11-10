@@ -21,6 +21,7 @@ import { parseRefreshedTokens } from './tesla-auth';
 import { DEFAULT_FLEET_BASE_URL } from './tesla-region';
 import { siteMembershipEnabled } from './site-membership-flag';
 import { SiteMembershipService } from './site-membership-service';
+import { accountFingerprint, errorFields, logEvent } from './observability';
 
 
 // Whitelist of allowed Tesla OAuth issuers.
@@ -811,6 +812,9 @@ export class TeslaAuthService {
         } catch (err) {
             const reason = err instanceof TeslaRegionError ? 'region' : 'upstream';
             console.error(`[TeslaAuthService] Failed to fetch Tesla products (${reason}):`, err);
+            logEvent('warn', 'tesla.sign-in.products-failed', {
+                reason, accountId: accountFingerprint(userId), adminContinues: roles.includes('admin'), ...errorFields(err),
+            });
             // An admin needs access even when Fleet is unavailable or this
             // region's partner registration is missing.
             if (!roles.includes('admin')) {
@@ -833,6 +837,9 @@ export class TeslaAuthService {
                 siteIds.push(...await new SiteMembershipService(client, importer).syncLogin(userId, products, productsFetchedAt));
             } catch (err) {
                 console.error('[TeslaAuthService] Failed to reconcile shared site memberships:', err);
+                logEvent('warn', 'tesla.sign-in.membership-sync-failed', {
+                    accountId: accountFingerprint(userId), productCount: products.length, ...errorFields(err),
+                });
                 return { status: 'fleet-api-failed', reason: 'sites' };
             }
         } else if (importableProducts.length > 0) {
@@ -850,6 +857,9 @@ export class TeslaAuthService {
                     console.log(`[TeslaAuthService] Linked site ${siteId} to User ${userId}.`);
                 } catch (err) {
                     console.error(`[TeslaAuthService] Failed to import/assign site ${siteId}:`, err);
+                    logEvent('warn', 'tesla.sign-in.site-assign-failed', {
+                        siteId, accountId: accountFingerprint(userId), ...errorFields(err),
+                    });
                 }
             }
 
@@ -859,11 +869,18 @@ export class TeslaAuthService {
             await siteRepo.removeSitesMissingFromTesla(userId, importableProducts.map(p => p.energy_site_id.toString()), productsFetchedAt);
         }
 
+        const siteSummary = {
+            accountId: accountFingerprint(userId), productCount: products.length,
+            importableCount: importableProducts.length, resolvedCount: siteIds.length,
+            membershipEnabled: siteMembershipEnabled(),
+        };
         if (importableProducts.length > 0 && siteIds.length === 0 && !roles.includes('admin')) {
+            logEvent('warn', 'tesla.sign-in.no-sites', siteSummary);
             await storeLearnedBaseUrl();
             return { status: 'fleet-api-failed', reason: 'sites' };
         }
 
+        logEvent('info', 'tesla.sign-in.sites-resolved', siteSummary);
         await storeLearnedBaseUrl();
 
         return {

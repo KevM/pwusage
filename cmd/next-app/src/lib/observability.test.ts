@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import { IoDeadlineError, ioFailureDetails } from './io-deadline';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { flushLogEvents, logEvent, observeRoute, observePage, logSessionRejection, setLogContext } from './observability';
+import { errorFields, flushLogEvents, logEvent, observeRoute, observePage, logSessionRejection, setLogContext } from './observability';
 
 const mocks = vi.hoisted(() => ({
     callbacks: [] as Array<() => unknown>,
@@ -260,5 +260,26 @@ describe('production observability', () => {
         expect(response.status).toBe(200);
         await finishResponse();
         expect(entries().map(entry => entry.event)).toEqual(['verification.started', 'request.completed']);
+    });
+});
+
+describe('errorFields', () => {
+    it('keeps the diagnostic fields of a database error and never its message', () => {
+        const error = Object.assign(new Error('duplicate key value violates unique constraint for user@example.com'), {
+            code: '23505', constraint: 'SiteMember_tesla_energy_site_id_key', detail: 'Key (email)=(user@example.com) exists',
+        });
+        expect(errorFields(error)).toEqual({
+            errorName: 'Error', errorCode: '23505', constraint: 'SiteMember_tesla_energy_site_id_key',
+        });
+    });
+
+    it('keeps an upstream HTTP status', () => {
+        const error = Object.assign(new Error('Tesla said no'), { status: 429 });
+        expect(errorFields(error)).toEqual({ errorName: 'Error', errorStatus: 429 });
+    });
+
+    it('describes a thrown non-error without echoing it', () => {
+        expect(errorFields('secret-looking string')).toEqual({ errorName: 'string' });
+        expect(errorFields(undefined)).toEqual({ errorName: 'undefined' });
     });
 });

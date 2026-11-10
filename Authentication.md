@@ -129,6 +129,15 @@ Login diagnostics:
   non-secret `loginId` and report the login kind, pending count or attempt age.
 - `tesla.sign-in.continuity-rejected` distinguishes missing, invalid/expired,
   and legacy-mismatched cookies. Hostnames are logged without URLs or queries.
+- `tesla.sign-in.result` carries `outcome`, plus `reason` (`region`, `upstream`
+  or `sites`) for `fleet-api-failed` and `statusCode` for `token-exchange-failed`.
+  The step that failed has its own event: `tesla.sign-in.products-failed`,
+  `tesla.sign-in.membership-sync-failed` and `tesla.sign-in.site-assign-failed`
+  (with `siteId`) carry `errorName`, `errorCode`, `constraint` and `errorStatus`
+  from `errorFields()`, never the error message. `tesla.sign-in.no-sites` and
+  `tesla.sign-in.sites-resolved` report `productCount`, `importableCount`,
+  `resolvedCount` and which path ran (`membershipEnabled`). All use the hashed
+  `accountId`.
 - State, nonce, authorization codes, PKCE values, cookie contents, and return
   destinations are never included in these events. `requestId` still correlates
   events within one request; `loginId` correlates the two requests for an attempt.
