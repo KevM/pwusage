@@ -88,6 +88,25 @@ export function flushLogEvents(): void {
     }
 }
 
+/** Diagnostic fields of a caught error: names and codes only. The message is left out on purpose,
+ * since it can echo credentials, emails or upstream response bodies. `constraint` is the Postgres
+ * constraint name, which `logEvent` would otherwise drop with the rest of the error's properties. */
+export function errorFields(error: unknown): Fields {
+    if (!(error instanceof Error)) return { errorName: typeof error };
+    const details = error as Error & { code?: unknown; constraint?: unknown; status?: unknown };
+    return {
+        errorName: error.name,
+        ...(typeof details.code === 'string' ? { errorCode: details.code } : {}),
+        ...(typeof details.constraint === 'string' ? { constraint: details.constraint } : {}),
+        ...(typeof details.status === 'number' ? { errorStatus: details.status } : {}),
+    };
+}
+
+/** The account fingerprint shared by the Tesla refresh and membership events. */
+export function accountFingerprint(userId: string): string {
+    return createHash('sha256').update(userId).digest('hex').slice(0, 16);
+}
+
 /** Use fixed event names and explicit fields; never pass request objects or raw upstream bodies. */
 export function logEvent(level: Level, event: string, fields: Fields = {}): void {
     const scope = scopes.getStore();
