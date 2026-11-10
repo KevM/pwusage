@@ -7,19 +7,17 @@ import {
     mergeTrmnlComponentScreensIntoInstallationJson
 } from '@/lib/trmnl-component-config';
 import { verifyTrmnlToken, VerifiedTrmnlTokenPayload, safeTimingSafeEqual } from '@/lib/trmnl-auth';
-import { SiteRepo } from '@/lib/site-repo';
 import { UserRepo } from '@/lib/user-repo';
+import type { TrmnlInstallation } from '@/lib/db';
 
-async function syncUserEmail(siteId: string, email: string) {
-    const siteRepo = new SiteRepo();
+async function syncUserEmail(installation: TrmnlInstallation, email: string) {
+    const installerId = installation.installed_by_user_id;
+    if (!installerId) return;
     const userRepo = new UserRepo();
-    const site = await siteRepo.getSite(siteId);
-    if (site && site.user_id) {
-        const currentEmail = await userRepo.getUserEmail(site.user_id);
-        if (!currentEmail) {
-            await userRepo.updateUserEmail(site.user_id, email);
-            console.log(`[TrmnlWebhook] Updated user ${site.user_id} with email from Trmnl: ${email}`);
-        }
+    const currentEmail = await userRepo.getUserEmail(installerId);
+    if (!currentEmail) {
+        await userRepo.updateUserEmail(installerId, email);
+        console.log(`[TrmnlWebhook] Updated installer ${installerId} with email from Trmnl`);
     }
 }
 
@@ -156,7 +154,7 @@ export async function POST(request: Request) {
 
             // Update user email if not present
             if (user.email && existing.site_id) {
-                await syncUserEmail(existing.site_id, user.email);
+                await syncUserEmail(existing, user.email);
             }
         } else {
             // 1. Check for Pending installation by plugin_setting_id (Strong Link)
@@ -197,7 +195,7 @@ export async function POST(request: Request) {
 
                 // Update user email if not present
                 if (user.email && pending.site_id) {
-                    await syncUserEmail(pending.site_id, user.email);
+                    await syncUserEmail(pending, user.email);
                 }
             } else {
                 console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unknown Plugin ID: ${tokenPluginId}. details ignored.`);

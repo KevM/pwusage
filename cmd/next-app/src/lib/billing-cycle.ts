@@ -76,3 +76,14 @@ export function getNextCycleStart(
     }
     return getSiteLocalDate(year, month, day, timeZone);
 }
+
+/**
+ * Parses a user-supplied billing day. Accepts an integer 1–31 given as a number
+ * or a string of digits; anything else is null. Short months clamp the day at
+ * use (see getCurrentCycleStart), so 29–31 are valid.
+ */
+export function parseBillingDay(value: unknown): number | null {
+    const day = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+    if (typeof day !== 'number' || !Number.isInteger(day) || day < 1 || day > 31) return null;
+    return day;
+}

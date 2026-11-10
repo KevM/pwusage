@@ -395,7 +395,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         it('keeps a reported timezone back while day records exist, instead of failing the site refresh',async()=>{
             const {UPSERT_SITE_SQL}=await import('../site-upsert-sql');
             await pool.query(`ALTER TABLE "Site" ADD COLUMN IF NOT EXISTS name text, ADD COLUMN IF NOT EXISTS utility text, ADD COLUMN IF NOT EXISTS updated timestamptz,
-                ADD COLUMN IF NOT EXISTS installed timestamptz, ADD COLUMN IF NOT EXISTS json jsonb`);
+                ADD COLUMN IF NOT EXISTS installed timestamptz, ADD COLUMN IF NOT EXISTS json jsonb,
+                ADD COLUMN IF NOT EXISTS tesla_hardware_id text`);
             const upsert=async(timezone:string)=>(await pool.query(UPSERT_SITE_SQL,['moved','Moved','Utility',later,timezone,'{}',true])).rows[0].timezone;
             await store.writeDay('moved',utcDay('2026-10-31'),samples(utcDay('2026-10-31'),288),later,later);
             expect(await upsert('America/Chicago')).toBe('UTC');

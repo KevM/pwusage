@@ -16,6 +16,17 @@ extension LoadTimingView {
         let context: LoadTimingForecastEstimator.PlanningContext?
     }
 
+    /// Re-run on scroll and when the hero moves without one (banner, job or layout change).
+    func heroFrameChanged(_ frame: CGRect) {
+        heroTracking.frame = frame
+        updateHeroVisibility()
+    }
+
+    func updateHeroVisibility() {
+        let isVisible = heroTracking.isHeroVisible
+        if isVisible != heroIsVisible { heroIsVisible = isVisible }
+    }
+
     /// Prices the selected Job with the solar forecast when it's usable and with
     /// balances held still otherwise, then turns that into the card's copy.
     func smartShiftState(now: Date, timing: LoadTiming, response: MobileBillResponse) -> SmartShiftState {

@@ -106,7 +106,7 @@ struct LoadTimingViewTests {
     func sourceTimeIsLabelled() {
         let sourceTime = Date(timeIntervalSince1970: 1_800_000_000)
         let summary = LoadTimingPresentation.sourceTimeSummary(sourceTime, timeZone: "UTC")
-        #expect(summary.hasPrefix("Energy observations through "))
+        #expect(summary.hasPrefix("Energy usage through "))
         #expect(summary.contains("8:00"))
     }
 

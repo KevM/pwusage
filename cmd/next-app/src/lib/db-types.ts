@@ -34,6 +34,8 @@ export interface Site {
   timezone: string;
   json: unknown | null; // pg jsonb returns object
   billing_start_day: number;
+  /** When a person chose the day (web or iOS). Null while it is still the column default. */
+  billing_start_day_confirmed_at?: Date | null;
   timezone_display_mode?: 'SITE' | 'BROWSER';
   sankey_renderer?: string;
   import_lock_id?: string | null;
@@ -98,6 +100,7 @@ export interface TrmnlInstallation {
   id: number;
   uuid: string | null;
   site_id: string;
+  installed_by_user_id?: string | null;
   plugin_setting_id: number | null;
   created_at: Date;
   json?: unknown;
@@ -107,6 +110,8 @@ export interface TrmnlInstallation {
 
 export interface SiteWithTariffs extends Site {
   tariffs: Tariff[];
+  /** The member whose Tesla credentials these are (Site.tesla_connection_user_id); may differ from user_id. */
+  token_owner_id?: string | null;
   access_token?: string | null;
   refresh_token?: string | null;
   auth_status?: string | null;
@@ -124,6 +129,7 @@ export interface LoadTag {
 }
 
 export interface BatteryHold {
+  started_by_user_id?: string | null;
     restore_attempted_at?: Date | null;
   monitoring?: import('./battery-hold-monitoring').BatteryHoldMonitoring | null;
   id: number;

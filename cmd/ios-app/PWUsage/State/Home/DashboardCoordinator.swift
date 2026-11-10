@@ -119,6 +119,8 @@ final class DashboardCoordinator: ObservableObject {
     let cadenceNow: () -> ContinuousClock.Instant
     let timerInterval: Duration?
     var sceneIsActive = false
+    /// When the app last left the foreground: the readings were on screen until then.
+    var leftForegroundAt: Date?
     var timerTask: Task<Void, Never>?
     /// Identity of the running timer loop, so a loop that exits can clear its
     /// own handle without clobbering a newer loop started in the meantime.
@@ -256,6 +258,7 @@ final class DashboardCoordinator: ObservableObject {
             bill.isRestored = true
         }
         // Attempts stay nil: every launch/site switch still refreshes immediately.
+        holdStaleReadings(at: now())
     }
 
     func scenePhaseChanged(isActive: Bool) {
@@ -265,6 +268,8 @@ final class DashboardCoordinator: ObservableObject {
             guard !isForeground else { return }
             isForeground = true
             refreshSettled = false
+            // A glance at Control Center is not time away: age counts from when they left.
+            holdStaleReadings(at: now(), seenUntil: leftForegroundAt)
             startTimer()
             Task {
                 guard isForeground else { return }
@@ -273,14 +278,17 @@ final class DashboardCoordinator: ObservableObject {
             }
         } else {
             sceneIsActive = false
+            if isForeground { leftForegroundAt = now() }
             isForeground = false
             batteryHold.isCurrent = false
             stopTimer()
             cancelLayoutRevalidation()
             // Keep fast polls in memory; persist the combined snapshot once on
-            // backgrounding instead of encoding the entire bill every minute.
+            // backgrounding instead of encoding the entire bill every minute. It keeps
+            // the summary's fetch time, so an old summary never restores as fresh.
             if let snapshot = live.response, let power = power.response {
-                cache?.storeLive(MobileLiveResponse(snapshot: snapshot, power: power), at: now())
+                cache?.storeLive(MobileLiveResponse(snapshot: snapshot, power: power),
+                                 at: live.lastSuccess ?? now())
             }
         }
     }
@@ -319,6 +327,7 @@ final class DashboardCoordinator: ObservableObject {
         guard sceneIsActive else { return }
         isForeground = true
         refreshSettled = false
+        holdStaleReadings(at: now())
         startTimer()
         Task { await refreshDue() }
     }

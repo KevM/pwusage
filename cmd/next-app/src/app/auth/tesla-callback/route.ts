@@ -123,7 +123,12 @@ async function handleGET(request: NextRequest) {
     }
 
     if (result.status === 'success') setLogContext({ siteIds: result.siteIds });
-    logEvent(result.status === 'success' ? 'info' : 'warn', 'tesla.sign-in.result', { outcome: result.status });
+    logEvent(result.status === 'success' ? 'info' : 'warn', 'tesla.sign-in.result', {
+        outcome: result.status,
+        // Without these a failed sign-in only says "fleet-api-failed", not which step failed.
+        ...(result.status === 'fleet-api-failed' ? { reason: result.reason } : {}),
+        ...(result.status === 'token-exchange-failed' ? { statusCode: result.statusCode } : {}),
+    });
 
     if (result.status === 'state-mismatch') {
         if (hasMobileCookies) clearAttempt();
@@ -174,6 +179,12 @@ async function handleGET(request: NextRequest) {
             }
             clearAttempt();
             return mobileCallbackResponse({ code: handoff.code, attempt: handoff.attemptId, state: mobileState });
+        }
+
+        if (result.siteIds.length === 0 && !result.roles.includes('admin')) {
+            cookieStore.delete('site_auth');
+            clearAttempt();
+            redirect('/no-sites');
         }
 
         if (result.siteIds.length > 0 || result.roles.includes('admin')) {

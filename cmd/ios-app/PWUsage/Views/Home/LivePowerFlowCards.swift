@@ -142,17 +142,3 @@ struct EmptyCard: View {
         .accessibilityElement(children: .combine)
     }
 }
-
-struct LoadingCard: View {
-    let title: String
-    var body: some View {
-        HStack(spacing: 12) {
-            ProgressView()
-            Text(title).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
-        .accessibilityElement(children: .combine)
-    }
-}

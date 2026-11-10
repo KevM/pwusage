@@ -5,9 +5,7 @@ extension DashboardPresentation {
     /// Whether at least 15% of the Live card shows below the bar, all in scroll
     /// content coordinates. An unmeasured card counts as visible.
     static func liveCardIsVisible(cardMinY: Double, cardMaxY: Double, visibleTop: Double) -> Bool {
-        let height = cardMaxY - cardMinY
-        guard height > 0 else { return true }
-        return cardMaxY - max(visibleTop, cardMinY) >= height * 0.15
+        ScrollHero.isVisible(minY: cardMinY, maxY: cardMaxY, visibleTop: visibleTop)
     }
 
     struct ScoreboardStat: Equatable {

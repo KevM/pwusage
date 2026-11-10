@@ -143,6 +143,21 @@ describe('GET /auth/tesla-callback', () => {
         expect(mocks.handleTeslaCallback).not.toHaveBeenCalled();
     });
 
+    it.each([
+        [{ status: 'fleet-api-failed', reason: 'sites' }, { outcome: 'fleet-api-failed', reason: 'sites' }],
+        [{ status: 'token-exchange-failed', statusCode: 502 }, { outcome: 'token-exchange-failed', statusCode: 502 }],
+    ])('logs the failure details with the sign-in result: %j', async (failure, expected) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        mocks.handleTeslaCallback.mockResolvedValue(failure);
+        mocks.getCookie.mockReturnValue(undefined);
+
+        await GET(new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz'));
+
+        const entry = warn.mock.calls.find(call => call[0] === 'tesla.sign-in.result')?.[1];
+        expect(entry).toMatchObject(expected);
+        warn.mockRestore();
+    });
+
     it('returns 400 when code or state parameters are missing', async () => {
         const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc');
         const res = await GET(req);
@@ -237,8 +252,9 @@ describe('GET /auth/tesla-callback', () => {
         await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
 
         expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('site_auth');
         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
-        expect(mocks.redirect).toHaveBeenCalledWith('/');
+        expect(mocks.redirect).toHaveBeenCalledWith('/no-sites');
     });
 
     it('redirects to saved callback only when it is safe relative path', async () => {

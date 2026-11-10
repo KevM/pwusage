@@ -6,6 +6,10 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## iOS: dark-mode contrast of the tall rate bar (2026-11-09)
+
+- [ ] **Make the unhighlighted part of the tall bar readable in dark mode:** the region without the highlight is dark grey and hard to see. Which bar and which screen is still unconfirmed (likely the Smart Shift rate chart); ask for a screenshot first. Use the theming vars (see `Color.emphasis`), not a hardcoded grey.
+
 ## iOS refresh rollout gates (2026-11-05, branch `codex/ios-refresh-egress`)
 
 - [ ] **Measure hosted egress before removing the manual cooldown:** run `mobile-route-egress-trace.test.ts` against a database with the Dev marker, record the headroom in [the plan](docs/plans/2026-11-05-ios-refresh-and-database-egress.md), and only then consider `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true` in production. Until then the 15-second floor stays.
@@ -166,6 +170,8 @@ Delete items as they land.
 - [ ] **Design note before the plan finishes:** add a `DesignDecisions.md` section for the activity bookkeeping invariants: SQL-side monotonic guards in `syncDesired`, bookkeeping only after lease release and outside restore deadlines, the periodic no-id reconcile as the recovery path, production APNs only when `VERCEL_ENV === 'production'` (gated at registration and claim), the dev copy deleting all activity rows, owner-conditioned advance-only acknowledgement, data-time APNs timestamps, and "accepted is not delivered".
 
 ## TRMNL: Loose Pending Installation Flow Note
+
+- [ ] **Replace most-recent loose-pending matching before multi-user rollout:** two household members installing devices together can claim the wrong pending row. The opaque token check still authenticates the webhook, but matching by the most recent row is ambiguous.
 
 - **Note (2026-07-01):** The loose-pending fallback flow (installation row with NULL `uuid` and NULL `plugin_setting_id`, claimed by the next webhook within 15 minutes) has been retained. Database inspection confirmed that loose installations still occur (most recent on June 23, 2026). This fallback remains necessary to handle cases where `plugin_setting_id` is missing from the callback URL during manual setups or when the TRMNL API `fetchMe` fails. Revisit and remove this flow if loose installs stop appearing after the manual-install path is fixed.
 

@@ -21,6 +21,8 @@ final class PWUsageAppModel: ObservableObject {
     @Published var isSigningOut = false
     @Published var signInMessage: String?
     @Published var isSitePickerPresented = false
+    /// Which sites the billing day prompt has already been put off for, this run. See `BillingDayPromptState`.
+    @Published var billingDayPrompt = BillingDayPromptState()
     @Published var accountScopeID: String?
     /// The tab on screen. Only `selectTab` persists it; an external Battery Saver
     /// launch moves it for one visit, like the saved site.
@@ -200,6 +202,7 @@ final class PWUsageAppModel: ObservableObject {
             // account lookup failure), foregrounding an authorized session retries it.
             // A running engine makes this a no-op.
             startSolarCloudSync()
+            if selectedSiteNeedsBillingDay { Task { await refreshBillingDays() } }
         } else if isActive, hasBootstrapAttempted, coordinator != nil, siteRequestCount == 0 {
             Task { await reloadSitesAfterSignIn() }
         }
@@ -232,10 +235,20 @@ final class PWUsageAppModel: ObservableObject {
             }
         } catch let error as MobileAuthService.AuthError {
             screenState = .signedOut
-            signInMessage = error == .cancelled ? nil : "Could not complete sign-in. Try again."
+            signInMessage = Self.signInMessage(for: error)
         } catch {
             screenState = .signedOut
             signInMessage = "Could not connect to pwusage. Try again."
+        }
+    }
+
+    static func signInMessage(for error: MobileAuthService.AuthError) -> String? {
+        switch error {
+        case .cancelled: nil
+        case .noSites:
+            "Tesla sign-in worked, but this account has no Powerwall access. "
+                + "If someone removed your access in Tesla, ask them to add you again."
+        default: "Could not complete sign-in. Try again."
         }
     }
 

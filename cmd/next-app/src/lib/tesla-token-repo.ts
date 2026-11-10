@@ -1,12 +1,29 @@
 import { logEvent, flushLogEvents } from './observability';
 import { ioDelay, checkIoDeadline, withIoDeadline, ioFailureDetails } from './io-deadline';
 import { pool } from './db';
-import { SiteRepo } from './site-repo';
-import { UserRepo } from './user-repo';
 import { TeslaConnectionRequiredError, TeslaRefreshBackoffError, TeslaRefreshError, TRANSIENT_BACKOFF_MS } from './tesla-refresh-outcome';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseRefreshedTokens, type RefreshedTokens } from './tesla-auth';
 import { after } from 'next/server';
+import { decryptToken, encryptToken, tokenFingerprint } from './token-crypto';
+
+/** The stored pair, decrypted. Legacy plaintext rows pass through. */
+function decryptCredentials<T extends { access_token: string | null; refresh_token: string | null }>(row: T, userId: string): T {
+    return {
+        ...row,
+        access_token: decryptToken(row.access_token, 'access_token', userId),
+        refresh_token: decryptToken(row.refresh_token, 'refresh_token', userId),
+    };
+}
+
+/**
+ * Compare-and-swap predicate for the single-use refresh grant. Ciphertext is
+ * random-IV, so rows compare by HMAC fingerprint; rows not yet backfilled have no
+ * fingerprint and compare by their legacy plaintext. See DesignDecisions.md.
+ */
+function grantMatches(fpParam: string, plainParam: string): string {
+    return `(refresh_token_fp = ${fpParam} OR (refresh_token_fp IS NULL AND refresh_token = ${plainParam}))`;
+}
 
 interface AccountCredentials {
     access_token: string | null;
@@ -39,17 +56,15 @@ function credentialId(value: string): string {
 }
 
 export class TeslaTokenRepo {
-    constructor(private siteRepo: SiteRepo, private userRepo: UserRepo = new UserRepo()) {}
-
     // === Queries ===
-    private async waitForUserRefresh(userId: string, suppliedRefresh: string, siteId?: string, timeoutMs = 20000, start = Date.now()): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
-        const fields = { siteId, accountId: credentialId(userId) };
+    private async waitForUserRefresh(userId: string, suppliedRefresh: string, timeoutMs = 20000, start = Date.now()): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
+        const fields = { accountId: credentialId(userId) };
         while (Date.now() - start < timeoutMs) {
             const res = await pool.query<AccountCredentials>(`SELECT access_token, refresh_token, is_refreshing, auth_status, is_active, refresh_lock_expires, tesla_refresh_state, tesla_refresh_retry_after, tesla_credential_generation, tesla_refresh_attempt_id FROM "User" WHERE id = $1`, [userId]);
-            const row = res.rows[0];
-            if (!row) {
+            if (!res.rows[0]) {
                 throw new Error('Token refresh wait failed: user not found');
             }
+            const row = decryptCredentials(res.rows[0], userId);
             if (row.tesla_refresh_state === 'in_flight' && Number(row.refresh_lock_expires) <= Date.now()) {
                 // The worker died mid-exchange. Its grant is retried after a
                 // backoff: if Tesla consumed it, the replacement was never
@@ -94,33 +109,6 @@ export class TeslaTokenRepo {
         throw new Error('Timeout waiting for token refresh lock');
     }
 
-    // === Commands ===
-    async updateSiteTokens(siteId: string, accessToken: string, refreshToken: string) {
-        const site = await this.siteRepo.getSite(siteId);
-
-        if (site && site.user_id) {
-            await this.userRepo.updateTokens(site.user_id, accessToken, refreshToken);
-            logEvent('info', 'tesla.credentials.updated', { siteId });
-        } else {
-            console.warn(`[TeslaTokenRepo] Cannot update tokens for site ${siteId} - No User Linked!`);
-        }
-
-        this.siteRepo.invalidateCache(siteId);
-    }
-
-    getLockedRefreshHandler(siteId: string) {
-        return {
-            refreshHandler: async (refreshToken: string) => {
-                const site = await this.siteRepo.getSite(siteId);
-                if (!site?.user_id) throw new Error('Site/User not found for refresh');
-                return this.refreshUser(site.user_id, refreshToken, siteId);
-            },
-            // Revocation belongs inside refreshUser's guarded write. A callback
-            // after releasing the lease could revoke a subsequent successful login.
-            errorHandler: async () => {},
-        };
-    }
-
     getLockedUserRefreshHandler(userId: string) {
         return {
             refreshHandler: (refreshToken: string) => this.refreshUser(userId, refreshToken),
@@ -128,23 +116,23 @@ export class TeslaTokenRepo {
         };
     }
 
-    private async refreshUser(userId: string, suppliedRefresh: string, siteId?: string): Promise<RefreshedTokens> {
+    private async refreshUser(userId: string, suppliedRefresh: string): Promise<RefreshedTokens> {
         checkIoDeadline();
         if (process.env.TESLA_REFRESH_PAUSED === '1') {
-            logEvent('info', 'tesla.refresh.paused', { accountId: credentialId(userId), siteId });
+            logEvent('info', 'tesla.refresh.paused', { accountId: credentialId(userId) });
             throw new TeslaRefreshError('not_dispatched', null, null, 'Tesla refresh is paused');
         }
-        const fields = { siteId, accountId: credentialId(userId) };
+        const fields = { accountId: credentialId(userId) };
         // A recovered lease is claimed again once; more than that is a race
         // worth surfacing rather than looping on.
         for (let attempt = 0; attempt < 2; attempt++) {
-            const result = await this.claimAndRefresh(userId, suppliedRefresh, siteId, fields);
+            const result = await this.claimAndRefresh(userId, suppliedRefresh, fields);
             if (result !== RETRY_CLAIM) return result;
         }
         throw new Error('Concurrent credential renewal did not update stored credentials');
     }
 
-    private async claimAndRefresh(userId: string, suppliedRefresh: string, siteId: string | undefined, fields: { siteId: string | undefined; accountId: string }): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
+    private async claimAndRefresh(userId: string, suppliedRefresh: string, fields: { accountId: string }): Promise<RefreshedTokens | typeof RETRY_CLAIM> {
         const now = Date.now();
         const lease = now + LEASE_MS;
         const exchangeId = randomUUID();
@@ -159,17 +147,17 @@ export class TeslaTokenRepo {
             WHERE id = $2 AND (is_refreshing = 0 OR refresh_lock_expires < $3)
               AND auth_status IS DISTINCT FROM 'revoked' AND is_active = true
               AND tesla_refresh_state = 'ready' AND tesla_refresh_retry_after <= $3
-              AND refresh_token = $5
+              AND ${grantMatches('$5', '$6')}
             RETURNING access_token, refresh_token, tesla_credential_generation, tesla_refresh_attempt_id
-        `, [lease, userId, now, exchangeId, suppliedRefresh]);
+        `, [lease, userId, now, exchangeId, tokenFingerprint(suppliedRefresh), suppliedRefresh]);
         if (!claim.rowCount) {
             logEvent('info', 'tesla.refresh.not-claimed', fields);
-            return this.waitForUserRefresh(userId, suppliedRefresh, siteId);
+            return this.waitForUserRefresh(userId, suppliedRefresh);
         }
 
         // The caller may stop waiting, but a dispatched rotation must run through
         // persistence under its own deadline and the serverless request lifecycle.
-        const operation = this.refreshClaimedUser(userId, suppliedRefresh, siteId, lease, claim.rows[0], fields, exchangeId);
+        const operation = this.refreshClaimedUser(userId, suppliedRefresh, lease, decryptCredentials(claim.rows[0], userId), fields, exchangeId);
         try {
             after(async () => { await operation.catch(() => undefined); });
         } catch {
@@ -184,15 +172,19 @@ export class TeslaTokenRepo {
      * attempt id, old grant), not by the lease clock: a slow save must still land.
      */
     private async saveRotation(userId: string, next: RefreshedTokens, previousRefresh: string, generation: number, exchangeId: string): Promise<boolean> {
+        // Encrypt once so a retried save writes the same envelope.
+        const encryptedAccess = encryptToken(next.access_token, 'access_token', userId);
+        const encryptedRefresh = encryptToken(next.refresh_token, 'refresh_token', userId);
         const save = () => pool.query(`
-            UPDATE "User" SET access_token = $1, refresh_token = $2,
+            UPDATE "User" SET access_token = $1, refresh_token = $2, refresh_token_fp = $7,
                 tesla_credential_generation = tesla_credential_generation + 1,
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 auth_status = 'active', tesla_refresh_retry_after = 0,
                 is_refreshing = 0, refresh_lock_expires = 0
-            WHERE id = $3 AND refresh_token = $4
+            WHERE id = $3 AND ${grantMatches('$4', '$8')}
               AND tesla_credential_generation = $5 AND tesla_refresh_attempt_id = $6
-        `, [next.access_token, next.refresh_token, userId, previousRefresh, generation, exchangeId]);
+        `, [encryptedAccess, encryptedRefresh, userId, tokenFingerprint(previousRefresh), generation, exchangeId,
+            tokenFingerprint(next.refresh_token), previousRefresh]);
         let lastError: unknown;
         for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
             try {
@@ -209,8 +201,8 @@ export class TeslaTokenRepo {
     }
 
     private async refreshClaimedUser(
-        userId: string, suppliedRefresh: string, siteId: string | undefined,
-        lease: number, current: AccountCredentials, fields: { siteId: string | undefined; accountId: string }, exchangeId: string,
+        userId: string, suppliedRefresh: string, lease: number, current: AccountCredentials,
+        fields: { accountId: string }, exchangeId: string,
     ): Promise<RefreshedTokens> {
         const generation = current.tesla_credential_generation;
         const exchangeFields = { ...fields, exchangeId, generationId: credentialId(`${userId}:${generation}`) };
@@ -228,7 +220,6 @@ export class TeslaTokenRepo {
                 ...exchangeFields, credentialId: credentialId(next.refresh_token),
             });
             if (await this.saveRotation(userId, next, previousRefresh, generation, exchangeId)) {
-                if (siteId) this.siteRepo.invalidateCache(siteId);
                 logEvent('info', 'tesla.refresh.succeeded', {
                     ...exchangeFields, previousCredentialId: credentialId(previousRefresh), credentialId: credentialId(next.refresh_token),
                     fromState: 'in_flight', toState: 'ready', persisted: true, outcome: 'credentials_received',
@@ -265,7 +256,7 @@ export class TeslaTokenRepo {
                 if (!recorded.rowCount) logEvent('info', 'tesla.refresh.outcome-superseded', { ...exchangeFields, outcome, attemptedState: state });
                 if (!recorded.rowCount && terminal) {
                     // A login may have superseded this rejected generation.
-                    return settled(await withIoDeadline(1000, () => this.waitForUserRefresh(userId, suppliedRefresh, siteId, 1000), null));
+                    return settled(await withIoDeadline(1000, () => this.waitForUserRefresh(userId, suppliedRefresh, 1000), null));
                 }
                 if (recorded.rowCount) logEvent('warn', 'tesla.refresh.state-changed', { ...exchangeFields, fromState: 'in_flight', toState: state, persisted: true, outcome, durationMs: Date.now() - startedAt, ...(retryAfter ? { retryAfter: new Date(retryAfter).toISOString() } : {}) });
                 flushLogEvents();
@@ -289,6 +280,6 @@ export class TeslaTokenRepo {
                 logEvent('warn', 'tesla.refresh.cleanup-deferred', exchangeFields);
             }
         }
-        return settled(await this.waitForUserRefresh(userId, suppliedRefresh, siteId));
+        return settled(await this.waitForUserRefresh(userId, suppliedRefresh));
     }
 }

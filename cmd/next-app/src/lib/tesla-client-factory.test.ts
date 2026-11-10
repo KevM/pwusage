@@ -1,22 +1,30 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import {
     createTeslaClientForSite,
+    createTeslaClientForSiteMember,
     createTeslaClientForUser,
-    createTeslaClientForAccessToken
+    createTeslaClientForAccessToken,
+    getSiteConnectionTokens
 } from './tesla-client-factory';
 import { TeslaClient } from './tesla-client';
 
 const mockGetTokensForSite = vi.fn();
+const mockGetTokensForSiteMember = vi.fn();
 const mockGetTokens = vi.fn();
 const mockSetFleetApiBaseUrl = vi.fn();
 const mockUserRefresh = vi.fn();
+const mockRepairConnection = vi.fn();
+const mockLogEvent = vi.hoisted(() => vi.fn());
 const EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+
+vi.mock('./observability', () => ({ logEvent: mockLogEvent }));
 
 vi.mock('./user-repo', () => {
     return {
         UserRepo: function UserRepo() {
             return {
                 getTokensForSite: mockGetTokensForSite,
+                getTokensForSiteMember: mockGetTokensForSiteMember,
                 getTokens: mockGetTokens,
                 setFleetApiBaseUrl: mockSetFleetApiBaseUrl
             };
@@ -27,7 +35,7 @@ vi.mock('./user-repo', () => {
 vi.mock('./site-repo', () => {
     return {
         SiteRepo: function SiteRepo() {
-            return {};
+            return { repairConnection: mockRepairConnection };
         }
     };
 });
@@ -36,10 +44,6 @@ vi.mock('./tesla-token-repo', () => {
     return {
         TeslaTokenRepo: function TeslaTokenRepo() {
             return {
-                getLockedRefreshHandler: vi.fn().mockReturnValue({
-                    refreshHandler: vi.fn(),
-                    errorHandler: vi.fn()
-                }),
                 getLockedUserRefreshHandler: vi.fn().mockReturnValue({
                     refreshHandler: mockUserRefresh,
                     errorHandler: vi.fn()
@@ -52,20 +56,104 @@ vi.mock('./tesla-token-repo', () => {
 describe('TeslaClientFactory', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'acc-token', refresh_token: 'ref-token', tesla_energy_site_id: 'site-1', is_active: true, tesla_refresh_state: 'ready' });
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
+    describe('getSiteConnectionTokens', () => {
+        it('moves a broken connection to a usable member and re-reads, only when membership is enabled', async () => {
+            const broken = { access_token: 'a', refresh_token: 'r', user_id: 'old', is_active: true, tesla_refresh_state: 'reconnect_required' };
+            const healthy = { access_token: 'b', refresh_token: 'r2', user_id: 'new', is_active: true, tesla_refresh_state: 'ready' };
+            mockGetTokensForSite.mockResolvedValueOnce(broken).mockResolvedValueOnce(healthy);
+            expect(await getSiteConnectionTokens('home')).toEqual(broken);
+            expect(mockRepairConnection).not.toHaveBeenCalled();
+            vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            try {
+                mockGetTokensForSite.mockReset();
+                mockGetTokensForSite.mockResolvedValueOnce(broken).mockResolvedValueOnce(healthy);
+                expect(await getSiteConnectionTokens('home')).toEqual(healthy);
+                expect(mockRepairConnection).toHaveBeenCalledWith('home');
+                mockRepairConnection.mockClear();
+                mockGetTokensForSite.mockReset();
+                mockGetTokensForSite.mockResolvedValue(healthy);
+                await getSiteConnectionTokens('home');
+                expect(mockRepairConnection).not.toHaveBeenCalled();
+            } finally { vi.unstubAllEnvs(); }
+        });
+    });
+
     describe('createTeslaClientForSite', () => {
+        it('logs only the final rejected site response with a hashed account', async () => {
+            vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            try {
+                mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true });
+                mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a', refresh_token: 'r', tesla_energy_site_id: 't', is_active: true, tesla_refresh_state: 'ready' });
+                const client = await createTeslaClientForSite('home');
+                vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 403 }));
+                await expect(client?.getLiveStatus('home')).rejects.toMatchObject({ status: 403 });
+                expect(mockLogEvent).toHaveBeenCalledWith('warn', 'site.connection.request-rejected',
+                    expect.objectContaining({ siteId: 'home', status: 403, accountId: expect.stringMatching(/^[a-f0-9]{16}$/) }));
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        });
+        it('repairs an unusable connection before selecting a pinned account', async () => {
+            vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+            try {
+                mockGetTokensForSite.mockResolvedValueOnce({ refresh_token: null, user_id: 'old', is_active: true })
+                    .mockResolvedValueOnce({ access_token: 'new-token', refresh_token: 'new-refresh', user_id: 'new', is_active: true });
+                const client = await createTeslaClientForSite('home');
+                expect(client).toBeInstanceOf(TeslaClient);
+                expect(mockRepairConnection).toHaveBeenCalledWith('home');
+                expect(mockGetTokensForSite).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.unstubAllEnvs();
+            }
+        });
+        it('pins an invited member without reading the connection grant', async () => {
+            mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'invite-token', refresh_token: 'invite-refresh', tesla_energy_site_id: 'invite-id', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSiteMember('home', 'invited');
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: {} }));
+            await client?.getLiveStatus('home');
+            expect(mockGetTokensForSite).not.toHaveBeenCalled();
+            expect(mockGetTokensForSiteMember).toHaveBeenCalledWith('home', 'invited');
+            expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toContain('/energy_sites/invite-id/live_status');
+            expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer invite-token' });
+        });
         it('checks current connection state again before using a constructed client', async () => {
             mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'ready' });
+            mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a', refresh_token: 'r', tesla_energy_site_id: 'site-1', is_active: true, tesla_refresh_state: 'uncertain' });
             const client = await createTeslaClientForSite('site-1');
-            mockGetTokensForSite.mockResolvedValue({ access_token: 'a', refresh_token: 'r', user_id: 'u', is_active: true, tesla_refresh_state: 'uncertain' });
             const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: [] }));
             await expect(client?.getProducts()).rejects.toMatchObject({ code: 'TESLA_CONNECTION_REQUIRED' });
             expect(fetchMock).not.toHaveBeenCalled();
+            expect(mockGetTokensForSiteMember).toHaveBeenCalledWith('site-1', 'u');
+        });
+
+        it('does not adopt another account after the site connection moves', async () => {
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', user_id: 'account-a', is_active: true, tesla_refresh_state: 'ready' });
+            mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', tesla_energy_site_id: 'a-site', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSite('site-1');
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'b-token', refresh_token: 'b-refresh', user_id: 'account-b', is_active: true, tesla_refresh_state: 'ready' });
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ response: [] }));
+            await client?.getProducts();
+            expect(mockGetTokensForSiteMember).toHaveBeenCalledWith('site-1', 'account-a');
+            expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer a-token' });
+        });
+
+        it('uses the pinned member’s current Tesla ID and rejects a missing mapping', async () => {
+            mockGetTokensForSite.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', user_id: 'account-a', tesla_energy_site_id: 'old-id' });
+            mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', tesla_energy_site_id: 'new-id', is_active: true, tesla_refresh_state: 'ready' });
+            const client = await createTeslaClientForSite('pwusage-site');
+            const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ response: {} }));
+            await client?.getLiveStatus('pwusage-site');
+            expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toContain('/energy_sites/new-id/live_status');
+            mockGetTokensForSiteMember.mockResolvedValue({ access_token: 'a-token', refresh_token: 'a-refresh', is_active: true, tesla_refresh_state: 'ready' });
+            await expect(client?.getLiveStatus('pwusage-site')).rejects.toThrow(/mapping missing/);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
         });
 
         it('returns null if no tokens or no refresh_token exists for site', async () => {
@@ -81,7 +169,8 @@ describe('TeslaClientFactory', () => {
         it('returns TeslaClient when refresh_token exists', async () => {
             mockGetTokensForSite.mockResolvedValue({
                 access_token: 'acc-token',
-                refresh_token: 'ref-token'
+                refresh_token: 'ref-token',
+                user_id: 'user-1'
             });
 
             const client = await createTeslaClientForSite('site-1');

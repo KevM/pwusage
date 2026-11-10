@@ -32,7 +32,7 @@ async function setup(terminal = false, hungCleanup = false) {
   const siteRepo = new SiteRepo();
   vi.spyOn(siteRepo, 'getSite').mockResolvedValue({ user_id: 'u' } as Awaited<ReturnType<SiteRepo['getSite']>>);
   vi.spyOn(siteRepo, 'invalidateCache').mockImplementation(() => {});
-  const handler = new TeslaTokenRepo(siteRepo).getLockedRefreshHandler('s').refreshHandler;
+  const handler = new TeslaTokenRepo().getLockedUserRefreshHandler('u').refreshHandler;
   // Keep a handle to the underlying handler: the outer deadline may reject
   // before its finally block finishes cleaning up.
   let handlerFinished: Promise<unknown> = Promise.resolve();

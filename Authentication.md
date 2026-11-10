@@ -39,6 +39,8 @@ Three auth artifacts are used for different concerns:
 - Purpose: backend calls to Tesla Fleet API.
 - Not set in browser cookies in the current callback flow.
 - Resolved server-side from `sub`/site ownership.
+- Encrypted at rest (see "Tesla token encryption" below). Read and write them only
+  through the repos (`UserRepo`, `SiteRepo`, `TeslaTokenRepo`), never with raw SQL.
 
 3. Trmnl installation token (`TrmnlInstallation.access_token`)
 - Purpose: verify plugin/device calls (markup and uninstall).
@@ -127,6 +129,15 @@ Login diagnostics:
   non-secret `loginId` and report the login kind, pending count or attempt age.
 - `tesla.sign-in.continuity-rejected` distinguishes missing, invalid/expired,
   and legacy-mismatched cookies. Hostnames are logged without URLs or queries.
+- `tesla.sign-in.result` carries `outcome`, plus `reason` (`region`, `upstream`
+  or `sites`) for `fleet-api-failed` and `statusCode` for `token-exchange-failed`.
+  The step that failed has its own event: `tesla.sign-in.products-failed`,
+  `tesla.sign-in.membership-sync-failed` and `tesla.sign-in.site-assign-failed`
+  (with `siteId`) carry `errorName`, `errorCode`, `constraint` and `errorStatus`
+  from `errorFields()`, never the error message. `tesla.sign-in.no-sites` and
+  `tesla.sign-in.sites-resolved` report `productCount`, `importableCount`,
+  `resolvedCount` and which path ran (`membershipEnabled`). All use the hashed
+  `accountId`.
 - State, nonce, authorization codes, PKCE values, cookie contents, and return
   destinations are never included in these events. `requestId` still correlates
   events within one request; `loginId` correlates the two requests for an attempt.
@@ -238,6 +249,71 @@ Middleware/proxy (`src/proxy.ts`):
 - Tokens without `sv` (legacy) are treated as `sv: 0`: they refresh and migrate
   to the current DB version only while the DB version is still 0.
 
+Tesla token encryption:
+- `User.access_token` and `User.refresh_token` are stored as
+  `enc:v1:<keyId>:<iv>:<ciphertext+tag>` (AES-256-GCM, AAD `User:<column>:<userId>`),
+  so a value cannot be replayed into another row or column. Implementation:
+  `cmd/next-app/src/lib/token-crypto.ts`.
+- Keys come from environment variables, not the database, so database access or a
+  backup alone cannot decrypt: `TOKEN_ENCRYPTION_KEYS` (`id:base64,id:base64`, 32-byte
+  keys, **first is active**) and `TOKEN_FINGERPRINT_KEY` (separate 32-byte base64 key).
+  Both are required wherever tokens are written. Generate with
+  `openssl rand -base64 32`.
+- Rotating encryption keys: see "Rotating `TOKEN_ENCRYPTION_KEYS`" below.
+- `TOKEN_ENCRYPTION_KEYS` values must be canonical base64 of 32 bytes; surrounding
+  whitespace or quotes are tolerated, typos are rejected.
+- Reads decrypt, and pass legacy plaintext through so deploying before the backfill is
+  safe. Writes always encrypt. The backfill `scripts/encrypt-tesla-tokens.ts` is
+  idempotent and guarded by the exact old values, so a concurrent rotation wins.
+- Random-IV ciphertext cannot be compared, so the refresh compare-and-swap uses
+  `User.refresh_token_fp` (HMAC-SHA256 of the refresh token). See `DesignDecisions.md`.
+- TRMNL tokens are not covered; they remain a separate follow-up.
+
+Rotating `TOKEN_ENCRYPTION_KEYS` (runbook; example `k2` to `k3`):
+
+Production and Preview/beta have separate keys; repeat per environment. Vercel never
+shows a sensitive value again, so **save every key in 1Password before sending it to
+Vercel** and use a new key id each time (a reused id makes a lost key look like a
+corrupt ciphertext).
+
+1. Generate: `NEW=$(openssl rand -base64 32)`; save `k3:$NEW` in 1Password.
+2. Prepend, keeping the old key so existing rows still decrypt:
+   `vercel env rm TOKEN_ENCRYPTION_KEYS production --yes`, then
+   `printf 'k3:%s,k2:%s' "$NEW" "<old key>" | vercel env add TOKEN_ENCRYPTION_KEYS production --sensitive`.
+   Deploy and wait until it is live (new writes now use `k3`). **Env var changes apply only
+   to new deployments, and saving the variable does not deploy.** Confirm the new
+   deployment id is actually serving (Vercel shows it Ready and Current, and Axiom shows
+   events from its id) before step 3. The backfill writes `k3` rows; a deployment still
+   running without `k3` cannot read them, and every Tesla token read fails (TRMNL
+   markup, crons, the app) until it is replaced. This caused a ~35 minute outage when
+   the first rotation was backfilled before the redeploy went live.
+3. Re-encrypt every row: from `cmd/next-app`, export `DATABASE_URL`, the same
+   `TOKEN_ENCRYPTION_KEYS` (`k3:...,k2:...`) and the existing `TOKEN_FINGERPRINT_KEY`,
+   then run `npx tsx scripts/encrypt-tesla-tokens.ts --dry-run` and the real run. Re-run
+   until `scanned=0`. `raced` rows were rewritten by a live refresh and need nothing.
+   Dormant and revoked users never refresh, which is why the backfill is required.
+4. Verify (read-only), expecting 0:
+   `SELECT count(*) FROM "User" WHERE (NULLIF(access_token,'') IS NOT NULL AND access_token NOT LIKE 'enc:v1:k3:%') OR (NULLIF(refresh_token,'') IS NOT NULL AND refresh_token NOT LIKE 'enc:v1:k3:%');`
+5. Retire the old key: set `TOKEN_ENCRYPTION_KEYS` to `k3:<new>` only and deploy, and
+   confirm the new deployment is serving as in step 2.
+6. Keep `k2` archived in 1Password for as long as the oldest database backup
+   (`docs/database-backups.md`): a restored backup still holds `k2` rows.
+
+Failure modes (logs carry the `TokenCryptoError` code, since error messages are not
+exported: `KEY_ID_UNKNOWN` = the running deployment lacks a key a row was written with,
+usually an un-deployed env change; `DECRYPT_FAILED` = wrong key material for that id or a
+copied ciphertext; `KEYS_NOT_CONFIGURED` / `KEY_INVALID` = bad env value):
+- Reads throw `No TOKEN_ENCRYPTION_KEYS entry for key id`: a key was removed before the
+  backfill finished. Re-add it, deploy, re-run the backfill.
+- A key is lost: rows under it are unrecoverable. Rotate to a new key id so those rows are
+  identifiable, then null the affected users' `access_token`, `refresh_token` and
+  `refresh_token_fp` and set `tesla_refresh_state = 'reconnect_required'`,
+  `auth_status = 'revoked'` so they sign in again.
+
+`TOKEN_FINGERPRINT_KEY` cannot be rotated: the backfill does not recompute existing
+fingerprints, so changing it makes every refresh compare-and-swap fail. Supporting it
+would need a code change (recompute `refresh_token_fp` from the decrypted token).
+
 Tesla token refresh behavior:
 - All production refresh callers share the account-level coordinator. Its atomic
   lease claim records `in_flight`, a UUID attempt ID, generation, and start time
@@ -249,7 +325,7 @@ Tesla token refresh behavior:
   401 by the credentials they sent, so only one of them refreshes.
 - Rotated credentials, the next generation and the lease release are saved in
   one statement, guarded by the original generation, attempt ID and refresh
-  credential (not the lease clock), with one retry. Newer OAuth login wins over
+  credential fingerprint (not the lease clock), with one retry. Newer OAuth login wins over
   stale completions. Acknowledgement loss cannot authorize another exchange of
   the previous generation.
 - `not_dispatched` and `configuration_rejected` return to `ready` with a
@@ -257,7 +333,7 @@ Tesla token refresh behavior:
   with a two-minute floor, then the same grant is retried. Only definitive
   credential rejection becomes `reconnect_required` with `auth_status=revoked`.
   During a retry floor, Fleet requests fail fast with `TeslaRefreshBackoffError`.
-- The dev/beta database copy clears `User` Tesla tokens: a second holder of a
+- The dev/beta database copy clears `User` Tesla tokens (and `refresh_token_fp`): a second holder of a
   single-use grant races prod (see `docs/dev-database-copy.md`).
 - `is_active` is account eligibility, independent of Tesla health. Refresh and
   verification never deactivate an account. OAuth replaces credentials and

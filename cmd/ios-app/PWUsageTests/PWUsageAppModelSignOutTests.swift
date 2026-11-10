@@ -188,3 +188,14 @@ extension PWUsageAppModelTests {
         #expect(api.liveSiteIDs.count == 1)
     }
 }
+
+extension PWUsageAppModelTests {
+    @Test("Sign-in messages explain missing Powerwall access and stay silent on cancel")
+    func signInMessageForAuthErrors() {
+        #expect(PWUsageAppModel.signInMessage(for: .cancelled) == nil)
+        #expect(PWUsageAppModel.signInMessage(for: .noSites)
+            == "Tesla sign-in worked, but this account has no Powerwall access. "
+            + "If someone removed your access in Tesla, ask them to add you again.")
+        #expect(PWUsageAppModel.signInMessage(for: .serverRejectedLogin) == "Could not complete sign-in. Try again.")
+    }
+}

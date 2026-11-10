@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Image from 'next/image';
-import { getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
+import { getCurrentUser, getDefaultSiteId, isUserAdmin } from '@/lib/auth-checks';
 import { UserRepo } from '@/lib/user-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
@@ -35,13 +35,11 @@ export default observePage('/profile', async function ProfilePage() {
 
     const siteId = defaultSiteId;
 
-    // Resolve User from the first site (assuming all sites belong to the same user in current context)
-    // Or we find the user via token, but we don't store user_id in cookie directly yet.
-    // We can lookup any site in DB to get user_id.
     const repo = new SiteRepo();
     const firstSite = await repo.getSite(siteId);
+    const currentUser = await getCurrentUser();
 
-    if (!firstSite || !firstSite.user_id) {
+    if (!firstSite || !currentUser) {
         return (
             <PageShell maxWidth="lg">
                 <Alert variant="danger">
@@ -52,7 +50,7 @@ export default observePage('/profile', async function ProfilePage() {
         );
     }
 
-    const user = await new UserRepo().getById(firstSite.user_id);
+    const user = await new UserRepo().getById(currentUser.id);
 
     if (!user) {
         return (

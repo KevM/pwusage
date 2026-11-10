@@ -8,6 +8,16 @@ import { pool, User, Site } from './db';
 import { TeslaClient, isTeslaAuthError } from './tesla-client';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
 import { normalizeFleetBaseUrl } from './tesla-region';
+import { decryptToken, encryptToken, tokenFingerprint } from './token-crypto';
+
+/** Decrypt the token columns of a `User` row in place of the stored envelope. */
+function decryptUserTokens<T extends { access_token?: string | null; refresh_token?: string | null }>(row: T, userId: string): T {
+    if ('access_token' in row) row = { ...row, access_token: decryptToken(row.access_token, 'access_token', userId) };
+    if ('refresh_token' in row) row = { ...row, refresh_token: decryptToken(row.refresh_token, 'refresh_token', userId) };
+    return row;
+}
+import { siteMembershipEnabled } from './site-membership-flag';
+import { siteAuthRestoredSql, siteConnectionUserSql } from './site-outage-sql';
 
 export interface UserWithSites extends User {
     sites: Site[];
@@ -28,27 +38,36 @@ interface VerificationState extends TeslaConnectionState {
 
 export class UserRepo {
     // === Queries ===
-    async getByAccessToken(token: string): Promise<{ id: string, email?: string, roles?: string[] } | null> {
-        const res = await pool.query('SELECT id, email, roles FROM "User" WHERE access_token = $1', [token]);
-        if (res.rows.length === 0) return null;
-        return res.rows[0];
-    }
-
     async getTokens(userId: string): Promise<{ access_token: string, refresh_token: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
         const res = await pool.query('SELECT access_token, refresh_token, fleet_api_base_url, is_active, auth_status, tesla_refresh_state, refresh_lock_expires, tesla_refresh_retry_after FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
-        return res.rows[0];
+        return decryptUserTokens(res.rows[0], userId);
     }
 
-    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
+    async getTokensForSite(siteId: string): Promise<{ access_token: string, refresh_token: string, user_id: string, tesla_energy_site_id: string, fleet_api_base_url: string | null } & TeslaConnectionState | null> {
         const res = await pool.query(`
-            SELECT u.access_token, u.refresh_token, u.id as user_id, u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state, u.refresh_lock_expires, u.tesla_refresh_retry_after
+            SELECT u.access_token, u.refresh_token, u.id as user_id, m.tesla_energy_site_id,
+                   u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state,
+                   u.refresh_lock_expires, u.tesla_refresh_retry_after
             FROM "User" u
-            JOIN "Site" s ON s.user_id = u.id
+            JOIN "Site" s ON s.tesla_connection_user_id = u.id
+            JOIN "SiteMember" m ON m.site_id = s.id AND m.user_id = u.id
             WHERE s.id = $1
         `, [siteId]);
         if (res.rows.length === 0) return null;
-        return res.rows[0];
+        return decryptUserTokens(res.rows[0], res.rows[0].user_id);
+    }
+
+    /** Fresh credentials and Tesla ID for one pinned member, even if the connection moved. */
+    async getTokensForSiteMember(siteId: string, userId: string): Promise<({ access_token: string; refresh_token: string; tesla_energy_site_id: string; fleet_api_base_url: string | null } & TeslaConnectionState) | null> {
+        const res = await pool.query(`
+            SELECT u.access_token, u.refresh_token, m.tesla_energy_site_id,
+                   u.fleet_api_base_url, u.is_active, u.auth_status, u.tesla_refresh_state,
+                   u.refresh_lock_expires, u.tesla_refresh_retry_after
+            FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
+            WHERE m.site_id = $1 AND m.user_id = $2
+        `, [siteId, userId]);
+        return res.rows.length ? decryptUserTokens(res.rows[0], userId) : null;
     }
 
     async isActive(userId: string): Promise<boolean> {
@@ -75,7 +94,7 @@ export class UserRepo {
     async getById(userId: string): Promise<User | null> {
         const res = await pool.query('SELECT * FROM "User" WHERE id = $1', [userId]);
         if (res.rows.length === 0) return null;
-        return res.rows[0] as User;
+        return decryptUserTokens(res.rows[0] as User, userId);
     }
 
     async getByEmail(email: string): Promise<User | null> {
@@ -85,11 +104,15 @@ export class UserRepo {
         // migration).
         const res = await pool.query('SELECT * FROM "User" WHERE LOWER(email) = LOWER($1) ORDER BY id LIMIT 1', [email]);
         if (res.rows.length === 0) return null;
-        return res.rows[0] as User;
+        const user = res.rows[0] as User;
+        return decryptUserTokens(user, user.id);
     }
 
     async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
+        const access = siteMembershipEnabled()
+            ? 'EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id = u.id)'
+            : 's.user_id = u.id';
         // Fetch users and check for Trmnl integration in a single query using subquery (efficiently handles the join logic)
         const userRes = await pool.query(`
             SELECT u.id, u.email, u.roles, u.is_active, u.auth_status, u.tesla_refresh_state, u.tesla_refresh_started_at, u.last_checked_at, u.auth_lost_at, u.auth_restored_at, u.created_at${tokenCols},
@@ -97,19 +120,23 @@ export class UserRepo {
                 SELECT 1
                 FROM "TrmnlInstallation" ti
                 JOIN "Site" s ON s.id = ti.site_id
-                WHERE s.user_id = u.id
+                WHERE ${access}
             ) as has_trmnl_integration,
             (
-                SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE s.user_id = u.id
+                SELECT MAX(${latestStoredSampleSql('s.id')}) FROM "Site" s WHERE ${access}
             ) as last_data_import
             FROM "User" u
             ORDER BY last_data_import DESC NULLS LAST, u.is_active DESC
         `);
-        const users = userRes.rows as (User & { has_trmnl_integration: boolean; last_data_import: string | null })[];
+        const users = (userRes.rows as (User & { has_trmnl_integration: boolean; last_data_import: string | null })[])
+            .map(user => decryptUserTokens(user, user.id));
 
         // Fetch all sites (optimization: fetch all and map in memory instead of N+1 queries)
         // We also strip tokens from Site results here
-        const siteRes = await pool.query('SELECT id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode FROM "Site"');
+        const siteRes = await pool.query(siteMembershipEnabled()
+            ? `SELECT s.id, m.user_id, s.name, s.utility, s.updated, s.installed, s.timezone, s.billing_start_day, s.timezone_display_mode
+               FROM "Site" s JOIN "SiteMember" m ON m.site_id = s.id`
+            : 'SELECT id, user_id, name, utility, updated, installed, timezone, billing_start_day, timezone_display_mode FROM "Site"');
         const sites = siteRes.rows as Site[];
 
         // Map sites to users
@@ -124,6 +151,19 @@ export class UserRepo {
         });
 
         return usersWithSites;
+    }
+
+    /** Emails of the people Tesla currently grants access to this shared site. */
+    async getSiteMemberEmails(siteId: string): Promise<string[]> {
+        if (!siteMembershipEnabled()) return [];
+        const { rows } = await pool.query<{ email: string }>(`
+            SELECT u.email
+            FROM "User" u
+            JOIN "SiteMember" m ON m.user_id = u.id
+            WHERE m.site_id = $1 AND u.email IS NOT NULL
+            ORDER BY lower(u.email), u.id
+        `, [siteId]);
+        return rows.map(row => row.email);
     }
 
     async getUserEmail(userId: string): Promise<string | null> {
@@ -159,7 +199,8 @@ export class UserRepo {
      */
     async getAuthRestoredAtForSite(siteId: string): Promise<Date | null> {
         const { rows } = await pool.query<{ auth_restored_at: Date | null }>(
-            'SELECT u.auth_restored_at FROM "Site" s JOIN "User" u ON u.id = s.user_id WHERE s.id = $1',
+            `SELECT ${siteAuthRestoredSql()} AS auth_restored_at FROM "Site" s
+             LEFT JOIN "User" u ON u.id = ${siteConnectionUserSql()} WHERE s.id = $1`,
             [siteId]
         );
         return rows[0]?.auth_restored_at ?? null;
@@ -182,11 +223,12 @@ export class UserRepo {
         fleetApiBaseUrl?: string | null;
     }): Promise<void> {
         const saved = await pool.query<{ tesla_credential_generation: number; is_active: boolean }>(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url)
-            VALUES ($1, $2, $3, $4, $5, 'active', true, $6)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url, refresh_token_fp)
+            VALUES ($1, $2, $3, $4, $5, 'active', true, $6, $7)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
+                refresh_token_fp = EXCLUDED.refresh_token_fp,
                 email = COALESCE(EXCLUDED.email, "User".email),
                 fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url),
                 auth_status = 'active',
@@ -194,8 +236,11 @@ export class UserRepo {
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 tesla_refresh_retry_after = 0, is_refreshing = 0, refresh_lock_expires = 0
             RETURNING tesla_credential_generation, is_active
-        `, [params.userId, params.email, params.accessToken, params.refreshToken, params.tokenExpiresAt,
-            normalizeFleetBaseUrl(params.fleetApiBaseUrl)]);
+        `, [params.userId, params.email,
+            encryptToken(params.accessToken, 'access_token', params.userId),
+            encryptToken(params.refreshToken, 'refresh_token', params.userId),
+            params.tokenExpiresAt, normalizeFleetBaseUrl(params.fleetApiBaseUrl),
+            tokenFingerprint(params.refreshToken)]);
         if (saved?.rows[0]) {
             logEvent('info', 'tesla.connection.credentials-restored', {
                 accountId: createHash('sha256').update(params.userId).digest('hex').slice(0, 16),
@@ -218,8 +263,8 @@ export class UserRepo {
 
     async updateTokens(userId: string, accessToken: string, refreshToken: string): Promise<void> {
         await pool.query(
-            'UPDATE "User" SET access_token = $1, refresh_token = $2 WHERE id = $3',
-            [accessToken, refreshToken, userId]
+            'UPDATE "User" SET access_token = $1, refresh_token = $2, refresh_token_fp = $4 WHERE id = $3',
+            [encryptToken(accessToken, 'access_token', userId), encryptToken(refreshToken, 'refresh_token', userId), userId, tokenFingerprint(refreshToken)]
         );
     }
 
@@ -255,6 +300,13 @@ export class UserRepo {
             // A login, refresh, revocation, or session-version bump during the
             // network check must supersede every eventual verification write.
             // No transaction/row lock is held across a Tesla request.
+            const membershipAccess = siteMembershipEnabled();
+            const siteAccess = membershipAccess
+                ? 'EXISTS (SELECT 1 FROM "SiteMember" WHERE site_id = $5 AND user_id = $3)'
+                : 'EXISTS (SELECT 1 FROM "Site" WHERE id = $5 AND user_id = $3)';
+            const anySite = membershipAccess
+                ? 'EXISTS (SELECT 1 FROM "SiteMember" WHERE user_id = $3)'
+                : 'EXISTS (SELECT 1 FROM "Site" WHERE user_id = $3)';
             const initial = await pool.query<VerificationState>(
                 'SELECT xmin::text AS auth_version, auth_status, is_active, tesla_refresh_state, refresh_lock_expires FROM "User" WHERE id = $1', [user.id],
             );
@@ -279,12 +331,8 @@ export class UserRepo {
                         refresh_lock_expires = CASE WHEN ${DEAD_LEASE} THEN 0 ELSE refresh_lock_expires END,
                         tesla_refresh_state = CASE WHEN ${DEAD_LEASE} THEN 'ready' ELSE tesla_refresh_state END
                     WHERE id = $3 AND xmin::text = $4
-                      AND ($5::text IS NULL OR EXISTS (
-                          SELECT 1 FROM "Site" WHERE id = $5 AND user_id = $3
-                      ))
-                      AND ($1 <> 'no_sites' OR NOT EXISTS (
-                          SELECT 1 FROM "Site" WHERE user_id = $3
-                      ))
+                      AND ($5::text IS NULL OR ${siteAccess})
+                      AND ($1 <> 'no_sites' OR NOT ${anySite})
                 `, [outcome, initial.rows[0].is_active, user.id, authVersion, siteId ?? null, Date.now(), TRANSIENT_BACKOFF_MS]);
                 if (updated.rowCount) return finish(outcome, reason, error, errorMessage);
 
@@ -308,7 +356,9 @@ export class UserRepo {
 
             // Get user's sites to test with
             phase = 'site-lookup';
-            const sitesRes = await pool.query('SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
+            const sitesRes = await pool.query(membershipAccess
+                ? 'SELECT site_id AS id FROM "SiteMember" WHERE user_id = $1 ORDER BY site_id LIMIT 1'
+                : 'SELECT id FROM "Site" WHERE user_id = $1 LIMIT 1', [user.id]);
             if (sitesRes.rows.length === 0) {
                 // No sites - can't verify credentials
                 return await commitStatus('no_sites', 'no-linked-site');
@@ -324,8 +374,10 @@ export class UserRepo {
             // and falsely revoke a healthy user.
             let createClient = deps?.createClient;
             if (!createClient) {
-                const { createTeslaClientForSite } = await import('./tesla-client-factory');
-                createClient = createTeslaClientForSite;
+                const { createTeslaClientForSite, createTeslaClientForSiteMember } = await import('./tesla-client-factory');
+                createClient = membershipAccess
+                    ? (id => createTeslaClientForSiteMember(id, user.id))
+                    : createTeslaClientForSite;
             }
             phase = 'client-construction';
             const client = await createClient(siteId);
@@ -364,7 +416,7 @@ export class UserRepo {
         }
     }
 
-    async verifyAllUserStatuses() {
+    async verifyAllUserStatuses(deadlineMs = Infinity) {
         const users = await this.getAllUsers();
         logEvent('info', 'tesla.user-verification.batch-started', { userCount: users.length });
         let activeCount = 0;
@@ -375,6 +427,7 @@ export class UserRepo {
         const staleThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
         for (const user of users) {
+            if (Date.now() >= deadlineMs - 5_000) break;
             // Optimization: Skip if checked recently AND active
             const lastChecked = user.last_checked_at ? new Date(user.last_checked_at) : null;
             const isStale = !lastChecked || lastChecked < staleThreshold;

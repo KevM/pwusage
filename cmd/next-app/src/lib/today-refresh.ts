@@ -3,10 +3,9 @@ import { withIoDeadline, ioSignal, checkIoDeadline } from './io-deadline';
 import { Importer } from './importer';
 import { type EnergySiteLiveStatus } from './tesla-client';
 import { SiteRepo } from './site-repo';
-import { UserRepo } from './user-repo';
 import { createEnergyRepo } from './energy-repo-factory';
 import { withImportLock } from './import-lock';
-import { createTeslaClientForSite } from './tesla-client-factory';
+import { createTeslaClientForSite, getSiteConnectionTokens } from './tesla-client-factory';
 import { nextSampleDueAt } from './tesla-sample-timing';
 
 /**
@@ -239,7 +238,7 @@ export async function refreshLiveStatus(
         // callers that render it, but report the connection state.
         let connectionChecked: Promise<boolean> | undefined;
         const cached = async (): Promise<RefreshLiveStatusResult> => {
-            connectionChecked ??= new UserRepo().getTokensForSite(siteId)
+            connectionChecked ??= getSiteConnectionTokens(siteId)
                 .then(connection => !connection?.refresh_token || connection.is_active === false || requiresTeslaReconnect(connection));
             return { status: await connectionChecked ? 'connection-required' : 'cached', liveStatus: cachedStatus, fetchedAt };
         };

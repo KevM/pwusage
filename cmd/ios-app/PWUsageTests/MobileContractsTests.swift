@@ -11,6 +11,34 @@ struct MobileContractsTests {
         #expect(sites == [MobileSite(id: "site-1", name: "Home", utility: "Utility Co")])
     }
 
+    @Test("Decodes the billing day and whether anyone chose it")
+    func decodesBillingDayFields() throws {
+        let fixture = Data(#"""
+        [{"id":"a","name":"Home","utility":"U","billingDay":31,"billingDayConfirmed":true},
+         {"id":"b","name":"Cabin","utility":"U","billingDay":1,"billingDayConfirmed":false}]
+        """#.utf8)
+        let sites = try JSONDecoder().decode([MobileSite].self, from: fixture)
+        #expect(sites.map(\.billingDay) == [31, 1])
+        #expect(sites.map(\.billingDayConfirmed) == [true, false])
+    }
+
+    @Test("A server without the billing day fields reads as confirmed day 1, so nobody is asked")
+    func missingBillingDayFieldsReadAsConfirmed() throws {
+        let fixture = Data(#"{"id":"a","name":"Home","utility":"U"}"#.utf8)
+        let site = try JSONDecoder().decode(MobileSite.self, from: fixture)
+        #expect(site.billingDay == 1)
+        #expect(site.billingDayConfirmed)
+    }
+
+    @Test("Saving a billing day returns the site with that day, confirmed")
+    func savingBillingDayConfirmsTheSite() {
+        let site = MobileSite(id: "a", name: "Home", utility: "U", billingDay: 1, billingDayConfirmed: false)
+        let saved = site.settingBillingDay(15)
+        #expect(saved.billingDay == 15)
+        #expect(saved.billingDayConfirmed)
+        #expect(saved.id == "a")
+    }
+
     @Test("Decodes mobile live fixture and nullable fields")
     func decodesMobileLiveFixtureAndNullableFields() throws {
         let fixture = Data(#"""

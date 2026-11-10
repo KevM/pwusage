@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => {
         verifySiteAccess: vi.fn(),
         findByUuidWithSite: vi.fn(),
         getSite: vi.fn(),
+        repairConnection: vi.fn(),
         getSiteCurrencyCode: vi.fn(),
         getLatestEnergyData: vi.fn(),
         getCycleAggregates: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('@/lib/trmnl-installation-repo', () => ({
 vi.mock('@/lib/site-repo', () => ({
     SiteRepo: class {
         getSite = mocks.getSite;
+        repairConnection = mocks.repairConnection;
         getSiteCurrencyCode = mocks.getSiteCurrencyCode;
     }
 }));
@@ -64,12 +66,6 @@ vi.mock('@/lib/energy-repo', () => ({
         static aggregateUsageByTOU = () => [];
     },
     sumTodayRows: () => ({ homeKwh: 0, gridNetKwh: 0, solarKwh: 0 })
-}));
-
-vi.mock('@/lib/tesla-token-repo', () => ({
-    TeslaTokenRepo: class {
-        getLockedRefreshHandler = () => ({ refreshHandler: vi.fn(), errorHandler: vi.fn() });
-    }
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -127,6 +123,21 @@ describe('/api/trmnl/markup', () => {
         for (const markup of Object.values(body)) expect(markup).toContain('Reconnect Tesla to update your data.');
         expect(mocks.refreshLive).not.toHaveBeenCalled();
         expect(mocks.after).not.toHaveBeenCalled();
+    });
+
+    it('fails the connection over to a healthy member instead of rendering the reconnect state', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            mocks.getSite
+                .mockResolvedValueOnce({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r', tesla_refresh_state: 'reconnect_required' })
+                .mockResolvedValue({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r2', tesla_refresh_state: 'ready' });
+            mocks.repairConnection.mockResolvedValue('member-2');
+            const response = await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1'));
+            const body = await response.json();
+            expect(mocks.repairConnection).toHaveBeenCalledWith('site-1');
+            for (const markup of Object.values(body)) expect(markup).not.toContain('Reconnect Tesla to update your data.');
+            expect(mocks.after).toHaveBeenCalled();
+        } finally { vi.unstubAllEnvs(); }
     });
 
     it('renders live and chart sections while clearly withholding an incompletely priced bill',async()=>{
