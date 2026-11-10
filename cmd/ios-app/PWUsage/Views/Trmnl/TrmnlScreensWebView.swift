@@ -4,6 +4,10 @@ import WebKit
 /// The web app's screens page for one device. It signs in with the app's own session cookie, so
 /// there is no second sign-in, and it keeps nothing of its own: the store is not persistent.
 struct TrmnlScreensWebView: UIViewRepresentable {
+    /// Marks the document before it paints, so the web app hides its site header and footer, which
+    /// the sheet's own bar makes redundant. Sent to every page the view loads.
+    static let embeddedMarkerScript = "document.documentElement.setAttribute('data-embedded', '')"
+
     let url: URL
 
     func makeCoordinator() -> Coordinator { Coordinator(host: url.host()) }
@@ -11,6 +15,8 @@ struct TrmnlScreensWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.embeddedMarkerScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         let cookies = (SharedWebSession.cookieStorage().cookies(for: url) ?? []).filter { $0.name == "site_auth" }
