@@ -514,6 +514,16 @@ Only rows with matching hardware need this. Today that is Harrison alone, with t
    and tags; delete the secondary's `EnergyDayArchive` rows, then the secondary itself, which cascades its rate plans, holds
    and activity registrations. A bare site delete fails (section 9).
 
+**What shipped (2026-11-09): the empty-duplicate merge only.** `scripts/merge-duplicate-site.ts` (`src/lib/site-merge.ts`) handles
+the case where the secondary holds no history: it takes the start claim, moves the secondary's members to the primary keeping
+their own Tesla IDs, and deletes the secondary in one transaction. It refuses on archived days, summaries, TRMNL devices, tags,
+an active hold, differing hardware or timezone, or a member already on the primary. Steps 3 and 4 (copying and comparing days)
+and repointing TRMNL and tags are not built; build them if a duplicate with data ever appears.
+`scripts/report-site-duplicates.ts` compares a duplicate's days with the primary's (read-only), and `--drop-secondary-days`
+lets the merge delete a duplicate's days and summaries when the primary already holds every one at least as completely
+(a day still open is ignored). Days the primary lacks, TRMNL devices and tags still refuse. Applying needs `--apply` and
+`--confirm-host`.
+
 Run production merges only with the owner's approval, after a backup. Warn affected members that iOS solar layouts need
 setting up again.
 

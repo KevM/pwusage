@@ -21,6 +21,7 @@ import { SiteRepo } from './site-repo';
 import { reconcileDueMemberships } from './site-membership-daily';
 import { UserRepo } from './user-repo';
 import { SiteMembershipJoinRepo } from './site-membership-join-repo';
+import { mergeEmptyDuplicateSite } from './site-merge';
 import type { EnergySiteInfo } from './tesla-client';
 
 const socket = process.env.SITE_MEMBERSHIP_TEST_SOCKET;
@@ -53,6 +54,16 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     await local.database.query(`CREATE TABLE "TrmnlInstallation" (
       id bigserial PRIMARY KEY, site_id text REFERENCES "Site"(id)
     )`);
+    // Minimal stand-ins: the merge only counts rows, and a bare delete of a site with summaries must fail.
+    await local.database.query(`CREATE TABLE "EnergyDayArchive" (id bigserial PRIMARY KEY,
+      site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
+      day_start timestamptz NOT NULL DEFAULT now(), sample_count integer NOT NULL DEFAULT 1, status text)`);
+    // Real summaries cascade from their archive row, and a bare delete of a site that has them must fail.
+    await local.database.query(`CREATE TABLE "EnergyDaySummary" (id bigserial PRIMARY KEY,
+      site_id text NOT NULL REFERENCES "Site"(id),
+      archive_id bigint REFERENCES "EnergyDayArchive"(id) ON DELETE CASCADE)`);
+    await local.database.query(`CREATE TABLE "LoadTag" (id bigserial PRIMARY KEY,
+      site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE)`);
     for (const file of [
       '20260525000000_add_battery_hold.sql',
       '20260525010000_battery_hold_enhancements.sql',
@@ -412,5 +423,128 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     expect(await repo.getRestoreCandidates(hold.id)).toEqual(['u1', 'u2']);
     await local.database.query(`UPDATE "User" SET auth_status='revoked' WHERE id='u1'`);
     expect(await repo.getRestoreCandidates(hold.id)).toEqual(['u2']);
+  });
+
+  describe('merging an empty duplicate site into the real one', () => {
+    const members = async (siteId: string) => (await local.database.query(
+      `SELECT user_id, tesla_energy_site_id FROM "SiteMember" WHERE site_id=$1 ORDER BY user_id`, [siteId])).rows;
+    const siteExists = async (id: string) => (await local.database.query(`SELECT 1 FROM "Site" WHERE id=$1`, [id])).rowCount === 1;
+
+    it('dry run reports the move and writes nothing', async () => {
+      const result = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: false });
+      expect(result).toEqual({ applied: false, blockers: [], movedMembers: [{ userId: 'u2', teslaEnergySiteId: 's2' }], droppedDays: 0 });
+      expect(await siteExists('s2')).toBe(true);
+      expect(await members('s1')).toEqual([{ user_id: 'u1', tesla_energy_site_id: 's1' }]);
+    });
+
+    it('moves the member with their own Tesla ID, deletes the duplicate and leaves the connection alone', async () => {
+      const result = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: true });
+      expect(result.applied).toBe(true);
+      expect(await siteExists('s2')).toBe(false);
+      expect(await members('s1')).toEqual([
+        { user_id: 'u1', tesla_energy_site_id: 's1' }, { user_id: 'u2', tesla_energy_site_id: 's2' }]);
+      expect((await local.database.query(`SELECT tesla_connection_user_id FROM "Site" WHERE id='s1'`)).rows[0].tesla_connection_user_id).toBe('u1');
+      expect(await new SiteRepo().getSiteIdsForTeslaIds(['s2'])).toEqual(['s1']);
+    });
+
+    it('releases the start claim afterwards and refuses a rerun cleanly', async () => {
+      await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: true });
+      expect(await repo.claimStart('hardware-1', randomUUID())).toBe(true);
+      await local.database.query(`DELETE FROM "BatteryHoldStartClaim"`);
+      const rerun = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: true });
+      expect(rerun).toEqual({ applied: false, blockers: ['secondary-not-found'], movedMembers: [], droppedDays: 0 });
+    });
+
+    it.each([
+      ['archived days', `INSERT INTO "EnergyDayArchive" (site_id) VALUES ('s2')`, 'secondary-has-archived-days'],
+      ['summaries', `INSERT INTO "EnergyDaySummary" (site_id) VALUES ('s2')`, 'secondary-has-summaries'],
+      ['TRMNL devices', `INSERT INTO "TrmnlInstallation" (site_id) VALUES ('s2')`, 'secondary-has-trmnl-installations'],
+      ['tags', `INSERT INTO "LoadTag" (site_id) VALUES ('s2')`, 'secondary-has-tags'],
+      ['a different timezone', `UPDATE "Site" SET timezone='America/Chicago' WHERE id='s2'`, 'timezones-differ'],
+      ['different hardware', `UPDATE "Site" SET tesla_hardware_id='hardware-2' WHERE id='s2'`, 'hardware-differs'],
+      ['a missing hardware ID', `UPDATE "Site" SET tesla_hardware_id=NULL WHERE id IN ('s1','s2')`, 'hardware-differs'],
+      ['the same person already on the primary', `INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES ('s1','u2','other-id')`, 'member-already-on-primary'],
+      ['an active hold on the secondary', `INSERT INTO "BatteryHold" (site_id, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at) VALUES ('s2',20,100,80,500,now()+interval '1 hour')`, 'active-hold'],
+      ['an active hold on the primary', `INSERT INTO "BatteryHold" (site_id, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at) VALUES ('s1',20,100,80,500,now()+interval '1 hour')`, 'active-hold'],
+      ['a start in progress', `INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at) VALUES ('hardware-1','${randomUUID()}', now()+interval '1 minute')`, 'start-claim-held'],
+    ])('refuses and writes nothing with %s', async (_label, setup, blocker) => {
+      await local.database.query(setup);
+      const dry = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: false });
+      expect(dry.blockers).toContain(blocker);
+      const result = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: true });
+      expect(result.applied).toBe(false);
+      expect(result.blockers).toContain(blocker);
+      expect(await siteExists('s2')).toBe(true);
+      expect((await members('s2')).length).toBe(1);
+    });
+
+    describe('dropping the duplicate\'s days that the real site already covers', () => {
+      const merge = (apply: boolean) => mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply, dropSecondaryDays: true });
+      const day = (site: string, start: string, samples: number, status: string | null = 'complete') => local.database.query(
+        `INSERT INTO "EnergyDayArchive" (site_id, day_start, sample_count, status) VALUES ($1, $2, $3, $4) RETURNING id`,
+        [site, start, samples, status]);
+      const archiveCount = async (site: string) => Number((await local.database.query(
+        `SELECT count(*) AS n FROM "EnergyDayArchive" WHERE site_id=$1`, [site])).rows[0].n);
+
+      beforeEach(async () => {
+        await day('s1', '2026-10-01', 288);
+        await day('s1', '2026-10-02', 288);
+        const first = (await day('s2', '2026-10-01', 288)).rows[0].id;
+        await day('s2', '2026-10-02', 288);
+        await local.database.query(`INSERT INTO "EnergyDaySummary" (site_id, archive_id) VALUES ('s2', $1)`, [first]);
+      });
+
+      it('dry run reports how many days it would drop and writes nothing', async () => {
+        const result = await merge(false);
+        expect(result).toMatchObject({ applied: false, blockers: [], droppedDays: 2 });
+        expect(await archiveCount('s2')).toBe(2);
+        expect(await siteExists('s2')).toBe(true);
+      });
+
+      it('drops the duplicate\'s days and summaries, moves the member and deletes the site', async () => {
+        const result = await merge(true);
+        expect(result).toMatchObject({ applied: true, blockers: [], droppedDays: 2 });
+        expect(await siteExists('s2')).toBe(false);
+        expect(await archiveCount('s2')).toBe(0);
+        expect(await archiveCount('s1')).toBe(2);
+        expect((await members('s1')).map(m => m.user_id)).toEqual(['u1', 'u2']);
+      });
+
+      it('tolerates a more complete day that is still open, since the primary refetches it', async () => {
+        await local.database.query(`UPDATE "EnergyDayArchive" SET sample_count=300, status='open' WHERE site_id='s2' AND day_start='2026-10-02'`);
+        expect(await merge(true)).toMatchObject({ applied: true, droppedDays: 2 });
+      });
+
+      it.each([
+        ['a day the primary lacks', async () => { await day('s2', '2026-10-03', 288); }, 'secondary-has-days-not-on-primary'],
+        ['a more complete closed day', async () => {
+          await local.database.query(`UPDATE "EnergyDayArchive" SET sample_count=100, status='gapped' WHERE site_id='s1' AND day_start='2026-10-02'`);
+        }, 'secondary-has-better-days'],
+        ['TRMNL devices', async () => { await local.database.query(`INSERT INTO "TrmnlInstallation" (site_id) VALUES ('s2')`); }, 'secondary-has-trmnl-installations'],
+        ['tags', async () => { await local.database.query(`INSERT INTO "LoadTag" (site_id) VALUES ('s2')`); }, 'secondary-has-tags'],
+      ])('refuses and drops nothing with %s', async (_label, setup, blocker) => {
+        await setup();
+        const before = await archiveCount('s2');
+        for (const apply of [false, true]) {
+          const result = await merge(apply);
+          expect(result.applied).toBe(false);
+          expect(result.blockers).toContain(blocker);
+        }
+        expect(await archiveCount('s2')).toBe(before);
+        expect(await siteExists('s2')).toBe(true);
+      });
+
+      it('still refuses archived days without the flag', async () => {
+        const result = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's2', apply: true });
+        expect(result.blockers).toContain('secondary-has-archived-days');
+        expect(await archiveCount('s2')).toBe(2);
+      });
+    });
+
+    it('refuses to merge a site into itself', async () => {
+      const result = await mergeEmptyDuplicateSite({ primaryId: 's1', secondaryId: 's1', apply: true });
+      expect(result).toEqual({ applied: false, blockers: ['same-site'], movedMembers: [], droppedDays: 0 });
+      expect(await siteExists('s1')).toBe(true);
+    });
   });
 });
