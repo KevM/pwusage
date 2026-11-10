@@ -13,7 +13,8 @@ vi.mock('next/headers', () => ({
     cookies: mocks.cookies
 }));
 
-vi.mock('./auth-jwt', () => ({
+vi.mock('./auth-jwt', async importOriginal => ({
+    ...await importOriginal<typeof import('./auth-jwt')>(),
     verifySiteToken: mocks.verifySiteToken
 }));
 
@@ -53,6 +54,20 @@ describe('auth-checks.ts', () => {
         expect(await getAuthorizedSiteIds()).toEqual([]);
         expect(await isUserAdmin()).toBe(false);
         expect(mocks.logSessionRejection).toHaveBeenCalledWith('missing-cookie');
+    });
+
+    it('rejects a token issued before the account was (re)created, but not one from its creation second', async () => {
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'], createdAtSeconds: 1000.7 });
+
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['user'], sv: 0, orig_iat: 900 });
+        expect(await getCurrentUser()).toBeNull();
+        expect(mocks.logSessionRejection).toHaveBeenCalledWith('revoked-session', 'user-1');
+    });
+
+    it('accepts a token minted in the same second the account was created', async () => {
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'], createdAtSeconds: 1000.7 });
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['user'], sv: 0, orig_iat: 1000 });
+        expect(await getCurrentUser()).toMatchObject({ id: 'user-1' });
     });
 
     it('returns null/false/empty array without throwing when verifySiteToken returns invalid/malformed payload', async () => {

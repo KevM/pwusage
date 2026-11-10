@@ -14,3 +14,19 @@ export function isSecureRequest(request: NextRequest): boolean {
     const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',', 1)[0]?.trim().toLowerCase();
     return forwardedProto === 'https' || request.nextUrl.protocol === 'https:';
 }
+
+/**
+ * CSRF defense in depth for cookie-authenticated writes. An absent Origin is allowed
+ * because URLSession requests from the iOS app may omit it.
+ */
+export function isCrossOriginRequest(request: NextRequest): boolean {
+    const origin = request.headers.get('origin');
+    if (origin) {
+        try {
+            if (new URL(origin).origin !== request.nextUrl.origin) return true;
+        } catch {
+            return true;
+        }
+    }
+    return request.headers.get('sec-fetch-site')?.toLowerCase() === 'cross-site';
+}

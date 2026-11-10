@@ -16,7 +16,7 @@ describe('robots', () => {
     const rule = robots().rules;
     const disallow = Array.isArray(rule) ? rule[0].disallow : rule.disallow;
     expect(disallow).toEqual(
-      expect.arrayContaining(['/api/', '/admin/', '/profile/', '/logout/'])
+      expect.arrayContaining(['/api/', '/admin/', '/profile/', '/logout/', '/account-delete'])
     );
   });
 

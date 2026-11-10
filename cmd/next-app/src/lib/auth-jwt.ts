@@ -35,6 +35,16 @@ export interface SiteAuthClaims {
     exp?: number;
 }
 
+/**
+ * True when a token was issued before this account row was created. A deleted account that
+ * signs in again gets a fresh row (session_version back at 0), so pre-deletion tokens must
+ * not authenticate it. Whole-second floor: a token minted in the creation second stays valid.
+ */
+export function tokenPredatesAccount(origIat: number | undefined, createdAtSeconds: number | null | undefined): boolean {
+    if (origIat === undefined || createdAtSeconds == null) return false;
+    return origIat < Math.floor(createdAtSeconds);
+}
+
 export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: string, originalIat?: number, sessionVersion: number = 0): string {
     const now = Math.floor(Date.now() / 1000);
     const payload: SiteAuthClaims = {
@@ -126,6 +136,12 @@ export async function checkRefreshNeeded(token: string): Promise<string | null> 
                 const tokenSessionVersion = decoded.sv ?? 0;
                 if (tokenSessionVersion < dbSessionVersion) {
                     console.warn(`[AuthJWT] Refusing to refresh revoked session for user ${decoded.sub} (token sv=${tokenSessionVersion} < db sv=${dbSessionVersion})`);
+                    return null;
+                }
+
+                const createdAt = user.created_at ? new Date(user.created_at).getTime() / 1000 : null;
+                if (tokenPredatesAccount(decoded.orig_iat, createdAt)) {
+                    console.warn(`[AuthJWT] Refusing to refresh a token issued before account ${decoded.sub} was created`);
                     return null;
                 }
 

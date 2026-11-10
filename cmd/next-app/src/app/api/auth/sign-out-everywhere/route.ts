@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth-checks';
 import { UserRepo } from '@/lib/user-repo';
-import { isSecureRequest } from '@/lib/request-security';
+import { isCrossOriginRequest, isSecureRequest } from '@/lib/request-security';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,22 +22,7 @@ function jsonError(error: string, status: number): NextResponse {
  * in depth consistent with the mobile session exchange route.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-    const origin = request.headers.get('origin');
-    if (origin) {
-        let originUrl: URL;
-        try {
-            originUrl = new URL(origin);
-        } catch {
-            return jsonError('Cross-origin requests are not allowed', 403);
-        }
-        if (originUrl.origin !== request.nextUrl.origin) {
-            return jsonError('Cross-origin requests are not allowed', 403);
-        }
-    }
-
-    if (request.headers.get('sec-fetch-site')?.toLowerCase() === 'cross-site') {
-        return jsonError('Cross-origin requests are not allowed', 403);
-    }
+    if (isCrossOriginRequest(request)) return jsonError('Cross-origin requests are not allowed', 403);
 
     const user = await getCurrentUser();
     if (!user) return jsonError('Unauthorized', 401);
