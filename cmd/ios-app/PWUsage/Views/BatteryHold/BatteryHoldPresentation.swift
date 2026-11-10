@@ -102,10 +102,6 @@ enum BatteryHoldPresentation {
         return "\(hold.targetReserve)%"
     }
 
-    static func toolbarTitle(state: BatteryHoldState, at now: Date) -> String? {
-        toolbarReserve(state: state, at: now).map { "Battery holding at \($0)" }
-    }
-
     static func toolbarAccessibilityLabel(state: BatteryHoldState, at now: Date) -> String {
         guard state.statusIsCurrent(at: now) else { return "Battery Saver, status unknown" }
         if let reserve = toolbarReserve(state: state, at: now) {
