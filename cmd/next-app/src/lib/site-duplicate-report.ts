@@ -53,8 +53,30 @@ interface OtherRowsRow {
     tags: string;
 }
 
-const SECONDARY_BETTER = `(s.sample_count > p.sample_count OR (s.status = 'complete' AND p.status IS DISTINCT FROM 'complete'))`;
+// A day the secondary still has open is ignored: it is being collected, and the primary refetches it.
+export const SECONDARY_BETTER = `(s.status IS DISTINCT FROM 'open' AND (s.sample_count > p.sample_count OR (s.status = 'complete' AND p.status IS DISTINCT FROM 'complete')))`;
 const PRIMARY_BETTER = `(p.sample_count > s.sample_count OR (p.status = 'complete' AND s.status IS DISTINCT FROM 'complete'))`;
+
+/** Whether the primary already holds every day the secondary has, at least as completely. Used by the merge. */
+export async function secondaryDayCoverage(
+    db: ReportQueryable,
+    primaryId: string,
+    secondaryId: string,
+): Promise<{ secondaryDays: number; notOnPrimary: number; secondaryBetter: number }> {
+    const { rows } = await db.query<{ secondary_days: string; not_on_primary: string; secondary_better: string }>(
+        `SELECT count(*) AS secondary_days,
+            count(*) FILTER (WHERE p.day_start IS NULL) AS not_on_primary,
+            count(*) FILTER (WHERE p.day_start IS NOT NULL AND ${SECONDARY_BETTER}) AS secondary_better
+         FROM "EnergyDayArchive" s
+         LEFT JOIN "EnergyDayArchive" p ON p.site_id = $1 AND p.day_start = s.day_start
+         WHERE s.site_id = $2`,
+        [primaryId, secondaryId]);
+    return {
+        secondaryDays: Number(rows[0]?.secondary_days ?? 0),
+        notOnPrimary: Number(rows[0]?.not_on_primary ?? 0),
+        secondaryBetter: Number(rows[0]?.secondary_better ?? 0),
+    };
+}
 
 async function otherRows(db: ReportQueryable, siteId: string): Promise<OtherRowsRow> {
     const { rows } = await db.query<OtherRowsRow>(
