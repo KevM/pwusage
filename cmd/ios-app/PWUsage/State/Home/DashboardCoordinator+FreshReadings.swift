@@ -6,17 +6,29 @@ import Foundation
 extension DashboardCoordinator {
     static let freshReadingLimit: TimeInterval = 15 * 60
 
-    /// `seenUntil` is when the person was last looking at Home's readings, if they
-    /// were: a reading's age then counts from the later of its fetch and that time.
+    /// `seenUntil` is when the person last had Home on screen. A reading Home was
+    /// showing then counts its age from the later of its fetch and that time; one
+    /// Home was holding was never seen, so it stays held until a fetch succeeds.
     func holdStaleReadings(at date: Date, seenUntil: Date? = nil) {
-        func shownSince(_ lastSuccess: Date?) -> Date? {
+        func shownSince(_ lastSuccess: Date?, isHeld: Bool) -> Date? {
             guard let lastSuccess else { return nil }
-            return max(lastSuccess, seenUntil ?? lastSuccess)
+            guard !isHeld, let seenUntil else { return isHeld ? nil : lastSuccess }
+            return max(lastSuccess, seenUntil)
         }
-        live.freshReadingWait = Self.wait(response: live.response, lastSuccess: shownSince(live.lastSuccess), at: date)
-        bill.freshReadingWait = Self.wait(response: bill.response, lastSuccess: shownSince(bill.lastSuccess), at: date)
-        power.freshReadingWait = Self.wait(
-            response: power.response, lastSuccess: shownSince(power.lastSuccess), at: date)
+        // A wait still loading keeps its start, so a glance away doesn't reset its slow line.
+        func rehold(_ current: FreshReadingWait?, _ next: FreshReadingWait?) -> FreshReadingWait? {
+            guard let current, !current.hasFailed, next != nil else { return next }
+            return current
+        }
+        live.freshReadingWait = rehold(live.freshReadingWait, Self.wait(
+            response: live.response,
+            lastSuccess: shownSince(live.lastSuccess, isHeld: live.freshReadingWait != nil), at: date))
+        bill.freshReadingWait = rehold(bill.freshReadingWait, Self.wait(
+            response: bill.response,
+            lastSuccess: shownSince(bill.lastSuccess, isHeld: bill.freshReadingWait != nil), at: date))
+        power.freshReadingWait = rehold(power.freshReadingWait, Self.wait(
+            response: power.response,
+            lastSuccess: shownSince(power.lastSuccess, isHeld: power.freshReadingWait != nil), at: date))
     }
 
     /// A pull to refresh sends every failed card back to waiting.

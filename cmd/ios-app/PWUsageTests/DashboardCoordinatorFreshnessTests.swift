@@ -173,6 +173,42 @@ extension DashboardCoordinatorTests {
         #expect(coordinator.bill.freshReadingWait == nil)
     }
 
+    @Test("A brief interruption keeps holding readings that were never shown")
+    func briefInterruptionKeepsHolds() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        coordinator.scenePhaseChanged(isActive: false)
+        clock.advance(minutes: 20)
+        api.summary.liveError = URLError(.notConnectedToInternet)
+        api.summary.billError = URLError(.notConnectedToInternet)
+        coordinator.scenePhaseChanged(isActive: true)
+        try await eventually { coordinator.refreshSettled }
+        #expect(coordinator.bill.freshReadingWait?.hasFailed == true)
+        coordinator.scenePhaseChanged(isActive: false)
+        coordinator.scenePhaseChanged(isActive: true)
+        #expect(coordinator.live.freshReadingWait != nil)
+        #expect(coordinator.bill.freshReadingWait != nil)
+    }
+
+    @Test("A glance away keeps a loading card's start time, so its slow line isn't reset")
+    func briefInterruptionKeepsWaitStart() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        api.summary.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock)
+        let start = clock.now
+        coordinator.scenePhaseChanged(isActive: true)
+        await api.summary.waitUntilLiveRequestStarts()
+        clock.advance(minutes: 1)
+        coordinator.scenePhaseChanged(isActive: false)
+        coordinator.scenePhaseChanged(isActive: true)
+        #expect(coordinator.live.freshReadingWait?.since == start)
+        api.summary.resumeRequests()
+    }
+
     @Test("Returning after more than 15 minutes holds the readings in memory")
     func foregroundAfterGapHoldsReadings() async throws {
         let clock = DashboardTestClock()
