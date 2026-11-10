@@ -389,6 +389,31 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
   refuses to renew the cookie. Re-authentication issues a token stamped with the
   new version. The caller's cookie is cleared in the same response.
 
+### 6. Account deletion
+Page: `/account-delete` (signed-out visitors go through `/login?callback=/account-delete`;
+`/auth/tesla-callback` issues a `site_auth` cookie for that callback even when the
+account has 0 Powerwall sites).
+Route: `DELETE /api/user`
+- Requires an authenticated user and `{ "confirm": "DELETE" }`, with the same
+  origin/`sec-fetch-site` checks as sign-out-everywhere (`isCrossOriginRequest`).
+- Restores any active Battery Saver session on sites where no other usable member
+  remains, because deleting the last member removes the record the restore relies
+  on. If Tesla needs reconnecting or the restore cannot be confirmed, it returns
+  `409`, keeps the account and keeps the session.
+- Deletes in one transaction (`AccountDeletionRepo`), locking the `User` and `Site`
+  rows in deterministic `ORDER BY id` order so a new Battery Saver session cannot
+  slip in. Removes the user's `MobileLoginHandoff`, `TrmnlInstallation`
+  (`installed_by_user_id`), and `SiteMember` rows; for sites with no remaining
+  members, `EnergyDayArchive` goes first (because `EnergyDaySummary` has `NO ACTION`
+  keys to `Tariff` and `TariffSchedule`) followed by `Site`, and finally `User`.
+  Surviving shared sites repair their Tesla connection (`SiteRepo.repairConnection`).
+- Clears the caller's `site_auth` cookie. Other devices are rejected on their next
+  request, because `resolveAuth` no longer finds the user.
+- Does not call Tesla to revoke tokens: Tesla documents no revocation endpoint for third
+  parties. `/account-delete/done` links to Tesla's consent page
+  (`auth.tesla.com/user/revoke/consent`) as an optional step. Revoking must follow
+  deletion, since pwusage needs the grant to restore the reserve.
+
 ### Troubleshooting: "passkey failed" on auth.tesla.com
 
 Tesla supports passkeys as an account sign-in credential. A passkey that a

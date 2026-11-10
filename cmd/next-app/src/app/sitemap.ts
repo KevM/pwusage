@@ -5,7 +5,7 @@ import { getAppBaseUrl } from '@/lib/url-utils';
 //   /products — redirects anonymous visitors to /login (auth-gated)
 //   /login    — an OAuth action handler (302s to Tesla), not content
 //   /help     — has no page; the real help page lives at /help/trmnl
-// Auth-gated areas (/site, /admin, /profile) and /api are also excluded and
+// Auth-gated areas (/site, /admin, /profile, /account-delete) and /api are also excluded and
 // disallowed in robots.ts.
 const PUBLIC_PATHS = ['', '/about', '/ios', '/news', '/help/trmnl', '/privacy', '/support'];
 
