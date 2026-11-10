@@ -75,9 +75,16 @@ export class BatteryHoldRepo {
   }
 
   async claimStart(key: string, owner: string): Promise<boolean> {
+    // Share-lock the claimed site(s) in the same statement as the insert. Account deletion locks
+    // those rows FOR UPDATE before it checks for claims, so a claim is either committed before
+    // that check (and blocks the deletion) or waits until the deletion has committed.
     const result = await pool.query(`
+      WITH site_locks AS (
+        SELECT id FROM "Site" WHERE COALESCE(tesla_hardware_id, 'site:' || id) = $1 ORDER BY id FOR SHARE
+      )
       INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at)
-      VALUES ($1, $2::uuid, clock_timestamp() + $3::int * interval '1 millisecond')
+      SELECT $1, $2::uuid, clock_timestamp() + $3::int * interval '1 millisecond'
+      FROM (SELECT count(*) FROM site_locks) AS locked
       ON CONFLICT (claim_key) DO UPDATE
       SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at
       WHERE "BatteryHoldStartClaim".expires_at <= clock_timestamp()
