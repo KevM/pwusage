@@ -73,16 +73,6 @@ struct LoadTimingView: View {
     let site: MobileSite
     let isSelected: Bool
 
-    /// On iOS 26.1 and later the tab bar's accessory carries a running session, so the toolbar button
-    /// steps aside. It stays to start one, and everywhere the accessory is unavailable.
-    private var showsHoldAccessory: Bool {
-        if #available(iOS 26.1, *) {
-            BatteryHoldAccessoryModel(state: coordinator.batteryHold, now: .now) != nil
-        } else {
-            false
-        }
-    }
-
     @StateObject var profileStore: LoadProfileStore
     @State var isProfileSheetPresented = false
     @State var isJobPickerPresented = false
@@ -184,17 +174,15 @@ struct LoadTimingView: View {
         .inlineNavigationTitle()
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if !showsHoldAccessory {
-                    Button {
-                        coordinator.isBatteryHoldSheetPresented = true
-                    } label: {
-                        BatteryHoldToolbarLabel(state: coordinator.batteryHold, now: .now)
-                    }
-                    .accessibilityLabel(
-                        BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: .now)
-                    )
-                    .accessibilityIdentifier("battery-hold-toolbar")
+                Button {
+                    coordinator.isBatteryHoldSheetPresented = true
+                } label: {
+                    BatteryHoldToolbarLabel(state: coordinator.batteryHold, now: .now)
                 }
+                .accessibilityLabel(
+                    BatteryHoldPresentation.toolbarAccessibilityLabel(state: coordinator.batteryHold, at: .now)
+                )
+                .accessibilityIdentifier("battery-hold-toolbar")
                 Button("Manage Jobs", systemImage: "gearshape") { isProfileSheetPresented = true }
                     .accessibilityLabel("Manage Jobs")
             }

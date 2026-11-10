@@ -161,8 +161,11 @@ struct BatteryHoldTests {
         let now = Date.now
         var state = BatteryHoldState(response: .init(hold: hold, notice: nil), isCurrent: true, fetchedAt: now)
         #expect(BatteryHoldPresentation.toolbarReserve(state: state, at: now) == "80%")
+        #expect(BatteryHoldPresentation.toolbarTitle(state: state, at: now) == "Battery holding at 80%")
         #expect(BatteryHoldPresentation.toolbarReserve(state: state, at: now.addingTimeInterval(121)) == nil)
+        #expect(BatteryHoldPresentation.toolbarTitle(state: state, at: now.addingTimeInterval(121)) == nil)
         state.response = .init(hold: nil, notice: nil)
         #expect(BatteryHoldPresentation.toolbarReserve(state: state, at: now) == nil)
+        #expect(BatteryHoldPresentation.toolbarTitle(state: state, at: now) == nil)
     }
 }

@@ -1,21 +1,26 @@
 import SwiftUI
 
-/// A compact control glyph; the percentage is the hold reserve, not live charge.
+/// The shield glyph, with "Battery holding at 80%" beside it while a hold is on. The percentage is the
+/// hold reserve, not live charge.
 struct BatteryHoldToolbarLabel: View {
     let state: BatteryHoldState
     let now: Date
 
-    private var reserve: String? {
-        BatteryHoldPresentation.toolbarReserve(state: state, at: now)
+    private var title: String? {
+        BatteryHoldPresentation.toolbarTitle(state: state, at: now)
     }
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "bolt.shield")
-            if let reserve {
-                Text(reserve).font(.caption).monospacedDigit()
+            if let title {
+                Text(title)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
-        .foregroundStyle(reserve == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+        .foregroundStyle(title == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
     }
 }
