@@ -46,9 +46,16 @@ struct AppTabView: View {
         if #available(iOS 26.1, *) {
             let banner = SolarSystemBannerModel(presentation: presentation, status: status)
             let showsBanner = presentation.showsBanner && !model.isDemo && !model.isShowingSolarSystem
-            tabView.tabViewBottomAccessory(isEnabled: showsBanner) {
-                SolarSystemBanner(model: banner, clocks: bannerClocks) {
-                    model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
+            // One accessory slot: a running Battery Saver session outranks the banner on its own tab.
+            let hold = model.selectedTab == .smartShift
+                ? BatteryHoldAccessoryModel(state: coordinator.batteryHold, now: .now) : nil
+            tabView.tabViewBottomAccessory(isEnabled: hold != nil || showsBanner) {
+                if let hold {
+                    BatteryHoldAccessory(model: hold) { coordinator.isBatteryHoldSheetPresented = true }
+                } else {
+                    SolarSystemBanner(model: banner, clocks: bannerClocks) {
+                        model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
+                    }
                 }
             }
             .onChange(of: banner.days, initial: true) { bannerClocks.observe(days: banner.days, now: .now) }

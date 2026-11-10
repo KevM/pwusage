@@ -6,6 +6,10 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## iOS: dark-mode contrast of the tall rate bar (2026-11-09)
+
+- [ ] **Make the unhighlighted part of the tall bar readable in dark mode:** the region without the highlight is dark grey and hard to see. Which bar and which screen is still unconfirmed (likely the Smart Shift rate chart); ask for a screenshot first. Use the theming vars (see `Color.emphasis`), not a hardcoded grey.
+
 ## iOS refresh rollout gates (2026-11-05, branch `codex/ios-refresh-egress`)
 
 - [ ] **Measure hosted egress before removing the manual cooldown:** run `mobile-route-egress-trace.test.ts` against a database with the Dev marker, record the headroom in [the plan](docs/plans/2026-11-05-ios-refresh-and-database-egress.md), and only then consider `MOBILE_MANUAL_IMPORT_NO_COOLDOWN=true` in production. Until then the 15-second floor stays.
