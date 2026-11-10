@@ -98,6 +98,7 @@ export class SiteMembershipJoinRepo {
                 await client.query(`INSERT INTO "SiteMember"
                     (site_id, user_id, tesla_energy_site_id, last_seen_in_tesla_at)
                     VALUES ($1, $2, $3, $4)`, [verifiedSiteId, userId, teslaId, fetchedAt]);
+                await client.query('UPDATE "Site" SET orphaned_at = NULL WHERE id = $1', [verifiedSiteId]);
                 await client.query('COMMIT');
                 logEvent('info', 'site.member.joined', { siteId: verifiedSiteId,
                     accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) });
@@ -122,7 +123,8 @@ export class SiteMembershipJoinRepo {
                     (site_id, user_id, tesla_energy_site_id, last_seen_in_tesla_at)
                     VALUES ($1, $2, $1, $3)`, [teslaId, userId, fetchedAt]);
                 await client.query(`UPDATE "Site" SET user_id = $2, tesla_connection_user_id = $2,
-                    tesla_hardware_id = COALESCE(tesla_hardware_id, $3) WHERE id = $1`, [teslaId, userId, hardwareId]);
+                    tesla_hardware_id = COALESCE(tesla_hardware_id, $3),
+                    orphaned_at = NULL WHERE id = $1`, [teslaId, userId, hardwareId]);
                 await client.query('COMMIT');
                 logEvent('info', 'site.member.rejoined-retained', { siteId: teslaId,
                     accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) });
@@ -143,6 +145,16 @@ export class SiteMembershipJoinRepo {
                 VALUES ($1, $2, $1, $3)`, [teslaId, userId, fetchedAt]);
             await client.query(`UPDATE "Site" SET user_id = $2, tesla_connection_user_id = $2 WHERE id = $1`,
                 [teslaId, userId]);
+            if (hardwareId) {
+                // A transferred Powerwall must never reattach to the previous owner's memberless row.
+                await client.query(`UPDATE "Site" s
+                    SET tesla_hardware_id = NULL,
+                        orphaned_at = COALESCE(s.orphaned_at, now())
+                    WHERE s.tesla_hardware_id = $1
+                      AND s.id <> $2
+                      AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)`,
+                [hardwareId, teslaId]);
+            }
             await client.query('COMMIT');
             return { kind: 'fresh', siteId: teslaId };
         } catch (error) {

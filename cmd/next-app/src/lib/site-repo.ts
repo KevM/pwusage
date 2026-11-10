@@ -186,9 +186,13 @@ export class SiteRepo {
                        AND (u.is_active IS NOT TRUE OR NULLIF(u.refresh_token, '') IS NULL
                             OR u.auth_status = 'revoked'
                             OR u.tesla_refresh_state IN ('uncertain', 'reconnect_required')))
-                   AND EXISTS (SELECT 1 FROM "SiteMember" other
+                   AND EXISTS (SELECT 1 FROM "Site" self
+                       JOIN "Site" other_site ON other_site.id = self.id
+                           OR (self.tesla_hardware_id IS NOT NULL
+                               AND other_site.tesla_hardware_id = self.tesla_hardware_id)
+                       JOIN "SiteMember" other ON other.site_id = other_site.id
                        JOIN "User" survivor ON survivor.id = other.user_id
-                       WHERE other.site_id = $1 AND other.user_id <> $2
+                       WHERE self.id = $1 AND other.user_id <> $2
                          AND other.last_seen_in_tesla_at >= now() - interval '2 days'
                          AND survivor.is_active = true AND NULLIF(survivor.refresh_token, '') IS NOT NULL
                          AND survivor.auth_status IS DISTINCT FROM 'revoked'
@@ -215,6 +219,20 @@ export class SiteRepo {
                     WHERE h.site_id = $1 AND h.status = 'active'
                       AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = $1)`, [siteId]);
                 endedHold = (ended.rowCount ?? 0) > 0;
+                // Last member gone: start the retention clock and release the hardware once
+                // another site that has a member owns it.
+                await client.query(`UPDATE "Site" s
+                    SET orphaned_at = COALESCE(s.orphaned_at, now()),
+                        tesla_hardware_id = CASE
+                            WHEN s.tesla_hardware_id IS NOT NULL AND EXISTS (
+                                SELECT 1 FROM "Site" other
+                                JOIN "SiteMember" m ON m.site_id = other.id
+                                WHERE other.id <> s.id AND other.tesla_hardware_id = s.tesla_hardware_id
+                            ) THEN NULL
+                            ELSE s.tesla_hardware_id
+                        END
+                    WHERE s.id = $1
+                      AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)`, [siteId]);
             }
             await client.query('COMMIT');
         } catch (error) {
@@ -526,7 +544,7 @@ export class SiteRepo {
                 ON CONFLICT (site_id, user_id) DO UPDATE
                 SET tesla_energy_site_id = EXCLUDED.tesla_energy_site_id,
                     last_seen_in_tesla_at = now()`, [siteId, userId]);
-            await client.query('UPDATE "Site" SET user_id = $1, tesla_connection_user_id = $1 WHERE id = $2', [userId, siteId]);
+            await client.query('UPDATE "Site" SET user_id = $1, tesla_connection_user_id = $1, orphaned_at = NULL WHERE id = $2', [userId, siteId]);
             await client.query('COMMIT');
         } catch (error) {
             await client.query('ROLLBACK');
@@ -547,13 +565,61 @@ export class SiteRepo {
                   AND last_seen_in_tesla_at < $3
                 RETURNING site_id
             )
-            UPDATE "Site" s SET user_id = NULL
+            UPDATE "Site" s SET
+                user_id = CASE WHEN s.user_id = $1 THEN NULL ELSE s.user_id END,
+                orphaned_at = CASE
+                    WHEN NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)
+                    THEN COALESCE(s.orphaned_at, now())
+                    ELSE s.orphaned_at
+                END
             FROM removed r
-            WHERE s.id = r.site_id AND s.user_id = $1
+            WHERE s.id = r.site_id
             RETURNING s.id AS site_id
         `, [userId, listedTeslaIds, fetchedAt]);
         for (const row of rows) this.invalidateCache(row.site_id);
         return rows.map(row => row.site_id);
+    }
+
+    /**
+     * Permanently deletes memberless sites orphaned for more than 30 days. Archives go first so
+     * their summaries cascade before the Site row (and its tariffs) disappear.
+     */
+    async purgeOrphanedSites(limit = 20): Promise<string[]> {
+        const client = await pool.connect();
+        let purgedIds: string[] = [];
+        try {
+            await client.query('BEGIN');
+            const eligible = await client.query<{ id: string }>(`
+                SELECT s.id
+                FROM "Site" s
+                WHERE s.orphaned_at < now() - interval '30 days'
+                  AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM "BatteryHoldStartClaim" c
+                      WHERE c.claim_key = COALESCE(s.tesla_hardware_id, 'site:' || s.id)
+                        AND c.expires_at > clock_timestamp()
+                  )
+                ORDER BY s.id
+                LIMIT $1
+                FOR UPDATE
+            `, [limit]);
+            purgedIds = eligible.rows.map(row => row.id);
+            if (purgedIds.length > 0) {
+                await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id = ANY($1::text[])', [purgedIds]);
+                await client.query('DELETE FROM "Site" WHERE id = ANY($1::text[])', [purgedIds]);
+            }
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+        for (const id of purgedIds) this.invalidateCache(id);
+        if (purgedIds.length > 0) {
+            logEvent('info', 'site.orphaned.purged', { purgedCount: purgedIds.length, siteIds: purgedIds });
+        }
+        return purgedIds;
     }
 
     async upsertSite(params: {

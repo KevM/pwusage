@@ -78,6 +78,12 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     await local.database.query(sql);
     await local.database.query(sql);
     await local.database.query(await readFile('db-migrations/20261109150459_add_memberships_attempted_at.sql', 'utf8'));
+    // Minimal stand-in so the account-deletion cascades migration can re-point its author FK.
+    await local.database.query(`CREATE TABLE "SystemAnnouncement" (id bigserial PRIMARY KEY, author_id text REFERENCES "User"(id))`);
+    await local.database.query(await readFile('db-migrations/20261110084828_user_account_deletion_cascades.sql', 'utf8'));
+    const orphanedAt = await readFile('db-migrations/20261110104600_add_site_orphaned_at.sql', 'utf8');
+    await local.database.query(orphanedAt);
+    await local.database.query(orphanedAt);
     backfill = (await local.database.query(`SELECT s.tesla_hardware_id, s.tesla_connection_user_id,
       m.tesla_energy_site_id FROM "Site" s JOIN "SiteMember" m ON m.site_id=s.id WHERE s.id='s1'`)).rows[0];
   });
@@ -228,12 +234,97 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     }
   });
 
+  it('stamps orphaned_at when the last member leaves, clears it on rejoin, and decouples hardware on fresh site creation', async () => {
+    const sites = new SiteRepo();
+    const joins = new SiteMembershipJoinRepo();
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      await local.database.query(`DELETE FROM "Site" WHERE id = 's2'`);
+      expect(await sites.removeMemberIfMissing('s1', 'u1', 's1', new Date(Date.now() + 60_000))).toBe(true);
+      const orphaned = (await local.database.query<{ orphaned_at: Date | null; tesla_hardware_id: string | null }>(
+        `SELECT orphaned_at, tesla_hardware_id FROM "Site" WHERE id = 's1'`)).rows[0];
+      expect(orphaned.orphaned_at).toBeInstanceOf(Date);
+      expect(orphaned.tesla_hardware_id).toBe('hardware-1');
+
+      const info = { id: 'hardware-1', site_name: 'Home' } as EnergySiteInfo;
+      await joins.commitDecision({ userId: 'u1', teslaId: 's1', info,
+        hardwareId: 'hardware-1', observedMembers: [], verifiedSiteId: null, fetchedAt: new Date() });
+      const rejoined = (await local.database.query<{ orphaned_at: Date | null }>(
+        `SELECT orphaned_at FROM "Site" WHERE id = 's1'`)).rows[0];
+      expect(rejoined.orphaned_at).toBeNull();
+
+      expect(await sites.removeMemberIfMissing('s1', 'u1', 's1', new Date(Date.now() + 120_000))).toBe(true);
+      const fresh = await joins.commitDecision({ userId: 'u2', teslaId: 'buyer-site', info,
+        hardwareId: 'hardware-1', observedMembers: [], verifiedSiteId: null, fetchedAt: new Date() });
+      expect(fresh).toEqual({ kind: 'fresh', siteId: 'buyer-site' });
+      const decoupled = (await local.database.query<{ orphaned_at: Date | null; tesla_hardware_id: string | null }>(
+        `SELECT orphaned_at, tesla_hardware_id FROM "Site" WHERE id = 's1'`)).rows[0];
+      expect(decoupled.orphaned_at).toBeInstanceOf(Date);
+      expect(decoupled.tesla_hardware_id).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('removes a dead sole member when another site with the same hardware has a live survivor', async () => {
+    const sites = new SiteRepo();
+    await local.database.query(`UPDATE "User" SET auth_status = 'revoked',
+      auth_lost_at = now() - interval '15 days' WHERE id = 'u1'`);
+    await local.database.query(`UPDATE "SiteMember" SET last_seen_in_tesla_at = now() - interval '15 days'
+      WHERE site_id = 's1' AND user_id = 'u1'`);
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      // s2 shares hardware-1 and u2 was seen recently, so u1 on s1 can be cleaned up.
+      expect(await sites.removeDeadMember('s1', 'u1', 's1')).toBe(true);
+      const s1 = (await local.database.query<{ orphaned_at: Date | null; tesla_hardware_id: string | null }>(
+        `SELECT orphaned_at, tesla_hardware_id FROM "Site" WHERE id = 's1'`)).rows[0];
+      expect(s1.orphaned_at).toBeInstanceOf(Date);
+      expect(s1.tesla_hardware_id).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('purges memberless sites orphaned for more than 30 days along with archives and summaries', async () => {
+    const sites = new SiteRepo();
+    await local.database.query(`DELETE FROM "SiteMember" WHERE site_id = 's1'`);
+    await local.database.query(`UPDATE "Site" SET user_id = NULL, tesla_connection_user_id = NULL,
+      tesla_hardware_id = NULL, orphaned_at = now() - interval '31 days' WHERE id = 's1'`);
+    const archive = await local.database.query<{ id: number }>(
+      `INSERT INTO "EnergyDayArchive" (site_id, sample_count, status) VALUES ('s1', 12, 'complete') RETURNING id`);
+    await local.database.query(
+      `INSERT INTO "EnergyDaySummary" (site_id, archive_id) VALUES ('s1', $1)`, [archive.rows[0].id]);
+    await local.database.query(`INSERT INTO "TrmnlInstallation" (site_id) VALUES ('s1')`);
+    await local.database.query(`INSERT INTO "LoadTag" (site_id) VALUES ('s1')`);
+
+    // A site with an active start claim is skipped until the claim expires.
+    await local.database.query(`INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at)
+      VALUES ('site:s1', $1, now() + interval '1 minute')`, [randomUUID()]);
+    expect(await sites.purgeOrphanedSites()).toEqual([]);
+
+    await local.database.query(`DELETE FROM "BatteryHoldStartClaim" WHERE claim_key = 'site:s1'`);
+    expect(await sites.purgeOrphanedSites()).toEqual(['s1']);
+    expect((await local.database.query(`SELECT id FROM "Site" WHERE id = 's1'`)).rows).toHaveLength(0);
+    expect((await local.database.query(`SELECT id FROM "EnergyDayArchive" WHERE site_id = 's1'`)).rows).toHaveLength(0);
+    expect((await local.database.query(`SELECT id FROM "EnergyDaySummary" WHERE site_id = 's1'`)).rows).toHaveLength(0);
+    expect((await local.database.query(`SELECT id FROM "TrmnlInstallation" WHERE site_id = 's1'`)).rows).toHaveLength(0);
+  });
+
+  it('keeps recently orphaned and still-membered sites when purging', async () => {
+    const sites = new SiteRepo();
+    await local.database.query(`UPDATE "Site" SET orphaned_at = now() - interval '31 days' WHERE id = 's1'`);
+    await local.database.query(`INSERT INTO "Site" (id, orphaned_at) VALUES ('recent', now() - interval '5 days')`);
+    expect(await sites.purgeOrphanedSites()).toEqual([]);
+  });
+
   it('keeps a sole dead member but removes one after another member is seen alive', async () => {
     const sites = new SiteRepo();
     await local.database.query(`UPDATE "User" SET auth_status='revoked',
       auth_lost_at=now()-interval '15 days' WHERE id='u1'`);
     await local.database.query(`UPDATE "SiteMember" SET last_seen_in_tesla_at=now()-interval '15 days'
       WHERE site_id='s1' AND user_id='u1'`);
+    // No other site shares the hardware, so u1 is a true sole member.
+    await local.database.query(`DELETE FROM "Site" WHERE id = 's2'`);
     vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
     try {
       expect(await sites.removeDeadMember('s1', 'u1', 's1')).toBe(false);
@@ -343,6 +434,16 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
       const result = await reconcileDueMemberships(farFuture());
       expect(result.deadRemoved).toBe(1);
       expect((await local.database.query(`SELECT count(*)::int AS n FROM "SiteMember" WHERE site_id = 's1' AND user_id = 'u1'`)).rows[0].n).toBe(0);
+    });
+
+    it('removes a dead member across shared hardware and purges 30-day orphaned sites', async () => {
+      await local.database.query(`UPDATE "User" SET auth_status = 'revoked', auth_lost_at = now() - interval '30 days' WHERE id = 'u1'`);
+      await local.database.query(`UPDATE "SiteMember" SET last_seen_in_tesla_at = now() - interval '20 days' WHERE site_id = 's1' AND user_id = 'u1'`);
+      await local.database.query(`INSERT INTO "Site" (id, orphaned_at) VALUES ('expired-orphan', now() - interval '31 days')`);
+      const result = await reconcileDueMemberships(farFuture());
+      expect(result.deadRemoved).toBe(1);
+      expect(result.orphanedPurged).toBe(1);
+      expect((await local.database.query(`SELECT id FROM "Site" WHERE id = 'expired-orphan'`)).rows).toHaveLength(0);
     });
 
     it('rotates failing accounts to the back so later accounts still get checked', async () => {
