@@ -20,7 +20,7 @@ describe('/account-delete', () => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
         mocks.getSites.mockResolvedValue([
-            { id: 's1', name: 'Lake House', shared: false, batterySaverRestoreReserve: null },
+            { id: 's1', name: 'Lake House', shared: false, otherMembers: [], batterySaverReserve: null, restoredOnLeave: true },
         ]);
     });
 
@@ -43,22 +43,36 @@ describe('/account-delete', () => {
 
     it('distinguishes shared sites that stay available to other members', async () => {
         mocks.getSites.mockResolvedValue([
-            { id: 's1', name: 'Lake House', shared: false, batterySaverRestoreReserve: null },
-            { id: 's2', name: 'Main Home', shared: true, batterySaverRestoreReserve: null },
+            { id: 's1', name: 'Lake House', shared: false, otherMembers: [], batterySaverReserve: null, restoredOnLeave: true },
+            { id: 's2', name: 'Main Home', shared: true, otherMembers: ['sam@example.com', 'lee@example.com'], batterySaverReserve: null, restoredOnLeave: false },
         ]);
         const html = await render();
         expect(html).toContain('Lake House');
         expect(html).toContain('Main Home');
         expect(html).toContain('stay available to the other members');
+        expect(html).toContain('Main Home is shared');
+        expect(html).toContain('Also has access: sam@example.com, lee@example.com');
+        expect(html).toContain('Remove me from this site');
+        expect(html).toContain('Delete this site for everyone');
+        expect(html).not.toContain('Lake House is shared');
     });
 
     it('warns about an active Battery Saver session with the reserve it restores', async () => {
         mocks.getSites.mockResolvedValue([
-            { id: 's1', name: 'Lake House', shared: false, batterySaverRestoreReserve: 20 },
+            { id: 's1', name: 'Lake House', shared: false, otherMembers: [], batterySaverReserve: 20, restoredOnLeave: true },
         ]);
         const html = await render();
         expect(html).toContain('Battery Saver is on for Lake House');
         expect(html).toContain('restores your backup reserve to 20%');
+    });
+
+    it('says Battery Saver keeps running for others when a shared site has another usable member', async () => {
+        mocks.getSites.mockResolvedValue([
+            { id: 's2', name: 'Main Home', shared: true, otherMembers: ['sam@example.com'], batterySaverReserve: 20, restoredOnLeave: false },
+        ]);
+        const html = await render();
+        expect(html).toContain('keeps running for the other members');
+        expect(html).toContain('If you delete the site for everyone');
     });
 
     it('explains an account with no sites', async () => {

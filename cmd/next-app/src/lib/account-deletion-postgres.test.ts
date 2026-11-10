@@ -24,6 +24,7 @@ const OTHER_TABLES = `
   ALTER TABLE "User"
     ADD COLUMN IF NOT EXISTS refresh_token text,
     ADD COLUMN IF NOT EXISTS auth_status text,
+    ADD COLUMN IF NOT EXISTS email text,
     ADD COLUMN IF NOT EXISTS tesla_refresh_state text DEFAULT 'ready';
   ALTER TABLE "Site"
     ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT 'Home',
@@ -112,13 +113,13 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
     it('keeps a shared site and its history when another member remains, removing only the departing member and their TRMNL device', async () => {
       const db = local.database;
       await seedAccount('member-1', 'site-shared', 'Shared Home');
-      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'member-2\', \'rt-2\', \'active\')');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status, email) VALUES (\'member-2\', \'rt-2\', \'active\', \'two@example.com\')');
       await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-shared\', \'member-2\', \'site-shared-2\')');
       await db.query('INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id) VALUES (\'site-shared\', \'member-2\')');
 
       const overview = await new AccountDeletionRepo().getSitesForDeletion('member-1');
       expect(overview).toEqual([
-        { id: 'site-shared', name: 'Shared Home', shared: true, hasOtherUsableMember: true, activeHoldOriginalReserve: null },
+        { id: 'site-shared', name: 'Shared Home', shared: true, hasOtherUsableMember: true, otherMembers: ['two@example.com'], activeHoldOriginalReserve: null },
       ]);
 
       const result = await new AccountDeletionRepo().deleteAccount('member-1');
@@ -189,6 +190,38 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
 
       await expect(new AccountDeletionRepo().deleteAccount('claimer')).rejects.toBeInstanceOf(ActiveBatterySaverError);
       expect(await countFor('User', 'id', 'claimer')).toBe(1);
+    });
+
+    it('deletes a shared site for every member when chosen, keeping the other accounts and their other sites', async () => {
+      const db = local.database;
+      await seedAccount('owner', 'site-everyone', 'Shared');
+      await seedAccount('other', 'site-other-own', 'Other Own');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-everyone\', \'other\', \'tesla-everyone-2\')');
+      await db.query('INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id) VALUES (\'site-everyone\', \'other\')');
+      await insertActiveHold('site-everyone', 'owner');
+      await db.query('DELETE FROM "BatteryHold" WHERE site_id = \'site-everyone\'');
+
+      const result = await new AccountDeletionRepo().deleteAccount('owner', ['site-everyone', 'not-mine']);
+
+      expect(result).toEqual({ deletedSiteIds: ['site-everyone'], survivingSiteIds: [] });
+      expect(await countFor('Site', 'id', 'site-everyone')).toBe(0);
+      expect(await countFor('SiteMember', 'site_id', 'site-everyone')).toBe(0);
+      expect(await countFor('TrmnlInstallation', 'site_id', 'site-everyone')).toBe(0);
+      expect(await countFor('EnergyDaySummary', 'site_id', 'site-everyone')).toBe(0);
+      expect(await countFor('User', 'id', 'other')).toBe(1);
+      expect(await countFor('Site', 'id', 'site-other-own')).toBe(1);
+    });
+
+    it('refuses to delete a shared site for everyone while Battery Saver is active, even with another usable member', async () => {
+      const db = local.database;
+      await seedAccount('o2', 'site-everyone-hold');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'m2\', \'rt-m2\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-everyone-hold\', \'m2\', \'tesla-m2\')');
+      await insertActiveHold('site-everyone-hold', 'o2');
+
+      await expect(new AccountDeletionRepo().deleteAccount('o2', ['site-everyone-hold'])).rejects.toBeInstanceOf(ActiveBatterySaverError);
+      expect(await countFor('Site', 'id', 'site-everyone-hold')).toBe(1);
+      expect(await countFor('SiteMember', 'site_id', 'site-everyone-hold')).toBe(2);
     });
 
     it('finishes without error when the account is already gone', async () => {

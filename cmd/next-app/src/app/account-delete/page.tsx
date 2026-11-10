@@ -23,7 +23,7 @@ export default observePage('/account-delete', async function AccountDeletePage()
     const sites = await getAccountDeletionSites(user.id);
     const soleSites = sites.filter(site => !site.shared);
     const sharedSites = sites.filter(site => site.shared);
-    const batterySaverSites = sites.filter(site => site.batterySaverRestoreReserve !== null);
+    const batterySaverSites = sites.filter(site => site.batterySaverReserve !== null);
     logEvent('info', 'user.account-deletion.page-viewed', {
         accountId: accountFingerprint(user.id),
         siteCount: sites.length,
@@ -44,8 +44,12 @@ export default observePage('/account-delete', async function AccountDeletePage()
                     <Alert key={site.id} variant="warning">
                         <AlertTitle>Battery Saver is on for {site.name}</AlertTitle>
                         <AlertDescription>
-                            Battery Saver is holding your Powerwall charge. Deleting your account turns it off and
-                            restores your backup reserve to {site.batterySaverRestoreReserve}%.
+                            {!site.shared || site.restoredOnLeave
+                                ? <>Battery Saver is holding your Powerwall charge. Deleting your account turns it off and
+                                    restores your backup reserve to {site.batterySaverReserve}%.</>
+                                : <>Battery Saver is holding your Powerwall charge. If you only remove yourself, it keeps
+                                    running for the other members. If you delete the site for everyone, it turns off and
+                                    restores your backup reserve to {site.batterySaverReserve}%.</>}
                         </AlertDescription>
                     </Alert>
                 ))}
@@ -63,7 +67,7 @@ export default observePage('/account-delete', async function AccountDeletePage()
                     )}
                     {sharedSites.length > 0 && (
                         <>
-                            <p>Your membership on these shared sites and any TRMNL display you connected. These sites and their history stay available to the other members:</p>
+                            <p>Your membership on these shared sites and any TRMNL display you connected. Unless you choose to delete a site for everyone below, it and its history stay available to the other members:</p>
                             <ul className="list-disc space-y-1 pl-5">
                                 {sharedSites.map(site => <li key={site.id}>{site.name}</li>)}
                             </ul>
@@ -78,7 +82,7 @@ export default observePage('/account-delete', async function AccountDeletePage()
                     <p>Signing in with Tesla later creates a new, empty pwusage account.</p>
                 </SectionCard>
                 <SectionCard title="Confirm">
-                    <AccountDeleteForm />
+                    <AccountDeleteForm sharedSites={sharedSites.map(({ id, name, otherMembers }) => ({ id, name, otherMembers }))} />
                 </SectionCard>
             </div>
         </PageShell>

@@ -8,10 +8,14 @@ import { createTeslaClientForSiteMember } from './tesla-client-factory';
 export interface AccountDeletionSite {
     id: string;
     name: string;
-    /** True when another member also belongs to this site, so the site and its history will stay. */
+    /** True when another member also belongs to this site. */
     shared: boolean;
-    /** The reserve Battery Saver will restore on deletion; null when no restore is needed. */
-    batterySaverRestoreReserve: number | null;
+    /** The other members' emails, for the leave-or-delete choice on a shared site. */
+    otherMembers: string[];
+    /** The reserve of the active Battery Saver session, or null when none is running. */
+    batterySaverReserve: number | null;
+    /** True when leaving alone ends Battery Saver (no other usable member could keep it going). */
+    restoredOnLeave: boolean;
 }
 
 export type AccountDeletionResult =
@@ -25,7 +29,9 @@ export async function getAccountDeletionSites(userId: string): Promise<AccountDe
         id: site.id,
         name: site.name,
         shared: site.shared,
-        batterySaverRestoreReserve: site.hasOtherUsableMember ? null : site.activeHoldOriginalReserve,
+        otherMembers: site.otherMembers,
+        batterySaverReserve: site.activeHoldOriginalReserve,
+        restoredOnLeave: !site.hasOtherUsableMember,
     }));
 }
 
@@ -38,18 +44,20 @@ async function restoreSiteBatterySaver(siteId: string, userId: string, repo: Bat
 }
 
 /**
- * Restores any active Battery Saver session on sites where no other usable member
- * remains, deletes the account in one transaction, and repairs the Tesla connection
- * for any surviving shared sites.
+ * Restores any active Battery Saver session on sites that will be deleted or have no
+ * other usable member, deletes the account in one transaction, and repairs the Tesla
+ * connection for any surviving shared sites. `deleteSiteIds` names shared sites the
+ * user chose to delete for every member instead of just leaving.
  */
-export async function deleteAccount(userId: string): Promise<AccountDeletionResult> {
+export async function deleteAccount(userId: string, deleteSiteIds: string[] = []): Promise<AccountDeletionResult> {
     const accountId = accountFingerprint(userId);
     const deletionRepo = new AccountDeletionRepo();
     const siteRepo = new SiteRepo();
     const holdRepo = new BatteryHoldRepo();
 
     for (const site of await deletionRepo.getSitesForDeletion(userId)) {
-        if (site.activeHoldOriginalReserve === null || site.hasOtherUsableMember) continue;
+        if (site.activeHoldOriginalReserve === null) continue;
+        if (site.hasOtherUsableMember && !deleteSiteIds.includes(site.id)) continue;
         const restore = await restoreSiteBatterySaver(site.id, userId, holdRepo);
         if (restore.status === 'needs_reauth') {
             logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'needs_reconnect' });
@@ -64,7 +72,7 @@ export async function deleteAccount(userId: string): Promise<AccountDeletionResu
     let deletedSiteIds: string[];
     let survivingSiteIds: string[];
     try {
-        ({ deletedSiteIds, survivingSiteIds } = await deletionRepo.deleteAccount(userId));
+        ({ deletedSiteIds, survivingSiteIds } = await deletionRepo.deleteAccount(userId, deleteSiteIds));
     } catch (error) {
         if (error instanceof ActiveBatterySaverError) {
             logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'battery_saver_started' });

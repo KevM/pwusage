@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
     return (
         <PageShell maxWidth="lg" padding="default" fullHeight={false}>
-            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 10, 2026." className="mb-8" />
+            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 11, 2026." className="mb-8" />
             <div className="space-y-6 text-gray-700 dark:text-gray-300">
                 <p>pwusage helps you understand your Powerwall energy use, estimate electricity costs, and use the optional Battery Saver feature for your Powerwall. This policy explains what information those features use.</p>
                 <SectionCard title="Tesla account and energy information" bodyClassName="space-y-4">
@@ -39,7 +39,7 @@ export default function PrivacyPage() {
                 <SectionCard title="Retention and your choices" bodyClassName="space-y-4">
                     <p>Server data can remain after you sign out or uninstall the app. Energy history is subject to service retention settings; account records, rate plan history, and backups have separate lifecycles. Signing out is not a request to delete your account.</p>
                     <p>You can revoke pwusage&apos;s access in your Tesla account&apos;s third-party app settings. Revoking Tesla access prevents future authorized API requests but does not automatically erase previously stored data.</p>
-                    <p>You can permanently delete your pwusage account, your TRMNL records, and any sites where you are the only member (with their energy history, rate plans, and settings) at any time from <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. Sites shared with another member stay available to them, including their history. Deleting your account does not remove pwusage from your Tesla account&apos;s approved apps; we offer a link to do that after deletion. It also does not remove any solar layout in your private iCloud, which you can remove in your iPhone&apos;s iCloud settings. Backups may retain removed data until their normal expiration, and operational logs until they expire.</p>
+                    <p>You can permanently delete your pwusage account, your TRMNL records, and any sites where you are the only member (with their energy history, rate plans, and settings) at any time from <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. For a site shared with other members, you choose per site whether to remove only yourself (it stays available to them, including its history) or delete it for everyone. Deleting your account does not remove pwusage from your Tesla account&apos;s approved apps; we offer a link to do that after deletion. It also does not remove any solar layout in your private iCloud, which you can remove in your iPhone&apos;s iCloud settings. Backups may retain removed data until their normal expiration, and operational logs until they expire.</p>
                     <p>To request access or correction of your data, or if you cannot sign in to delete your account, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership.</p>
                 </SectionCard>
                 <SectionCard title="Privacy questions and changes" bodyClassName="space-y-4">

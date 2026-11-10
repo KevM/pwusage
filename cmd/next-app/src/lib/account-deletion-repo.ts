@@ -16,6 +16,8 @@ export interface SiteDeletionOverview {
     name: string;
     shared: boolean;
     hasOtherUsableMember: boolean;
+    /** The other members' emails (a placeholder when one has none), oldest member first. */
+    otherMembers: string[];
     activeHoldOriginalReserve: number | null;
 }
 
@@ -47,11 +49,18 @@ export class AccountDeletionRepo {
             name: string;
             shared: boolean;
             has_other_usable_member: boolean;
+            other_members: string[];
             original_reserve: number | null;
         }>(`
             SELECT s.id, s.name,
                 EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id <> $1) AS shared,
                 ${OTHER_USABLE_MEMBER_EXISTS} AS has_other_usable_member,
+                ARRAY(
+                    SELECT COALESCE(NULLIF(u.email, ''), 'Another member')
+                    FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
+                    WHERE m.site_id = s.id AND m.user_id <> $1
+                    ORDER BY m.joined_at, u.id
+                ) AS other_members,
                 h.original_reserve
             FROM "Site" s
             LEFT JOIN LATERAL (
@@ -72,18 +81,21 @@ export class AccountDeletionRepo {
             name: row.name,
             shared: row.shared,
             hasOtherUsableMember: row.has_other_usable_member,
+            otherMembers: row.other_members,
             activeHoldOriginalReserve: row.original_reserve === null ? null : Number(row.original_reserve),
         }));
     }
 
     /**
      * Removes the account, its memberships, its TRMNL installations, and any site
-     * where this user was the last member.
+     * where this user was the last member. Sites listed in `deleteSiteIds` are also
+     * removed for every other member (their memberships and TRMNL installations go
+     * with the site; their accounts stay). Ids the user does not belong to are ignored.
      *
      * Locking User and Site rows in deterministic id order serializes concurrent
      * member deletions and blocks new holds or memberships until commit.
      */
-    async deleteAccount(userId: string): Promise<AccountDeletionCommitResult> {
+    async deleteAccount(userId: string, deleteSiteIds: string[] = []): Promise<AccountDeletionCommitResult> {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -125,9 +137,12 @@ export class AccountDeletionRepo {
             `, [userId]);
 
             const allSiteIds = sites.rows.map(row => row.id);
-            const sitesNeedingRestore = sites.rows.filter(row => !row.has_other_usable_member).map(row => row.id);
-            // A start claim matters wherever no other usable member could restore, not only on sole-member sites.
-            const unrestorableClaimKeys = sites.rows.filter(row => !row.has_other_usable_member).map(row => row.claim_key);
+            const forcedDelete = new Set(deleteSiteIds.filter(id => allSiteIds.includes(id)));
+            // Where the site goes away, or no other usable member could restore, a Battery Saver
+            // session or in-flight start claim would be stranded.
+            const unrestorable = sites.rows.filter(row => !row.has_other_usable_member || forcedDelete.has(row.id));
+            const sitesNeedingRestore = unrestorable.map(row => row.id);
+            const unrestorableClaimKeys = unrestorable.map(row => row.claim_key);
 
             if (sitesNeedingRestore.length > 0) {
                 const activeHolds = await client.query(
@@ -152,7 +167,10 @@ export class AccountDeletionRepo {
                     [userId, allSiteIds],
                 );
             }
-            await client.query('DELETE FROM "SiteMember" WHERE user_id = $1', [userId]);
+            await client.query(
+                'DELETE FROM "SiteMember" WHERE user_id = $1 OR site_id = ANY($2::text[])',
+                [userId, [...forcedDelete]],
+            );
 
             const goneRes = await client.query<{ id: string }>(`
                 SELECT s.id FROM "Site" s

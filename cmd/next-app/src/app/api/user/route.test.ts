@@ -27,7 +27,7 @@ describe('DELETE /api/user', () => {
         const response = await DELETE(makeRequest());
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ ok: true });
-        expect(mocks.deleteAccount).toHaveBeenCalledWith('user-1');
+        expect(mocks.deleteAccount).toHaveBeenCalledWith('user-1', []);
         const cookie = response.cookies.get('site_auth');
         expect(cookie?.value).toBe('');
         expect(cookie?.maxAge).toBe(0);
@@ -50,6 +50,16 @@ describe('DELETE /api/user', () => {
             'sec-fetch-site': 'same-origin',
         }));
         expect(response.status).toBe(200);
+    });
+
+    it('passes the shared sites chosen for deletion through', async () => {
+        await DELETE(makeRequest({ confirm: 'DELETE', deleteSiteIds: ['s2'] }));
+        expect(mocks.deleteAccount).toHaveBeenCalledWith('user-1', ['s2']);
+    });
+
+    it.each([[{ confirm: 'DELETE', deleteSiteIds: 's2' }], [{ confirm: 'DELETE', deleteSiteIds: [1] }]])('rejects a malformed site list: %j', async body => {
+        expect((await DELETE(makeRequest(body))).status).toBe(400);
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
     });
 
     it('rejects unauthenticated requests', async () => {

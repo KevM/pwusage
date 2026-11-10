@@ -32,9 +32,15 @@ async function handleDELETE(request: NextRequest): Promise<NextResponse> {
         return jsonError('Type DELETE to confirm.', 400);
     }
 
+    const requested = (body as { deleteSiteIds?: unknown }).deleteSiteIds;
+    if (requested !== undefined
+        && !(Array.isArray(requested) && requested.every(id => typeof id === 'string'))) {
+        return jsonError('Invalid request body', 400);
+    }
+
     let result;
     try {
-        result = await deleteAccount(user.id);
+        result = await deleteAccount(user.id, (requested as string[] | undefined) ?? []);
     } catch {
         return jsonError('Could not delete your account. Your account was not changed. Try again.', 500);
     }

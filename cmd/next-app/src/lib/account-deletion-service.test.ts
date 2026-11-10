@@ -49,7 +49,7 @@ describe('account deletion service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: null },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: null },
         ]);
         mocks.createClient.mockResolvedValue({ tesla: true });
         mocks.createMemberClient.mockResolvedValue(null);
@@ -57,14 +57,14 @@ describe('account deletion service', () => {
         mocks.repairConnection.mockResolvedValue(null);
     });
 
-    it('lists sites with shared status and the reserve Battery Saver would restore', async () => {
+    it('lists sites with members and Battery Saver state', async () => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
-            { id: 'site-2', name: 'Cabin', shared: true, hasOtherUsableMember: true, activeHoldOriginalReserve: 30 },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: 20 },
+            { id: 'site-2', name: 'Cabin', shared: true, hasOtherUsableMember: true, otherMembers: ['b@x.test'], activeHoldOriginalReserve: 30 },
         ]);
         await expect(getAccountDeletionSites('user-1')).resolves.toEqual([
-            { id: 'site-1', name: 'Home', shared: false, batterySaverRestoreReserve: 20 },
-            { id: 'site-2', name: 'Cabin', shared: true, batterySaverRestoreReserve: null },
+            { id: 'site-1', name: 'Home', shared: false, otherMembers: [], batterySaverReserve: 20, restoredOnLeave: true },
+            { id: 'site-2', name: 'Cabin', shared: true, otherMembers: ['b@x.test'], batterySaverReserve: 30, restoredOnLeave: false },
         ]);
     });
 
@@ -80,7 +80,7 @@ describe('account deletion service', () => {
 
     it('skips Battery Saver restore and repairs connection when another usable member remains on a shared site', async () => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-shared', name: 'Home', shared: true, hasOtherUsableMember: true, activeHoldOriginalReserve: 20 },
+            { id: 'site-shared', name: 'Home', shared: true, hasOtherUsableMember: true, otherMembers: ['a@x.test'], activeHoldOriginalReserve: 20 },
         ]);
         mocks.repoDelete.mockResolvedValue({ deletedSiteIds: [], survivingSiteIds: ['site-shared'] });
 
@@ -106,7 +106,7 @@ describe('account deletion service', () => {
 
     it.each([['ok'], ['reserve_changed'], ['no_active_hold']])('deletes after a %s restore', async status => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: 20 },
         ]);
         mocks.restoreBattery.mockResolvedValue({ status });
         await expect(deleteAccount('user-1')).resolves.toMatchObject({ status: 'deleted' });
@@ -117,9 +117,21 @@ describe('account deletion service', () => {
         }));
     });
 
+    it('restores Battery Saver and passes the choice through when a shared site is deleted for everyone', async () => {
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-shared', name: 'Home', shared: true, hasOtherUsableMember: true, otherMembers: ['a@x.test'], activeHoldOriginalReserve: 20 },
+        ]);
+        mocks.restoreBattery.mockResolvedValue({ status: 'ok' });
+        mocks.repoDelete.mockResolvedValue({ deletedSiteIds: ['site-shared'], survivingSiteIds: [] });
+
+        await expect(deleteAccount('user-1', ['site-shared'])).resolves.toMatchObject({ status: 'deleted', sitesDeleted: 1 });
+        expect(mocks.restoreBattery).toHaveBeenCalledWith(expect.objectContaining({ siteId: 'site-shared' }));
+        expect(mocks.repoDelete).toHaveBeenCalledWith('user-1', ['site-shared']);
+    });
+
     it('restores with the departing member\'s own grant before the site connection', async () => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: 20 },
         ]);
         const memberClient = { member: true };
         mocks.createMemberClient.mockResolvedValue(memberClient);
@@ -132,7 +144,7 @@ describe('account deletion service', () => {
 
     it('keeps the account when Tesla needs reconnecting', async () => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: 20 },
         ]);
         mocks.restoreBattery.mockResolvedValue({ status: 'needs_reauth' });
         await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'needs_reconnect' });
@@ -141,7 +153,7 @@ describe('account deletion service', () => {
 
     it('keeps the account when no Tesla client can be built', async () => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: 20 },
         ]);
         mocks.createClient.mockResolvedValue(null);
         await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'needs_reconnect' });
@@ -150,7 +162,7 @@ describe('account deletion service', () => {
 
     it('keeps the account when the restore cannot be confirmed', async () => {
         mocks.getSitesForDeletion.mockResolvedValue([
-            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, otherMembers: [], activeHoldOriginalReserve: 20 },
         ]);
         mocks.restoreBattery.mockResolvedValue({ status: 'error', message: 'uncertain' });
         await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'battery_saver_pending' });

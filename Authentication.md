@@ -394,10 +394,11 @@ Page: `/account-delete` (signed-out visitors go through `/login?callback=/accoun
 `/auth/tesla-callback` issues a `site_auth` cookie for that callback even when the
 account has 0 Powerwall sites).
 Route: `DELETE /api/user`
-- Requires an authenticated user and `{ "confirm": "DELETE" }`, with the same
+- Requires an authenticated user and `{ "confirm": "DELETE", "deleteSiteIds": [...] }`
+  (`deleteSiteIds` is optional: shared sites to delete for every member instead of just leaving; default is leave), with the same
   origin/`sec-fetch-site` checks as sign-out-everywhere (`isCrossOriginRequest`).
-- Restores any active Battery Saver session on sites where no other usable member
-  remains, because deleting the last member removes the record the restore relies
+- Restores any active Battery Saver session on sites being deleted (including shared sites
+  chosen for deletion) or where no other usable member remains, because deleting the last member removes the record the restore relies
   on. If Tesla needs reconnecting or the restore cannot be confirmed, it returns
   `409`, keeps the account and keeps the session.
 - Deletes in one transaction (`AccountDeletionRepo`), locking the `User` and `Site`
