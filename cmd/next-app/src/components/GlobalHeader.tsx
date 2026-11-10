@@ -63,7 +63,7 @@ export function GlobalHeader({ showStyleGuide = false }: GlobalHeaderProps) {
     }, [isMenuOpen]);
 
     return (
-        <header className="w-full bg-white dark:bg-slate-900 p-4 md:px-8 shadow-sm relative">
+        <header data-site-chrome className="w-full bg-white dark:bg-slate-900 p-4 md:px-8 shadow-sm relative">
             <div className="max-w-screen-2xl mx-auto">
                 <div className="flex flex-nowrap items-center gap-x-2 md:gap-x-4 justify-between relative">
                     {/* Logo Group - Always First */}
