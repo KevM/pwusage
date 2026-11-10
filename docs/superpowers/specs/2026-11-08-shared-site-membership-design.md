@@ -607,7 +607,7 @@ deletions in each order.
 | --- | --- | --- |
 | Q1 | Can an invited account change the reserve with its own grant (U2)? | The owner confirmed yes on 2026-11-08. |
 | Q2 | How should a second account join? | **Decided by the owner: automatically on the live check** (section 5). A buyer joining a seller's site before Tesla removes the seller is an accepted risk. |
-| Q3 | When Tesla removes the last member (a sold home) and nobody chose to delete anything, how long do we keep the data? | Delete after 30 days with a small daily job. Crons skip it in the meantime. Keeping it forever is simpler but has a privacy cost. |
+| Q3 | When Tesla removes the last member (a sold home) and nobody chose to delete anything, how long do we keep the data? | Delete after 30 days with a small daily job. Crons skip it in the meantime. Keeping it forever is simpler but has a privacy cost. **Resolved** in [`2026-11-10-orphaned-site-cleanup-design.md`](./2026-11-10-orphaned-site-cleanup-design.md): memberless sites are stamped with `orphaned_at`, released from `tesla_hardware_id` once another site with that hardware has a member, and purged after 30 days by `reconcileDueMemberships`. |
 | Q4 | Should new members see history from before they joined? | Yes. Tesla's app shows invited users history too. Mention it on the privacy page. |
 | Q5 | Should members see each other's email addresses in site settings? | Yes. It's how someone spots an unexpected person. Emails only. |
 | Q6 | Any member can edit rate plans, tags and settings. OK? | Yes for v1. |

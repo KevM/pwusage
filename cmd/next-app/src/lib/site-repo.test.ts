@@ -446,7 +446,7 @@ describe('SiteRepo new commands and queries', () => {
             'SELECT id FROM "Site" WHERE id = $1 FOR UPDATE',
             'DELETE FROM "SiteMember" WHERE site_id = $1 AND user_id <> $2',
             expect.stringContaining('INSERT INTO "SiteMember"'),
-            'UPDATE "Site" SET user_id = $1, tesla_connection_user_id = $1 WHERE id = $2',
+            'UPDATE "Site" SET user_id = $1, tesla_connection_user_id = $1, orphaned_at = NULL WHERE id = $2',
             'COMMIT',
         ]);
         expect(releaseMock).toHaveBeenCalled();
@@ -459,7 +459,8 @@ describe('SiteRepo new commands and queries', () => {
         expect(removed).toEqual(['old-site']);
         const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
         expect(sql).toContain('last_seen_in_tesla_at < $3');
-        expect(sql).toContain('SET user_id = NULL');
+        expect(sql).toContain('user_id = CASE WHEN s.user_id = $1 THEN NULL ELSE s.user_id END');
+        expect(sql).toContain('orphaned_at = CASE');
         expect(params).toEqual(['user-1', ['current-site'], fetchedAt]);
     });
 

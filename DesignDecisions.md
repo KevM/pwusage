@@ -494,3 +494,20 @@ without the aborted parent signal; if cleanup fails, lock expiry is the fallback
 
 See `docs/battery-hold-monitor-operations.md` for verified runtime/scheduler
 configuration and the ten-site capacity measurements.
+
+## Orphaned sites: cross-hardware dead-grant cleanup and purge order
+
+Why `removeDeadMember` (and the daily `stale` query) count a live survivor on **any `Site` with the
+same non-null `tesla_hardware_id`**, not only on the same `site_id`: when a seller's grant is already
+dead before the buyer signs in, `commitDecision` creates a fresh `Site` for the buyer, so the seller
+is the sole member of the old row and no same-`site_id` survivor ever exists. Without the hardware
+join the dead membership, and the old `Site` with its history, would never leave. A sole owner whose
+Powerwall nobody else has claimed still has no survivor on any row for that hardware, so their
+membership and reconnect prompt are preserved.
+
+Why `purgeOrphanedSites` deletes `EnergyDayArchive` **before** `Site`: `EnergyDaySummary` cascades
+from its archive row, and deleting those first avoids the `EnergyDaySummary_tariff_id_fkey`
+violation that the `Site` → `Tariff` cascade can otherwise hit depending on trigger order. The purge
+also skips sites with an unexpired `BatteryHoldStartClaim` and requires `orphaned_at` older than 30
+days, so a returning member (`orphaned_at` cleared on rejoin) is never purged. Design:
+[`docs/superpowers/specs/2026-11-10-orphaned-site-cleanup-design.md`](docs/superpowers/specs/2026-11-10-orphaned-site-cleanup-design.md).

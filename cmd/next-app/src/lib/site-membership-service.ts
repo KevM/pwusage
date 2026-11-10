@@ -64,11 +64,26 @@ export class SiteMembershipService {
         return [...siteIds];
     }
 
+    /** True when the member's list holds an ID they have no mapping for that is this Powerwall. */
+    private async listsHardwareUnderNewId(client: Pick<TeslaClient, 'getEnergySiteInfo'>, memberUserId: string,
+        products: FleetProduct[], hardwareId: string | null): Promise<boolean> {
+        if (!hardwareId) return false;
+        const mappedIds = new Set((await this.members.membersForUser(memberUserId)).map(m => m.tesla_energy_site_id));
+        for (const product of products) {
+            if (!product.energy_site_id) continue;
+            const id = String(product.energy_site_id);
+            if (mappedIds.has(id)) continue;
+            if ((await client.getEnergySiteInfo(id)).id === hardwareId) return true;
+        }
+        return false;
+    }
+
     private async resolveProduct(userId: string, teslaId: string, info: EnergySiteInfo,
         hardwareId: string | null, fetchedAt: Date) {
         for (let attempt = 0; attempt < 2; attempt++) {
-            const observedMembers = hardwareId ? await this.members.membersForHardware(hardwareId) : [];
+            let observedMembers = hardwareId ? await this.members.membersForHardware(hardwareId) : [];
             let verifiedSiteId: string | null = null;
+            let removedAny = false;
             let checked = 0;
             for (const member of observedMembers) {
                 if (member.user_id === userId || !usable(member)) continue;
@@ -76,11 +91,20 @@ export class SiteMembershipService {
                 checked++;
                 const client = await this.clientForUser(member.user_id);
                 if (!client) throw new Error('Usable site member has no Tesla client');
+                const checkedAt = new Date();
                 const products = await client.getProducts();
                 if (products.some(product => String(product.energy_site_id) === member.tesla_energy_site_id)) {
                     verifiedSiteId = member.site_id;
                     break;
                 }
+                // A live list proves this member no longer has the Powerwall in Tesla, unless it
+                // lists the same hardware under a new ID (a re-invite their own login will remap).
+                if (await this.listsHardwareUnderNewId(client, member.user_id, products, hardwareId)) continue;
+                if (await this.sites.removeMemberIfMissing(member.site_id, member.user_id,
+                    member.tesla_energy_site_id, checkedAt)) removedAny = true;
+            }
+            if (!verifiedSiteId && removedAny && hardwareId) {
+                observedMembers = await this.members.membersForHardware(hardwareId);
             }
             const decision = await this.members.commitDecision({ userId, teslaId, info,
                 hardwareId, observedMembers, verifiedSiteId, fetchedAt });
