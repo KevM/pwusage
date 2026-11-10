@@ -181,13 +181,14 @@ async function handleGET(request: NextRequest) {
             return mobileCallbackResponse({ code: handoff.code, attempt: handoff.attemptId, state: mobileState });
         }
 
-        if (result.siteIds.length === 0 && !result.roles.includes('admin')) {
+        const allowZeroSitesForDeletion = savedCallback === '/account-delete';
+        if (result.siteIds.length === 0 && !result.roles.includes('admin') && !allowZeroSitesForDeletion) {
             cookieStore.delete('site_auth');
             clearAttempt();
             redirect('/no-sites');
         }
 
-        if (result.siteIds.length > 0 || result.roles.includes('admin')) {
+        if (result.siteIds.length > 0 || result.roles.includes('admin') || allowZeroSitesForDeletion) {
             const { signSiteToken, COOKIE_MAX_AGE_SECONDS } = await import('@/lib/auth-jwt');
             // Stamp the user's current session_version so a fresh login after a
             // sign-out-everywhere bump is not immediately treated as revoked.
