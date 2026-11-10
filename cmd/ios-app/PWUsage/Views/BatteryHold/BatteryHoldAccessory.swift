@@ -11,18 +11,9 @@ struct BatteryHoldAccessory: View {
                 Image(systemName: "bolt.shield.fill")
                     .foregroundStyle(Color.emphasis)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(model.title)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    if let detail = model.detail {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                }
+                Text(model.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.up")
                     .font(.caption.weight(.semibold))
