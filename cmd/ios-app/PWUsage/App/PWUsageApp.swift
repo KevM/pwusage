@@ -14,6 +14,7 @@ struct PWUsageApp: App {
         case misconfigured(String)
     }
 
+    @UIApplicationDelegateAdaptor(OrientationDelegate.self) private var orientationDelegate
     @Environment(\.scenePhase) private var scenePhase
     @State private var launch: Launch = .starting
     /// The demo, while it runs, is rendered in place of the real model.

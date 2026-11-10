@@ -20,24 +20,44 @@ enum ScreenOrientation {
     static func enterLandscape() -> Bool {
         guard rotates(on: UIDevice.current.userInterfaceIdiom), let scene = activeScene else { return false }
         let wasPortrait = scene.interfaceOrientation.isPortrait
-        request(.landscape, on: scene)
+        allow(.landscape, in: scene)
         return wasPortrait
     }
 
-    /// Turns back to where `enterLandscape` found the phone, then lets it follow the person's hand again.
+    /// How long a turn takes, which callers wait out so they can hide the redraw behind black.
+    static let turnDuration: Duration = .milliseconds(450)
+
+    /// Turns back to where `enterLandscape` found the phone, waits for the turn, then lets the phone follow the
+    /// person's hand again. Returns once the screen is back.
     @MainActor
     static func restore(wasPortrait: Bool) async {
         guard rotates(on: UIDevice.current.userInterfaceIdiom), let scene = activeScene else { return }
-        request(restoringMask(wasPortrait: wasPortrait), on: scene)
-        // Leave the request in place while the turn happens, then stop constraining the phone.
-        try? await Task.sleep(for: .milliseconds(600))
-        request(.allButUpsideDown, on: scene)
+        guard wasPortrait else {
+            allow(.allButUpsideDown, in: scene, rotating: false)
+            return
+        }
+        allow(restoringMask(wasPortrait: wasPortrait), in: scene)
+        try? await Task.sleep(for: turnDuration)
+        allow(.allButUpsideDown, in: scene, rotating: false)
+    }
+
+    /// Narrows what the app allows to `mask`, tells every view controller to look again, and asks for the turn.
+    @MainActor
+    private static func allow(_ mask: UIInterfaceOrientationMask, in scene: UIWindowScene, rotating: Bool = true) {
+        OrientationDelegate.supported = mask
+        var controller = scene.keyWindow?.rootViewController
+        while let current = controller {
+            current.setNeedsUpdateOfSupportedInterfaceOrientations()
+            controller = current.presentedViewController
+        }
+        if rotating { request(mask, on: scene) }
     }
 
     @MainActor
     private static func request(_ mask: UIInterfaceOrientationMask, on scene: UIWindowScene) {
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-            log.error("Orientation request \(mask.rawValue) failed: \(error.localizedDescription)")
+            // Expected while the new limit propagates: the turn still happens once the controllers have looked again.
+            log.info("Orientation request \(mask.rawValue) not applied: \(error.localizedDescription)")
         }
     }
 

@@ -7,6 +7,10 @@ struct TrmnlFullScreenPreview: View {
     let editor: TrmnlScreensEditorModel
     let onClose: () -> Void
     @State private var cameFromPortrait = false
+    /// False while the phone is turning, when the view is laid out at in-between sizes; the black stays up
+    /// and the preview fades in once it has settled.
+    @State private var isSettled = false
+    @State private var isClosing = false
 
     var body: some View {
         // The outer reader respects the safe area, so it is the one that knows where the island and the home
@@ -16,7 +20,13 @@ struct TrmnlFullScreenPreview: View {
         }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
-        .task { cameFromPortrait = ScreenOrientation.enterLandscape() }
+        .task { await settle() }
+    }
+
+    private func settle() async {
+        cameFromPortrait = ScreenOrientation.enterLandscape()
+        if cameFromPortrait { try? await Task.sleep(for: ScreenOrientation.turnDuration) }
+        withAnimation(.easeIn(duration: 0.25)) { isSettled = true }
     }
 
     private func content(insets: EdgeInsets) -> some View {
@@ -27,18 +37,21 @@ struct TrmnlFullScreenPreview: View {
                     leading: insets.leading, top: insets.top, trailing: insets.trailing, bottom: insets.bottom))
             ZStack {
                 Color.black
-                pages.trmnlPlaced(in: layout.preview)
-                closeButton.trmnlPlaced(in: layout.closeButton)
-                step(by: -1, systemImage: "chevron.left", label: "Previous screen")
-                    .trmnlPlaced(in: layout.previousButton)
-                step(by: 1, systemImage: "chevron.right", label: "Next screen")
-                    .trmnlPlaced(in: layout.nextButton)
-                TrmnlScreenPosition(
-                    editor: editor, captionStyle: .primary, arrangement: layout.isLandscape ? .inline : .stacked,
-                    inactiveDot: .white.opacity(0.5))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .trmnlPlaced(in: layout.position)
+                ZStack {
+                    pages.trmnlPlaced(in: layout.preview)
+                    closeButton.trmnlPlaced(in: layout.closeButton)
+                    step(by: -1, systemImage: "chevron.left", label: "Previous screen")
+                        .trmnlPlaced(in: layout.previousButton)
+                    step(by: 1, systemImage: "chevron.right", label: "Next screen")
+                        .trmnlPlaced(in: layout.nextButton)
+                    TrmnlScreenPosition(
+                        editor: editor, captionStyle: .primary, arrangement: layout.isLandscape ? .inline : .stacked,
+                        inactiveDot: .white.opacity(0.5))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .trmnlPlaced(in: layout.position)
+                }
+                .opacity(isSettled ? 1 : 0)
             }
         }
         .ignoresSafeArea()
@@ -80,10 +93,16 @@ struct TrmnlFullScreenPreview: View {
         }
     }
 
+    /// Fades the screen out, turns the phone back under the black, and only then lets the cover go, so the
+    /// editor behind is never seen mid-turn.
     private func close() {
-        let wasPortrait = cameFromPortrait
-        onClose()
-        Task { await ScreenOrientation.restore(wasPortrait: wasPortrait) }
+        guard !isClosing else { return }
+        isClosing = true
+        Task {
+            withAnimation(.easeOut(duration: 0.15)) { isSettled = false }
+            await ScreenOrientation.restore(wasPortrait: cameFromPortrait)
+            onClose()
+        }
     }
 }
 
