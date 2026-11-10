@@ -27,12 +27,6 @@ struct TrmnlPresentationTests {
             == "Delete Screen 2? This cannot be undone.")
     }
 
-    @Test("A narrow bar gets a short position, split across two lines")
-    func compactPosition() {
-        #expect(TrmnlPresentation.compactPosition(index: 0, count: 3) == "1 of 3")
-        #expect(TrmnlPresentation.onDeviceCompact == "On device")
-    }
-
     @Test("The Settings row counts devices")
     func deviceCountLabel() {
         #expect(TrmnlPresentation.deviceCountLabel(1) == "1 device")

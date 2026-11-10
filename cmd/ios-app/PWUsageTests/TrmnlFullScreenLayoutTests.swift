@@ -53,14 +53,16 @@ struct TrmnlFullScreenLayoutTests {
         }
     }
 
-    @Test("A landscape view puts the buttons in the bars beside the preview, and the position in the right bar")
+    @Test("A landscape view puts the buttons in the bars beside the preview, and the position in a strip under it")
     func landscapeBars() {
         let layout = phoneLandscape
         #expect(layout.isLandscape)
         #expect(layout.previousButton.maxX <= layout.preview.minX)
         #expect(layout.nextButton.minX >= layout.preview.maxX)
-        #expect(layout.position.minX >= layout.preview.maxX)
-        #expect(abs(layout.previousButton.midY - 201) < 0.5)
+        #expect(layout.position.minY >= layout.preview.maxY)
+        #expect(layout.position.minX == layout.preview.minX)
+        #expect(layout.position.width == layout.preview.width)
+        #expect(abs(layout.previousButton.midY - layout.preview.midY) < 0.5)
     }
 
     @Test("A portrait view puts navigation in the bar below the preview, around the position")
@@ -74,13 +76,22 @@ struct TrmnlFullScreenLayoutTests {
         #expect(layout.position.width > 100)
     }
 
-    @Test("The preview keeps its 5 by 3 shape and sits centered")
+    @Test("The preview keeps its 5 by 3 shape and sits centered across the screen")
     func shape() {
         for layout in [phoneLandscape, phonePortrait, wideWindow] {
             let preview = layout.preview
             #expect(abs(preview.width / preview.height - 800.0 / 480.0) < 0.001)
             #expect(abs(preview.midX - layout.container.width / 2) < 0.5)
-            #expect(abs(preview.midY - layout.container.height / 2) < 0.5)
         }
+        #expect(abs(phonePortrait.preview.midY - 437) < 0.5)
+    }
+
+    @Test("In landscape the preview gives up some height to the strip, and only that much")
+    func landscapeStripCost() {
+        let layout = phoneLandscape
+        let strip = TrmnlFullScreenLayout.positionStripHeight
+        #expect(layout.position.height == strip)
+        #expect(layout.position.maxY <= 402 - 21)
+        #expect(layout.preview.height > 402 * 0.7)
     }
 }

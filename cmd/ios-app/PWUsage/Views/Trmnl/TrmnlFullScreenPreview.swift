@@ -33,7 +33,9 @@ struct TrmnlFullScreenPreview: View {
                     .trmnlPlaced(in: layout.previousButton)
                 step(by: 1, systemImage: "chevron.right", label: "Next screen")
                     .trmnlPlaced(in: layout.nextButton)
-                TrmnlScreenPosition(editor: editor, captionStyle: .primary, isCompact: layout.isLandscape)
+                TrmnlScreenPosition(
+                    editor: editor, captionStyle: .primary, arrangement: layout.isLandscape ? .inline : .stacked,
+                    inactiveDot: .white.opacity(0.5))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
                     .trmnlPlaced(in: layout.position)

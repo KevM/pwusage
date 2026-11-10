@@ -38,32 +38,48 @@ struct TrmnlScreenCarousel: View {
 
 /// Where the selected screen is in the rotation: page dots and a caption.
 struct TrmnlScreenPosition: View {
+    enum Arrangement {
+        /// Dots above the caption.
+        case stacked
+        /// Dots beside the caption, on one line, for a strip under the preview.
+        case inline
+    }
+
     let editor: TrmnlScreensEditorModel
     /// How strong the caption reads; over a dark full-screen preview it needs `.primary` to be legible.
     var captionStyle: HierarchicalShapeStyle = .secondary
-    /// A short two-line caption, for a bar too narrow for the full sentence.
-    var isCompact = false
+    var arrangement = Arrangement.stacked
+    var inactiveDot: Color = .secondary.opacity(0.5)
 
     var body: some View {
-        VStack(spacing: 8) {
-            if editor.screens.count > 1 {
-                TrmnlPageDots(count: editor.screens.count, selected: editor.selectedIndex)
-            }
-            if isCompact {
-                Text(TrmnlPresentation.compactPosition(index: editor.selectedIndex, count: editor.screens.count))
-                    .font(.footnote)
-                    .foregroundStyle(captionStyle)
-                if isShowingNow {
-                    Text(TrmnlPresentation.onDeviceCompact).font(.caption2).foregroundStyle(captionStyle)
+        Group {
+            switch arrangement {
+            case .stacked:
+                VStack(spacing: 8) {
+                    dots
+                    captionText
                 }
-            } else {
-                Text(caption)
-                    .font(.footnote)
-                    .foregroundStyle(captionStyle)
-                    .fixedSize(horizontal: false, vertical: true)
+            case .inline:
+                HStack(spacing: 12) {
+                    dots
+                    captionText.lineLimit(1)
+                }
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private var dots: some View {
+        if editor.screens.count > 1 {
+            TrmnlPageDots(count: editor.screens.count, selected: editor.selectedIndex, inactive: inactiveDot)
+        }
+    }
+
+    private var captionText: some View {
+        Text(caption)
+            .font(.footnote)
+            .foregroundStyle(captionStyle)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Whether the screen shown is the one on the device, which an unsaved reorder or edit no longer is.
