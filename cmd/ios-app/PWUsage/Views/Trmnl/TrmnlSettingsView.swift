@@ -113,9 +113,10 @@ struct TrmnlSettingsView: View {
                 case .saving:
                     ProgressView()
                 case .saved:
-                    Label(TrmnlPresentation.savedTitle, systemImage: "checkmark")
-                        .labelStyle(.titleAndIcon)
+                    // A status, not a button: just a check, which VoiceOver reads as "Saved".
+                    Image(systemName: "checkmark")
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel(TrmnlPresentation.savedTitle)
                 case .failed:
                     Button(TrmnlPresentation.retryTitle) { Task { _ = await editor.flush() } }
                         .accessibilityIdentifier("trmnl.retry-save")

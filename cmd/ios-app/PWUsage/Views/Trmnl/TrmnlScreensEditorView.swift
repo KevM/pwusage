@@ -16,10 +16,14 @@ struct TrmnlScreensEditorView: View {
     let devices: [TrmnlDevice]
     let onSelectDevice: (Int) -> Void
     @State private var isConfirmingDelete = false
+    @State private var isFullScreen = false
 
     var body: some View {
         GeometryReader { proxy in
             if proxy.size.width >= Self.wideBreakpoint { wide } else { compact }
+        }
+        .fullScreenCover(isPresented: $isFullScreen) {
+            TrmnlFullScreenPreview(editor: editor) { isFullScreen = false }
         }
         .confirmationDialog(
             TrmnlPresentation.deleteConfirmation(screenName: selectedName),
@@ -36,7 +40,7 @@ struct TrmnlScreensEditorView: View {
     /// The preview stays pinned above the controls, so it is in view while a switch below it is changed.
     private var compact: some View {
         VStack(spacing: 0) {
-            TrmnlScreenCarousel(editor: editor)
+            TrmnlScreenCarousel(editor: editor, onFullScreen: { isFullScreen = true })
                 .frame(maxWidth: Self.pinnedPreviewMaxWidth)
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -61,7 +65,7 @@ struct TrmnlScreensEditorView: View {
                     let room = CGSize(
                         width: column.size.width - 2 * Self.previewMargin,
                         height: column.size.height - 2 * Self.previewMargin)
-                    TrmnlScreenCarousel(editor: editor, showsPosition: false)
+                    TrmnlScreenCarousel(editor: editor, showsPosition: false, onFullScreen: { isFullScreen = true })
                         .frame(maxWidth: max(0, min(room.width, room.height * TrmnlPreview.aspectRatio)))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }

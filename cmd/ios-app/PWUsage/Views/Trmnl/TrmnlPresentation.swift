@@ -29,6 +29,13 @@ enum TrmnlPresentation {
         return isShowingNow ? "\(position) · On the device now" : position
     }
 
+    /// The position in a narrow bar: "1 of 3", and a second short line when it is the screen on the device.
+    static func compactPosition(index: Int, count: Int) -> String {
+        "\(index + 1) of \(count)"
+    }
+
+    static let onDeviceCompact = "On device"
+
     static func deleteConfirmation(screenName: String) -> String {
         "Delete \(screenName)? This cannot be undone."
     }

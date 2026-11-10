@@ -4,8 +4,8 @@ import SwiftUI
 /// 800 by 480 and scaled here, rather than leaving the scaling to the page's viewport tag, which
 /// WebKit does not apply reliably to a view that has no size when the page loads.
 struct TrmnlPreview: View {
-    static let screenSize = CGSize(width: 800, height: 480)
-    static let aspectRatio = screenSize.width / screenSize.height
+    nonisolated static let screenSize = CGSize(width: 800, height: 480)
+    nonisolated static let aspectRatio = screenSize.width / screenSize.height
 
     let document: String
 
