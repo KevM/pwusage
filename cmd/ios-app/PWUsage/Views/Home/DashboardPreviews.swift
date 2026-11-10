@@ -61,6 +61,12 @@
         func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
             throw URLError(.notConnectedToInternet)
         }
+        func fetchTrmnlScreens(uuid: String) async throws -> [TrmnlManagedScreen] {
+            throw URLError(.notConnectedToInternet)
+        }
+        func saveTrmnlScreens(_ screens: [TrmnlManagedScreen], for device: TrmnlDevice, siteID: String) async throws {
+            throw URLError(.notConnectedToInternet)
+        }
         func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
             MobileBillingDay(billingDay: day, billingDayConfirmed: true)
         }

@@ -11,8 +11,27 @@ enum TrmnlPresentation {
     static let emptyMessage = "Add the pwusage plugin on trmnl.com. Your device appears here once it connects."
     static let addTitle = "Add Trmnl"
     static let addAnotherTitle = "Add another device"
-    static let screensTitle = "Screens"
+    static let savedTitle = "Saved"
+    static let retryTitle = "Try Again"
+    static let saveFailure = "Your changes could not be saved. Try again, or keep editing to retry."
+    static let screensLoadFailure = "This device's screens could not be loaded."
+    static let addScreenTitle = "Add screen"
+    static let deleteScreenTitle = "Delete screen"
+    static let moveEarlierTitle = "Move earlier"
+    static let moveLaterTitle = "Move later"
+    static let liveStatsHeader = "Live stats"
+    static let chartsHeader = "Charts and tables"
+    static let screenHeader = "Screen"
     static let openTitle = "Open in Trmnl"
+
+    static func screenCaption(index: Int, count: Int, isShowingNow: Bool) -> String {
+        let position = "Screen \(index + 1) of \(count)"
+        return isShowingNow ? "\(position) · On the device now" : position
+    }
+
+    static func deleteConfirmation(screenName: String) -> String {
+        "Delete \(screenName)? This cannot be undone."
+    }
 
     static func addButtonTitle(deviceCount: Int) -> String {
         deviceCount == 0 ? addTitle : addAnotherTitle
@@ -46,17 +65,6 @@ enum TrmnlPresentation {
 
     static func openURL(for device: TrmnlDevice) -> URL {
         trmnlURL(path: "/plugin_settings/\(device.pluginSettingId)/edit")
-    }
-
-    /// The web app's screens page for the device, which the sheet shows.
-    static func screensURL(origin: URL, device: TrmnlDevice) -> URL {
-        guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
-            preconditionFailure("The API origin is a valid URL")
-        }
-        components.path = "/trmnl/manage"
-        components.queryItems = [URLQueryItem(name: "uuid", value: device.uuid)]
-        guard let url = components.url else { preconditionFailure("The screens URL is built from valid parts") }
-        return url
     }
 
     private static func trmnlURL(path: String, query: [URLQueryItem] = []) -> URL {

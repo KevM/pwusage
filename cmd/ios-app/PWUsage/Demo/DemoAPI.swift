@@ -96,6 +96,14 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo has no Trmnl")
     }
 
+    func fetchTrmnlScreens(uuid: String) async throws -> [TrmnlManagedScreen] {
+        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo has no Trmnl")
+    }
+
+    func saveTrmnlScreens(_ screens: [TrmnlManagedScreen], for device: TrmnlDevice, siteID: String) async throws {
+        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only")
+    }
+
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
     func logout() async throws {}
     func clearSiteAuthCookie() async {}
