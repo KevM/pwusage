@@ -115,6 +115,14 @@ describe('/api/trmnl/markup', () => {
         expect(mocks.after).toHaveBeenCalled();
     }, 1000);
 
+    it('adds a ready-to-render document to site previews', async () => {
+        mocks.getSite.mockResolvedValue({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r' });
+        const response = await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1'));
+        const body = await response.json();
+        expect(body.document).toMatch(/^<!doctype html>/);
+        expect(body.document).toContain(body.markup);
+    });
+
     it.each(['uncertain', 'reconnect_required'])('renders stored data and a reconnect message for %s', async state => {
         mocks.getSite.mockResolvedValue({ id: 'site-1', name: 'Home', timezone: 'UTC', tariffs: [], refresh_token: 'r', tesla_refresh_state: state });
         const response = await GET(new Request('http://localhost/api/trmnl/markup?site_id=site-1'));
@@ -192,6 +200,7 @@ describe('/api/trmnl/markup', () => {
         expect(response.status).toBe(200);
         const body = await response.json();
         expect(body.markup).toContain('Harrison');
+        expect(body).not.toHaveProperty('document');
         // Human session authz must not be consulted on the device path.
         expect(mocks.verifySiteAccess).not.toHaveBeenCalled();
     });

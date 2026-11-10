@@ -18,7 +18,7 @@ import { useToast } from '@/components/ui/Toast';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
-import { coercePositiveInt } from '@/lib/trmnl-component-config';
+import { toTrmnlDevices } from '@/lib/trmnl-devices';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
@@ -26,59 +26,9 @@ interface SettingsViewProps {
     memberEmails: string[];
 }
 
-function parseInstallationJson(value: unknown): Record<string, unknown> | null {
-    if (!value) return null;
-    if (typeof value === 'string') {
-        try {
-            const parsed = JSON.parse(value);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                return parsed as Record<string, unknown>;
-            }
-            return null;
-        } catch {
-            return null;
-        }
-    }
-
-    if (typeof value === 'object' && !Array.isArray(value)) {
-        return value as Record<string, unknown>;
-    }
-
-    return null;
-}
-
-function extractPluginSettingId(installation: TrmnlInstallation | null | undefined): number | null {
-    if (!installation) return null;
-    if (installation.plugin_setting_id) return installation.plugin_setting_id;
-
-    const json = parseInstallationJson(installation.json);
-    if (!json) return null;
-
-    const topLevel = coercePositiveInt(json.plugin_setting_id);
-    if (topLevel) return topLevel;
-
-    const user = json.user;
-    if (user && typeof user === 'object' && !Array.isArray(user)) {
-        const nested = coercePositiveInt((user as Record<string, unknown>).plugin_setting_id);
-        if (nested) return nested;
-    }
-
-    const callbackUrl = typeof json.installation_callback_url === 'string' ? json.installation_callback_url : null;
-    if (callbackUrl) {
-        const match = callbackUrl.match(/\/plugin_settings\/(\d+)/);
-        if (match) {
-            return coercePositiveInt(match[1]);
-        }
-    }
-
-    return null;
-}
-
-function formatDeviceDate(value: Date | string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime())
-        ? ''
-        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+function formatDeviceDate(value: string | null): string {
+    if (!value) return '';
+    return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 export function SettingsView({ site, installations, memberEmails }: SettingsViewProps) {
@@ -90,13 +40,7 @@ export function SettingsView({ site, installations, memberEmails }: SettingsView
     const [previewScale, setPreviewScale] = useState<number>(0.5);
     const [refreshLoading, setRefreshLoading] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-    // Only devices that finished connecting; pending rows have nothing to open yet.
-    const devices = installations.flatMap(installation => {
-        const pluginSettingId = extractPluginSettingId(installation);
-        return installation.uuid && pluginSettingId
-            ? [{ id: installation.id, uuid: installation.uuid, pluginSettingId, createdAt: installation.created_at }]
-            : [];
-    });
+    const devices = toTrmnlDevices(installations);
 
     // Callback ref to render QR code with centered logo as soon as canvas mounts
     const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
@@ -275,7 +219,7 @@ export function SettingsView({ site, installations, memberEmails }: SettingsView
                                 <li key={device.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                         <p className="font-medium text-gray-900 dark:text-white">Device {device.uuid.slice(0, 8)}</p>
-                                        <p className="text-xs text-gray-500">Connected {formatDeviceDate(device.createdAt)}</p>
+                                        <p className="text-xs text-gray-500">Connected {formatDeviceDate(device.connectedAt)}</p>
                                     </div>
                                     <div className="flex gap-2">
                                         <a href={`/trmnl/manage?uuid=${encodeURIComponent(device.uuid)}`}>

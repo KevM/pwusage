@@ -13,6 +13,7 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import QRCode from 'qrcode';
 import { TrmnlRenderer } from '@/lib/trmnl-renderer';
+import { buildTrmnlPreviewDocument } from '@/lib/trmnl-preview-document';
 import { computeLoadTiming } from '@/lib/load-timing';
 import {
     DEFAULT_TRMNL_COMPONENT_CONFIG,
@@ -400,7 +401,9 @@ async function handleGET(request: Request) {
             markup: markupFull,
             markup_half_vertical: markupHalfVertical,
             markup_half_horizontal: markupHalfHorizontal,
-            markup_quadrant: markupQuadrant
+            markup_quadrant: markupQuadrant,
+            // Site preview only (the iOS app renders this in a web view); device polls do not need it.
+            ...(siteIdParam && !uuid ? { document: buildTrmnlPreviewDocument(markupFull) } : {})
         }, {
             headers: {
                 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
