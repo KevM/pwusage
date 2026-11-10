@@ -256,6 +256,7 @@ final class DashboardCoordinator: ObservableObject {
             bill.isRestored = true
         }
         // Attempts stay nil: every launch/site switch still refreshes immediately.
+        holdStaleReadings(at: now())
     }
 
     func scenePhaseChanged(isActive: Bool) {
@@ -265,6 +266,7 @@ final class DashboardCoordinator: ObservableObject {
             guard !isForeground else { return }
             isForeground = true
             refreshSettled = false
+            holdStaleReadings(at: now())
             startTimer()
             Task {
                 guard isForeground else { return }
@@ -278,9 +280,11 @@ final class DashboardCoordinator: ObservableObject {
             stopTimer()
             cancelLayoutRevalidation()
             // Keep fast polls in memory; persist the combined snapshot once on
-            // backgrounding instead of encoding the entire bill every minute.
+            // backgrounding instead of encoding the entire bill every minute. It keeps
+            // the summary's fetch time, so an old summary never restores as fresh.
             if let snapshot = live.response, let power = power.response {
-                cache?.storeLive(MobileLiveResponse(snapshot: snapshot, power: power), at: now())
+                cache?.storeLive(MobileLiveResponse(snapshot: snapshot, power: power),
+                                 at: live.lastSuccess ?? now())
             }
         }
     }
@@ -319,6 +323,7 @@ final class DashboardCoordinator: ObservableObject {
         guard sceneIsActive else { return }
         isForeground = true
         refreshSettled = false
+        holdStaleReadings(at: now())
         startTimer()
         Task { await refreshDue() }
     }

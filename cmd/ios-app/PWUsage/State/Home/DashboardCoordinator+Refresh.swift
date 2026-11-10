@@ -15,7 +15,10 @@ extension DashboardCoordinator {
         guard canStillRefresh(trigger: trigger, generation: generation) else { return }
         let historyAtStart = historyGeneration
         let billAttemptsAtStart = billAttempts
-        if trigger == .userGesture { manualRefreshCount += 1 }
+        if trigger == .userGesture {
+            manualRefreshCount += 1
+            retryFailedWaits(at: now())
+        }
         defer { finishRefresh(trigger: trigger, generation: generation) }
         let billWasFetching = billTask != nil
         if showingBillEarly, bill.response == nil {
@@ -218,6 +221,7 @@ extension DashboardCoordinator {
                 power.lastSuccess = now()
                 recordAttempt(.power)
                 power.isUnavailable = false
+                power.freshReadingWait = nil
                 teslaConnectionRestored()
             } catch {
                 handlePowerFailure(error, generation: generation)
@@ -270,6 +274,7 @@ extension DashboardCoordinator {
             bill.isRestored = false
             cache?.storeBill(response, at: successTime)
             bill.isUnavailable = false
+            bill.freshReadingWait = nil
         } catch {
             guard !isAbandonedRequest() else { return }
             guard generation == siteGeneration else { return }
@@ -303,6 +308,7 @@ extension DashboardCoordinator {
         case .power:
             power.isUnavailable = true
         }
+        markWaitFailed(endpoint)
     }
 
     func teslaConnectionRestored() {
