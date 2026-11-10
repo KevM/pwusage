@@ -30,9 +30,10 @@ struct TrmnlScreensEditorView: View {
 
     private var compact: some View {
         List {
-            deviceSection
             Section(TrmnlPresentation.previewHeader) { TrmnlScreenCarousel(editor: editor) }
+            deviceSection
             controlSections
+            linksSection
         }
     }
 
@@ -43,6 +44,7 @@ struct TrmnlScreensEditorView: View {
             List {
                 deviceSection
                 controlSections
+                linksSection
             }
             .frame(width: Self.controlsWidth)
         }
@@ -50,22 +52,30 @@ struct TrmnlScreensEditorView: View {
 
     // MARK: Device
 
+    /// One row naming the device, a menu to switch when there are several.
     private var deviceSection: some View {
-        Section(TrmnlPresentation.devicesHeader) {
+        Section {
             if devices.count > 1 {
-                Menu {
-                    ForEach(devices) { device in
-                        Button(TrmnlPresentation.name(for: device)) { onSelectDevice(device.id) }
-                    }
-                } label: {
-                    LabeledContent("Device") {
-                        Text(TrmnlPresentation.name(for: editor.device))
-                        Image(systemName: "chevron.up.chevron.down").font(.footnote).foregroundStyle(.secondary)
+                HStack {
+                    Text("Device")
+                    Spacer()
+                    Menu {
+                        ForEach(devices) { device in
+                            Button(TrmnlPresentation.name(for: device)) { onSelectDevice(device.id) }
+                        }
+                    } label: {
+                        Text(TrmnlPresentation.name(for: editor.device)).lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down").font(.footnote)
                     }
                 }
             } else {
                 LabeledContent("Device", value: TrmnlPresentation.name(for: editor.device))
             }
+        }
+    }
+
+    private var linksSection: some View {
+        Section {
             Link(TrmnlPresentation.openTitle, destination: TrmnlPresentation.openURL(for: editor.device))
             Link(TrmnlPresentation.addAnotherTitle, destination: TrmnlPresentation.addURL)
                 .accessibilityIdentifier("trmnl.add")
