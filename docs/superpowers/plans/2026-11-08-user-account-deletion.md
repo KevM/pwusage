@@ -2,28 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let a signed-in user permanently delete their pwusage account from a dedicated `/account-delete` page, without ever stranding a Powerwall at a raised backup reserve.
+**Goal:** Let a signed-in user permanently delete their pwusage account from a dedicated `/account-delete` page, preserving shared Powerwall sites for remaining members and never stranding a Powerwall at a raised backup reserve.
 
 **Spec:** [`docs/superpowers/specs/2026-11-08-user-account-deletion-design.md`](../specs/2026-11-08-user-account-deletion-design.md). Read it first.
 
-**Architecture:** `DELETE /api/user` calls `deleteAccount` in `account-deletion-service.ts`, which restores any active Battery Saver session and then calls `AccountDeletionRepo`. The repo deletes in one transaction, removing `EnergyDayArchive` first because a plain cascade fails on `EnergyDaySummary`. The `/account-delete` page shows the details and takes the typed confirmation. `/account-delete/done` offers optional Tesla removal.
+**Architecture:** `DELETE /api/user` calls `deleteAccount` in `account-deletion-service.ts`, which restores any active Battery Saver session on sites where no other usable member remains, calls `AccountDeletionRepo.deleteAccount`, and then calls `siteRepo.repairConnection` for any surviving shared sites. The repo runs in one transaction: it locks `User` and the member's `Site` rows in deterministic `ORDER BY id` order, refuses if an unrestorable active `BatteryHold` or live `BatteryHoldStartClaim` would be stranded, removes the user's `MobileLoginHandoff`, `TrmnlInstallation` (`installed_by_user_id`), and `SiteMember` rows, deletes `EnergyDayArchive` and `Site` only for sites with no remaining `SiteMember` rows, and finally deletes `User`. The `/account-delete` page shows sole-member sites to be deleted, shared sites that will stay available to other members, and takes the typed confirmation. `/account-delete/done` offers optional Tesla removal.
 
 **Tech Stack:** Next.js 16 App Router, TypeScript, PostgreSQL (`pg`), Tailwind CSS, Vitest 4.
-
-**Verification status:** All code below was built on a throwaway worktree of `881a2127`. There, typecheck, lint, `npm test -- --run` (1,824 passed), `npm run test:hold:postgres` (69 passed) and `npm run build` all succeeded. Removing the `EnergyDayArchive` delete made the Postgres test fail with the production error, so the test does catch that bug. The pages were not opened in a browser and no real deletion was run; Task 7 covers those. If `main` has moved, re-check the diffs against it.
 
 ## Global Constraints
 
 - Run commands from `cmd/next-app`.
 - **Never run deletion code or tests against `.env` or `DATABASE_URL`.** `.env` points at the Dev DB, and the Postgres suite uses a disposable local cluster on purpose. It needs PostgreSQL's `pg_config` on `PATH`.
 - Use `npm run db:migration:create`. Never name a migration file by hand.
+- Do not change `Site.user_id` back to `ON DELETE CASCADE` (`20261109135834_add_site_member.sql` set it to `ON DELETE SET NULL` so shared sites survive a connection user's deletion).
 - Do not add `@testing-library/react` or jsdom. Component tests use `renderToStaticMarkup`.
 - Do not add a Tesla revocation call or a challenge token. The spec explains why.
 - No `any`. User-facing copy follows `docs/voice-and-terms.md`.
 
 ---
 
-### Task 1: Migration and transactional delete
+### Task 1: Migration and membership-aware transactional delete
 
 **Files:**
 - Create: `cmd/next-app/db-migrations/<generated>_user_account_deletion_cascades.sql`
@@ -38,9 +37,13 @@ Create `cmd/next-app/src/lib/account-deletion-postgres.test.ts`:
 ```typescript
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { readdir, readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 
 const local = vi.hoisted(() => ({ database: undefined as unknown as import('pg').Pool }));
-vi.mock('./db', () => ({ pool: { connect: () => local.database.connect() } }));
+vi.mock('./db', () => ({ pool: {
+  query: (...args: unknown[]) => Reflect.apply(local.database.query, local.database, args),
+  connect: () => local.database.connect(),
+} }));
 
 import { AccountDeletionRepo, ActiveBatterySaverError } from './account-deletion-repo';
 import { createActivityTestDatabase, safeActivityTestSocket as safeSocket } from './battery-hold-activity-test-db';
@@ -55,6 +58,13 @@ const ARCHIVE_TABLE = `
     site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE, day_start date NOT NULL, revision int NOT NULL,
     PRIMARY KEY (site_id, day_start, revision));`;
 const OTHER_TABLES = `
+  ALTER TABLE "User"
+    ADD COLUMN IF NOT EXISTS refresh_token text,
+    ADD COLUMN IF NOT EXISTS auth_status text,
+    ADD COLUMN IF NOT EXISTS tesla_refresh_state text DEFAULT 'ready';
+  ALTER TABLE "Site"
+    ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT 'Home',
+    ADD COLUMN IF NOT EXISTS json jsonb;
   CREATE TABLE "EnergyDaySummary" (
     site_id text NOT NULL, day_start date NOT NULL, revision int NOT NULL,
     tariff_id int NOT NULL REFERENCES "Tariff"(id), tariff_schedule_id int REFERENCES "TariffSchedule"(id),
@@ -64,12 +74,11 @@ const OTHER_TABLES = `
   CREATE TABLE "MobileLoginHandoff" (id serial PRIMARY KEY, user_id text NOT NULL);
   CREATE TABLE "SystemAnnouncement" (id serial PRIMARY KEY, author_id text REFERENCES "User"(id));`;
 
-const OWNED_TABLES = [
-  'Site', 'Tariff', 'TariffSeason', 'TariffSchedule', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag',
-  'TrmnlInstallation', 'MobileLoginHandoff', 'BatteryHold',
-];
+async function applyMigrationsTwice(): Promise<void> {
+  const siteMemberSql = await readFile('db-migrations/20261109135834_add_site_member.sql', 'utf8');
+  await local.database.query(siteMemberSql);
+  await local.database.query(siteMemberSql);
 
-async function applyDeletionMigrationTwice(): Promise<void> {
   const file = (await readdir('db-migrations')).find(name => name.endsWith('_user_account_deletion_cascades.sql'));
   if (!file) throw new Error('Migration not found');
   const sql = await readFile(`db-migrations/${file}`, 'utf8');
@@ -77,17 +86,23 @@ async function applyDeletionMigrationTwice(): Promise<void> {
   await local.database.query(sql);
 }
 
-async function seedAccount(userId: string, siteId: string): Promise<void> {
+async function seedAccount(userId: string, siteId: string, name = 'Home'): Promise<void> {
   const db = local.database;
-  await db.query('INSERT INTO "User" (id) VALUES ($1)', [userId]);
-  await db.query('INSERT INTO "Site" (id, user_id) VALUES ($1, $2)', [siteId, userId]);
+  await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES ($1, $2, \'active\')', [userId, `rt-${userId}`]);
+  await db.query(
+    'INSERT INTO "Site" (id, user_id, name, tesla_hardware_id, tesla_connection_user_id) VALUES ($1, $2, $3, $4, None)'
+      .replace('None', 'NULL'),
+    [siteId, userId, name, `hw-${siteId}`],
+  );
+  await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES ($1, $2, $1)', [siteId, userId]);
+  await db.query('UPDATE "Site" SET tesla_connection_user_id = $1 WHERE id = $2', [userId, siteId]);
   const tariff = (await db.query('INSERT INTO "Tariff" (site_id) VALUES ($1) RETURNING id', [siteId])).rows[0].id;
   const season = (await db.query('INSERT INTO "TariffSeason" (tariff_id) VALUES ($1) RETURNING id', [tariff])).rows[0].id;
   const schedule = (await db.query('INSERT INTO "TariffSchedule" (season_id) VALUES ($1) RETURNING id', [season])).rows[0].id;
   await db.query(`INSERT INTO "EnergyDayArchive" VALUES ($1, '2026-01-01', 1)`, [siteId]);
   await db.query(`INSERT INTO "EnergyDaySummary" VALUES ($1, '2026-01-01', 1, $2, $3)`, [siteId, tariff, schedule]);
   await db.query('INSERT INTO "LoadTag" (site_id) VALUES ($1)', [siteId]);
-  await db.query('INSERT INTO "TrmnlInstallation" (site_id) VALUES ($1)', [siteId]);
+  await db.query('INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id) VALUES ($1, $2)', [siteId, userId]);
   await db.query('INSERT INTO "MobileLoginHandoff" (user_id) VALUES ($1)', [userId]);
   await db.query('INSERT INTO "SystemAnnouncement" (author_id) VALUES ($1)', [userId]);
 }
@@ -95,48 +110,92 @@ async function seedAccount(userId: string, siteId: string): Promise<void> {
 const countFor = async (table: string, column: string, value: string): Promise<number> =>
   Number((await local.database.query(`SELECT count(*) FROM "${table}" WHERE ${column} = $1`, [value])).rows[0].count);
 
-const insertActiveHold = (siteId: string) => local.database.query(`
-  INSERT INTO "BatteryHold" (site_id, status, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at)
-  VALUES ($1, 'active', 20, 100, 90, 500, now() + interval '1 hour')`, [siteId]);
+const insertActiveHold = (siteId: string, startedBy = 'leaving') => local.database.query(`
+  INSERT INTO "BatteryHold" (site_id, status, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at, started_by_user_id)
+  VALUES ($1, 'active', 20, 100, 90, 500, now() + interval '1 hour', $2)`, [siteId, startedBy]);
 
 describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
   afterAll(async () => { await local.database?.end(); });
 
-  // Trigger firing order follows creation order, and the plain cascade fails when
+  // Trigger firing order follows creation order, and the plain Site cascade fails when
   // Tariff fires before EnergyDayArchive. Production has that order; both must work.
   describe.each([
     ['tariff_first', TARIFF_TABLES + ARCHIVE_TABLE],
     ['archive_first', ARCHIVE_TABLE + TARIFF_TABLES],
   ])('with foreign keys created %s', (order, tables) => {
-    it('removes everything the account owns and leaves other accounts alone', async () => {
+    it('removes a sole-member site and everything the account owns, leaving other accounts alone', async () => {
       await local.database?.end();
       local.database = await createActivityTestDatabase(`account_deletion_${order}`);
       await local.database.query(tables + OTHER_TABLES);
-      await applyDeletionMigrationTwice();
+      await applyMigrationsTwice();
       await seedAccount('leaving', 'site-a');
       await seedAccount('staying', 'site-b');
+      // Also verify a legacy TRMNL row with installed_by_user_id IS NULL cascades with a deleted site.
+      await local.database.query('INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id) VALUES ($1, NULL)', ['site-a']);
 
       const result = await new AccountDeletionRepo().deleteAccount('leaving');
 
-      expect(result.siteIds).toEqual(['site-a']);
+      expect(result).toEqual({ deletedSiteIds: ['site-a'], survivingSiteIds: [] });
       expect(await countFor('User', 'id', 'leaving')).toBe(0);
       expect(await countFor('Site', 'id', 'site-a')).toBe(0);
-      for (const table of ['Tariff', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag', 'TrmnlInstallation']) {
+      for (const table of ['SiteMember', 'Tariff', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag', 'TrmnlInstallation']) {
         expect(await countFor(table, 'site_id', 'site-a'), table).toBe(0);
         expect(await countFor(table, 'site_id', 'site-b'), table).toBe(1);
       }
       expect(await countFor('MobileLoginHandoff', 'user_id', 'leaving')).toBe(0);
       expect(await countFor('MobileLoginHandoff', 'user_id', 'staying')).toBe(1);
-      for (const table of OWNED_TABLES) {
-        const total = Number((await local.database.query(`SELECT count(*) FROM "${table}"`)).rows[0].count);
-        expect(total, table).toBe(table === 'BatteryHold' ? 0 : 1);
-      }
       expect(Number((await local.database.query('SELECT count(*) FROM "SystemAnnouncement" WHERE author_id IS NULL')).rows[0].count)).toBe(1);
     });
 
-    it('refuses while Battery Saver is active and rolls everything back', async () => {
+    it('keeps a shared site and its history when another member remains, removing only the departing member and their TRMNL device', async () => {
+      const db = local.database;
+      await seedAccount('member-1', 'site-shared', 'Shared Home');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'member-2\', \'rt-2\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-shared\', \'member-2\', \'site-shared-2\')');
+      await db.query('INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id) VALUES (\'site-shared\', \'member-2\')');
+
+      const overview = await new AccountDeletionRepo().getSitesForDeletion('member-1');
+      expect(overview).toEqual([
+        { id: 'site-shared', name: 'Shared Home', shared: true, hasOtherUsableMember: true, activeHoldOriginalReserve: null },
+      ]);
+
+      const result = await new AccountDeletionRepo().deleteAccount('member-1');
+      expect(result).toEqual({ deletedSiteIds: [], survivingSiteIds: ['site-shared'] });
+      expect(await countFor('User', 'id', 'member-1')).toBe(0);
+      expect(await countFor('Site', 'id', 'site-shared')).toBe(1);
+      expect(await countFor('EnergyDayArchive', 'site_id', 'site-shared')).toBe(1);
+      expect(await countFor('EnergyDaySummary', 'site_id', 'site-shared')).toBe(1);
+      expect(await countFor('SiteMember', 'site_id', 'site-shared')).toBe(1);
+      expect(await countFor('TrmnlInstallation', 'site_id', 'site-shared')).toBe(1);
+      const siteRow = (await db.query('SELECT user_id, tesla_connection_user_id FROM "Site" WHERE id = \'site-shared\'')).rows[0];
+      expect(siteRow).toEqual({ user_id: null, tesla_connection_user_id: null });
+
+      // Deleting the last remaining member now removes the site and its history.
+      const second = await new AccountDeletionRepo().deleteAccount('member-2');
+      expect(second).toEqual({ deletedSiteIds: ['site-shared'], survivingSiteIds: [] });
+      expect(await countFor('Site', 'id', 'site-shared')).toBe(0);
+      expect(await countFor('EnergyDaySummary', 'site_id', 'site-shared')).toBe(0);
+    });
+
+    it('allows deleting a member during an active Battery Saver session when another usable member remains on the site', async () => {
+      const db = local.database;
+      await seedAccount('member-hold-1', 'site-shared-hold');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'member-hold-2\', \'rt-hold-2\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-shared-hold\', \'member-hold-2\', \'tesla-hold-2\')');
+      await insertActiveHold('site-shared-hold', 'member-hold-1');
+
+      await expect(new AccountDeletionRepo().deleteAccount('member-hold-1')).resolves.toEqual({
+        deletedSiteIds: [],
+        survivingSiteIds: ['site-shared-hold'],
+      });
+      expect(await countFor('BatteryHold', 'site_id', 'site-shared-hold')).toBe(1);
+      await db.query('DELETE FROM "BatteryHold" WHERE site_id = \'site-shared-hold\'');
+      await new AccountDeletionRepo().deleteAccount('member-hold-2');
+    });
+
+    it('refuses while Battery Saver is active with no other usable member and rolls everything back', async () => {
       await seedAccount('holding', 'site-c');
-      await insertActiveHold('site-c');
+      await insertActiveHold('site-c', 'holding');
 
       await expect(new AccountDeletionRepo().deleteAccount('holding')).rejects.toBeInstanceOf(ActiveBatterySaverError);
 
@@ -144,8 +203,23 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       expect(await countFor('EnergyDayArchive', 'site_id', 'site-c')).toBe(1);
     });
 
+    it('refuses while a Battery Saver start claim is held on a sole-member site', async () => {
+      await local.database.query('DELETE FROM "BatteryHold" WHERE site_id = \'site-c\'');
+      await local.database.query(
+        `INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at) VALUES ('hw-site-c', $1::uuid, clock_timestamp() + interval '1 minute')`,
+        [randomUUID()],
+      );
+
+      await expect(new AccountDeletionRepo().deleteAccount('holding')).rejects.toBeInstanceOf(ActiveBatterySaverError);
+      expect(await countFor('User', 'id', 'holding')).toBe(1);
+      expect(await countFor('Site', 'id', 'site-c')).toBe(1);
+    });
+
     it('finishes without error when the account is already gone', async () => {
-      await expect(new AccountDeletionRepo().deleteAccount('missing')).resolves.toEqual({ siteIds: [] });
+      await expect(new AccountDeletionRepo().deleteAccount('missing')).resolves.toEqual({
+        deletedSiteIds: [],
+        survivingSiteIds: [],
+      });
     });
   });
 });
@@ -180,16 +254,12 @@ Replace the generated file's contents with:
 
 ```sql
 -- Migration: user_account_deletion_cascades
--- Lets one DELETE of a "User" row remove what the account owns. EnergyDaySummary's
--- NO ACTION keys to Tariff and TariffSchedule stay as they are: AccountDeletionRepo
--- deletes EnergyDayArchive first, in the same transaction.
+-- Ensures deleting a sole-member "Site" cascades to its TRMNL installations, and
+-- deleting an admin "User" keeps their system announcements.
+-- Note: "Site_user_id_fkey" intentionally stays ON DELETE SET NULL (from
+-- 20261109135834_add_site_member.sql) so shared sites survive a member's deletion.
 
-ALTER TABLE "Site"
-    DROP CONSTRAINT IF EXISTS "Site_user_id_fkey",
-    ADD CONSTRAINT "Site_user_id_fkey"
-        FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE;
-
--- site_id had no foreign key before this. Adding one fails loudly if any orphan exists.
+-- site_id had no ON DELETE CASCADE before this. Adding one fails loudly if any orphan exists.
 ALTER TABLE "TrmnlInstallation"
     DROP CONSTRAINT IF EXISTS "TrmnlInstallation_site_id_fkey",
     ADD CONSTRAINT "TrmnlInstallation_site_id_fkey"
@@ -208,47 +278,169 @@ Create `cmd/next-app/src/lib/account-deletion-repo.ts`:
 ```typescript
 import { pool } from './db';
 
-/** A Battery Saver session is active, so deleting now would strand the raised reserve. */
+/**
+ * A Battery Saver session (or in-flight start claim) is active on a site that has no
+ * other usable member, so deleting now would strand the Powerwall at a raised reserve.
+ */
 export class ActiveBatterySaverError extends Error {
     constructor() {
-        super('Battery Saver is active on a site owned by this account');
+        super('Battery Saver is active on a site with no other usable member');
         this.name = 'ActiveBatterySaverError';
     }
 }
 
+export interface SiteDeletionOverview {
+    id: string;
+    name: string;
+    shared: boolean;
+    hasOtherUsableMember: boolean;
+    activeHoldOriginalReserve: number | null;
+}
+
+export interface AccountDeletionCommitResult {
+    deletedSiteIds: string[];
+    survivingSiteIds: string[];
+}
+
+const OTHER_USABLE_MEMBER_EXISTS = `
+    EXISTS (
+        SELECT 1 FROM "SiteMember" m
+        JOIN "User" u ON u.id = m.user_id
+        WHERE m.site_id = s.id AND m.user_id <> $1
+          AND u.is_active = true AND NULLIF(u.refresh_token, '') IS NOT NULL
+          AND u.auth_status IS DISTINCT FROM 'revoked'
+          AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+          AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+    )`;
+
 export class AccountDeletionRepo {
     /**
-     * Removes the account and everything it owns in one transaction.
-     *
-     * Locking the User and Site rows blocks new child rows and site assignments until
-     * commit, because their foreign key checks need a share lock on these rows. A
-     * Battery Saver session started during deletion therefore cannot slip through.
+     * Lists the sites the user belongs to, whether another member shares each site,
+     * whether another usable member could restore Battery Saver, and the active
+     * Battery Saver original reserve if any.
      */
-    async deleteAccount(userId: string): Promise<{ siteIds: string[] }> {
+    async getSitesForDeletion(userId: string): Promise<SiteDeletionOverview[]> {
+        const { rows } = await pool.query<{
+            id: string;
+            name: string;
+            shared: boolean;
+            has_other_usable_member: boolean;
+            original_reserve: number | null;
+        }>(`
+            SELECT s.id, s.name,
+                EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id <> $1) AS shared,
+                ${OTHER_USABLE_MEMBER_EXISTS} AS has_other_usable_member,
+                h.original_reserve
+            FROM "Site" s
+            LEFT JOIN LATERAL (
+                SELECT original_reserve FROM "BatteryHold"
+                WHERE site_id = s.id AND status = 'active'
+                ORDER BY created_at DESC LIMIT 1
+            ) h ON true
+            WHERE s.id IN (
+                SELECT site_id FROM "SiteMember" WHERE user_id = $1
+                UNION
+                SELECT id FROM "Site" WHERE user_id = $1
+            )
+            ORDER BY s.id
+        `, [userId]);
+
+        return rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            shared: row.shared,
+            hasOtherUsableMember: row.has_other_usable_member,
+            activeHoldOriginalReserve: row.original_reserve === null ? null : Number(row.original_reserve),
+        }));
+    }
+
+    /**
+     * Removes the account, its memberships, its TRMNL installations, and any site
+     * where this user was the last member.
+     *
+     * Locking User and Site rows in deterministic id order serializes concurrent
+     * member deletions and blocks new holds or memberships until commit.
+     */
+    async deleteAccount(userId: string): Promise<AccountDeletionCommitResult> {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            await client.query('SELECT id FROM "User" WHERE id = $1 FOR UPDATE', [userId]);
-            const sites = await client.query<{ id: string }>(
-                'SELECT id FROM "Site" WHERE user_id = $1 FOR UPDATE',
-                [userId],
-            );
-            const siteIds = sites.rows.map(site => site.id);
+            const userRes = await client.query('SELECT id FROM "User" WHERE id = $1 FOR UPDATE', [userId]);
+            if (userRes.rowCount === 0) {
+                await client.query('COMMIT');
+                return { deletedSiteIds: [], survivingSiteIds: [] };
+            }
 
-            const activeHolds = await client.query(
-                `SELECT 1 FROM "BatteryHold" WHERE site_id = ANY($1::text[]) AND status = 'active' LIMIT 1`,
-                [siteIds],
-            );
-            if (activeHolds.rows.length > 0) throw new ActiveBatterySaverError();
+            const sites = await client.query<{
+                id: string;
+                claim_key: string;
+                has_other_member: boolean;
+                has_other_usable_member: boolean;
+            }>(`
+                SELECT s.id,
+                    COALESCE(s.tesla_hardware_id, 'site:' || s.id) AS claim_key,
+                    EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id <> $1) AS has_other_member,
+                    ${OTHER_USABLE_MEMBER_EXISTS} AS has_other_usable_member
+                FROM "Site" s
+                WHERE s.id IN (
+                    SELECT site_id FROM "SiteMember" WHERE user_id = $1
+                    UNION
+                    SELECT id FROM "Site" WHERE user_id = $1
+                )
+                ORDER BY s.id
+                FOR UPDATE
+            `, [userId]);
 
-            // EnergyDaySummary has NO ACTION keys to Tariff and TariffSchedule. Removing
-            // archives first removes the summaries, so the Site cascade cannot fail on
-            // them whichever order its triggers fire in.
-            await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id = ANY($1::text[])', [siteIds]);
+            const allSiteIds = sites.rows.map(row => row.id);
+            const sitesNeedingRestore = sites.rows.filter(row => !row.has_other_usable_member).map(row => row.id);
+            const soleSiteClaimKeys = sites.rows.filter(row => !row.has_other_member).map(row => row.claim_key);
+
+            if (sitesNeedingRestore.length > 0) {
+                const activeHolds = await client.query(
+                    `SELECT 1 FROM "BatteryHold" WHERE site_id = ANY($1::text[]) AND status = 'active' LIMIT 1`,
+                    [sitesNeedingRestore],
+                );
+                if (activeHolds.rows.length > 0) throw new ActiveBatterySaverError();
+            }
+
+            if (soleSiteClaimKeys.length > 0) {
+                const activeClaims = await client.query(
+                    `SELECT 1 FROM "BatteryHoldStartClaim" WHERE claim_key = ANY($1::text[]) AND expires_at > clock_timestamp() LIMIT 1`,
+                    [soleSiteClaimKeys],
+                );
+                if (activeClaims.rows.length > 0) throw new ActiveBatterySaverError();
+            }
+
             await client.query('DELETE FROM "MobileLoginHandoff" WHERE user_id = $1', [userId]);
+            if (allSiteIds.length > 0) {
+                await client.query(
+                    'DELETE FROM "TrmnlInstallation" WHERE installed_by_user_id = $1 AND site_id = ANY($2::text[])',
+                    [userId, allSiteIds],
+                );
+            }
+            await client.query('DELETE FROM "SiteMember" WHERE user_id = $1', [userId]);
+
+            const goneRes = await client.query<{ id: string }>(`
+                SELECT s.id FROM "Site" s
+                WHERE s.id = ANY($1::text[])
+                  AND NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)
+                ORDER BY s.id
+            `, [allSiteIds]);
+            const deletedSiteIds = goneRes.rows.map(row => row.id);
+            const deletedSet = new Set(deletedSiteIds);
+            const survivingSiteIds = allSiteIds.filter(id => !deletedSet.has(id));
+
+            if (deletedSiteIds.length > 0) {
+                // EnergyDaySummary has NO ACTION keys to Tariff and TariffSchedule. Removing
+                // archives first removes the summaries, so the Site cascade cannot fail on
+                // them whichever order its triggers fire in.
+                await client.query('DELETE FROM "EnergyDayArchive" WHERE site_id = ANY($1::text[])', [deletedSiteIds]);
+                await client.query('DELETE FROM "Site" WHERE id = ANY($1::text[])', [deletedSiteIds]);
+            }
+
             await client.query('DELETE FROM "User" WHERE id = $1', [userId]);
             await client.query('COMMIT');
-            return { siteIds };
+            return { deletedSiteIds, survivingSiteIds };
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;
@@ -265,13 +457,13 @@ export class AccountDeletionRepo {
 npm run test:hold:postgres
 ```
 
-Expected: PASS, including both foreign key orders.
+Expected: PASS, including both foreign key orders, shared-site survival, and sole-member deletion.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add db-migrations src/lib/account-deletion-repo.ts src/lib/account-deletion-postgres.test.ts scripts/test-battery-hold.sh
-git commit -m "feat(db): add transactional account deletion and cascades"
+git commit -m "feat(db): add membership-aware account deletion and cascades"
 ```
 
 ---
@@ -290,7 +482,7 @@ Extracted so the deletion code reuses the existing logic instead of copying it.
 Change `cmd/next-app/src/lib/observability.ts`:
 
 ```diff
-@@ -135,10 +135,15 @@ export function setLogContext(fields: { siteId: string } | { siteIds: string[] }
+@@ -154,10 +154,15 @@ export function setLogContext(fields: { siteId: string } | { siteIds: string[] }
  type SessionRejection = 'missing-cookie' | 'invalid-session' | 'expired-session'
      | 'missing-account' | 'inactive-account' | 'revoked-session' | 'site-not-assigned';
  
@@ -406,25 +598,23 @@ Create `cmd/next-app/src/lib/account-deletion-service.test.ts`:
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    getSitesForUser: vi.fn(),
     invalidateCache: vi.fn(),
-    getActiveHold: vi.fn(),
+    repairConnection: vi.fn(),
     createClient: vi.fn(),
     restoreBattery: vi.fn(),
+    getSitesForDeletion: vi.fn(),
     repoDelete: vi.fn(),
     logEvent: vi.fn(),
 }));
 
 vi.mock('./site-repo', () => ({
     SiteRepo: class {
-        getSitesForUser = mocks.getSitesForUser;
         invalidateCache = mocks.invalidateCache;
+        repairConnection = mocks.repairConnection;
     },
 }));
 vi.mock('./battery-hold-repo', () => ({
-    BatteryHoldRepo: class {
-        getActiveHold = mocks.getActiveHold;
-    },
+    BatteryHoldRepo: class {},
 }));
 vi.mock('./battery-hold-service', () => ({
     createSiteTeslaClient: mocks.createClient,
@@ -435,6 +625,7 @@ vi.mock('./account-deletion-repo', () => {
     return {
         ActiveBatterySaverError,
         AccountDeletionRepo: class {
+            getSitesForDeletion = mocks.getSitesForDeletion;
             deleteAccount = mocks.repoDelete;
         },
     };
@@ -450,57 +641,96 @@ import { deleteAccount, getAccountDeletionSites } from './account-deletion-servi
 describe('account deletion service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getSitesForUser.mockResolvedValue([{ id: 'site-1', name: 'Home' }]);
-        mocks.getActiveHold.mockResolvedValue(null);
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: null },
+        ]);
         mocks.createClient.mockResolvedValue({ tesla: true });
-        mocks.repoDelete.mockResolvedValue({ siteIds: ['site-1'] });
+        mocks.repoDelete.mockResolvedValue({ deletedSiteIds: ['site-1'], survivingSiteIds: [] });
+        mocks.repairConnection.mockResolvedValue(null);
     });
 
-    it('lists sites with the reserve Battery Saver would restore', async () => {
-        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+    it('lists sites with shared status and the reserve Battery Saver would restore', async () => {
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+            { id: 'site-2', name: 'Cabin', shared: true, hasOtherUsableMember: true, activeHoldOriginalReserve: 30 },
+        ]);
         await expect(getAccountDeletionSites('user-1')).resolves.toEqual([
-            { id: 'site-1', name: 'Home', batterySaverRestoreReserve: 20 },
+            { id: 'site-1', name: 'Home', shared: false, batterySaverRestoreReserve: 20 },
+            { id: 'site-2', name: 'Cabin', shared: true, batterySaverRestoreReserve: null },
         ]);
     });
 
     it('deletes without touching Tesla when Battery Saver is off', async () => {
-        await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'deleted', siteCount: 1 });
+        await expect(deleteAccount('user-1')).resolves.toEqual({
+            status: 'deleted',
+            sitesDeleted: 1,
+            sitesRetained: 0,
+        });
         expect(mocks.createClient).not.toHaveBeenCalled();
         expect(mocks.invalidateCache).toHaveBeenCalledWith('site-1');
     });
 
-    it('logs a fingerprint, never the raw user id', async () => {
+    it('skips Battery Saver restore and repairs connection when another usable member remains on a shared site', async () => {
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-shared', name: 'Home', shared: true, hasOtherUsableMember: true, activeHoldOriginalReserve: 20 },
+        ]);
+        mocks.repoDelete.mockResolvedValue({ deletedSiteIds: [], survivingSiteIds: ['site-shared'] });
+
+        await expect(deleteAccount('user-1')).resolves.toEqual({
+            status: 'deleted',
+            sitesDeleted: 0,
+            sitesRetained: 1,
+        });
+        expect(mocks.restoreBattery).not.toHaveBeenCalled();
+        expect(mocks.repairConnection).toHaveBeenCalledWith('site-shared');
+        expect(mocks.invalidateCache).toHaveBeenCalledWith('site-shared');
+    });
+
+    it('logs a fingerprint and site counts, never the raw user id', async () => {
         await deleteAccount('user-1');
         expect(mocks.logEvent).toHaveBeenCalledWith('info', 'user.account-deletion.completed', {
             accountId: 'hash-of-user-1',
-            siteCount: 1,
+            sitesDeleted: 1,
+            sitesRetained: 0,
         });
         expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('"user-1"');
     });
 
     it.each([['ok'], ['reserve_changed'], ['no_active_hold']])('deletes after a %s restore', async status => {
-        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+        ]);
         mocks.restoreBattery.mockResolvedValue({ status });
         await expect(deleteAccount('user-1')).resolves.toMatchObject({ status: 'deleted' });
-        expect(mocks.restoreBattery).toHaveBeenCalledWith(expect.objectContaining({ siteId: 'site-1', reason: 'manual' }));
+        expect(mocks.restoreBattery).toHaveBeenCalledWith(expect.objectContaining({
+            siteId: 'site-1',
+            actorUserId: 'user-1',
+            reason: 'manual',
+        }));
     });
 
     it('keeps the account when Tesla needs reconnecting', async () => {
-        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+        ]);
         mocks.restoreBattery.mockResolvedValue({ status: 'needs_reauth' });
         await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'needs_reconnect' });
         expect(mocks.repoDelete).not.toHaveBeenCalled();
     });
 
     it('keeps the account when no Tesla client can be built', async () => {
-        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+        ]);
         mocks.createClient.mockResolvedValue(null);
         await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'needs_reconnect' });
         expect(mocks.repoDelete).not.toHaveBeenCalled();
     });
 
     it('keeps the account when the restore cannot be confirmed', async () => {
-        mocks.getActiveHold.mockResolvedValue({ original_reserve: 20 });
+        mocks.getSitesForDeletion.mockResolvedValue([
+            { id: 'site-1', name: 'Home', shared: false, hasOtherUsableMember: false, activeHoldOriginalReserve: 20 },
+        ]);
         mocks.restoreBattery.mockResolvedValue({ status: 'error', message: 'uncertain' });
         await expect(deleteAccount('user-1')).resolves.toEqual({ status: 'battery_saver_pending' });
         expect(mocks.repoDelete).not.toHaveBeenCalled();
@@ -541,42 +771,47 @@ import { SiteRepo } from './site-repo';
 export interface AccountDeletionSite {
     id: string;
     name: string;
-    /** The reserve Battery Saver will restore; null when Battery Saver is off for this site. */
+    /** True when another member also belongs to this site, so the site and its history will stay. */
+    shared: boolean;
+    /** The reserve Battery Saver will restore on deletion; null when no restore is needed. */
     batterySaverRestoreReserve: number | null;
 }
 
 export type AccountDeletionResult =
-    | { status: 'deleted'; siteCount: number }
+    | { status: 'deleted'; sitesDeleted: number; sitesRetained: number }
     | { status: 'needs_reconnect' }
     | { status: 'battery_saver_pending' };
 
 export async function getAccountDeletionSites(userId: string): Promise<AccountDeletionSite[]> {
-    const sites = await new SiteRepo().getSitesForUser(userId);
-    const holdRepo = new BatteryHoldRepo();
-    return Promise.all(sites.map(async site => {
-        const hold = await holdRepo.getActiveHold(site.id);
-        return { id: site.id, name: site.name, batterySaverRestoreReserve: hold?.original_reserve ?? null };
+    const overview = await new AccountDeletionRepo().getSitesForDeletion(userId);
+    return overview.map(site => ({
+        id: site.id,
+        name: site.name,
+        shared: site.shared,
+        batterySaverRestoreReserve: site.hasOtherUsableMember ? null : site.activeHoldOriginalReserve,
     }));
 }
 
-async function restoreSiteBatterySaver(siteId: string, repo: BatteryHoldRepo): Promise<RestoreResult> {
+async function restoreSiteBatterySaver(siteId: string, userId: string, repo: BatteryHoldRepo): Promise<RestoreResult> {
     const client = await createSiteTeslaClient(siteId);
     if (!client) return { status: 'needs_reauth' };
-    return restoreBattery({ client, repo, siteId, reason: 'manual' });
+    return restoreBattery({ client, repo, siteId, actorUserId: userId, reason: 'manual' });
 }
 
 /**
- * Restores any active Battery Saver session, then deletes the account. Deletion removes
- * the record the restore relies on, so a restore that cannot be confirmed stops here.
+ * Restores any active Battery Saver session on sites where no other usable member
+ * remains, deletes the account in one transaction, and repairs the Tesla connection
+ * for any surviving shared sites.
  */
 export async function deleteAccount(userId: string): Promise<AccountDeletionResult> {
     const accountId = accountFingerprint(userId);
+    const deletionRepo = new AccountDeletionRepo();
     const siteRepo = new SiteRepo();
     const holdRepo = new BatteryHoldRepo();
 
-    for (const site of await siteRepo.getSitesForUser(userId)) {
-        if (!await holdRepo.getActiveHold(site.id)) continue;
-        const restore = await restoreSiteBatterySaver(site.id, holdRepo);
+    for (const site of await deletionRepo.getSitesForDeletion(userId)) {
+        if (site.activeHoldOriginalReserve === null || site.hasOtherUsableMember) continue;
+        const restore = await restoreSiteBatterySaver(site.id, userId, holdRepo);
         if (restore.status === 'needs_reauth') {
             logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'needs_reconnect' });
             return { status: 'needs_reconnect' };
@@ -587,9 +822,10 @@ export async function deleteAccount(userId: string): Promise<AccountDeletionResu
         }
     }
 
-    let siteIds: string[];
+    let deletedSiteIds: string[];
+    let survivingSiteIds: string[];
     try {
-        ({ siteIds } = await new AccountDeletionRepo().deleteAccount(userId));
+        ({ deletedSiteIds, survivingSiteIds } = await deletionRepo.deleteAccount(userId));
     } catch (error) {
         if (error instanceof ActiveBatterySaverError) {
             logEvent('warn', 'user.account-deletion.blocked', { accountId, reason: 'battery_saver_started' });
@@ -599,9 +835,24 @@ export async function deleteAccount(userId: string): Promise<AccountDeletionResu
         throw error;
     }
 
-    siteIds.forEach(siteId => siteRepo.invalidateCache(siteId));
-    logEvent('info', 'user.account-deletion.completed', { accountId, siteCount: siteIds.length });
-    return { status: 'deleted', siteCount: siteIds.length };
+    for (const siteId of survivingSiteIds) {
+        await siteRepo.repairConnection(siteId);
+        siteRepo.invalidateCache(siteId);
+    }
+    for (const siteId of deletedSiteIds) {
+        siteRepo.invalidateCache(siteId);
+    }
+
+    logEvent('info', 'user.account-deletion.completed', {
+        accountId,
+        sitesDeleted: deletedSiteIds.length,
+        sitesRetained: survivingSiteIds.length,
+    });
+    return {
+        status: 'deleted',
+        sitesDeleted: deletedSiteIds.length,
+        sitesRetained: survivingSiteIds.length,
+    };
 }
 ```
 
@@ -615,18 +866,20 @@ npm test -- --run src/lib/account-deletion-service.test.ts
 
 ```bash
 git add src/lib/account-deletion-service.ts src/lib/account-deletion-service.test.ts
-git commit -m "feat(account): restore Battery Saver before deleting an account"
+git commit -m "feat(account): restore Battery Saver and repair shared sites on account deletion"
 ```
 
 ---
 
-### Task 4: `DELETE /api/user`
+### Task 4: `DELETE /api/user` and `/auth/tesla-callback` for zero-site deletion
 
 **Files:**
 - Create: `cmd/next-app/src/app/api/user/route.test.ts`
 - Create: `cmd/next-app/src/app/api/user/route.ts`
+- Modify: `cmd/next-app/src/app/auth/tesla-callback/route.ts`
+- Modify: `cmd/next-app/src/app/auth/tesla-callback/route.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 Create `cmd/next-app/src/app/api/user/route.test.ts`:
 
@@ -653,7 +906,7 @@ describe('DELETE /api/user', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-        mocks.deleteAccount.mockResolvedValue({ status: 'deleted', siteCount: 1 });
+        mocks.deleteAccount.mockResolvedValue({ status: 'deleted', sitesDeleted: 1, sitesRetained: 0 });
     });
 
     it('deletes the account and clears the session cookie', async () => {
@@ -719,13 +972,41 @@ describe('DELETE /api/user', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+Change `cmd/next-app/src/app/auth/tesla-callback/route.test.ts` to add a test for zero-site users signing in with `callback=/account-delete`:
 
-```bash
-npm test -- --run src/app/api/user
+```diff
+@@ -240,6 +240,22 @@ describe('GET /auth/tesla-callback', () => {
+         expect(mocks.cookieDelete).toHaveBeenCalledWith('site_auth');
+         expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
+         expect(mocks.redirect).toHaveBeenCalledWith('/no-sites');
+     });
+ 
++    it('sets site_auth and redirects to /account-delete when a zero-site user signs in to delete their account', async () => {
++        mocks.handleTeslaCallback.mockResolvedValue({
++            status: 'success',
++            siteIds: [],
++            roles: [],
++            userId: 'user-123',
++        });
++        mocks.getCookie.mockImplementation((name: string) => name === 'auth_callback' ? { value: '/account-delete' } : undefined);
++
++        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
++        await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
++
++        expect(mocks.cookieSet).toHaveBeenCalledWith('site_auth', 'signed-site-token', expect.any(Object));
++        expect(mocks.redirect).toHaveBeenCalledWith('/account-delete');
++    });
++
+     it('redirects to saved callback only when it is safe relative path', async () => {
 ```
 
-- [ ] **Step 3: Add the route**
+- [ ] **Step 2: Run them and confirm they fail**
+
+```bash
+npm test -- --run src/app/api/user src/app/auth/tesla-callback/route.test.ts
+```
+
+- [ ] **Step 3: Add `DELETE /api/user` and update `/auth/tesla-callback`**
 
 Create `cmd/next-app/src/app/api/user/route.ts`:
 
@@ -800,17 +1081,39 @@ async function handleDELETE(request: NextRequest): Promise<NextResponse> {
 export const DELETE = observeRoute('/api/user', handleDELETE);
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+Change `cmd/next-app/src/app/auth/tesla-callback/route.ts`:
+
+```diff
+@@ -181,13 +181,14 @@ async function handleGET(request: NextRequest) {
+             return mobileCallbackResponse({ code: handoff.code, attempt: handoff.attemptId, state: mobileState });
+         }
+ 
+-        if (result.siteIds.length === 0 && !result.roles.includes('admin')) {
++        const allowZeroSitesForDeletion = savedCallback === '/account-delete';
++        if (result.siteIds.length === 0 && !result.roles.includes('admin') && !allowZeroSitesForDeletion) {
+             cookieStore.delete('site_auth');
+             clearAttempt();
+             redirect('/no-sites');
+         }
+ 
+-        if (result.siteIds.length > 0 || result.roles.includes('admin')) {
++        if (result.siteIds.length > 0 || result.roles.includes('admin') || allowZeroSitesForDeletion) {
+             const { signSiteToken, COOKIE_MAX_AGE_SECONDS } = await import('@/lib/auth-jwt');
+             // Stamp the user's current session_version so a fresh login after a
+             // sign-out-everywhere bump is not immediately treated as revoked.
+```
+
+- [ ] **Step 4: Run them and confirm they pass**
 
 ```bash
-npm test -- --run src/app/api/user
+npm test -- --run src/app/api/user src/app/auth/tesla-callback/route.test.ts
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/app/api/user
-git commit -m "feat(api): add DELETE /api/user"
+git add src/app/api/user src/app/auth/tesla-callback/route.ts src/app/auth/tesla-callback/route.test.ts
+git commit -m "feat(api): add DELETE /api/user and allow zero-site login for deletion"
 ```
 
 ---
@@ -910,7 +1213,9 @@ describe('/account-delete', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-        mocks.getSites.mockResolvedValue([{ id: 's1', name: 'Lake House', batterySaverRestoreReserve: null }]);
+        mocks.getSites.mockResolvedValue([
+            { id: 's1', name: 'Lake House', shared: false, batterySaverRestoreReserve: null },
+        ]);
     });
 
     it('sends signed-out visitors through login and back', async () => {
@@ -922,17 +1227,29 @@ describe('/account-delete', () => {
         expect(metadata.robots).toEqual({ index: false, follow: false });
     });
 
-    it('lists the sites that will be deleted and starts with the button disabled', async () => {
+    it('lists sole-member sites that will be deleted and starts with the button disabled', async () => {
         const html = await render();
         expect(html).toContain('Lake House');
-        expect(html).toContain('even if someone else also uses that Powerwall');
         expect(html).not.toContain('Battery Saver is on');
         expect(html).toMatch(/<button[^>]*disabled[^>]*>Permanently Delete Account/);
         expect(html).toContain('href="/account-delete/cancel"');
     });
 
+    it('distinguishes shared sites that stay available to other members', async () => {
+        mocks.getSites.mockResolvedValue([
+            { id: 's1', name: 'Lake House', shared: false, batterySaverRestoreReserve: null },
+            { id: 's2', name: 'Main Home', shared: true, batterySaverRestoreReserve: null },
+        ]);
+        const html = await render();
+        expect(html).toContain('Lake House');
+        expect(html).toContain('Main Home');
+        expect(html).toContain('stay available to the other members');
+    });
+
     it('warns about an active Battery Saver session with the reserve it restores', async () => {
-        mocks.getSites.mockResolvedValue([{ id: 's1', name: 'Lake House', batterySaverRestoreReserve: 20 }]);
+        mocks.getSites.mockResolvedValue([
+            { id: 's1', name: 'Lake House', shared: false, batterySaverRestoreReserve: 20 },
+        ]);
         const html = await render();
         expect(html).toContain('Battery Saver is on for Lake House');
         expect(html).toContain('restores your backup reserve to 20%');
@@ -1129,10 +1446,14 @@ export default observePage('/account-delete', async function AccountDeletePage()
     if (!user) redirect('/login?callback=/account-delete');
 
     const sites = await getAccountDeletionSites(user.id);
+    const soleSites = sites.filter(site => !site.shared);
+    const sharedSites = sites.filter(site => site.shared);
     const batterySaverSites = sites.filter(site => site.batterySaverRestoreReserve !== null);
     logEvent('info', 'user.account-deletion.page-viewed', {
         accountId: accountFingerprint(user.id),
         siteCount: sites.length,
+        sitesDeleted: soleSites.length,
+        sitesRetained: sharedSites.length,
         batterySaverActive: batterySaverSites.length > 0,
     });
 
@@ -1154,16 +1475,24 @@ export default observePage('/account-delete', async function AccountDeletePage()
                     </Alert>
                 ))}
                 <SectionCard title="What gets deleted" bodyClassName="space-y-4 text-sm">
-                    {sites.length > 0 ? (
+                    {sites.length === 0 && (
+                        <p>Your pwusage account and the Tesla sign-in details stored with it. No sites are linked to this account.</p>
+                    )}
+                    {soleSites.length > 0 && (
                         <>
                             <p>Your pwusage account and these sites, with their history, rate plans, Battery Saver settings and TRMNL connections:</p>
                             <ul className="list-disc space-y-1 pl-5">
-                                {sites.map(site => <li key={site.id}>{site.name}</li>)}
+                                {soleSites.map(site => <li key={site.id}>{site.name}</li>)}
                             </ul>
-                            <p>Sites are deleted even if someone else also uses that Powerwall.</p>
                         </>
-                    ) : (
-                        <p>Your pwusage account and the Tesla sign-in details stored with it. No sites are linked to this account.</p>
+                    )}
+                    {sharedSites.length > 0 && (
+                        <>
+                            <p>Your membership on these shared sites and any TRMNL display you connected. These sites and their history stay available to the other members:</p>
+                            <ul className="list-disc space-y-1 pl-5">
+                                {sharedSites.map(site => <li key={site.id}>{site.name}</li>)}
+                            </ul>
+                        </>
                     )}
                 </SectionCard>
                 <SectionCard title="What deleting does not change" bodyClassName="space-y-4 text-sm">
@@ -1239,7 +1568,7 @@ export default function AccountDeleteDonePage() {
         <PageShell maxWidth="lg">
             <PageHeader
                 title="Account Deleted"
-                description="Your pwusage account and the sites linked to it have been deleted."
+                description="Your pwusage account has been deleted."
                 className="mb-6"
             />
             <div className="space-y-6">
@@ -1288,18 +1617,19 @@ git commit -m "feat(web): add the account deletion pages"
 **Files:**
 - Modify: `cmd/next-app/src/app/profile/page.tsx`
 - Modify: `cmd/next-app/src/app/products/page.tsx`
+- Modify: `cmd/next-app/src/app/no-sites/page.tsx`
 - Modify: `cmd/next-app/src/app/robots.ts` and `robots.test.ts`
 - Modify: `cmd/next-app/src/app/sitemap.ts`
 - Modify: `cmd/next-app/src/app/privacy/page.tsx`
 - Modify: `cmd/next-app/src/app/support/page.tsx`
 - Modify: `Authentication.md`
 
-- [ ] **Step 1: Add the links**
+- [ ] **Step 1: Add the links on `/profile`, `/products` and `/no-sites`**
 
 Change `cmd/next-app/src/app/profile/page.tsx`:
 
 ```diff
-@@ -159,6 +159,16 @@ export default observePage('/profile', async function ProfilePage() {
+@@ -156,6 +156,16 @@ export default observePage('/profile', async function ProfilePage() {
  
                  </div>
              </SectionCard>
@@ -1307,7 +1637,7 @@ Change `cmd/next-app/src/app/profile/page.tsx`:
 +            <SectionCard
 +                className="mt-6"
 +                title="Delete Account"
-+                description="Permanently delete your pwusage account, your sites and their history."
++                description="Permanently delete your pwusage account and sole-member sites."
 +            >
 +                <Link href="/account-delete" prefetch={false}>
 +                    <Button renderAs="span" variant="danger">Delete Account</Button>
@@ -1341,6 +1671,21 @@ Change `cmd/next-app/src/app/products/page.tsx`:
              </div>
          </PageShell>
      );
+```
+
+Change `cmd/next-app/src/app/no-sites/page.tsx`:
+
+```diff
+@@ -10,5 +10,8 @@ export default function NoSitesPage() {
+             <P>Tesla sign-in succeeded, but this account no longer has access to a Powerwall site.</P>
+             <P>If someone removed your access in Tesla, ask them to add you again. Then sign in to pwusage.</P>
+             <Link href="/login" className="underline">Sign in with another Tesla account</Link>
++            <P className="text-sm text-muted-foreground">
++                Not planning to use pwusage? <Link href="/login?callback=/account-delete" prefetch={false} className="text-primary underline">Delete your account</Link>.
++            </P>
+         </PageShell>
+     );
+ }
 ```
 
 - [ ] **Step 2: Keep the page out of crawlers, test first**
@@ -1402,23 +1747,23 @@ Change `cmd/next-app/src/app/privacy/page.tsx`:
  export default function PrivacyPage() {
      return (
          <PageShell maxWidth="lg" padding="default" fullHeight={false}>
--            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 1, 2026." className="mb-8" />
-+            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 8, 2026." className="mb-8" />
+-            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 8, 2026." className="mb-8" />
++            <PageHeader title="Privacy Policy" description="For the pwusage website and iOS app. Updated November 10, 2026." className="mb-8" />
              <div className="space-y-6 text-gray-700 dark:text-gray-300">
                  <p>pwusage helps you understand your Powerwall energy use, estimate electricity costs, and use the optional Battery Saver feature for your Powerwall. This policy explains what information those features use.</p>
                  <SectionCard title="Tesla account and energy information" bodyClassName="space-y-4">
-@@ -35,12 +35,13 @@ export default function PrivacyPage() {
+@@ -34,12 +34,13 @@ export default function PrivacyPage() {
                  </SectionCard>
                  <SectionCard title="TRMNL integration" bodyClassName="space-y-4">
                      <p>If you install a TRMNL integration, pwusage shares the dashboard information needed to render your connected display. Our server stores your TRMNL OAuth access token, account and installation identifiers, display settings, and account information supplied by TRMNL, including your email address. We use these records to connect your display, authenticate integration requests, and maintain its settings. If your pwusage account has no email address, we may fill it from the email supplied by TRMNL.</p>
 -                    <p>Installation records remain until deleted. When you uninstall the integration through TRMNL and pwusage receives and verifies its uninstall notification, we delete the installation record, including its stored token and TRMNL account information. This does not delete your pwusage account, an email copied to that account, or energy history. If an uninstall does not reach pwusage, or you want other associated data deleted, email support@fm.rodeo. Backups may retain deleted records until their normal expiration.</p>
-+                    <p>Installation records remain until deleted. When you uninstall the integration through TRMNL and pwusage receives and verifies its uninstall notification, we delete the installation record, including its stored token and TRMNL account information. This does not delete your pwusage account, an email copied to that account, or energy history. Deleting your pwusage account also deletes these records. If an uninstall does not reach pwusage, or you want other associated data deleted, email support@fm.rodeo. Backups may retain deleted records until their normal expiration.</p>
++                    <p>Installation records remain until deleted. When you uninstall the integration through TRMNL and pwusage receives and verifies its uninstall notification, we delete the installation record, including its stored token and TRMNL account information. This does not delete your pwusage account, an email copied to that account, or energy history. Deleting your pwusage account also deletes the installation records you created. If an uninstall does not reach pwusage, or you want other associated data deleted, email support@fm.rodeo. Backups may retain deleted records until their normal expiration.</p>
                  </SectionCard>
                  <SectionCard title="Retention and your choices" bodyClassName="space-y-4">
                      <p>Server data can remain after you sign out or uninstall the app. Energy history is subject to service retention settings; account records, rate plan history, and backups have separate lifecycles. Signing out is not a request to delete your account.</p>
-                     <p>You can revoke pwusage&apos;s access in your Tesla account&apos;s third-party app settings and remove the optional Solcast connection in the app. Revoking Tesla access prevents future authorized API requests but does not automatically erase previously stored data.</p>
+                     <p>You can revoke pwusage&apos;s access in your Tesla account&apos;s third-party app settings. Revoking Tesla access prevents future authorized API requests but does not automatically erase previously stored data.</p>
 -                    <p>To request access, correction, or deletion of your pwusage account and associated data, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership. Backups may retain removed data until their normal expiration.</p>
-+                    <p>You can permanently delete your pwusage account, its sites and their energy history, rate plans, settings, and TRMNL records at any time from <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. Sites are deleted even if someone else also uses that Powerwall. Deleting your account does not remove pwusage from your Tesla account&apos;s approved apps; we offer a link to do that after deletion. It also does not remove any solar layout in your private iCloud, which you can remove in your iPhone&apos;s iCloud settings. Backups may retain removed data until their normal expiration, and operational logs until they expire.</p>
++                    <p>You can permanently delete your pwusage account, your TRMNL records, and any sites where you are the only member (with their energy history, rate plans, and settings) at any time from <Link href="/account-delete" prefetch={false} className="text-primary underline">Delete Account</Link>. Sites shared with another member stay available to them, including their history. Deleting your account does not remove pwusage from your Tesla account&apos;s approved apps; we offer a link to do that after deletion. It also does not remove any solar layout in your private iCloud, which you can remove in your iPhone&apos;s iCloud settings. Backups may retain removed data until their normal expiration, and operational logs until they expire.</p>
 +                    <p>To request access or correction of your data, or if you cannot sign in to delete your account, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership.</p>
                  </SectionCard>
                  <SectionCard title="Privacy questions and changes" bodyClassName="space-y-4">
@@ -1429,7 +1774,7 @@ Change `cmd/next-app/src/app/support/page.tsx`:
 
 ```diff
 @@ -38,7 +38,7 @@ export default function SupportPage() {
-                     <p>Solcast forecasts are optional and require your own API key and rooftop site. Check the forecast status message for connection, setup, or household-history problems. You can disconnect Solcast without disconnecting Tesla.</p>
+                     <p>Solar forecasts are built in and automatic. The app estimates your rooftop solar production using your household usage history and weather reports, with no external account or API key required. If a solar forecast is unavailable or your panel layout is still being determined, Smart Shift falls back to your historical solar production patterns.</p>
                  </SectionCard>
                  <SectionCard title="Account and privacy requests" bodyClassName="space-y-4">
 -                    <p>For an account-data or deletion request, email <a href="mailto:support@fm.rodeo" className="text-primary underline">support@fm.rodeo</a>. We may need to verify account ownership before acting on your request. Signing out or uninstalling does not delete your server account. Revoking access in Tesla stops future authorized requests.</p>
@@ -1442,22 +1787,28 @@ Change `cmd/next-app/src/app/support/page.tsx`:
 Change `Authentication.md`:
 
 ```diff
-@@ -313,6 +313,25 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
+@@ -389,6 +389,28 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
    refuses to renew the cookie. Re-authentication issues a token stamped with the
    new version. The caller's cookie is cleared in the same response.
  
 +### 6. Account deletion
-+Page: `/account-delete` (signed-out visitors go through `/login?callback=/account-delete`).
++Page: `/account-delete` (signed-out visitors go through `/login?callback=/account-delete`;
++`/auth/tesla-callback` issues a `site_auth` cookie for that callback even when the
++account has 0 Powerwall sites).
 +Route: `DELETE /api/user`
 +- Requires an authenticated user and `{ "confirm": "DELETE" }`, with the same
 +  origin/`sec-fetch-site` checks as sign-out-everywhere (`isCrossOriginRequest`).
-+- Restores any active Battery Saver session first, because deletion removes the record
-+  the restore relies on. If Tesla needs reconnecting or the restore cannot be confirmed,
-+  it returns `409`, keeps the account and keeps the session.
-+- Deletes in one transaction (`AccountDeletionRepo`), locking the `User` and `Site` rows
-+  so a new Battery Saver session cannot slip in. `EnergyDayArchive` goes first because
-+  `EnergyDaySummary` has `NO ACTION` keys to `Tariff` and `TariffSchedule`, then
-+  `MobileLoginHandoff`, then `User`, which cascades to everything else it owns.
++- Restores any active Battery Saver session on sites where no other usable member
++  remains, because deleting the last member removes the record the restore relies
++  on. If Tesla needs reconnecting or the restore cannot be confirmed, it returns
++  `409`, keeps the account and keeps the session.
++- Deletes in one transaction (`AccountDeletionRepo`), locking the `User` and `Site`
++  rows in deterministic `ORDER BY id` order so a new Battery Saver session cannot
++  slip in. Removes the user's `MobileLoginHandoff`, `TrmnlInstallation`
++  (`installed_by_user_id`), and `SiteMember` rows; for sites with no remaining
++  members, `EnergyDayArchive` goes first (because `EnergyDaySummary` has `NO ACTION`
++  keys to `Tariff` and `TariffSchedule`) followed by `Site`, and finally `User`.
++  Surviving shared sites repair their Tesla connection (`SiteRepo.repairConnection`).
 +- Clears the caller's `site_auth` cookie. Other devices are rejected on their next
 +  request, because `resolveAuth` no longer finds the user.
 +- Does not call Tesla to revoke tokens: Tesla documents no revocation endpoint for third
@@ -1479,7 +1830,7 @@ npm test -- --run src/app/robots.test.ts src/app/sitemap.test.ts
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/app/profile/page.tsx src/app/products/page.tsx src/app/robots.ts src/app/robots.test.ts src/app/sitemap.ts src/app/privacy/page.tsx src/app/support/page.tsx ../../Authentication.md
+git add src/app/profile/page.tsx src/app/products/page.tsx src/app/no-sites/page.tsx src/app/robots.ts src/app/robots.test.ts src/app/sitemap.ts src/app/privacy/page.tsx src/app/support/page.tsx ../../Authentication.md
 git commit -m "feat(web): link to account deletion and update the privacy policy"
 ```
 
@@ -1512,8 +1863,9 @@ Use the preview tools with `npm run dev:agent` on port 5174. Do not submit the f
 These need live Tesla access, so list them in the PR rather than running them. Use a throwaway account on beta, never the owner's real account:
 
 - A real deletion removes the account, and other signed-in devices are rejected.
-- With Battery Saver on, the warning shows the right reserve, and deleting restores it on the Powerwall.
-- With Tesla disconnected and Battery Saver on, deletion is refused and the account stays.
+- On a shared site, deleting one member's account leaves the site and its history working for the remaining member.
+- With Battery Saver on (and no other usable member), the warning shows the right reserve, and deleting restores it on the Powerwall.
+- With Tesla disconnected and Battery Saver on (and no other usable member), deletion is refused and the account stays.
 - The Tesla removal link works and `back_url` returns to `/account-delete/done`. If Tesla does not return, the page still has to make sense.
 - The migration ran on the Dev copy without an orphan-row failure.
 

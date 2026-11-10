@@ -1,7 +1,7 @@
 # Design Document: User Account Deletion
 
 - **Author**: Antigravity & User
-- **Date**: 2026-11-08 (revised after review)
+- **Date**: 2026-11-10 (revised for shared-site memberships)
 - **Status**: Ready to implement
 - **Target Area**: `cmd/next-app` (web app and database schema)
 
@@ -11,12 +11,18 @@ Homeowners need a self-service way to permanently delete their pwusage account a
 Today this takes an email to support.
 
 ### Goals
-- **Full database purge:** remove the `User` row and every site, rate plan, day record, Battery
-  Saver record, tag and TRMNL installation the account owns.
-- **Never strand a Powerwall:** restore any active Battery Saver session before deleting. If the
-  restore cannot be confirmed, keep the account and say what to do next.
-- **A dedicated page:** `/account-delete` explains what happens, warns about active Battery Saver
-  sessions, and asks the user to type `DELETE`.
+- **Complete account and sole-site purge:** remove the `User` row, the user's `SiteMember` rows, the
+  user's TRMNL installations, and every site (with its rate plans, day records, Battery Saver
+  records, tags and remaining TRMNL installations) where the user was the last member.
+- **Keep shared sites working for other members:** when a site has another member in `SiteMember`,
+  leave the site and its history in place and move its Tesla connection if it pointed at the
+  departing user.
+- **Never strand a Powerwall:** restore any active Battery Saver session when no other usable member
+  remains on that site, before deleting. If the restore cannot be confirmed, keep the account and
+  say what to do next.
+- **A dedicated page:** `/account-delete` explains what happens, distinguishes sites that will be
+  deleted from shared sites that will stay available to other members, warns about active Battery
+  Saver sessions, and asks the user to type `DELETE`.
 - **Honest wording:** say what deletion does not reach: backups, logs, Tesla's approved-app list,
   private iCloud data and the TRMNL plugin.
 - **Funnel telemetry:** page views, cancels, blocked attempts and completed deletions.
@@ -26,9 +32,6 @@ Today this takes an email to support.
   can open it: signed-out visitors go through `/login?callback=/account-delete`, which the iOS
   browser session needs because mobile login sets no browser cookie. Add the entry before App Store
   submission and check Apple's current guideline 5.1.1(v).
-- **Shared Powerwall memberships.** Designed separately. This feature ships on the single-owner
-  model (`Site.user_id`). Once memberships exist, deleting an account removes that person's
-  membership, and a site is deleted only when its last member leaves.
 - **Calling Tesla to revoke tokens.** See section 5.
 
 ## 2. User Flow
@@ -42,21 +45,21 @@ sequenceDiagram
     participant Tesla as Tesla Fleet API
     participant DB as PostgreSQL
 
-    User->>Page: Opens from /profile, /products or the iOS app
-    Page->>DB: Load sites and active Battery Saver sessions
+    User->>Page: Opens from /profile, /products, /no-sites or the iOS app
+    Page->>DB: Load member sites, remaining usable members, and active Battery Saver sessions
     Page-->>User: Details, Battery Saver warning, type DELETE
     alt Cancel
         User->>Page: Cancel (/account-delete/cancel logs it, then /profile)
     else Confirm
         User->>API: DELETE { confirm: "DELETE" }
         API->>API: Origin checks, session, confirmation
-        opt Battery Saver is active on a site
+        opt Battery Saver is active on a site with no other usable member
             API->>Tesla: Restore the original backup reserve
             alt Tesla needs reconnecting, or restore unconfirmed
                 API-->>Page: 409, account and session kept
             end
         end
-        API->>DB: Transaction (section 3)
+        API->>DB: Transaction (section 3) + repairConnection for surviving sites
         API-->>Page: 200, site_auth cleared
         Page->>User: /account-delete/done, with optional Tesla removal link
     end
@@ -66,6 +69,9 @@ Entry points:
 - `/profile` gets a Delete Account card.
 - `/products` gets a small link for accounts with no energy products, because `/profile` redirects
   accounts with no sites to `/products`.
+- `/no-sites` links to `/login?callback=/account-delete`, and `/auth/tesla-callback` issues a
+  `site_auth` cookie when `savedCallback === '/account-delete'` even if the account has 0 sites, so
+  an account without Powerwall access can still sign in to delete its `User` record.
 - `/support` and `/privacy` link to the page.
 
 `/account-delete` and `/account-delete/done` are `noindex`. `/account-delete` is disallowed in
@@ -74,53 +80,86 @@ cannot count as a page view.
 
 ## 3. Database
 
+### Existing schema (`20261109135834_add_site_member.sql`)
+- `SiteMember(site_id, user_id)` cascades from both `Site` and `User`.
+- `Site.tesla_connection_user_id` has a composite foreign key to `SiteMember(site_id, user_id)` with
+  `ON DELETE SET NULL (tesla_connection_user_id)`.
+- `Site.user_id` → `User`: `ON DELETE SET NULL`. (Do **not** change this to `ON DELETE CASCADE`, or
+  deleting the connection user would delete a shared site.)
+- `BatteryHold.started_by_user_id` and `TrmnlInstallation.installed_by_user_id` → `User`:
+  `ON DELETE SET NULL`.
+- Already cascading from `Site`: `Tariff` → `TariffSeason` → `TariffSchedule`, `EnergyDayArchive` →
+  `EnergyDaySummary`, `BatteryHold` → `BatteryHoldActivity`, `LoadTag`, and `SiteMember`.
+- Already cascading from `User`: `BatteryHoldActivity.user_id` and `SiteMember.user_id`.
+
 ### Migration (`npm run db:migration:create user_account_deletion_cascades`)
-- `Site.user_id` → `User`: `ON DELETE CASCADE` (currently `NO ACTION`).
-- `TrmnlInstallation.site_id` → `Site`: new foreign key, `ON DELETE CASCADE`. This column has no
-  foreign key today. The migration fails loudly if an orphan row exists. None existed when this was
-  checked on 2026-11-08.
+- `TrmnlInstallation.site_id` → `Site`: `ON DELETE CASCADE` (currently `NO ACTION` where present, or
+  absent on older environments). Replacing it with `ON DELETE CASCADE` ensures that when a site's
+  last member leaves and the site is deleted, any TRMNL installation on that site (including legacy
+  rows with `installed_by_user_id IS NULL`) is removed with the site.
 - `SystemAnnouncement.author_id` → `User`: `ON DELETE SET NULL`, so announcements survive an admin's
   deletion.
 
-Already cascading: `Tariff` → `TariffSeason` → `TariffSchedule`, `EnergyDayArchive` →
-`EnergyDaySummary`, `BatteryHold` → `BatteryHoldActivity`, `LoadTag`, and
-`BatteryHoldActivity.user_id`.
-
-### The cascade alone is not enough
+### Why a bare `DELETE FROM "Site"` is not enough
 `EnergyDaySummary` has `NO ACTION` foreign keys to `Tariff` and `TariffSchedule`, and every summary
 row has a `tariff_id`. Those checks run when the nested cascade statement ends. If the `Tariff`
 cascade fires before the `EnergyDayArchive` cascade, the delete fails with
 `violates foreign key constraint "EnergyDaySummary_tariff_id_fkey"`. Firing order follows trigger
-OIDs, and production has `Tariff` first, so a plain `DELETE FROM "User"` fails for anyone with
+OIDs, and production has `Tariff` first, so a plain `DELETE FROM "Site"` fails for any site with
 history.
 
 Keep those keys, since they protect rate plan history during normal use, and delete
-`EnergyDayArchive` first.
+`EnergyDayArchive` first for any site being removed.
 
 ### Transaction (`AccountDeletionRepo.deleteAccount`)
-1. `SELECT ... FROM "User" ... FOR UPDATE`, then the same for the user's `Site` rows. New child rows
-   and site assignments need a foreign key share lock on these rows, so they wait until commit and
-   then fail.
-2. If any owned site has an active `BatteryHold`, roll back with `ActiveBatterySaverError`.
-3. `DELETE FROM "EnergyDayArchive"` for the owned sites.
-4. `DELETE FROM "MobileLoginHandoff"` for the user. This table has no foreign key.
-5. `DELETE FROM "User"`, which cascades to the rest.
+1. `SELECT id FROM "User" WHERE id = $1 FOR UPDATE`. If no row exists, commit and return empty lists.
+2. Find the user's sites from `SiteMember` (`UNION` `Site.user_id = $1` so pre-flag or unmigrated
+   rows are covered) and lock them in deterministic order:
+   `SELECT id, tesla_hardware_id FROM "Site" WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE`.
+   Fixed ordering prevents deadlocks when two members of a shared site delete at the same time.
+3. Determine which locked sites have **no other** member (`NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id <> $1)`) and which have **no other usable** member (an active `User` with a non-empty `refresh_token`, `auth_status` distinct from `'revoked'`, and `tesla_refresh_state` distinct from `'uncertain'` and `'reconnect_required'`).
+4. Guard against stranding a Powerwall:
+   - If any site without another usable member has an active `BatteryHold`, roll back with
+     `ActiveBatterySaverError`.
+   - If any site being deleted (`gone`) has a live `BatteryHoldStartClaim`
+     (`expires_at > clock_timestamp()`), roll back with `ActiveBatterySaverError` so a deletion
+     cannot remove a site while `parkBattery` has sent a reserve command and has not yet inserted
+     its hold row.
+5. `DELETE FROM "MobileLoginHandoff" WHERE user_id = $1` (this table has no foreign key).
+6. `DELETE FROM "TrmnlInstallation" WHERE installed_by_user_id = $1 AND site_id = ANY($2::text[])`,
+   so the departing user's TRMNL display stops showing a surviving shared site's data.
+7. `DELETE FROM "SiteMember" WHERE user_id = $1`. The composite foreign key clears
+   `Site.tesla_connection_user_id` on any shared site where this user was the connection user.
+8. Recompute `gone` sites: locked sites that now have zero `SiteMember` rows.
+9. For `gone` sites:
+   - `DELETE FROM "EnergyDayArchive" WHERE site_id = ANY($1::text[])`
+   - `DELETE FROM "Site" WHERE id = ANY($1::text[])` (cascades to `Tariff`, `BatteryHold`, `LoadTag`,
+     and any remaining `TrmnlInstallation`).
+10. `DELETE FROM "User" WHERE id = $1`.
 
-If `parkBattery` is mid-flight, its `createHold` insert fails after commit, and its existing
-compensating restore puts the reserve back.
+Two members of a shared site deleting concurrently are serialized by Step 2's `ORDER BY id FOR UPDATE`:
+the first leaves the site for the second; the second sees no remaining `SiteMember` row and deletes
+the site.
 
 ## 4. Service and API
 
 ### `src/lib/account-deletion-service.ts`
-- `getAccountDeletionSites(userId)`: sites with the reserve Battery Saver would restore, for the page.
+- `getAccountDeletionSites(userId)`: lists the user's sites with:
+  - `shared`: whether another `SiteMember` exists on the site.
+  - `batterySaverRestoreReserve`: the reserve Battery Saver will restore on deletion (`original_reserve`
+    when an active hold exists and no other usable member remains on the site; `null` otherwise).
 - `deleteAccount(userId)`:
-  1. For each owned site with an active hold, call `restoreBattery` with reason `manual`.
+  1. For each site where an active hold exists and no other usable member remains, call
+     `restoreBattery` with `reason: 'manual'` and `actorUserId: userId`.
      - `ok`, `reserve_changed`, `no_active_hold`: continue.
      - `needs_reauth`, or no Tesla client: return `needs_reconnect`.
      - `error`: return `battery_saver_pending`.
-  2. Run the transaction. `ActiveBatterySaverError` also returns `battery_saver_pending`.
-  3. Invalidate `SiteRepo`'s cache for each site. Other instances age out within the 15-minute TTL.
-  4. Log `user.account-deletion.completed`.
+  2. Run `AccountDeletionRepo.deleteAccount(userId)`. `ActiveBatterySaverError` returns
+     `battery_saver_pending`.
+  3. For each `survivingSiteId`, call `siteRepo.repairConnection(siteId)` so shared sites fail over
+     to a remaining usable member.
+  4. Invalidate `SiteRepo`'s cache for every affected site (`deletedSiteIds` and `survivingSiteIds`).
+  5. Log `user.account-deletion.completed` with `sitesDeleted` and `sitesRetained`.
 
 ### `DELETE /api/user`
 Wrapped in `observeRoute` so events reach Axiom. Checks run in this order:
@@ -160,12 +199,17 @@ Copy follows `docs/voice-and-terms.md`: rate plans not tariffs, Battery Saver, c
 "please".
 
 ### `/account-delete`
-- **Battery Saver warning**, one per active site: "Battery Saver is on for {site}. Battery Saver is
-  holding your Powerwall charge. Deleting your account turns it off and restores your backup reserve
-  to {n}%."
-- **What gets deleted:** the account and a list of its sites, with history, rate plans, Battery Saver
-  settings and TRMNL connections. "Sites are deleted even if someone else also uses that Powerwall."
-  Accounts with no sites get their own wording.
+- **Battery Saver warning**, one per site where `batterySaverRestoreReserve !== null`:
+  "Battery Saver is on for {site}. Battery Saver is holding your Powerwall charge. Deleting your
+  account turns it off and restores your backup reserve to {n}%."
+- **What gets deleted:**
+  - Sole-member sites (`!shared`): "Your pwusage account and these sites, with their history, rate
+    plans, Battery Saver settings and TRMNL connections:" followed by the site names.
+  - Shared sites (`shared`): "Your membership on these shared sites and any TRMNL display you
+    connected. These sites and their history stay available to the other members:" followed by the
+    site names.
+  - Accounts with no sites get: "Your pwusage account and the Tesla sign-in details stored with it.
+    No sites are linked to this account."
 - **What deleting does not change:** Powerwall and Tesla account, backups up to about 8 weeks, logs,
   iPhone data, private iCloud, TRMNL plugin, and that signing in later creates a new empty account.
 - **Confirm:** type `DELETE`. Cancel is a plain link to `/account-delete/cancel`. Errors appear above
@@ -182,12 +226,12 @@ next.
 ## 7. Telemetry
 
 Logged with `accountFingerprint(userId)`, never the raw id, which can be an email address:
-- `user.account-deletion.page-viewed` (`siteCount`, `batterySaverActive`)
+- `user.account-deletion.page-viewed` (`siteCount`, `sitesDeleted`, `sitesRetained`, `batterySaverActive`)
 - `user.account-deletion.cancelled`
 - `user.account-deletion.blocked` (`reason`: `needs_reconnect`, `restore_unconfirmed`,
   `battery_saver_started`)
 - `user.account-deletion.failed`
-- `user.account-deletion.completed` (`siteCount`)
+- `user.account-deletion.completed` (`sitesDeleted`, `sitesRetained`)
 
 People who simply leave the page appear as views without a completion.
 
@@ -202,22 +246,30 @@ restore decision.
 
 - **Admin accounts can delete themselves.** There is no last-admin guard. The role is a database
   value and can be reassigned directly.
-- **Shared Powerwalls:** login makes the last person to sign in the owner, and that owner's deletion
-  removes the site. The page warns about this, and the current data cannot detect it. The memberships
-  design replaces this behaviour.
+- **Shared Powerwalls:** deleting an account removes that person's `SiteMember` rows and TRMNL
+  installations, and repairs the Tesla connection for any surviving site. A site and its history are
+  deleted only when its last member leaves.
+- **Zero-site accounts:** `/auth/tesla-callback` issues a `site_auth` session cookie when a
+  signed-out visitor comes through `/login?callback=/account-delete` even if the account has no
+  Powerwall sites, and `/no-sites` links to `/login?callback=/account-delete`.
 - **TRMNL:** no call to TRMNL. Deleting the installation row removes the stored token, and the page
   tells the user to remove the plugin.
-- **Live Activities:** the restore runs `reconcileBatteryHoldActivities`, but the registration rows
-  are deleted right after, so a Live Activity may remain on a lock screen until it goes stale.
+- **Live Activities:** the restore runs `reconcileBatteryHoldActivities`, and `BatteryHoldActivity`
+  rows for the departing user cascade away with `User`, so a Live Activity on the departing user's
+  lock screen may remain until it goes stale.
 
 ## 10. Testing
 
-- **Postgres (`npm run test:hold:postgres`, disposable local cluster, never `.env`):** full purge
-  with foreign keys created in both orders, other accounts untouched, migration applied twice,
-  refusal and rollback during an active session, and an already-deleted account.
-- **Service:** each restore outcome, fingerprint-only logging, cache invalidation, database failure.
+- **Postgres (`npm run test:site-membership` / `npm run test:hold:postgres`, disposable local cluster, never `.env`):**
+  full purge when the last member leaves (with foreign keys created in both orders), shared site
+  retained and `tesla_connection_user_id` cleared/repaired when another member remains, two members
+  deleting concurrently, migration applied twice, refusal and rollback when Battery Saver is active
+  with no other usable member or when `BatteryHoldStartClaim` is held, and an already-deleted account.
+- **Service:** each restore outcome, shared site with another usable member skipping restore and
+  repairing connection, fingerprint-only logging, cache invalidation, database failure.
 - **Route:** origin checks, auth, confirmation, `409` paths keeping the session, `500` hiding
-  internal detail.
+  internal detail, plus `/auth/tesla-callback` issuing `site_auth` when `savedCallback === '/account-delete'`
+  for a zero-site user.
 - **Pages:** rendered with `renderToStaticMarkup`, matching the repo. `@testing-library/react` and
   jsdom are not installed and are not added.
 - **Owner checks on beta:** a real deletion with a throwaway account, Tesla's `back_url` returning to
