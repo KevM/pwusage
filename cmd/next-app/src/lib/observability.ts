@@ -157,7 +157,7 @@ type SessionRejection = 'missing-cookie' | 'invalid-session' | 'expired-session'
 /** Fixed reasons and the same account fingerprint used by Tesla refresh events. */
 export function logSessionRejection(reason: SessionRejection, userId?: string): void {
     logEvent('info', 'auth.session.rejected', {
-        reason, ...(userId ? { accountId: createHash('sha256').update(userId).digest('hex').slice(0, 16) } : {}),
+        reason, ...(userId ? { accountId: accountFingerprint(userId) } : {}),
     });
 }
 
