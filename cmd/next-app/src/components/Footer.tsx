@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 export function Footer() {
     return (
-        <footer className="py-12 mt-auto" style={{ backgroundColor: '#111827', color: '#d1d5db' }}>
+        <footer data-site-chrome className="py-12 mt-auto" style={{ backgroundColor: '#111827', color: '#d1d5db' }}>
             <div className="container mx-auto px-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     {/* SEO Text Section */}

@@ -70,3 +70,9 @@ body {
 .dark .group:hover .view-details-pill {
   border-color: rgba(30, 58, 138, 0.5) !important; /* equivalent to border-blue-900/50 */
 }
+
+/* The iOS app shows some pages in a sheet of its own, and marks the document (html[data-embedded]) before it
+   paints; the site header and footer are then redundant. */
+html[data-embedded] [data-site-chrome] {
+  display: none;
+}

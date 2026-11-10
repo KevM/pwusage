@@ -8,4 +8,8 @@ describe('Footer', () => {
         expect(html).toContain('href="/ios"');
         expect(html).toContain('iPhone App (Beta)');
     });
+
+    it('is site chrome, so an embedding app can hide it', () => {
+        expect(renderToStaticMarkup(<Footer />)).toContain('<footer data-site-chrome="true"');
+    });
 });
