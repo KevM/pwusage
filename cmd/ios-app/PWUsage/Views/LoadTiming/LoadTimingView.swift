@@ -39,7 +39,7 @@ enum LoadTimingPresentation {
             DashboardPresentation.date($0, timeZoneIdentifier: timeZone,
                                        dateStyle: .medium, timeStyle: .short)
         } ?? "unavailable"
-        return "Energy observations through \(time)"
+        return "Energy usage through \(time)"
     }
 
     /// One hour is deliberate, so the verdict and this label age out on the same
