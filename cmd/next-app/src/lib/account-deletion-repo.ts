@@ -35,6 +35,7 @@ const OTHER_USABLE_MEMBER_EXISTS = `
           AND u.auth_status IS DISTINCT FROM 'revoked'
           AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
           AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+          AND (m.commands_denied_at IS NULL OR m.commands_denied_at < now() - interval '7 days')
     )`;
 
 export class AccountDeletionRepo {
@@ -138,11 +139,14 @@ export class AccountDeletionRepo {
 
             const allSiteIds = sites.rows.map(row => row.id);
             const forcedDelete = new Set(deleteSiteIds.filter(id => allSiteIds.includes(id)));
-            // Where the site goes away, or no other usable member could restore, a Battery Saver
-            // session or in-flight start claim would be stranded.
-            const unrestorable = sites.rows.filter(row => !row.has_other_usable_member || forcedDelete.has(row.id));
-            const sitesNeedingRestore = unrestorable.map(row => row.id);
-            const unrestorableClaimKeys = unrestorable.map(row => row.claim_key);
+            // Where the site goes away, or no other usable member could restore, an active
+            // Battery Saver session would be stranded.
+            const sitesNeedingRestore = sites.rows
+                .filter(row => !row.has_other_usable_member || forcedDelete.has(row.id))
+                .map(row => row.id);
+            // An in-flight start by the departing member must finish before they go, whoever else
+            // remains: its hold insert and compensating restore both need their membership.
+            const claimKeys = sites.rows.map(row => row.claim_key);
 
             if (sitesNeedingRestore.length > 0) {
                 const activeHolds = await client.query(
@@ -152,10 +156,10 @@ export class AccountDeletionRepo {
                 if (activeHolds.rows.length > 0) throw new ActiveBatterySaverError();
             }
 
-            if (unrestorableClaimKeys.length > 0) {
+            if (claimKeys.length > 0) {
                 const activeClaims = await client.query(
                     `SELECT 1 FROM "BatteryHoldStartClaim" WHERE claim_key = ANY($1::text[]) AND expires_at > clock_timestamp() LIMIT 1`,
-                    [unrestorableClaimKeys],
+                    [claimKeys],
                 );
                 if (activeClaims.rows.length > 0) throw new ActiveBatterySaverError();
             }

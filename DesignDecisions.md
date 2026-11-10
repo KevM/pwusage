@@ -400,6 +400,12 @@ looking silently signed out. Admins are the deliberate exception: a product
 failure does not block admin access, because recovering partner registration or
 a region problem requires an admin session.
 
+**Exception: new accounts with no energy products.** A brand-new account whose
+product list *loads* but has no energy product is not stored at all (no `User`
+row, no tokens, no session), because a product-less sign-in is likely a Powerwall
+changing owners. This is the one case where products are fetched first. Existing
+users, admins and failed lookups still persist first, for the reasons above.
+
 **421 has two meanings — do not collapse them.** Tesla also answers 421 with
 `Account … must be registered in the current region <host>`, meaning the partner
 app is not registered in that region. The named host is usually the current host,

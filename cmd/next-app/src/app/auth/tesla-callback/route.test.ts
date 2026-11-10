@@ -273,6 +273,32 @@ describe('GET /auth/tesla-callback', () => {
         expect(mocks.redirect).toHaveBeenCalledWith('/account-delete');
     });
 
+    it('redirects a product-less new account to the no-products page without a session', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({ status: 'no-energy-products' });
+        const req = new NextRequest('http://localhost:5173/auth/tesla-callback?code=abc&state=xyz');
+        await expect(GET(req)).rejects.toMatchObject({ digest: expect.stringContaining('NEXT_REDIRECT;') });
+        expect(mocks.cookieSet).not.toHaveBeenCalledWith('site_auth', expect.any(String), expect.any(Object));
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('site_auth');
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_state');
+        expect(mocks.redirect).toHaveBeenCalledWith('/no-sites?reason=no-products');
+    });
+
+    it('ends a native sign-in of a product-less new account with the no_sites error', async () => {
+        mocks.handleTeslaCallback.mockResolvedValue({ status: 'no-energy-products' });
+        const mobileCookies: Record<string, string> = {
+            auth_mobile_attempt: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+            auth_mobile_challenge: 'A'.repeat(43),
+            auth_mobile_state: 'B'.repeat(32),
+        };
+        mocks.getCookie.mockImplementation((name: string) => mobileCookies[name]
+            ? { value: mobileCookies[name] }
+            : undefined);
+        const response = await GET(new NextRequest('https://pwusage.test/auth/tesla-callback?code=tesla-code&state=xyz'));
+        expect(response.headers.get('location')).toContain('error=no_sites');
+        expect(mocks.createMobileLoginHandoff).not.toHaveBeenCalled();
+        expect(mocks.cookieDelete).toHaveBeenCalledWith('auth_mobile_attempt');
+    });
+
     it('redirects to saved callback only when it is safe relative path', async () => {
         mocks.handleTeslaCallback.mockResolvedValue({
             status: 'success',

@@ -150,6 +150,15 @@ async function handleGET(request: NextRequest) {
         clearAttempt();
         return mobileFailure('login_unavailable') ?? NextResponse.json({ error: 'Could not finish Tesla sign-in' }, { status: 500 });
     }
+    if (result.status === 'no-energy-products') {
+        // Nothing was stored for this account, so there is no session to issue.
+        clearAttempt();
+        if (mobileAttemptId && mobileChallenge && mobileState) {
+            return mobileCallbackResponse({ error: 'no_sites', state: mobileState });
+        }
+        cookieStore.delete('site_auth');
+        redirect('/no-sites?reason=no-products');
+    }
     if (result.status === 'fleet-api-failed') {
         clearAttempt();
         return mobileFailure('product_import_failed') ?? NextResponse.json({ error: 'Failed to load Tesla products' }, { status: 502 });
