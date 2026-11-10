@@ -304,6 +304,37 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       }
     });
 
+    it('refuses while a start claim is held on a shared site even when another usable member remains', async () => {
+      const db = local.database;
+      await seedAccount('claim-leaver', 'site-claim-shared');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'claim-stayer\', \'rt-cs\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-claim-shared\', \'claim-stayer\', \'tesla-cs\')');
+      await db.query(
+        `INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at) VALUES ('hw-site-claim-shared', $1::uuid, clock_timestamp() + interval '1 minute')`,
+        [randomUUID()],
+      );
+
+      await expect(new AccountDeletionRepo().deleteAccount('claim-leaver')).rejects.toBeInstanceOf(ActiveBatterySaverError);
+      expect(await countFor('User', 'id', 'claim-leaver')).toBe(1);
+    });
+
+    it('does not count a recently command-denied member as able to keep Battery Saver running', async () => {
+      const db = local.database;
+      await seedAccount('cmd-leaver', 'site-cmd-denied');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'cmd-readonly\', \'rt-ro\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id, commands_denied_at) VALUES (\'site-cmd-denied\', \'cmd-readonly\', \'tesla-ro\', now())');
+      await insertActiveHold('site-cmd-denied', 'cmd-leaver');
+
+      const [overview] = await new AccountDeletionRepo().getSitesForDeletion('cmd-leaver');
+      expect(overview.hasOtherUsableMember).toBe(false);
+      await expect(new AccountDeletionRepo().deleteAccount('cmd-leaver')).rejects.toBeInstanceOf(ActiveBatterySaverError);
+
+      // A denial older than a week no longer counts against them.
+      await db.query(`UPDATE "SiteMember" SET commands_denied_at = now() - interval '8 days' WHERE user_id = 'cmd-readonly'`);
+      const [later] = await new AccountDeletionRepo().getSitesForDeletion('cmd-leaver');
+      expect(later.hasOtherUsableMember).toBe(true);
+    });
+
     it('finishes without error when the account is already gone', async () => {
       await expect(new AccountDeletionRepo().deleteAccount('missing')).resolves.toEqual({
         deletedSiteIds: [],
