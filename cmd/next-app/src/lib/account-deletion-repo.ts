@@ -161,12 +161,9 @@ export class AccountDeletionRepo {
             }
 
             await client.query('DELETE FROM "MobileLoginHandoff" WHERE user_id = $1', [userId]);
-            if (allSiteIds.length > 0) {
-                await client.query(
-                    'DELETE FROM "TrmnlInstallation" WHERE installed_by_user_id = $1 AND site_id = ANY($2::text[])',
-                    [userId, allSiteIds],
-                );
-            }
+            // Everything this user installed, whatever their current memberships: the installation
+            // token works without the account, so it must not outlive it.
+            await client.query('DELETE FROM "TrmnlInstallation" WHERE installed_by_user_id = $1', [userId]);
             await client.query(
                 'DELETE FROM "SiteMember" WHERE user_id = $1 OR site_id = ANY($2::text[])',
                 [userId, [...forcedDelete]],

@@ -9,6 +9,7 @@ vi.mock('./db', () => ({ pool: {
 } }));
 
 import { AccountDeletionRepo, ActiveBatterySaverError } from './account-deletion-repo';
+import { BatteryHoldRepo } from './battery-hold-repo';
 import { createActivityTestDatabase, safeActivityTestSocket as safeSocket } from './battery-hold-activity-test-db';
 
 // Mirrors the production foreign keys for the tables this test creates by hand.
@@ -222,6 +223,85 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       await expect(new AccountDeletionRepo().deleteAccount('o2', ['site-everyone-hold'])).rejects.toBeInstanceOf(ActiveBatterySaverError);
       expect(await countFor('Site', 'id', 'site-everyone-hold')).toBe(1);
       expect(await countFor('SiteMember', 'site_id', 'site-everyone-hold')).toBe(2);
+    });
+
+    it('re-evaluates remaining members after waiting on a concurrent member deletion, and keeps the active hold guard', async () => {
+      const db = local.database;
+      await seedAccount('race-a', 'site-race');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'race-b\', \'rt-race-b\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-race\', \'race-b\', \'tesla-race-b\')');
+      await insertActiveHold('site-race', 'race-b');
+
+      // Play member A's deletion by hand: lock the site and remove A, but do not commit yet.
+      const first = await db.connect();
+      try {
+        await first.query('BEGIN');
+        await first.query('SELECT id FROM "Site" WHERE id = \'site-race\' FOR UPDATE');
+        await first.query('DELETE FROM "SiteMember" WHERE user_id = \'race-a\'');
+        await first.query('DELETE FROM "User" WHERE id = \'race-a\'');
+
+        // B's deletion starts while A is in flight and must block on the site lock.
+        const second = new AccountDeletionRepo().deleteAccount('race-b');
+        const settled = second.then(() => 'resolved', () => 'rejected');
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          const waiting = await db.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`);
+          if (waiting.rows.length > 0) break;
+          if (Date.now() > deadline) throw new Error('second deletion never waited on the site lock');
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+
+        await first.query('COMMIT');
+        // A's committed deletion leaves B as the last usable member, so the hold blocks B.
+        await expect(second).rejects.toBeInstanceOf(ActiveBatterySaverError);
+        expect(await settled).toBe('rejected');
+      } finally {
+        first.release();
+      }
+
+      expect(await countFor('User', 'id', 'race-b')).toBe(1);
+      expect(await countFor('Site', 'id', 'site-race')).toBe(1);
+      expect(await countFor('BatteryHold', 'site_id', 'site-race')).toBe(1);
+    });
+
+    it('deletes the departing user\'s TRMNL installations even on a site they no longer belong to', async () => {
+      const db = local.database;
+      await seedAccount('trmnl-owner', 'site-trmnl');
+      await seedAccount('trmnl-keeper', 'site-trmnl-other');
+      // An installation left behind when the membership was removed (membership flag off).
+      await db.query('INSERT INTO "TrmnlInstallation" (site_id, installed_by_user_id) VALUES (\'site-trmnl-other\', \'trmnl-owner\')');
+
+      await new AccountDeletionRepo().deleteAccount('trmnl-owner');
+
+      expect(await countFor('TrmnlInstallation', 'installed_by_user_id', 'trmnl-owner')).toBe(0);
+      expect(await countFor('TrmnlInstallation', 'site_id', 'site-trmnl-other')).toBe(1);
+    });
+
+    it('makes a start claim wait while account deletion holds the site lock', async () => {
+      const db = local.database;
+      await seedAccount('claim-race', 'site-claim-race');
+      const deletion = await db.connect();
+      try {
+        await deletion.query('BEGIN');
+        await deletion.query('SELECT id FROM "Site" WHERE id = \'site-claim-race\' FOR UPDATE');
+
+        const claim = new BatteryHoldRepo().claimStart('hw-site-claim-race', randomUUID());
+        let claimed: boolean | undefined;
+        void claim.then(value => { claimed = value; });
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          const waiting = await db.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`);
+          if (waiting.rows.length > 0) break;
+          if (Date.now() > deadline) throw new Error('claim never waited on the site lock');
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(claimed).toBeUndefined();
+
+        await deletion.query('COMMIT');
+        await expect(claim).resolves.toBe(true);
+      } finally {
+        deletion.release();
+      }
     });
 
     it('finishes without error when the account is already gone', async () => {

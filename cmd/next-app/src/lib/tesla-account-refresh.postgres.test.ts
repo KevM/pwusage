@@ -57,7 +57,8 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
             refresh_lock_expires bigint NOT NULL DEFAULT 0,
             auth_status text DEFAULT 'active', is_active boolean DEFAULT true,
             last_checked_at timestamp, email text, token_expires_at bigint,
-            session_version integer NOT NULL DEFAULT 0, roles text[] NOT NULL DEFAULT '{}'::text[]
+            session_version integer NOT NULL DEFAULT 0, roles text[] NOT NULL DEFAULT '{}'::text[],
+            created_at timestamp DEFAULT CURRENT_TIMESTAMP
         )`);
         await pool.query(migration);
         await pool.query(fingerprintMigration);
