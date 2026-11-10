@@ -12,12 +12,13 @@ struct TrmnlScreensEditorModelTests {
     }
 
     private func make(
-        screens: [TrmnlManagedScreen]? = nil, delay: Duration = .milliseconds(40)
+        screens: [TrmnlManagedScreen]? = nil, delay: Duration = .milliseconds(40),
+        saveDelay: Duration = .milliseconds(60)
     ) -> (TrmnlScreensEditorModel, FakeScreensAPI) {
         let api = FakeScreensAPI(screens: screens ?? [screen("a"), screen("b", bill: true)])
         var nextID = 0
         let model = TrmnlScreensEditorModel(
-            device: device, siteID: "site-1", api: api, previewDelay: delay,
+            device: device, siteID: "site-1", api: api, previewDelay: delay, saveDelay: saveDelay,
             makeScreenID: { nextID += 1
                 return "new-\(nextID)" })
         return (model, api)
@@ -155,34 +156,99 @@ struct TrmnlScreensEditorModelTests {
         #expect(model.selectedIndex == 0)
     }
 
-    @Test("Saving sends the renamed screens, then the draft is clean")
-    func saving() async throws {
-        let (model, api) = make()
+    @Test("An edit saves after things go quiet, once, with everything changed in the meantime")
+    func autosavesAfterQuiet() async throws {
+        let (model, api) = make(saveDelay: .milliseconds(80))
         await model.load()
         model.update { $0.showEnergyChart = true }
-        #expect(await model.save())
+        model.update { $0.showLoadTiming = true }
         #expect(model.saveState == .idle)
-        #expect(!model.hasUnsavedChanges)
-        let saved = try #require(api.saved)
+        try await staysTrue(for: .milliseconds(30)) { api.saves.isEmpty }
+        try await eventually { api.saves.count == 1 }
+        try await eventually { model.saveState == .saved }
+        let saved = try #require(api.saves.first)
         #expect(saved.screens.map(\.name) == ["Screen 1", "Screen 2"])
         #expect(saved.screens[1].componentConfig.showEnergyChart)
+        #expect(saved.screens[1].componentConfig.showLoadTiming)
         #expect(saved.device == device)
         #expect(saved.siteID == "site-1")
+        #expect(!model.hasUnsavedChanges)
+        try await staysTrue(for: .milliseconds(150)) { api.saves.count == 1 }
     }
 
-    @Test("A failed save keeps the edits and says so; a clean draft saves nothing")
-    func saveFailure() async {
+    @Test("Each further edit pushes the save out again")
+    func editsExtendTheSaveWait() async throws {
+        let (model, api) = make(saveDelay: .milliseconds(150))
+        await model.load()
+        model.update { $0.showEnergyChart = true }
+        try await Task.sleep(for: .milliseconds(90))
+        model.update { $0.showLoadTiming = true }
+        try await Task.sleep(for: .milliseconds(90))
+        #expect(api.saves.isEmpty)
+        try await eventually { api.saves.count == 1 }
+    }
+
+    @Test("Adding, deleting and moving a screen save at once")
+    func structuralChangesSaveAtOnce() async throws {
+        let (model, api) = make(saveDelay: .seconds(30))
+        await model.load()
+        model.addScreen()
+        try await eventually { api.saves.count == 1 }
+        #expect(api.saves[0].screens.count == 3)
+        model.moveSelectedScreen(by: -1)
+        try await eventually { api.saves.count == 2 }
+        model.deleteSelectedScreen()
+        try await eventually { api.saves.count == 3 }
+        #expect(api.saves[2].screens.count == 2)
+    }
+
+    @Test("Leaving saves what is waiting without the quiet period")
+    func flush() async throws {
+        let (model, api) = make(saveDelay: .seconds(30))
+        await model.load()
+        model.update { $0.showEnergyChart = true }
+        #expect(await model.flush())
+        #expect(api.saves.count == 1)
+        #expect(!model.hasUnsavedChanges)
+        #expect(await model.flush())
+        #expect(api.saves.count == 1)
+    }
+
+    @Test("An edit made while a save is on its way is saved next, and nothing is lost")
+    func editDuringSave() async throws {
+        let (model, api) = make(saveDelay: .milliseconds(20))
+        api.saveLatency = .milliseconds(150)
+        await model.load()
+        model.update { $0.showEnergyChart = true }
+        try await eventually { api.saveStarts == 1 }
+        model.update { $0.showLoadTiming = true }
+        try await eventually { api.saves.count == 2 }
+        try await eventually { model.saveState == .saved }
+        #expect(api.saves[1].screens[1].componentConfig.showLoadTiming)
+        #expect(!model.hasUnsavedChanges)
+    }
+
+    @Test("A failed save keeps the edits, says so, and is retried by the next edit or a retry")
+    func saveFailure() async throws {
         let (model, api) = make()
         await model.load()
-        #expect(await model.save())
-        #expect(api.saved == nil)
-        model.update { $0.showEnergyChart = true }
         api.saveFailure = URLError(.timedOut)
-        #expect(await model.save() == false)
-        #expect(model.saveState == .failed)
+        model.update { $0.showEnergyChart = true }
+        try await eventually { model.saveState == .failed }
         #expect(model.hasUnsavedChanges)
         api.saveFailure = nil
         #expect(await model.save())
+        #expect(model.saveState == .saved)
+        #expect(!model.hasUnsavedChanges)
+    }
+
+    @Test("A draft with nothing changed saves nothing")
+    func cleanDraft() async {
+        let (model, api) = make()
+        await model.load()
+        #expect(await model.save())
+        #expect(await model.flush())
+        #expect(api.saves.isEmpty)
         #expect(model.saveState == .idle)
     }
 }
@@ -199,7 +265,9 @@ private final class FakeScreensAPI: MobileTrmnlAPI, @unchecked Sendable {
     var saveFailure: (any Error)?
     var previewFailures: [TrmnlComponentConfig] = []
     private(set) var previewRequests: [TrmnlComponentConfig] = []
-    private(set) var saved: Saved?
+    var saveLatency: Duration = .zero
+    private(set) var saves: [Saved] = []
+    private(set) var saveStarts = 0
 
     init(screens: [TrmnlManagedScreen]) { self.screens = screens }
 
@@ -219,7 +287,9 @@ private final class FakeScreensAPI: MobileTrmnlAPI, @unchecked Sendable {
     }
 
     func saveTrmnlScreens(_ screens: [TrmnlManagedScreen], for device: TrmnlDevice, siteID: String) async throws {
+        saveStarts += 1
+        if saveLatency > .zero { try await Task.sleep(for: saveLatency) }
         if let saveFailure { throw saveFailure }
-        saved = Saved(screens: screens, device: device, siteID: siteID)
+        saves.append(Saved(screens: screens, device: device, siteID: siteID))
     }
 }

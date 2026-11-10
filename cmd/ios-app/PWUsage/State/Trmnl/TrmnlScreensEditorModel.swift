@@ -1,9 +1,10 @@
 import Foundation
 import Observation
 
-/// Edits the screens one Trmnl device rotates through. Changes stay in a draft until saved. Each screen
-/// shows a live preview of its own settings; previews wait for edits to go quiet, since each one is a
-/// server request, and are kept by settings so undoing a change costs nothing.
+/// Edits the screens one Trmnl device rotates through. Changes save themselves: edits wait for a quiet
+/// moment, then go up together, and adding, deleting or moving a screen saves at once. Each screen shows a
+/// live preview of its own settings; previews wait for edits to go quiet too, since each one is a server
+/// request, and are kept by settings so undoing a change costs nothing.
 @MainActor
 @Observable
 final class TrmnlScreensEditorModel {
@@ -14,8 +15,10 @@ final class TrmnlScreensEditorModel {
     }
 
     enum Save: Equatable {
+        /// Nothing to report: untouched, or edited and waiting for the quiet moment.
         case idle
         case saving
+        case saved
         case failed
     }
 
@@ -32,21 +35,26 @@ final class TrmnlScreensEditorModel {
     /// The last document each screen showed, kept while an edit's preview is on its way.
     private var shown: [String: String] = [:]
     private var pendingPreview: Task<Void, Never>?
+    private var pendingSave: Task<Void, Never>?
+    /// The saves in flight; edits made meanwhile are picked up by the same run.
+    private var saveRun: Task<Bool, Never>?
 
     private let siteID: String
     private let api: any MobileTrmnlAPI
     private let previewDelay: Duration
+    private let saveDelay: Duration
     private let makeScreenID: () -> String
 
     init(
         device: TrmnlDevice, siteID: String, api: any MobileTrmnlAPI,
-        previewDelay: Duration = .milliseconds(500),
+        previewDelay: Duration = .milliseconds(500), saveDelay: Duration = .milliseconds(1500),
         makeScreenID: @escaping () -> String = { "screen-\(Int(Date().timeIntervalSince1970 * 1000))" }
     ) {
         self.device = device
         self.siteID = siteID
         self.api = api
         self.previewDelay = previewDelay
+        self.saveDelay = saveDelay
         self.makeScreenID = makeScreenID
     }
 
@@ -102,6 +110,7 @@ final class TrmnlScreensEditorModel {
         change(&screens[selectedIndex].componentConfig)
         saveState = .idle
         schedulePreview()
+        scheduleSave()
     }
 
     func addScreen() {
@@ -111,6 +120,7 @@ final class TrmnlScreensEditorModel {
         selectedIndex = screens.count - 1
         saveState = .idle
         previewSelectedScreen()
+        saveNow()
     }
 
     func deleteSelectedScreen() {
@@ -120,6 +130,7 @@ final class TrmnlScreensEditorModel {
         selectedIndex = min(selectedIndex, screens.count - 1)
         saveState = .idle
         previewSelectedScreen()
+        saveNow()
     }
 
     /// Moves the selected screen earlier (-1) or later (+1) in the rotation.
@@ -129,23 +140,58 @@ final class TrmnlScreensEditorModel {
         screens = Self.numbered(screens)
         selectedIndex += offset
         saveState = .idle
+        saveNow()
     }
 
     // MARK: Saving
 
-    /// Saves the draft. Returns true when the server has it, or when there was nothing to save.
+    /// Saves what is waiting, without the quiet moment: on leaving, or to retry after a failure. Returns
+    /// true when the server has everything, or when there was nothing to save.
+    func flush() async -> Bool {
+        pendingSave?.cancel()
+        return await save()
+    }
+
+    /// Saves the draft, or joins the save already under way. Returns true when the server has it all.
     func save() async -> Bool {
+        if let saveRun { return await saveRun.value }
         guard hasUnsavedChanges else { return true }
-        saveState = .saving
-        do {
-            try await api.saveTrmnlScreens(screens, for: device, siteID: siteID)
-            saved = screens
-            saveState = .idle
-            return true
-        } catch {
-            saveState = .failed
-            return false
+        let run = Task { await runSaves() }
+        saveRun = run
+        return await run.value
+    }
+
+    private func scheduleSave() {
+        pendingSave?.cancel()
+        pendingSave = Task { [saveDelay] in
+            try? await Task.sleep(for: saveDelay)
+            guard !Task.isCancelled else { return }
+            _ = await save()
         }
+    }
+
+    private func saveNow() {
+        pendingSave?.cancel()
+        pendingSave = Task { _ = await save() }
+    }
+
+    /// Sends the draft, again if it changed while that was on its way, until the server has all of it.
+    private func runSaves() async -> Bool {
+        while hasUnsavedChanges {
+            let sending = screens
+            saveState = .saving
+            do {
+                try await api.saveTrmnlScreens(sending, for: device, siteID: siteID)
+                saved = sending
+            } catch {
+                saveState = .failed
+                saveRun = nil
+                return false
+            }
+        }
+        saveState = .saved
+        saveRun = nil
+        return true
     }
 
     // MARK: Previews

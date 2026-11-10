@@ -10,43 +10,30 @@ struct TrmnlSettingsAccess {
 struct TrmnlSettingsView: View {
     @Bindable var model: TrmnlSettingsModel
     @State private var editor: TrmnlScreensEditorModel?
-    /// A device switch waiting on an answer about unsaved changes.
-    @State private var pendingDeviceID: Int?
-    @State private var isConfirmingLeave = false
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         content
             .navigationTitle(TrmnlPresentation.title)
             .inlineNavigationTitle()
-            .navigationBarBackButtonHidden(hasUnsavedChanges)
             .toolbar { toolbarItems }
             .task { await model.load() }
             .task(id: model.selectedDeviceID) { await openEditor() }
             .onChange(of: scenePhase) { _, phase in
-                // Back from trmnl.com, where a device may have just been added.
-                if phase == .active { Task { await model.reloadDevices() } }
-            }
-            .confirmationDialog(
-                TrmnlPresentation.discardTitle, isPresented: $isConfirmingLeave, titleVisibility: .visible
-            ) {
-                Button(TrmnlPresentation.discardTitle, role: .destructive) { dismiss() }
-            }
-            .confirmationDialog(
-                TrmnlPresentation.discardTitle, isPresented: pendingSwitchBinding, titleVisibility: .visible
-            ) {
-                Button(TrmnlPresentation.discardTitle, role: .destructive) {
-                    model.selectedDeviceID = pendingDeviceID
-                    pendingDeviceID = nil
+                if phase == .active {
+                    // Back from trmnl.com, where a device may have just been added.
+                    Task { await model.reloadDevices() }
+                } else {
+                    flushEdits()
                 }
             }
+            .onDisappear { flushEdits() }
     }
 
-    private var hasUnsavedChanges: Bool { editor?.hasUnsavedChanges == true }
-
-    private var pendingSwitchBinding: Binding<Bool> {
-        Binding(get: { pendingDeviceID != nil }, set: { if !$0 { pendingDeviceID = nil } })
+    /// Saves any edits still waiting for their quiet moment: the app is leaving the screen or the foreground.
+    private func flushEdits() {
+        guard let editor else { return }
+        Task { _ = await editor.flush() }
     }
 
     // MARK: Content
@@ -113,20 +100,22 @@ struct TrmnlSettingsView: View {
 
     // MARK: Toolbar
 
+    /// Edits save themselves; this says where that stands.
     @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
-        if hasUnsavedChanges {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { isConfirmingLeave = true }
-            }
-        }
         if let editor, editor.loadState == .ready {
             ToolbarItem(placement: .confirmationAction) {
-                if editor.saveState == .saving {
+                switch editor.saveState {
+                case .idle:
+                    EmptyView()
+                case .saving:
                     ProgressView()
-                } else {
-                    Button(TrmnlPresentation.saveTitle) { Task { _ = await editor.save() } }
-                        .disabled(!editor.hasUnsavedChanges)
-                        .accessibilityIdentifier("trmnl.save")
+                case .saved:
+                    Label(TrmnlPresentation.savedTitle, systemImage: "checkmark")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                case .failed:
+                    Button(TrmnlPresentation.retryTitle) { Task { _ = await editor.flush() } }
+                        .accessibilityIdentifier("trmnl.retry-save")
                 }
             }
         }
@@ -134,9 +123,16 @@ struct TrmnlSettingsView: View {
 
     // MARK: Switching devices
 
+    /// Switches device once the current one's edits are saved; if they cannot be, stays where they can be retried.
     private func requestSelect(_ id: Int) {
         guard id != model.selectedDeviceID else { return }
-        if hasUnsavedChanges { pendingDeviceID = id } else { model.selectedDeviceID = id }
+        guard let editor else {
+            model.selectedDeviceID = id
+            return
+        }
+        Task {
+            if await editor.flush() { model.selectedDeviceID = id }
+        }
     }
 
     private func openEditor() async {
