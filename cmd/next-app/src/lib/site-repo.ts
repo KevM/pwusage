@@ -568,7 +568,9 @@ export class SiteRepo {
             UPDATE "Site" s SET
                 user_id = CASE WHEN s.user_id = $1 THEN NULL ELSE s.user_id END,
                 orphaned_at = CASE
-                    WHEN NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id)
+                    -- The CTE's deletes are invisible here, and every removed row is this user's,
+                    -- so any other member's row means the site still has someone.
+                    WHEN NOT EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id <> $1)
                     THEN COALESCE(s.orphaned_at, now())
                     ELSE s.orphaned_at
                 END

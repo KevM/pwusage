@@ -119,6 +119,9 @@ describe.skipIf(!safeSocket)('Site membership PostgreSQL schema and claims', () 
     expect(await sites.removeSitesMissingFromTesla('u1', [], new Date(Date.now() + 1000))).toEqual(['s1']);
     const row = (await local.database.query(`SELECT user_id, tesla_connection_user_id FROM "Site" WHERE id='s1'`)).rows[0];
     expect(row).toEqual({ user_id: null, tesla_connection_user_id: null });
+    // Removing the sole member in the same statement must start the orphan clock.
+    expect((await local.database.query(`SELECT orphaned_at FROM "Site" WHERE id='s1'`)).rows[0].orphaned_at).toBeInstanceOf(Date);
+    expect((await local.database.query(`SELECT orphaned_at FROM "Site" WHERE id='s2'`)).rows[0].orphaned_at).toBeNull();
   });
 
   it('loads the connection grant and the pinned member’s current Tesla ID together', async () => {
