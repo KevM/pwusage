@@ -89,6 +89,13 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only")
     }
 
+    /// The demo hides Trmnl settings, so nothing asks for devices.
+    func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice] { [] }
+
+    func fetchTrmnlPreview(siteID: String) async throws -> String {
+        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo has no Trmnl")
+    }
+
     func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
     func logout() async throws {}
     func clearSiteAuthCookie() async {}

@@ -18,6 +18,8 @@ struct SettingsView: View {
     /// Saves the site's billing day; the row is hidden in the demo, which cannot save.
     var onSaveBillingDay: (Int) async throws -> Void = { _ in }
     var onRevealSeen: () -> Void = {}
+    /// Where the Trmnl screen reads from; nil hides the row, as in the demo, which has no devices.
+    var trmnl: TrmnlSettingsAccess?
 
     @State private var isConfirmingSignOut = false
 
@@ -66,6 +68,12 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings.solar-system")
+                if trmnl != nil {
+                    NavigationLink(value: SettingsDestination.trmnl) {
+                        Label(TrmnlPresentation.title, systemImage: "rectangle.on.rectangle")
+                    }
+                    .accessibilityIdentifier("settings.trmnl")
+                }
                 NavigationLink(value: SettingsDestination.about) {
                     Label("About", systemImage: "info.circle")
                 }
@@ -93,6 +101,11 @@ struct SettingsView: View {
             case .billingDay:
                 BillingDaySettingsView(site: site, save: onSaveBillingDay)
                     .id(site.id)
+            case .trmnl:
+                if let trmnl {
+                    TrmnlSettingsView(siteID: site.id, access: trmnl)
+                        .id(site.id)
+                }
             case .about:
                 AboutSheet()
             }
@@ -116,6 +129,7 @@ enum SettingsDestination: Hashable {
     case billingDay
     /// `startsAtLocation` opens straight into the home location step.
     case solarSystem(startsAtLocation: Bool = false)
+    case trmnl
     case about
 }
 

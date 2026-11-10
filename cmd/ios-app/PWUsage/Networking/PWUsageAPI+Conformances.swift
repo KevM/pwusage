@@ -9,3 +9,4 @@ extension PWUsageAPI: PWUsageApplicationAPI {}
 extension PWUsageAPI: MobileTariffDataAPI {}
 extension PWUsageAPI: MobileBatteryHoldDataAPI {}
 extension PWUsageAPI: BatteryHoldActivityAPI {}
+extension PWUsageAPI: MobileTrmnlAPI {}
