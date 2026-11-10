@@ -13,7 +13,9 @@ struct SmartShiftBarTitle: View {
             .font(.headline)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .frame(maxWidth: .infinity, alignment: .center)
+            // On the Mac a full-width title beside the trailing buttons lays the bar out as three stacked
+            // rows at launch, until the window is resized. The title keeps its natural width there.
+            .frame(maxWidth: ProcessInfo.processInfo.isiOSAppOnMac ? nil : .infinity, alignment: .center)
             .accessibilityAddTraits(.isHeader)
             .animation(.easeInOut(duration: 0.25), value: recommendation)
             .dynamicTypeSize(...DynamicTypeSize.xLarge)
