@@ -274,3 +274,12 @@ restore decision.
   jsdom are not installed and are not added.
 - **Owner checks on beta:** a real deletion with a throwaway account, Tesla's `back_url` returning to
   the done page, and a Battery Saver restore. These use live Tesla access and cannot be automated.
+
+## Amendment: per-site choice on shared sites
+
+Superseding "shared sites always stay": on `/account-delete`, each shared site shows the other members' emails
+(members already see each other's emails in site settings) and lets the user choose **Remove me** (default; the
+site and its history stay for the others) or **Delete this site for everyone**. The choice is sent as
+`deleteSiteIds` to `DELETE /api/user`. Deleting for everyone removes the site, every member's membership and TRMNL
+installations on it; the other members' accounts stay. A site deleted for everyone is treated like a sole-member
+site for Battery Saver: the session is restored first, and an active hold or start claim blocks the delete.
