@@ -65,21 +65,23 @@ export class TrmnlInstallationRepo {
         uuid: string | null = null,
         pluginSettingId: number | null = null,
         json: unknown = null,
-        accessToken: string | null = null
+        accessToken: string | null = null,
+        installedByUserId: string | null = null
     ): Promise<number> {
-        const params = [siteId, uuid || null, pluginSettingId, json, accessToken];
+        const params = [siteId, uuid || null, pluginSettingId, json, accessToken, installedByUserId];
         const query = uuid ? `
-            INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token, installed_by_user_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT(uuid) DO UPDATE SET 
                 site_id = EXCLUDED.site_id,
                 plugin_setting_id = COALESCE(EXCLUDED.plugin_setting_id, "TrmnlInstallation".plugin_setting_id),
                 json = COALESCE(EXCLUDED.json, "TrmnlInstallation".json),
-                access_token = COALESCE(EXCLUDED.access_token, "TrmnlInstallation".access_token)
+                access_token = COALESCE(EXCLUDED.access_token, "TrmnlInstallation".access_token),
+                installed_by_user_id = COALESCE(EXCLUDED.installed_by_user_id, "TrmnlInstallation".installed_by_user_id)
             RETURNING id
         ` : `
-            INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token, installed_by_user_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
         `;
         const { rows } = await pool.query(query, params);

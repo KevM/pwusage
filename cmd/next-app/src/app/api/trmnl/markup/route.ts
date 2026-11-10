@@ -5,6 +5,7 @@ import { after, NextResponse } from 'next/server';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
 import { SiteRepo } from '@/lib/site-repo';
+import { siteMembershipEnabled } from '@/lib/site-membership-flag';
 import { Schedule } from '@/lib/schedule';
 import { EnergySiteLiveStatus } from '@/lib/tesla-client';
 import { refreshTodayData, refreshLiveStatus } from '@/lib/today-refresh';
@@ -117,6 +118,10 @@ async function handleGET(request: Request) {
 
         setLogContext({ siteId: site.id });
 
+        // A broken connection with a healthy member behind it is not a reconnect: move it, then reload.
+        if (requiresTeslaReconnect(site) && siteMembershipEnabled() && await siteRepo.repairConnection(site.id)) {
+            site = await siteRepo.getSite(site.id, { includeTokens: true }) || site;
+        }
         const reconnectRequired = requiresTeslaReconnect(site);
 
         // Calculate bill for current period using site-local time components

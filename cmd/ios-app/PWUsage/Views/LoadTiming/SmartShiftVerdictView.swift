@@ -7,6 +7,7 @@ struct SmartShiftVerdictView: View {
     var isSelected = true
     var onOpenDetails: (SmartShiftChoiceID) -> Void = { _ in }
     var onOpenSolarSettings: () -> Void = {}
+    var onHeroFrameChange: (CGRect) -> Void = { _ in }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: SmartShiftSelection
@@ -16,7 +17,9 @@ struct SmartShiftVerdictView: View {
 
     init(verdict: SmartShiftVerdict, timeZone: String, isSelected: Bool = true,
          onOpenDetails: @escaping (SmartShiftChoiceID) -> Void = { _ in },
-         onOpenSolarSettings: @escaping () -> Void = {}) {
+         onOpenSolarSettings: @escaping () -> Void = {},
+         onHeroFrameChange: @escaping (CGRect) -> Void = { _ in }) {
+        self.onHeroFrameChange = onHeroFrameChange
         self.verdict = verdict
         self.timeZone = timeZone
         self.isSelected = isSelected
@@ -27,8 +30,15 @@ struct SmartShiftVerdictView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(verdict.title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
-            Text(verdict.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.emphasis)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(verdict.title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
+                Text(verdict.subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Color.emphasis)
+            }
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .named(LoadTimingView.scrollContentSpace))
+            } action: {
+                onHeroFrameChange($0)
+            }
             choiceTiles
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

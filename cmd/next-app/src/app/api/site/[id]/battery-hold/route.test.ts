@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyMock, parkMock, restoreMock, getActiveMock, getNoticeMock, ackMock, createClientMock } = vi.hoisted(() => ({
+const { verifyMock, currentUserMock, memberClientMock, parkMock, restoreMock, getActiveMock, getNoticeMock, ackMock, createClientMock } = vi.hoisted(() => ({
   verifyMock: vi.fn(), parkMock: vi.fn(), restoreMock: vi.fn(),
+  currentUserMock: vi.fn(), memberClientMock: vi.fn(),
   getActiveMock: vi.fn(), getNoticeMock: vi.fn(), ackMock: vi.fn(), createClientMock: vi.fn(),
 }));
 
-vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyMock }));
+vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyMock, getCurrentUser: currentUserMock }));
+vi.mock('@/lib/tesla-client-factory', () => ({ createTeslaClientForSiteMember: memberClientMock }));
 vi.mock('@/lib/battery-hold-service', () => ({
   parkBattery: parkMock, restoreBattery: restoreMock, createSiteTeslaClient: createClientMock,
 }));
@@ -28,9 +30,12 @@ describe('battery-hold route', () => {
   beforeEach(() => {
     verifyMock.mockReset(); parkMock.mockReset(); restoreMock.mockReset();
     getActiveMock.mockReset(); createClientMock.mockReset();
+    currentUserMock.mockReset(); memberClientMock.mockReset();
     getNoticeMock.mockReset(); ackMock.mockReset();
     verifyMock.mockResolvedValue(true);
     createClientMock.mockResolvedValue({});
+    currentUserMock.mockResolvedValue({ id: 'invited' });
+    memberClientMock.mockResolvedValue({});
     getNoticeMock.mockResolvedValue(null);
   });
 
@@ -53,6 +58,21 @@ describe('battery-hold route', () => {
     const res = await POST(req({ action: 'park' }) as never, ctx as never);
     expect(res.status).toBe(200);
     expect(parkMock).toHaveBeenCalled();
+  });
+
+  it('routes shared-site starts through the signed-in member’s own grant', async () => {
+    vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+    try {
+      parkMock.mockResolvedValue({ status: 'commands_denied' });
+      const res = await POST(req({ action: 'park' }) as never, ctx as never);
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: 'commands_denied' });
+      expect(memberClientMock).toHaveBeenCalledWith('site-1', 'invited');
+      expect(createClientMock).not.toHaveBeenCalled();
+      expect(parkMock).toHaveBeenCalledWith(expect.objectContaining({ userId: 'invited' }));
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('POST park with invalid timer duration returns 400', async () => {

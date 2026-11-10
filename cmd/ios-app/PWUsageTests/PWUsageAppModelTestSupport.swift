@@ -25,6 +25,13 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         holdCommands.append(command)
         return .init(status: .succeeded, hold: nil, current: nil)
     }
+    private(set) var billingDayCalls: [(siteID: String, day: Int)] = []
+    var billingDayError: Error?
+    func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
+        billingDayCalls.append((siteID, day))
+        if let billingDayError { throw billingDayError }
+        return MobileBillingDay(billingDay: day, billingDayConfirmed: true)
+    }
     var sites: [MobileSite]
     /// Consumed one entry per `fetchSites` before `sites` is used, so a test can
     /// hand successive attempts different site lists.
@@ -93,9 +100,28 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         }
     }
 
+    var holdBill = false
+    private var billContinuations: [(String, CheckedContinuation<MobileBillResponse, Error>)] = []
+
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
         billSiteIDs.append(siteID)
+        if holdBill {
+            return try await withCheckedThrowingContinuation { billContinuations.append((siteID, $0)) }
+        }
         return try Self.billResponse(siteID: siteID)
+    }
+
+    func resumeBillRequests() {
+        holdBill = false
+        let pending = billContinuations
+        billContinuations.removeAll()
+        for (siteID, continuation) in pending {
+            do {
+                continuation.resume(returning: try Self.billResponse(siteID: siteID))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {

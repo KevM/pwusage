@@ -28,3 +28,21 @@ Plan: docs/plans/2026-11-02-solar-system-experience.md
 - [x] Verification: suites, lint, Release build, simulator states (loading, waiting, needs location, improving, final; light/dark, AX text, Reduce Motion, location sheet search and map).
 
 Current state: Tasks 1–9 are implemented and verified on the simulator. Remaining for the user: the real-device run on Beta (`cmd/next-app/scripts/dev-history-reset.md`), including the clear-day pass's Debug timing on an iPhone 18 Pro and the oldest phone available; the cadence stays every second slice until those numbers say otherwise.
+
+# Shared site membership (2026-11-08)
+
+Design: docs/superpowers/specs/2026-11-08-shared-site-membership-design.md
+Branch: codex/shared-site-membership
+
+- [x] Create and locally rerun the membership schema migration.
+- [x] Add a physical-hardware Battery Saver start lease and reject starts while another row has an active hold.
+- [x] Resolve `/profile` from the signed-in account.
+- [x] Pin site clients to their selected account; reconcile stale site rows after a successful Tesla product list; keep new hardware IDs; guard reserve settle across duplicate rows; retire expired holds only when nobody can restore; add disposable PostgreSQL regression tests.
+- [x] Attribute TRMNL installs to the signed-in installer and sync webhook email only to that account.
+- [ ] Finish Phase 1: shared-safe account deletion (PR #319 is still documentation-only), fuller PostgreSQL coverage, remaining identity fixes.
+- [x] Phase 2 core: pinned site clients translate all five Tesla site calls from `Site.id` to the member's fresh Tesla ID; missing mappings fail before a request. Legacy product-list access maps IDs back to pwusage sites. Disposable PostgreSQL and web tests cover re-invites and endpoint URLs.
+- [ ] Finish Phase 2: remove unused site-scoped refresh helpers. The script audit found one raw `calendar_history` call in `check-soe-history.ts`; it now reads the mapped ID from the pinned request credentials.
+- [ ] Phase 3: flag added off by default; site-list, Live Activity, admin user, and solar beta reads use members when enabled. Verification probes a member's own grant. Login join/re-invite, conditional removal, daily reconciliation, 14-day dead-grant cleanup, batch connection repair, outage reach-back, final rejected-request logging, and per-person Battery Saver commands are implemented with unit and disposable PostgreSQL tests. Remaining authorization and account deletion integration still need review. Do not enable the flag yet.
+- [ ] Phases 4–5: product and iOS states, merge tool, rollout and documentation.
+
+U2: The owner confirmed on 2026-11-08 that invited accounts can change the reserve with their own Tesla grant. This session did not rerun the beta script.

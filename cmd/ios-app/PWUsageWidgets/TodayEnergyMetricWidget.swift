@@ -72,7 +72,7 @@ struct TodayEnergyMetricWidget: Widget {
                                            family: .systemSmall, metric: entry.metric)
                 .widgetURL(DashboardLink.url)
                 .privacySensitive()
-                .containerBackground(Color(uiColor: .secondarySystemGroupedBackground), for: .widget)
+                .containerBackground(for: .widget) { TodayEnergyMetricFill(metric: entry.metric) }
         }
         .configurationDisplayName("Today's Metric")
         .description("Choose Home, Solar, Grid, or Battery to see one of today's energy metrics.")

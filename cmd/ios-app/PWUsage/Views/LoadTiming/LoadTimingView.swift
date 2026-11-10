@@ -91,6 +91,12 @@ struct LoadTimingView: View {
     @State var exploredProfileID: String?
     /// Bumped when the comparison goes stale on its own (see `nextRefresh`), to run a body pass.
     @State var staleRefreshes = 0
+    /// False once the verdict headline scrolls away, which moves it into the bar under the title.
+    @State var heroIsVisible = true
+    @State var heroTracking = ScrollHero.Tracking()
+    /// The verdict headline on screen, kept for the bar, which sits outside the once-per-pass evaluation.
+    @State var barRecommendation: String?
+    nonisolated static let scrollContentSpace = "smartShiftScrollContent"
 
     /// `profileStore` is an autoclosure so a caller that builds one on every
     /// body pass only has it built once, like the `StateObject` it feeds.
@@ -172,8 +178,17 @@ struct LoadTimingView: View {
                 }
             }
             .padding(20)
+            .coordinateSpace(name: Self.scrollContentSpace)
             .frame(maxWidth: SectionTheme.maxContentWidth)
             .frame(maxWidth: .infinity)
+        }
+        // Measured against the edge below the bar: visibility APIs count content
+        // under the translucent bar as on screen, so the hero would seem visible too long.
+        .onScrollGeometryChange(for: Double.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { _, visibleTop in
+            heroTracking.visibleTop = visibleTop
+            updateHeroVisibility()
         }
         .refreshable {
             await coordinator.loadTimingDetailRefreshed()
@@ -183,6 +198,9 @@ struct LoadTimingView: View {
         .navigationTitle("Smart Shift")
         .inlineNavigationTitle()
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                SmartShiftBarTitle(recommendation: heroIsVisible ? nil : barRecommendation)
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 if !showsHoldAccessory {
                     Button {
@@ -245,8 +263,11 @@ struct LoadTimingView: View {
                 SmartShiftVerdictView(
                     verdict: verdict, timeZone: timeZone, isSelected: isSelected,
                     onOpenDetails: { detailsSnapshot = detailsSnapshot(state, verdict: verdict, selected: $0) },
-                    onOpenSolarSettings: { isSolarForecastSheetPresented = true })
+                    onOpenSolarSettings: { isSolarForecastSheetPresented = true },
+                    onHeroFrameChange: heroFrameChanged)
                     .id(state.profile?.id)
+                    .onChange(of: verdict.title, initial: true) { _, title in barRecommendation = title }
+                    .onDisappear { barRecommendation = nil }
                 jobRows(hint: state.hint)
             case .blocked(let message):
                 if let profile = selectedProfile {

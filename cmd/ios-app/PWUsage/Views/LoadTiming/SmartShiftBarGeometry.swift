@@ -160,8 +160,11 @@ struct SmartShiftBarGeometry {
         return (center: count == 1 ? margin / 2 : column, width: room)
     }
 
+    /// Phone-width bars stay proportional; extra room (landscape, iPad) widens them up to this.
+    static let maxBarWidth: CGFloat = 120
+
     static func barWidth(count: Int, in width: CGFloat) -> CGFloat {
         guard count > 0 else { return 0 }
-        return max(0, min(70, width / CGFloat(count) * 0.6))
+        return max(0, min(maxBarWidth, width / CGFloat(count) * 0.6))
     }
 }

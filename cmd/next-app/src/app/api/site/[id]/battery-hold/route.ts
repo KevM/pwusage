@@ -1,9 +1,11 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySiteAccess } from '@/lib/auth-checks';
+import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { createSiteTeslaClient, parkBattery, restoreBattery } from '@/lib/battery-hold-service';
+import { createTeslaClientForSiteMember } from '@/lib/tesla-client-factory';
+import { siteMembershipEnabled } from '@/lib/site-membership-flag';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -54,14 +56,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  const client = await createSiteTeslaClient(id);
+  const user = siteMembershipEnabled() && action === 'park' ? await getCurrentUser() : null;
+  if (siteMembershipEnabled() && action === 'park' && !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+  const client = user && action === 'park'
+    ? await createTeslaClientForSiteMember(id, user.id)
+    : await createSiteTeslaClient(id);
   if (!client) {
     return NextResponse.json({ error: 'needs_reauth' }, { status: 409 });
   }
 
   const result = action === 'park'
-    ? await parkBattery({ client, repo, siteId: id, mode, durationHours, reserveChoice })
-    : await restoreBattery({ client, repo, siteId: id, reason: 'manual' });
+    ? await parkBattery({ client, repo, siteId: id, userId: user?.id, mode, durationHours, reserveChoice })
+    : await restoreBattery({ client, repo, siteId: id, reason: 'manual',
+        actorUserId: siteMembershipEnabled() ? (await getCurrentUser())?.id : undefined });
 
   switch (result.status) {
     case 'ok':
@@ -79,6 +88,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'no_soc' }, { status: 422 });
     case 'needs_reauth':
       return NextResponse.json({ error: 'needs_reauth' }, { status: 409 });
+    case 'commands_denied':
+      return NextResponse.json({ error: 'commands_denied' }, { status: 403 });
     default:
       return NextResponse.json({ error: result.message }, { status: 500 });
   }

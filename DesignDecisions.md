@@ -64,6 +64,25 @@ before the fetch completes, so the SoC-age/staleness display can look slightly
 fresher than reality for a moment. Judged acceptable versus duplicate billable
 calls. (See `docs/superpowers/plans/2026-07-03-live-status-claim-and-token-guard.md`.)
 
+### Refresh-token fingerprint (`User.refresh_token_fp`)
+
+Tesla access and refresh tokens are AES-256-GCM encrypted at rest
+(`cmd/next-app/src/lib/token-crypto.ts`, key in `TOKEN_ENCRYPTION_KEYS`). Encryption
+uses a random IV, so the same token encrypts to a different string every time and
+the claim and save statements can no longer say `WHERE refresh_token = $x`. That
+equality **is** the single-use-grant compare-and-swap, so it cannot be dropped.
+`refresh_token_fp` stores an HMAC-SHA256 of the refresh token (own key,
+`TOKEN_FINGERPRINT_KEY`, deliberately not the encryption key) and both statements
+compare it instead: `refresh_token_fp = $fp OR (refresh_token_fp IS NULL AND
+refresh_token = $plaintext)`. The second arm only serves rows not yet backfilled.
+
+Do not "simplify" by decrypting in SQL, comparing ciphertext, or comparing in
+application code after a read: that reopens the window in which two workers both
+believe they hold the grant. Every writer of `refresh_token` must write the
+fingerprint in the same statement. Rotating `TOKEN_FINGERPRINT_KEY` invalidates
+every stored fingerprint, so it needs a backfill, unlike encryption keys, which
+rotate by prepending a new key.
+
 ---
 
 ## 2. Append-only tariff versioning

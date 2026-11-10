@@ -3,6 +3,7 @@ import type { BatteryHoldMonitoring } from './battery-hold-monitoring';
 import { BatteryHold } from './db';
 
 function mapRow(row: {
+  started_by_user_id?: string | null;
   monitoring?: BatteryHoldMonitoring | null;
   restore_attempted_at?: Date | string | null;
   id: number; site_id: string | number; status: string; mode: string | null;
@@ -14,6 +15,7 @@ function mapRow(row: {
   cancelled_observed_reserve: number | string | null;
 }): BatteryHold {
   return {
+    started_by_user_id: row.started_by_user_id ?? null,
     monitoring: row.monitoring ?? null,
     restore_attempted_at: row.restore_attempted_at ? new Date(row.restore_attempted_at) : null,
     id: Number(row.id),
@@ -33,7 +35,113 @@ function mapRow(row: {
   };
 }
 
+/** How long a start owns its hardware claim before another request may take it. */
+export const START_LEASE_MS = 90 * 1000;
+
 export class BatteryHoldRepo {
+  async getRestoreCandidates(holdId: number, preferredUserId?: string): Promise<string[]> {
+    const { rows } = await pool.query<{ user_id: string }>(`
+      SELECT m.user_id FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      JOIN "SiteMember" m ON m.site_id = s.id
+      JOIN "User" u ON u.id = m.user_id
+      WHERE h.id = $1 AND u.is_active = true AND NULLIF(u.refresh_token, '') IS NOT NULL
+        AND u.auth_status IS DISTINCT FROM 'revoked'
+        AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+        AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+      ORDER BY COALESCE(m.commands_denied_at >= now() - interval '7 days', false) ASC,
+        CASE WHEN m.user_id = $2 THEN 0
+             WHEN m.user_id = h.started_by_user_id THEN 1
+             WHEN m.user_id = s.tesla_connection_user_id THEN 2 ELSE 3 END,
+        m.joined_at, m.user_id`, [holdId, preferredUserId ?? null]);
+    return rows.map(row => row.user_id);
+  }
+  async markCommandsDenied(siteId: string, userId: string): Promise<void> {
+    await pool.query(`UPDATE "SiteMember" SET commands_denied_at = now()
+      WHERE site_id = $1 AND user_id = $2`, [siteId, userId]);
+  }
+
+  async clearCommandsDenied(siteId: string, userId: string): Promise<void> {
+    await pool.query(`UPDATE "SiteMember" SET commands_denied_at = NULL
+      WHERE site_id = $1 AND user_id = $2`, [siteId, userId]);
+  }
+  async getStartClaimKey(siteId: string): Promise<string> {
+    const { rows } = await pool.query<{ claim_key: string }>(`
+      SELECT COALESCE(tesla_hardware_id, 'site:' || id) AS claim_key
+      FROM "Site" WHERE id = $1
+    `, [siteId]);
+    if (!rows[0]) throw new Error('Site not found');
+    return rows[0].claim_key;
+  }
+
+  async claimStart(key: string, owner: string): Promise<boolean> {
+    const result = await pool.query(`
+      INSERT INTO "BatteryHoldStartClaim" (claim_key, owner, expires_at)
+      VALUES ($1, $2::uuid, clock_timestamp() + $3::int * interval '1 millisecond')
+      ON CONFLICT (claim_key) DO UPDATE
+      SET owner = EXCLUDED.owner, expires_at = EXCLUDED.expires_at
+      WHERE "BatteryHoldStartClaim".expires_at <= clock_timestamp()
+    `, [key, owner, START_LEASE_MS]);
+    return result.rowCount === 1;
+  }
+
+  /** Extend a live lease; false if it lapsed or another start owns it now. */
+  async renewStart(key: string, owner: string): Promise<boolean> {
+    const result = await pool.query(`
+      UPDATE "BatteryHoldStartClaim"
+      SET expires_at = clock_timestamp() + $3::int * interval '1 millisecond'
+      WHERE claim_key = $1 AND owner = $2::uuid AND expires_at > clock_timestamp()
+    `, [key, owner, START_LEASE_MS]);
+    return result.rowCount === 1;
+  }
+
+  async releaseStart(key: string, owner: string): Promise<void> {
+    await pool.query(`DELETE FROM "BatteryHoldStartClaim"
+      WHERE claim_key = $1 AND owner = $2::uuid`, [key, owner]);
+  }
+
+  async getActiveHoldForClaim(key: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT h.* FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      WHERE COALESCE(s.tesla_hardware_id, 'site:' || s.id) = $1
+        AND h.status = 'active'
+      ORDER BY h.created_at DESC LIMIT 1
+    `, [key]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
+  async getLatestRestoredHoldForClaim(key: string): Promise<BatteryHold | null> {
+    const { rows } = await pool.query(`
+      SELECT h.* FROM "BatteryHold" h
+      JOIN "Site" s ON s.id = h.site_id
+      WHERE COALESCE(s.tesla_hardware_id, 'site:' || s.id) = $1
+        AND h.status = 'restored' AND h.restored_at IS NOT NULL
+      ORDER BY h.restored_at DESC, h.id DESC LIMIT 1
+    `, [key]);
+    return rows.length ? mapRow(rows[0]) : null;
+  }
+
+  /** Retire only an expired hold whose Powerwall has no usable member grant. */
+  async retireUnrestorableHold(id: number): Promise<boolean> {
+    const result = await pool.query(`
+      UPDATE "BatteryHold" h
+      SET status = 'cancelled', restore_reason = 'no_usable_members', restored_at = clock_timestamp()
+      WHERE h.id = $1 AND h.status = 'active'
+        AND h.safety_expires_at <= clock_timestamp()
+        AND (h.processing_expires_at IS NULL OR h.processing_expires_at <= clock_timestamp())
+        AND NOT EXISTS (
+          SELECT 1 FROM "SiteMember" m JOIN "User" u ON u.id = m.user_id
+          WHERE m.site_id = h.site_id AND u.is_active = true
+            AND u.refresh_token IS NOT NULL
+            AND u.auth_status IS DISTINCT FROM 'revoked'
+            AND u.tesla_refresh_state IS DISTINCT FROM 'uncertain'
+            AND u.tesla_refresh_state IS DISTINCT FROM 'reconnect_required'
+        )
+    `, [id]);
+    return result.rowCount === 1;
+  }
+
   async clearRestoreAttempt(id: number, owner: string): Promise<boolean> {
     const result = await pool.query(`UPDATE "BatteryHold" SET restore_attempted_at = NULL, restore_reason = NULL
       WHERE id = $1 AND status = 'active' AND processing_owner = $2::uuid
@@ -99,6 +207,7 @@ export class BatteryHoldRepo {
     siteId: string; originalReserve: number; targetReserve: number;
     parkedSoc: number; baselineLoadW: number; safetyExpiresAt: Date;
     mode?: 'auto' | 'timer';
+    startedByUserId?: string;
   }): Promise<BatteryHold> {
     // Share the activity registration lock, before allocating/inserting a new
     // hold. The CTE keeps the site lock until this statement commits.
@@ -107,13 +216,13 @@ export class BatteryHoldRepo {
         SELECT id FROM "Site" WHERE id = $1 FOR NO KEY UPDATE
       )
       INSERT INTO "BatteryHold"
-        (site_id, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at, mode)
-      SELECT id, $2, $3, $4, $5, $6, $7 FROM locked_site
+        (site_id, original_reserve, target_reserve, parked_soc, baseline_load_w, safety_expires_at, mode, started_by_user_id)
+      SELECT id, $2, $3, $4, $5, $6, $7, $8 FROM locked_site
       RETURNING *
     `, [
       params.siteId, params.originalReserve, params.targetReserve,
       params.parkedSoc, params.baselineLoadW, params.safetyExpiresAt,
-      params.mode ?? 'auto',
+      params.mode ?? 'auto', params.startedByUserId ?? null,
     ]);
     return mapRow(rows[0]);
   }

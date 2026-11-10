@@ -57,6 +57,9 @@
         ) async throws -> MobileSolarHistoryResponse {
             .enabled(timeZone: .gmt, days: [], nextFrom: nil)
         }
+        func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
+            MobileBillingDay(billingDay: day, billingDayConfirmed: true)
+        }
         func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
         func logout() async throws {}
         func clearSiteAuthCookie() async {}

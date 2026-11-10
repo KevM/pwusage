@@ -29,6 +29,12 @@ BEGIN
         EXECUTE 'UPDATE public."User" SET access_token = NULL, refresh_token = NULL, auth_status = ''revoked''
             WHERE access_token IS NOT NULL OR refresh_token IS NOT NULL';
     END IF;
+    -- The refresh-token fingerprint (added after prod's first copies) describes the
+    -- token just cleared; leaving it would pair a NULL token with a fingerprint.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'User' AND column_name = 'refresh_token_fp') THEN
+        EXECUTE 'UPDATE public."User" SET refresh_token_fp = NULL WHERE refresh_token_fp IS NOT NULL';
+    END IF;
     -- Match the refresh state once prod has it: the migration that derives it
     -- from auth_status will not re-run on later copies, and a copy can catch
     -- prod mid-refresh.

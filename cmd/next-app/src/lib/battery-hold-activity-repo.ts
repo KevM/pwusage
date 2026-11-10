@@ -1,5 +1,12 @@
 import { pool } from './db';
 import { withIoDeadline } from './io-deadline';
+import { siteMembershipEnabled } from './site-membership-flag';
+
+function siteAccessPredicate(): string {
+  return siteMembershipEnabled()
+    ? 'EXISTS (SELECT 1 FROM "SiteMember" m WHERE m.site_id = s.id AND m.user_id = u.id)'
+    : 's.user_id = u.id';
+}
 
 export const APNS_ENVIRONMENTS = ['sandbox', 'production'] as const;
 export type ApnsEnvironment = typeof APNS_ENVIRONMENTS[number];
@@ -60,7 +67,7 @@ export class BatteryHoldActivityRepo {
   async userCanAccessSite(userId: string, siteId: string): Promise<boolean> {
     const { rows } = await pool.query(`SELECT 1 FROM "User" u JOIN "Site" s ON s.id = $2
       WHERE u.id = $1 AND u.is_active = true
-        AND (s.user_id = u.id OR 'admin' = ANY(COALESCE(u.roles, '{}')))`, [userId, siteId]);
+        AND (${siteAccessPredicate()} OR 'admin' = ANY(COALESCE(u.roles, '{}')))`, [userId, siteId]);
     return rows.length === 1;
   }
 
@@ -182,7 +189,7 @@ export class BatteryHoldActivityRepo {
           AND a.apns_environment = ANY($1::text[])
           AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= now())
           AND (a.claim_expires_at IS NULL OR a.claim_expires_at <= now())
-          AND u.is_active = true AND (s.user_id = u.id OR 'admin' = ANY(COALESCE(u.roles, '{}')))
+          AND u.is_active = true AND (${siteAccessPredicate()} OR 'admin' = ANY(COALESCE(u.roles, '{}')))
         ORDER BY (a.desired_snapshot->>'status' = 'active'), a.next_attempt_at NULLS FIRST, a.id
         LIMIT $2
         FOR UPDATE OF a SKIP LOCKED)

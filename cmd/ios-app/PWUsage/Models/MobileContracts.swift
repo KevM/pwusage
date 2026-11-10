@@ -4,6 +4,33 @@ struct MobileSite: Codable, Equatable, Identifiable {
     let id: String
     let name: String
     let utility: String
+    /// Day of the month the utility bill starts.
+    let billingDay: Int
+    /// False while the day is still the server default and nobody has chosen it. A server that
+    /// predates the field decodes as confirmed, so the app never asks for something it cannot save.
+    let billingDayConfirmed: Bool
+
+    init(id: String, name: String, utility: String, billingDay: Int = 1, billingDayConfirmed: Bool = true) {
+        self.id = id
+        self.name = name
+        self.utility = utility
+        self.billingDay = billingDay
+        self.billingDayConfirmed = billingDayConfirmed
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        utility = try container.decode(String.self, forKey: .utility)
+        billingDay = try container.decodeIfPresent(Int.self, forKey: .billingDay) ?? 1
+        billingDayConfirmed = try container.decodeIfPresent(Bool.self, forKey: .billingDayConfirmed) ?? true
+    }
+
+    /// The same site once a person has chosen `day`.
+    func settingBillingDay(_ day: Int) -> MobileSite {
+        MobileSite(id: id, name: name, utility: utility, billingDay: day, billingDayConfirmed: true)
+    }
 }
 
 struct MobileBillResponse: Codable, Equatable {

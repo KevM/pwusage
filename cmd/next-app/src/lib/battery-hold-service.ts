@@ -1,14 +1,19 @@
-import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
+import { isTeslaConnectionRequired, TeslaRefreshError, TeslaRefreshBackoffError } from './tesla-refresh-outcome';
 import { randomUUID } from 'node:crypto';
 import { withIoDeadline, checkIoDeadline, abortable } from './io-deadline';
 import { TeslaClient, TeslaAuthError, isTeslaAuthError } from './tesla-client';
-import { BatteryHoldRepo } from './battery-hold-repo';
-import { createTeslaClientForSite } from './tesla-client-factory';
+import { BatteryHoldRepo, START_LEASE_MS } from './battery-hold-repo';
+export { START_LEASE_MS };
+import { createTeslaClientForSite, createTeslaClientForSiteMember } from './tesla-client-factory';
+import { siteMembershipEnabled } from './site-membership-flag';
 import type { BatteryHold } from './db';
 import { seedHoldMonitoring } from './battery-hold-monitoring';
 import { reconcileBatteryHoldActivities } from './battery-hold-activity-repo';
+import { logEvent } from './observability';
 
 const START_RESERVE_SETTLE_MS = 60 * 1000;
+/** The Tesla command must give up well inside the start lease renewed just before it. */
+export const START_COMMAND_DEADLINE_MS = 60 * 1000;
 export const SAFETY_HOLD_MS = 8 * 60 * 60 * 1000; // 8h backstop
 
 import { computeTargetReserve, planReserve } from './battery-hold-rules';
@@ -24,17 +29,49 @@ export type ParkResult =
   | { status: 'reserve_sync_pending' }
   | { status: 'needs_choice'; options: [80, 100] }
   | { status: 'needs_reauth' }
+  | { status: 'commands_denied' }
   | { status: 'error'; message: string };
 
 export interface ParkDeps {
   client: TeslaClient; repo: BatteryHoldRepo; siteId: string; now?: Date;
+  userId?: string;
   mode?: 'auto' | 'timer';
   durationHours?: number;
   reserveChoice?: 80 | 100;
 }
 
 export async function parkBattery(
-  { client, repo, siteId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
+  deps: ParkDeps,
+): Promise<ParkResult> {
+  const { repo, siteId } = deps;
+  const claimKey = await repo.getStartClaimKey(siteId);
+  const owner = randomUUID();
+  if (!await repo.claimStart(claimKey, owner)) {
+    return { status: 'error', message: 'Battery Saver is already updating.' };
+  }
+  try {
+    // Duplicate site rows can each carry an active hold, and the lookup returns
+    // only the newest. Retire one at a time and look again, so a start never
+    // commands the Powerwall while another hold still controls it.
+    for (let existing = await repo.getActiveHoldForClaim(claimKey); existing;
+         existing = await repo.getActiveHoldForClaim(claimKey)) {
+      if (!await repo.retireUnrestorableHold(existing.id)) {
+        return existing.site_id === siteId
+          ? { status: 'already_active', hold: existing }
+          : { status: 'error', message: 'Battery Saver is already active on this Powerwall.' };
+      }
+      logEvent('warn', 'battery-hold.retired-no-usable-members', { siteId: existing.site_id });
+    }
+    return await parkBatteryWithClaim(deps, claimKey, owner);
+  } finally {
+    await repo.releaseStart(claimKey, owner);
+  }
+}
+
+async function parkBatteryWithClaim(
+  { client, repo, siteId, userId, now = new Date(), mode = 'auto', durationHours, reserveChoice }: ParkDeps,
+  claimKey: string,
+  owner: string,
 ): Promise<ParkResult> {
   if (mode === 'timer') {
     if (durationHours === undefined || durationHours === null || typeof durationHours !== 'number' || Number.isNaN(durationHours) || durationHours <= 0) {
@@ -42,15 +79,12 @@ export async function parkBattery(
     }
   }
 
-  const existing = await repo.getActiveHold(siteId);
-  if (existing) return { status: 'already_active', hold: existing };
-
   let live: { percentage_charged: number; load_power: number; timestamp: string };
   let info: { backup_reserve_percent: number };
   let lastRestored: BatteryHold | null;
   try {
     [live, info, lastRestored] = await Promise.all([
-      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHold(siteId),
+      client.getLiveStatus(siteId), client.getEnergySiteInfo(siteId), repo.getLatestRestoredHoldForClaim(claimKey),
     ]);
   } catch (e) {
     return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
@@ -91,12 +125,27 @@ export async function parkBattery(
     ? Math.round((durationHours ?? 0) * 60 * 60 * 1000)
     : SAFETY_HOLD_MS;
 
+  // Tesla rate-limit retries can outlast the lease taken at the start. Confirm we
+  // still own it (extending it) before commanding, and abandon the command before
+  // the renewed lease could lapse, so no second start can slip in alongside us.
+  if (!await repo.renewStart(claimKey, owner)) {
+    return { status: 'error', message: 'Battery Saver is already updating.' };
+  }
   try {
-    const resp = await client.setBackupReserve(siteId, target);
+    const resp = await withIoDeadline(START_COMMAND_DEADLINE_MS, () => client.setBackupReserve(siteId, target));
+    if (userId) {
+      try { await repo.clearCommandsDenied(siteId, userId); }
+      catch { console.warn(`[BatteryHold] Could not clear command denial for site ${siteId}`); }
+    }
     if (resp?.Message && /Max Backup Reserve/i.test(resp.Message)) {
       console.warn(`[BatteryHold] unexpected clamp for ${siteId}: sent ${target}, got "${resp.Message}"`);
     }
   } catch (e) {
+    if (e instanceof TeslaAuthError && e.status === 403 && userId) {
+      try { await repo.markCommandsDenied(siteId, userId); }
+      catch { console.warn(`[BatteryHold] Could not record command denial for site ${siteId}`); }
+      return { status: 'commands_denied' };
+    }
     return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) };
   }
   let hold: BatteryHold;
@@ -109,6 +158,7 @@ export async function parkBattery(
       baselineLoadW: loadPower,
       safetyExpiresAt: new Date(now.getTime() + holdMs),
       mode,
+      startedByUserId: userId,
     });
   } catch (dbError) {
     console.error(`[BatteryHold] Failed to write hold to database for site ${siteId}. Attempting compensating restore to ${originalReserve}%...`, dbError);
@@ -140,6 +190,7 @@ export type RestoreResult =
 
 export interface RestoreDeps {
   client: TeslaClient; repo: BatteryHoldRepo; siteId: string;
+  actorUserId?: string;
   reason: 'load_ended' | 'no_load_detected' | 'manual' | 'safety_timeout' | 'timer_elapsed';
   expectedHoldId?: number;
   leaseOwner?: string;
@@ -173,14 +224,41 @@ export async function restoreBattery(deps: RestoreDeps): Promise<RestoreResult> 
   return result;
 }
 
-async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHoldId, leaseOwner }: RestoreDeps): Promise<RestoreResult> {
+/** Failures that prove the command (or read) was never accepted: Tesla rejected the member's access,
+ * or their refresh was rejected/backed off/unavailable before or right after a 401. Unlike a timeout,
+ * these leave the outcome known, so another member can safely be tried. */
+function isNotAppliedFailure(e: unknown): boolean {
+  return (e instanceof TeslaAuthError && (e.status === 401 || e.status === 403))
+    || e instanceof TeslaRefreshError || e instanceof TeslaRefreshBackoffError || isTeslaConnectionRequired(e);
+}
+
+async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHoldId, leaseOwner, actorUserId }: RestoreDeps): Promise<RestoreResult> {
   const hold = await repo.getActiveHold(siteId);
   if (!hold || hold.id !== expectedHoldId || !leaseOwner || !await repo.ownsHold(hold.id, leaseOwner)) return { status: 'no_active_hold' };
   const isRecent = Date.now() - hold.created_at.getTime() < 5 * 60 * 1000;
+  /** Read the site's reserve through the connection client, then each candidate member, so one
+   * member's rejected, backed-off or removed grant doesn't end the restore before others are tried. */
+  async function readReserveWithFailover(): Promise<number> {
+    let firstError: unknown;
+    const makers: Array<() => Promise<TeslaClient | null>> = [async () => client];
+    if (shared) for (const id of candidates) if (id) makers.push(() => createTeslaClientForSiteMember(siteId, id));
+    for (const make of makers) {
+      try {
+        const readClient = await make();
+        if (readClient) return (await readClient.getEnergySiteInfo(siteId)).backup_reserve_percent;
+      } catch (e) {
+        firstError ??= e;
+        if (!isNotAppliedFailure(e)) throw e;
+      }
+    }
+    throw firstError ?? new Error('No usable Tesla client for this site.');
+  }
+  const shared = siteMembershipEnabled();
+  const candidates = shared ? await repo.getRestoreCandidates(hold.id, actorUserId) : [null];
   // Uncertain commands always reconcile via a read, including manual retries.
   if (hold.restore_attempted_at || (reason !== 'manual' && !isRecent)) {
     let current: number;
-    try { current = (await client.getEnergySiteInfo(siteId)).backup_reserve_percent; }
+    try { current = await readReserveWithFailover(); }
     catch (e) { return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: errMsg(e) }; }
     if (!Number.isInteger(current) || current < 0 || current > 100) return { status: 'error', message: 'Tesla did not return a valid backup reserve.' };
     if (current !== hold.target_reserve && current !== hold.original_reserve) {
@@ -197,24 +275,46 @@ async function restoreClaimedBattery({ client, repo, siteId, reason, expectedHol
       return { status: 'error', message: 'Previous restoration outcome is pending. Waiting before another command.' };
     }
   }
-  // Persist before sending: abort/transport failure is NOT proof no command ran.
-  // The owner/identity check must still win immediately before the external write.
-  if (!await repo.recordRestoreAttempt(hold.id, leaseOwner, reason)) return { status: 'error', message: 'Restoration is pending or the hold claim expired.' };
-  try {
-    checkIoDeadline();
-    await abortable(client.setBackupReserve(siteId, hold.original_reserve));
-  } catch (e) {
-    // Only an explicit authentication rejection proves this command was not
-    // applied. Message-based auth detection alone cannot establish that.
-    if (e instanceof TeslaAuthError && (e.status === 401 || e.status === 403)) {
-      try { await repo.clearRestoreAttempt(hold.id, leaseOwner); }
-      catch { console.warn(`[BatteryHold] Rejected attempt cleanup deferred for hold ${hold.id}`); }
+  for (const memberId of candidates) {
+    const commandClient = memberId ? await createTeslaClientForSiteMember(siteId, memberId) : client;
+    if (!commandClient) continue;
+    // Persist before sending: abort/transport failure is NOT proof no command ran.
+    if (!await repo.recordRestoreAttempt(hold.id, leaseOwner, reason)) return { status: 'error', message: 'Restoration is pending or the hold claim expired.' };
+    try {
+      checkIoDeadline();
+      await abortable(commandClient.setBackupReserve(siteId, hold.original_reserve));
+    } catch (e) {
+      if (isNotAppliedFailure(e)) {
+        // Only Tesla's own 401/403 is a command-permission denial; a refresh failure says nothing about it.
+        if (memberId && e instanceof TeslaAuthError) {
+          try { await repo.markCommandsDenied(siteId, memberId); }
+          catch { console.warn(`[BatteryHold] Could not record command denial for site ${siteId}`); }
+        }
+        try {
+          if (!await repo.clearRestoreAttempt(hold.id, leaseOwner)) {
+            return shared
+              ? { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' }
+              : { status: 'needs_reauth' };
+          }
+        } catch {
+          return shared
+            ? { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' }
+            : { status: 'needs_reauth' };
+        }
+        if (shared) continue;
+        return { status: 'needs_reauth' };
+      }
+      return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' };
     }
-    return (isTeslaAuthError(e) || isTeslaConnectionRequired(e)) ? { status: 'needs_reauth' } : { status: 'error', message: 'Restoration outcome is uncertain; the next check will reconcile it.' };
+    if (memberId) {
+      try { await repo.clearCommandsDenied(siteId, memberId); }
+      catch { console.warn(`[BatteryHold] Could not clear command denial for site ${siteId}`); }
+    }
+    checkIoDeadline();
+    if (!await repo.markRestored(hold.id, reason, leaseOwner)) return { status: 'error', message: 'Restoration acknowledgement could not be saved; the next check will reconcile it.' };
+    return { status: 'ok' };
   }
-  checkIoDeadline();
-  if (!await repo.markRestored(hold.id, reason, leaseOwner)) return { status: 'error', message: 'Restoration acknowledgement could not be saved; the next check will reconcile it.' };
-  return { status: 'ok' };
+  return { status: 'needs_reauth' };
 }
 
 /** Build a TeslaClient for a site (null if no usable tokens). Delegate to shared factory in tesla-client-factory. */

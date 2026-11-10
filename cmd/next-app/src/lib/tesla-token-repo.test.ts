@@ -1,11 +1,10 @@
 import { TeslaRefreshError, TeslaConnectionRequiredError, TeslaRefreshBackoffError } from './tesla-refresh-outcome';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { decryptToken, encryptToken, isEncryptedToken, tokenFingerprint } from './token-crypto';
 
-const { queryMock, refreshAccessTokenMock, userRepoUpdateTokensMock, userRepoUpdateUserStatusMock } = vi.hoisted(() => ({
+const { queryMock, refreshAccessTokenMock } = vi.hoisted(() => ({
     queryMock: vi.fn(),
     refreshAccessTokenMock: vi.fn(),
-    userRepoUpdateTokensMock: vi.fn(),
-    userRepoUpdateUserStatusMock: vi.fn(),
 }));
 
 vi.mock('./db', () => ({
@@ -17,43 +16,8 @@ vi.mock('./tesla-auth', async importOriginal => ({
     refreshAccessToken: refreshAccessTokenMock,
 }));
 
-vi.mock('./user-repo', () => ({
-    UserRepo: vi.fn(),
-}));
-
 import { TeslaTokenRepo } from './tesla-token-repo';
-import { SiteRepo } from './site-repo';
-import { UserRepo } from './user-repo';
 import { isTeslaAuthError } from './tesla-client';
-
-function makeSiteJoinRow(overrides: Record<string, unknown> = {}) {
-    return {
-        id: 'site-1',
-        user_id: 'user-1',
-        name: 'Home',
-        utility: null,
-        updated: new Date('2026-01-01T00:00:00Z'),
-        installed: new Date('2025-01-01T00:00:00Z'),
-        timezone: 'America/Chicago',
-        billing_start_day: 1,
-        timezone_display_mode: null,
-        tariff_id: null,
-        tariff_name: null,
-        tariff_updated: null,
-        tariff_site_id: null,
-        season_id: null,
-        season_name: null,
-        from_month: null, from_day: null,
-        to_month: null, to_day: null,
-        season_buy_rate: null, season_sell_rate: null,
-        schedule_id: null,
-        schedule_name: null,
-        schedule_buy_rate: null, schedule_sell_rate: null,
-        from_day_of_week: null, from_hour: null, from_minute: null,
-        to_day_of_week: null, to_hour: null, to_minute: null,
-        ...overrides,
-    };
-}
 
 describe('TeslaTokenRepo refresh wait', () => {
     let tokenRepo: TeslaTokenRepo;
@@ -61,7 +25,7 @@ describe('TeslaTokenRepo refresh wait', () => {
     beforeEach(() => {
         queryMock.mockReset();
         refreshAccessTokenMock.mockReset();
-        tokenRepo = new TeslaTokenRepo(new SiteRepo());
+        tokenRepo = new TeslaTokenRepo();
     });
 
     // The claim matches nothing, so the caller polls the account row.
@@ -76,6 +40,27 @@ describe('TeslaTokenRepo refresh wait', () => {
             .catch((error: unknown) => error);
         expect(error).toBeInstanceOf(TeslaConnectionRequiredError);
         expect(isTeslaAuthError(error)).toBe(false);
+    });
+
+    it('adopts a concurrent rotation read back encrypted', async () => {
+        const tokens = await unclaimed({
+            access_token: encryptToken('rotated-access', 'access_token', 'user-1'),
+            refresh_token: encryptToken('rotated-refresh', 'refresh_token', 'user-1'),
+            is_refreshing: 0, auth_status: 'active', tesla_refresh_state: 'ready',
+        });
+        expect(tokens).toEqual({ access_token: 'rotated-access', refresh_token: 'rotated-refresh' });
+    });
+
+    it('does not mistake the caller\'s own encrypted grant for a rotation', async () => {
+        // Same grant, different ciphertext/IV: must compare decrypted values.
+        queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+        queryMock.mockResolvedValue({ rows: [{
+            access_token: encryptToken('a', 'access_token', 'user-1'),
+            refresh_token: encryptToken('old-refresh', 'refresh_token', 'user-1'),
+            is_refreshing: 0, auth_status: 'active', tesla_refresh_state: 'ready', tesla_refresh_retry_after: String(Date.now() + 60_000),
+        }] });
+        await expect(tokenRepo.getLockedUserRefreshHandler('user-1').refreshHandler('old-refresh'))
+            .rejects.toBeInstanceOf(TeslaRefreshBackoffError);
     });
 
     it('returns new tokens when a concurrent refresh succeeded', async () => {
@@ -98,22 +83,16 @@ describe('TeslaTokenRepo refresh wait', () => {
     });
 });
 
-describe('getLockedRefreshHandler', () => {
-    let siteRepo: SiteRepo;
+describe('getLockedUserRefreshHandler', () => {
     let tokenRepo: TeslaTokenRepo;
 
     beforeEach(() => {
         queryMock.mockReset();
         refreshAccessTokenMock.mockReset();
-        siteRepo = new SiteRepo();
-        siteRepo.invalidateCache('site-1');
-        tokenRepo = new TeslaTokenRepo(siteRepo);
+        tokenRepo = new TeslaTokenRepo();
     });
 
     it('atomically revokes and releases lock on terminal failure so waiters cannot observe the unlocked-without-revoked state', async () => {
-        // getSite (for acquireRefreshLock; result is cached, so only one DB load for getSite)
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 });
-        queryMock.mockResolvedValueOnce({ rows: [] }); // tariff tree query
         // acquireRefreshLock UPDATE → lock acquired
         queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: 'old-token', refresh_token: 'old-refresh' }] });
         // atomic revoke+release UPDATE
@@ -122,7 +101,7 @@ describe('getLockedRefreshHandler', () => {
 
         refreshAccessTokenMock.mockRejectedValueOnce(new TeslaRefreshError('credential_rejected'));
 
-        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        const handlers = tokenRepo.getLockedUserRefreshHandler('user-1');
         await expect(handlers.refreshHandler('old-refresh')).rejects.toThrow();
 
         // Find the query that releases the lock (sets is_refreshing = 0 in SET clause, not WHERE).
@@ -143,8 +122,6 @@ describe('getLockedRefreshHandler', () => {
         // arrives after that refresh released the lock. It must not take the free
         // lock and send the same dead refresh token to Tesla again.
         const user = { is_refreshing: 0, auth_status: 'revoked' };
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 }); // getSite site scalars
-        queryMock.mockResolvedValueOnce({ rows: [] }); // getSite tariff tree
         queryMock.mockImplementation(async (sql: string) => {
             if (sql.includes('SET is_refreshing = 1')) {
                 const excludesRevoked = /auth_status IS DISTINCT FROM 'revoked'/.test(sql);
@@ -156,21 +133,18 @@ describe('getLockedRefreshHandler', () => {
             return { rowCount: 1 };
         });
 
-        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        const handlers = tokenRepo.getLockedUserRefreshHandler('user-1');
         await expect(handlers.refreshHandler('old-refresh')).rejects.toThrow('Reconnect Tesla');
         expect(refreshAccessTokenMock).not.toHaveBeenCalled();
     });
 
     it('releases lock normally on non-terminal (transient) failure', async () => {
-        // getSite cached after acquireRefreshLock's first call, so releaseRefreshLock hits cache
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 }); // getSite site scalars
-        queryMock.mockResolvedValueOnce({ rows: [] }); // getSite tariff tree
         queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: 'old-token', refresh_token: 'old-refresh' }] }); // claim snapshot
         queryMock.mockResolvedValueOnce({ rowCount: 1 }); // releaseRefreshLock UPDATE
 
         refreshAccessTokenMock.mockRejectedValueOnce(new Error('Network timeout'));
 
-        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        const handlers = tokenRepo.getLockedUserRefreshHandler('user-1');
         await expect(handlers.refreshHandler('old-refresh')).rejects.toThrow();
 
         const lockReleaseCall = queryMock.mock.calls.find(
@@ -185,61 +159,58 @@ describe('getLockedRefreshHandler', () => {
     });
 });
 
-describe('TeslaTokenRepo delegates User writes to UserRepo', () => {
-    let siteRepo: SiteRepo;
-    let userRepo: { updateTokens: typeof userRepoUpdateTokensMock; updateUserStatus: typeof userRepoUpdateUserStatusMock };
+describe('TeslaTokenRepo refresh persistence', () => {
     let tokenRepo: TeslaTokenRepo;
 
     beforeEach(() => {
         queryMock.mockReset();
-        userRepoUpdateTokensMock.mockReset();
-        userRepoUpdateUserStatusMock.mockReset();
-        siteRepo = new SiteRepo();
-        siteRepo.invalidateCache('site-1');
-        userRepo = { updateTokens: userRepoUpdateTokensMock, updateUserStatus: userRepoUpdateUserStatusMock };
-        tokenRepo = new TeslaTokenRepo(siteRepo, userRepo as unknown as UserRepo);
-    });
-
-    it('updateSiteTokens delegates to UserRepo.updateTokens', async () => {
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
-        queryMock.mockResolvedValueOnce({ rows: [] }); // tariff tree query
-
-        await tokenRepo.updateSiteTokens('site-1', 'new-access', 'new-refresh');
-
-        expect(userRepoUpdateTokensMock).toHaveBeenCalledWith('user-1', 'new-access', 'new-refresh');
+        tokenRepo = new TeslaTokenRepo();
     });
 
     it('refresh persists new tokens with credential and lease guards', async () => {
-        // getSite for acquireRefreshLock — site scalars, then tariff tree
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()], rowCount: 1 });
-        queryMock.mockResolvedValueOnce({ rows: [] });
-        // acquireRefreshLock UPDATE
         queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: 'old-token', refresh_token: 'old-refresh' }] });
         queryMock.mockResolvedValue({ rowCount: 1, rows: [] });
 
         refreshAccessTokenMock.mockResolvedValueOnce({ access_token: 'new-access', refresh_token: 'new-refresh' });
 
-        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
+        const handlers = tokenRepo.getLockedUserRefreshHandler('user-1');
         await handlers.refreshHandler('old-refresh');
 
         // Guarded by credential generation and attempt, not the lease clock:
         // Tesla already consumed the old grant, so a slow save must still land.
         const save = queryMock.mock.calls.find(([sql]) => String(sql).includes('SET access_token = $1'));
-        expect(save?.[0]).toContain('AND refresh_token = $4');
+        // The CAS compares the HMAC fingerprint (random-IV ciphertext never
+        // matches); the plaintext arm covers rows not yet backfilled.
+        expect(save?.[0]).toContain('refresh_token_fp = $7');
+        expect(save?.[0]).toContain('(refresh_token_fp = $4 OR (refresh_token_fp IS NULL AND refresh_token = $8))');
+        expect(save?.[0]).toContain('tesla_credential_generation = $5');
         expect(save?.[0]).toContain('tesla_refresh_attempt_id = $6');
         expect(save?.[0]).toContain('is_refreshing = 0, refresh_lock_expires = 0');
         expect(save?.[0]).not.toContain('refresh_lock_expires >');
-        expect(save?.[1]).toEqual(['new-access', 'new-refresh', 'user-1', 'old-refresh', undefined, expect.any(String)]);
+        const params = save?.[1] as string[];
+        expect(isEncryptedToken(params[0])).toBe(true);
+        expect(isEncryptedToken(params[1])).toBe(true);
+        expect(decryptToken(params[0], 'access_token', 'user-1')).toBe('new-access');
+        expect(decryptToken(params[1], 'refresh_token', 'user-1')).toBe('new-refresh');
+        expect(params[2]).toBe('user-1');
+        expect(params[3]).toBe(tokenFingerprint('old-refresh'));
+        expect(params.slice(4, 6)).toEqual([undefined, expect.any(String)]);
+        expect(params[6]).toBe(tokenFingerprint('new-refresh'));
+        expect(params[7]).toBe('old-refresh');
     });
 
-    it('errorHandler does not revoke a login that completed after the refresh lease was released', async () => {
-        // getSite for errorHandler — site scalars, then tariff tree
-        queryMock.mockResolvedValueOnce({ rows: [makeSiteJoinRow()] });
-        queryMock.mockResolvedValueOnce({ rows: [] });
+    it('claims the grant by fingerprint, not by ciphertext', async () => {
+        queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ access_token: encryptToken('old-token', 'access_token', 'user-1'), refresh_token: encryptToken('old-refresh', 'refresh_token', 'user-1') }] });
+        queryMock.mockResolvedValue({ rowCount: 1, rows: [] });
+        refreshAccessTokenMock.mockResolvedValueOnce({ access_token: 'new-access', refresh_token: 'new-refresh' });
 
-        const handlers = tokenRepo.getLockedRefreshHandler('site-1');
-        await handlers.errorHandler();
+        await tokenRepo.getLockedUserRefreshHandler('user-1').refreshHandler('old-refresh');
 
-        expect(userRepoUpdateUserStatusMock).not.toHaveBeenCalled();
+        const claim = queryMock.mock.calls.find(([sql]) => String(sql).includes('SET is_refreshing = 1'));
+        expect(claim?.[0]).toContain('(refresh_token_fp = $5 OR (refresh_token_fp IS NULL AND refresh_token = $6))');
+        expect(claim?.[1].slice(4)).toEqual([tokenFingerprint('old-refresh'), 'old-refresh']);
+        // The grant sent to Tesla is the decrypted one from the claimed row.
+        expect(refreshAccessTokenMock).toHaveBeenCalledWith('old-refresh', expect.anything());
     });
+
 });

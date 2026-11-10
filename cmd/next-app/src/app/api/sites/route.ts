@@ -67,7 +67,9 @@ export async function GET(request: Request) {
         const result = sites.map(s => ({
             id: s.id,
             name: s.name,
-            utility: s.utility ?? 'Unknown Utility'
+            utility: s.utility ?? 'Unknown Utility',
+            billingDay: s.billing_start_day || 1,
+            billingDayConfirmed: s.billing_start_day_confirmed_at != null
         }));
 
         return NextResponse.json(result);

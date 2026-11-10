@@ -38,8 +38,8 @@ export type { RefreshedTokens };
  * Narrow the token endpoint's JSON body to the two fields the caller needs.
  *
  * `Response.json()` is typed `any`, so returning it directly would leak that
- * `any` through a declared return type and let a malformed 200 reach
- * `updateSiteTokens` as `undefined`. This takes `unknown` instead, which erases
+ * `any` through a declared return type and let a malformed 200 reach token
+ * persistence as `undefined`. This takes `unknown` instead, which erases
  * the `any` at the boundary. Empty strings are rejected for the same reason: an
  * empty token passes a `typeof` check but is just as unusable, and would be
  * written to the DB as the user's credentials.

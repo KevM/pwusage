@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
+import { getCurrentCycleStart, getNextCycleStart, parseBillingDay } from './billing-cycle';
 import { getSiteLocalDate, addMonthsInSiteTimezone } from './date-utils';
 
 describe('getCurrentCycleStart — UTC site', () => {
@@ -252,3 +252,17 @@ describe('getNextCycleStart', () => {
     });
 });
 
+
+describe('parseBillingDay', () => {
+    it('accepts integers 1 through 31, as numbers or digit strings', () => {
+        expect(parseBillingDay(1)).toBe(1);
+        expect(parseBillingDay(31)).toBe(31);
+        expect(parseBillingDay('15')).toBe(15);
+    });
+
+    it('rejects everything else', () => {
+        for (const bad of [0, 32, -1, 1.5, NaN, '', 'abc', '1.5', '0', '32', null, undefined, {}, [], true]) {
+            expect(parseBillingDay(bad)).toBeNull();
+        }
+    });
+});
