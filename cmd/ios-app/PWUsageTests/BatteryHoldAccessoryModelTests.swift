@@ -36,8 +36,8 @@ struct BatteryHoldAccessoryModelTests {
     func fullDetails() throws {
         let model = try #require(BatteryHoldAccessoryModel(
             state: state(monitoring: monitoring(sampledAt: now.addingTimeInterval(-60))), now: now))
-        #expect(model.title == "Battery Saver on · held at 80%")
-        #expect(model.detail == "Home 1.8 kW · detects a job at 2.2 kW")
+        #expect(model.title == "Battery Saver · 80%")
+        #expect(model.detail == "Home 1.8 kW · job at 2.2 kW")
     }
 
     @Test("Appears only for a current, active hold")
@@ -50,7 +50,7 @@ struct BatteryHoldAccessoryModelTests {
     @Test("Without a reading it still says the hold level and omits the numbers")
     func noReading() throws {
         let model = try #require(BatteryHoldAccessoryModel(state: state(), now: now))
-        #expect(model.title == "Battery Saver on · held at 80%")
+        #expect(model.title == "Battery Saver · 80%")
         #expect(model.detail == nil)
     }
 
@@ -73,6 +73,6 @@ struct BatteryHoldAccessoryModelTests {
         let reading = monitoring(sampledAt: now.addingTimeInterval(-60))
         let model = try #require(BatteryHoldAccessoryModel(state: state(monitoring: reading), now: now))
         #expect(model.accessibilityLabel == "Battery Saver on, held at 80%. "
-            + "Home 1.8 kW · detects a job at 2.2 kW. Open Battery Saver.")
+            + "Home 1.8 kW. A job is detected at 2.2 kW. Open Battery Saver.")
     }
 }

@@ -11,27 +11,26 @@ struct BatteryHoldAccessoryModel: Equatable {
 
     let title: String
     let detail: String?
-
-    var accessibilityLabel: String {
-        let spoken = title.replacingOccurrences(of: " · held", with: ", held")
-        return [spoken + ".", detail.map { $0 + "." }, "Open Battery Saver."].compactMap(\.self).joined(separator: " ")
-    }
+    let accessibilityLabel: String
 
     init?(state: BatteryHoldState, now: Date) {
         guard state.statusIsCurrent(at: now), let hold = state.response?.hold else { return nil }
-        title = "Battery Saver on · held at \(hold.targetReserve)%"
-        detail = Self.detail(hold, now: now)
-    }
-
-    private static func detail(_ hold: BatteryHold, now: Date) -> String? {
-        guard let monitoring = hold.monitoring,
-              let sampledAt = monitoring.sampledAt, now.timeIntervalSince(sampledAt) <= readingLifetime,
-              let home = monitoring.homeLoadW, home.isFinite, home >= 0 else { return nil }
-        var parts = ["Home \(kilowatts(home))"]
-        if hold.mode == .auto, let baseline = monitoring.baselineLoadW, baseline.isFinite, baseline >= 0 {
-            parts.append("detects a job at \(kilowatts(baseline + detectionRiseW))")
+        title = "Battery Saver · \(hold.targetReserve)%"
+        var spoken = ["Battery Saver on, held at \(hold.targetReserve)%."]
+        var parts: [String] = []
+        if let monitoring = hold.monitoring,
+           let sampledAt = monitoring.sampledAt, now.timeIntervalSince(sampledAt) <= Self.readingLifetime,
+           let home = monitoring.homeLoadW, home.isFinite, home >= 0 {
+            parts.append("Home \(Self.kilowatts(home))")
+            spoken.append("Home \(Self.kilowatts(home)).")
+            if hold.mode == .auto, let baseline = monitoring.baselineLoadW, baseline.isFinite, baseline >= 0 {
+                let level = Self.kilowatts(baseline + Self.detectionRiseW)
+                parts.append("job at \(level)")
+                spoken.append("A job is detected at \(level).")
+            }
         }
-        return parts.joined(separator: " · ")
+        detail = parts.isEmpty ? nil : parts.joined(separator: " · ")
+        accessibilityLabel = (spoken + ["Open Battery Saver."]).joined(separator: " ")
     }
 
     private static func kilowatts(_ watts: Double) -> String {
