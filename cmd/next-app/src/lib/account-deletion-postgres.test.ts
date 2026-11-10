@@ -224,6 +224,45 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       expect(await countFor('SiteMember', 'site_id', 'site-everyone-hold')).toBe(2);
     });
 
+    it('re-evaluates remaining members after waiting on a concurrent member deletion, and keeps the active hold guard', async () => {
+      const db = local.database;
+      await seedAccount('race-a', 'site-race');
+      await db.query('INSERT INTO "User" (id, refresh_token, auth_status) VALUES (\'race-b\', \'rt-race-b\', \'active\')');
+      await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES (\'site-race\', \'race-b\', \'tesla-race-b\')');
+      await insertActiveHold('site-race', 'race-b');
+
+      // Play member A's deletion by hand: lock the site and remove A, but do not commit yet.
+      const first = await db.connect();
+      try {
+        await first.query('BEGIN');
+        await first.query('SELECT id FROM "Site" WHERE id = \'site-race\' FOR UPDATE');
+        await first.query('DELETE FROM "SiteMember" WHERE user_id = \'race-a\'');
+        await first.query('DELETE FROM "User" WHERE id = \'race-a\'');
+
+        // B's deletion starts while A is in flight and must block on the site lock.
+        const second = new AccountDeletionRepo().deleteAccount('race-b');
+        const settled = second.then(() => 'resolved', () => 'rejected');
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          const waiting = await db.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`);
+          if (waiting.rows.length > 0) break;
+          if (Date.now() > deadline) throw new Error('second deletion never waited on the site lock');
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+
+        await first.query('COMMIT');
+        // A's committed deletion leaves B as the last usable member, so the hold blocks B.
+        await expect(second).rejects.toBeInstanceOf(ActiveBatterySaverError);
+        expect(await settled).toBe('rejected');
+      } finally {
+        first.release();
+      }
+
+      expect(await countFor('User', 'id', 'race-b')).toBe(1);
+      expect(await countFor('Site', 'id', 'site-race')).toBe(1);
+      expect(await countFor('BatteryHold', 'site_id', 'site-race')).toBe(1);
+    });
+
     it('finishes without error when the account is already gone', async () => {
       await expect(new AccountDeletionRepo().deleteAccount('missing')).resolves.toEqual({
         deletedSiteIds: [],
