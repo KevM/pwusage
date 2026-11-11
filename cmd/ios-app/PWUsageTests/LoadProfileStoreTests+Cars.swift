@@ -150,3 +150,18 @@ extension LoadProfileStoreTests {
         subscription.cancel()
     }
 }
+
+extension LoadProfileStoreTests {
+    @Test("A car that is already at its target can still be added")
+    @MainActor
+    func createsACarAlreadyAtItsTarget() throws {
+        let fixture = ProfileStoreFixture()
+        let full = CarLoadSettings(capacityKwh: 75, initialStateOfCharge: 100,
+                                   targetStateOfCharge: 100, chargingLevel: .level2)
+        let created = try fixture.store.createCarProfile(name: "Model Y", settings: full)
+        #expect(created.carSettings == full)
+        #expect(created.energyKwh > 0)
+        #expect(created.durationHours > 0)
+        #expect(LoadProfileStore(userDefaults: fixture.defaults).profile(id: created.id)?.carSettings == full)
+    }
+}

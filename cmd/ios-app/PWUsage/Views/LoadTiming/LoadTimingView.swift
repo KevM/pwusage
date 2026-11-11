@@ -207,7 +207,9 @@ struct LoadTimingView: View {
                     .onDisappear { barRecommendation = nil }
                 jobRows(hint: state.hint)
             case .blocked(let message):
-                if let profile = selectedProfile {
+                // A car at its target is "blocked" (nothing to charge); its charge must stay editable.
+                carSummaryRow
+                if let profile = selectedProfile, LoadTimingPresentation.carSummary(profile) == nil {
                     Text(profile.name)
                         .font(.title3.weight(.bold))
                         .fixedSize(horizontal: false, vertical: true)

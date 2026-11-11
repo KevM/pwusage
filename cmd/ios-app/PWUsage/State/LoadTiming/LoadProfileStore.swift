@@ -84,8 +84,9 @@ final class LoadProfileStore: ObservableObject {
             id: UUID().uuidString,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             kind: .car,
-            energyKwh: estimate.batteryKwh,
-            durationHours: estimate.durationHours,
+            // A car already at its target adds no energy; the stored fields only need to stay valid.
+            energyKwh: estimate.batteryKwh > 0 ? estimate.batteryKwh : Defaults.carEnergyKwh,
+            durationHours: estimate.batteryKwh > 0 ? estimate.durationHours : Defaults.carDurationHours,
             carSettings: settings
         )
         try Self.validate(profile)
