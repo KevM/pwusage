@@ -21,6 +21,12 @@ struct LoadProfilesSheet: View {
                         store.moveProfiles(fromOffsets: offsets, toOffset: destination)
                     }
                     Button {
+                        draft = ProfileDraft.newCar()
+                    } label: {
+                        Label("Add a Car", systemImage: "car.fill")
+                    }
+                    .accessibilityHint("Creates a car with its own battery size and charge settings")
+                    Button {
                         draft = ProfileDraft.newCustom()
                     } label: {
                         Label("Add a Custom Job", systemImage: "plus.circle.fill")
@@ -110,6 +116,7 @@ struct LoadProfilesSheet: View {
 
             Menu {
                 Button("Edit") { draft = ProfileDraft(profile: profile) }
+                Button("Duplicate") { duplicate(profile) }
                 Button("Delete", role: .destructive) { pendingDeletion = profile }
             } label: {
                 Image(systemName: "ellipsis")
@@ -123,9 +130,8 @@ struct LoadProfilesSheet: View {
 
     func save(_ draft: ProfileDraft) {
         guard draft.isValid else {
-            validationMessage = draft.kind == .custom
-                && draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Enter a name for this custom job."
+            validationMessage = draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Enter a name for this job."
                 : "Energy and duration must be greater than zero. Check the car charge settings too."
             return
         }
@@ -134,17 +140,27 @@ struct LoadProfilesSheet: View {
             if let id = draft.id {
                 saved = try store.editProfile(
                     id: id,
-                    name: draft.kind == .custom ? draft.name : nil,
+                    name: draft.name,
                     energyKwh: draft.energyKwh,
                     durationHours: draft.durationHours,
                     carSettings: draft.carSettings
                 )
+            } else if draft.kind == .car, let settings = draft.carSettings {
+                saved = try store.createCarProfile(name: draft.name, settings: settings)
             } else {
                 saved = try store.createCustomProfile(name: draft.name, energyKwh: draft.energyKwh,
                                                       durationHours: draft.durationHours)
             }
             try store.selectProfile(id: saved.id)
             self.draft = nil
+        } catch {
+            validationMessage = message(for: error)
+        }
+    }
+
+    func duplicate(_ profile: LoadProfile) {
+        do {
+            try store.duplicateProfile(id: profile.id)
         } catch {
             validationMessage = message(for: error)
         }

@@ -8,10 +8,10 @@ struct ProfileDraft: Identifiable, Equatable {
     var durationHours: Double
     var carSettings: CarLoadSettings?
 
-    var sheetID: String { id ?? "new-custom" }
+    var sheetID: String { id ?? (kind == .car ? "new-car" : "new-custom") }
     var isValid: Bool {
         energyKwh.isFinite && energyKwh > 0 && durationHours.isFinite && durationHours > 0 &&
-            (kind != .custom || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
+            !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             (kind != .car || carSettings.map {
                 $0.capacityKwh.isFinite && $0.capacityKwh > 0 && $0.capacityKwh <= LoadProfile.maximumCarCapacityKwh &&
                     (0 ... 100).contains($0.initialStateOfCharge) &&
@@ -38,6 +38,20 @@ struct ProfileDraft: Identifiable, Equatable {
     }
 
     static func newCustom() -> ProfileDraft { ProfileDraft() }
+
+    static func newCar() -> ProfileDraft {
+        var draft = ProfileDraft()
+        draft.name = "Car"
+        draft.kind = .car
+        draft.energyKwh = LoadProfileStore.Defaults.carEnergyKwh
+        draft.durationHours = LoadProfileStore.Defaults.carDurationHours
+        draft.carSettings = CarLoadSettings(
+            capacityKwh: LoadProfileStore.Defaults.carCapacityKwh,
+            initialStateOfCharge: LoadProfileStore.Defaults.carInitialSOC,
+            targetStateOfCharge: LoadProfileStore.Defaults.carTargetSOC,
+            chargingLevel: LoadProfileStore.Defaults.carLevel)
+        return draft
+    }
 
     /// Whether closing the editor now would lose something the person typed.
     /// A value edited and put back is not a change, so the editor stays one
