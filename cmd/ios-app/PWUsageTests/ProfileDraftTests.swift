@@ -81,4 +81,47 @@ struct ProfileDraftTests {
         renamed.name = "Leaf"
         #expect(renamed.hasUnsavedChanges(from: original))
     }
+
+    @Test("Picking a size resets energy and hours to that size's defaults")
+    func applyingASizeResetsEnergyAndHours() {
+        let large = ProfileDraft.newCustom().applying(size: .large)
+        #expect(large.size == .large)
+        #expect(large.energyKwh == 20)
+        #expect(large.durationHours == 4)
+        let medium = large.applying(size: .medium)
+        #expect(medium.energyKwh == 6)
+        #expect(medium.durationHours == 2)
+    }
+
+    @Test("Stepping energy or hours never changes the size")
+    func steppingEnergyNeverChangesSize() {
+        var draft = ProfileDraft.newCustom()
+        draft.energyKwh = 9
+        draft.durationHours = 3.5
+        #expect(draft.size == .medium)
+    }
+
+    @Test("The energy step follows the size")
+    func stepFollowsSize() {
+        let draft = ProfileDraft.newCustom()
+        #expect(draft.applying(size: .small).energyStepKwh == 0.5)
+        #expect(draft.applying(size: .medium).energyStepKwh == 1)
+        #expect(draft.applying(size: .large).energyStepKwh == 5)
+        #expect(ProfileDraft(profile: washer).energyStepKwh == 0.5)
+    }
+
+    @Test("Changing the size is an unsaved change")
+    func changingSizeIsAnUnsavedChange() {
+        let original = ProfileDraft.newCustom()
+        #expect(original.applying(size: .large).hasUnsavedChanges(from: original))
+    }
+
+    @Test("Editing a saved job keeps its size and verb in the draft")
+    func draftCarriesSizeAndVerb() {
+        let tub = LoadProfile(id: "tub", name: "Hot tub", kind: .custom, energyKwh: 20, durationHours: 4,
+                              carSettings: nil, size: .large, actionVerb: "Heat")
+        let draft = ProfileDraft(profile: tub)
+        #expect(draft.size == .large)
+        #expect(draft.actionVerb == "Heat")
+    }
 }

@@ -59,6 +59,18 @@ struct ProfileDraft: Identifiable, Equatable {
                 targetStateOfCharge: defaults.carTargetSOC, chargingLevel: defaults.carLevel))
     }
 
+    /// Picking a size starts from that size's usual energy and hours; stepping either afterwards leaves it alone.
+    func applying(size: JobSize) -> ProfileDraft {
+        var resized = self
+        resized.size = size
+        resized.energyKwh = size.defaultEnergyKwh
+        resized.durationHours = size.defaultDurationHours
+        return resized
+    }
+
+    /// How far the Energy stepper moves: bigger sizes take bigger steps.
+    var energyStepKwh: Double { size?.energyStepKwh ?? 0.5 }
+
     var newProfile: NewProfile {
         NewProfile(name: name, kind: kind, energyKwh: energyKwh, durationHours: durationHours,
                    carSettings: carSettings, size: size, actionVerb: actionVerb)

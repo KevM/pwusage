@@ -56,12 +56,7 @@ struct ProfileEditorSheet: View {
                 }
 
                 if draft.kind != .car {
-                    Section("Job Estimate") {
-                        decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: 0.5, unit: "kWh")
-                        decimalStepper(
-                            "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5,
-                            unit: "hours")
-                    }
+                    estimateSections
                 } else {
                     Section {
                         Text(carEstimateSummary)
@@ -128,6 +123,32 @@ struct ProfileEditorSheet: View {
                 settings[keyPath: keyPath] = newValue
                 draft.carSettings = settings
             }
+        )
+    }
+
+    @ViewBuilder
+    var estimateSections: some View {
+        if draft.kind == .custom, draft.size != nil {
+            Section("Size") {
+                Picker("Size", selection: sizeBinding) {
+                    ForEach(JobSize.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Job size")
+            }
+        }
+        Section("Job Estimate") {
+            decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: draft.energyStepKwh,
+                           unit: "kWh")
+            decimalStepper(
+                "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5, unit: "hours")
+        }
+    }
+
+    var sizeBinding: Binding<JobSize> {
+        Binding(
+            get: { draft.size ?? .medium },
+            set: { draft = draft.applying(size: $0) }
         )
     }
 
