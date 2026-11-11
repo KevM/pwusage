@@ -58,8 +58,8 @@ ALTER TABLE "Tariff"
 
 - Existing rows default to `source = 'tesla'` and `created_by_user_id = NULL`.
 - All new `source = 'manual'` rows record `created_by_user_id = actingUserId` (while `source = 'tesla'` system syncs leave `created_by_user_id = NULL`). Using `ON DELETE SET NULL` matches [`20261109135834_add_site_member.sql`](../../../cmd/next-app/db-migrations/20261109135834_add_site_member.sql) and [`20261110084828_user_account_deletion_cascades.sql`](../../../cmd/next-app/db-migrations/20261110084828_user_account_deletion_cascades.sql) so shared sites keep their rate history if a member deletes their account.
-- Existing unique index `tariff_site_name_version_uidx (site_id, name, version)` and partial unique index `tariff_current_uidx (site_id) WHERE is_current = TRUE` remain intact.
-- **`is_current` invariant:** `Tariff.is_current = TRUE` always points to the `"Tariff"` row referenced by the `"TariffEffectivePeriod"` covering *today* in `site.timezone` (or the latest span covering/preceding today if no open-ended span exists). All mutations to `"TariffEffectivePeriod"` recompute `is_current` atomically inside the same database transaction.
+- **Unique `is_current` per site:** `20260524_120000_tariff_versioning.sql` originally created `tariff_current_uidx ON "Tariff"(site_id, name) WHERE is_current`, which allowed different tariff names on one site to both claim `is_current = TRUE`. Our migration deduplicates any multi-current site (keeping the highest `id`) and replaces `tariff_current_uidx` with `CREATE UNIQUE INDEX tariff_current_uidx ON "Tariff"(site_id) WHERE is_current` (while keeping `tariff_site_name_version_uidx (site_id, name, version)`).
+- **`is_current` invariant:** `Tariff.is_current = TRUE` always points to the single `"Tariff"` row referenced by the `"TariffEffectivePeriod"` covering *today* in `site.timezone` (or the latest span covering/preceding today if no open-ended span exists). All mutations to `"TariffEffectivePeriod"` **demote first** (`UPDATE "Tariff" SET is_current = FALSE WHERE site_id = $1 AND is_current AND id <> $2`) and then promote `id = $2` inside the same database transaction so the non-deferrable partial unique index never trips mid-statement.
 - **No delete/mutate rule:** `"Tariff"`, `"TariffSeason"`, and `"TariffSchedule"` rows remain strictly append-only. Editing a manual rate plan creates a new immutable `"Tariff"` version (`version = MAX(version) + 1` for `(site_id, name)`) attributed to the editing user and updates `"TariffEffectivePeriod"` pointers for the edited date span rather than mutating schedules referenced by historical `"EnergyDaySummary"` rows.
 
 ### 2.2 `"TariffEffectivePeriod"` Table
@@ -68,7 +68,7 @@ ALTER TABLE "Tariff"
 CREATE TABLE IF NOT EXISTS "TariffEffectivePeriod" (
   id                 SERIAL PRIMARY KEY,
   site_id            TEXT NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
-  tariff_id          INTEGER NOT NULL REFERENCES "Tariff"(id),
+  tariff_id          INTEGER NOT NULL REFERENCES "Tariff"(id) ON DELETE CASCADE,
   effective_from     DATE NOT NULL,
   effective_to       DATE,
   source             TEXT NOT NULL CHECK (source IN ('tesla', 'manual')),
@@ -79,7 +79,15 @@ CREATE TABLE IF NOT EXISTS "TariffEffectivePeriod" (
 
 CREATE INDEX IF NOT EXISTS tariff_effective_period_site_dates_idx
   ON "TariffEffectivePeriod" (site_id, effective_from, effective_to);
+
+ALTER TABLE "TariffEffectivePeriod" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON "TariffEffectivePeriod" FROM PUBLIC, anon, authenticated;
+GRANT ALL ON "TariffEffectivePeriod" TO service_role;
+GRANT ALL ON SEQUENCE "TariffEffectivePeriod_id_seq" TO service_role;
 ```
+
+- `tariff_id` uses `REFERENCES "Tariff"(id) ON DELETE CASCADE` specifically so deleting a `"Site"` (via `AccountDeletionRepo.deleteAccount` or `SiteRepo.purgeOrphanedSites`) never fails if Postgres fires `"Site" -> "Tariff"` cascade before `"Site" -> "TariffEffectivePeriod"`. Application mutations on periods NEVER delete `"Tariff"` rows (`"Tariff"` remains append-only).
+- **`MAX_EFFECTIVE_PERIODS_PER_SITE = 50`:** Span creation/splitting checks that the resulting count of `"TariffEffectivePeriod"` rows for `site_id` does not exceed `50` (`400` otherwise) to prevent unbounded timeline fragmentation.
 
 - `updated_by_user_id` tracks which user created or last modified that effective span (populated for `'manual'` span writes and for user date adjustments on `'tesla'` spans; `NULL` for automatic Tesla syncs or after user account deletion).
 
@@ -112,11 +120,11 @@ All span writes run inside a Postgres transaction holding `SELECT 1 FROM "Site" 
 2. **Edit schedule/rates or dates of an existing manual period (`PATCH /api/site/[id]/tariffs/[periodId]`):**
    - Look up the existing `"TariffEffectivePeriod"` row (and its old `[oldFrom, oldTo]`).
    - If the tariff definition (`name`, seasons, schedules, rates) changed, insert a new `"Tariff"` row (`source = 'manual'`, `version = nextVersion`, `content_hash`) plus its `"TariffSeason"` and `"TariffSchedule"` rows; otherwise reuse `period.tariff_id`.
-   - Delete the existing `periodId` row and re-insert `[newFrom, newTo]` with the target `tariff_id` using rule 1 (splitting/trimming any newly overlapped neighbors, while leaving dates vacated by shrinking a span as a gap unless covered later). Recompute `Tariff.is_current`, ensuring today still resolves cleanly if the manual plan was shortened before today.
+   - Delete the existing `periodId` row and re-insert `[newFrom, newTo]` with the target `tariff_id` using rule 1 (splitting/trimming any newly overlapped neighbors). If shrinking a manual period vacates dates adjacent to a `'tesla'` span with no intervening `'manual'` span, extend that `'tesla'` span across the vacated dates (leaving `'manual'` neighbors untouched); otherwise any remaining un-bridged dates appear as an explicit fallback indicator row in the UI rather than disappearing silently. Recompute `Tariff.is_current`.
    - Enqueue bounded re-attribution over the union of `[oldFrom, oldTo]` and `[newFrom, newTo]`.
 3. **Delete a manual period (`DELETE /api/site/[id]/tariffs/[periodId]`):**
    - Allowed only when `source = 'manual'` (`400` if `source = 'tesla'`).
-   - Deletes only the `"TariffEffectivePeriod"` row (never `"Tariff"`). Recomputes `Tariff.is_current`, and if no span covers today, promotes the latest `'tesla'` tariff (or inserts/reopens a `'tesla'` ongoing span from `today` if a `'tesla'` tariff exists) so live operations remain priced.
+   - Deletes only the `"TariffEffectivePeriod"` row (never `"Tariff"`). If an adjacent `'tesla'` span borders the vacated dates (including split `'tesla'` fragments around the deleted manual span that share the same `tariff_id`), heal/coalesce the `'tesla'` span back across those dates; otherwise, if today is uncovered and a `'tesla'` tariff exists, insert an ongoing `'tesla'` span from `today` so live operations stay priced, and surface any historical gap explicitly in the UI. Recomputes `Tariff.is_current`.
    - Enqueues bounded re-attribution over the deleted span's date range so affected days fall back accurately.
 
 ### 2.4 `"SiteTariffReattribution"` Table
@@ -127,6 +135,7 @@ Tracks per-site re-attribution state so work stays idempotent across retries, co
 CREATE TABLE IF NOT EXISTS "SiteTariffReattribution" (
   site_id              TEXT PRIMARY KEY REFERENCES "Site"(id) ON DELETE CASCADE,
   status               TEXT NOT NULL CHECK (status IN ('pending', 'running', 'idle', 'failed')),
+  generation           INTEGER NOT NULL DEFAULT 1,
   from_date            DATE NOT NULL,
   to_date              DATE,
   cursor_day_start     TIMESTAMPTZ,
@@ -141,7 +150,7 @@ CREATE TABLE IF NOT EXISTS "SiteTariffReattribution" (
 ```
 
 - `from_date` / `to_date` delimit the union of site-local calendar dates impacted since the job started (`to_date = NULL` means through the newest stored `EnergyDayArchive` day).
-- **Coalescing concurrent edits:** If a user saves another rate plan while `status IN ('pending', 'running')`, widen `[from_date, to_date]` to cover the union of both ranges, reset `cursor_day_start = NULL`, recompute `total_days`, reset `processed_days = 0`, `updated_days = 0`, `attempt_count = 0`, `last_error = NULL`, and set `status = 'pending'`. Because batch processing runs newest-first, any running batch writes under `claimMutation` and sees the reset cursor on the next tick.
+- **Coalescing & fencing concurrent workers (`generation`):** Every call to `enqueueTariffReattribution` increments `generation = generation + 1`, widens `[from_date, to_date]` when active (`status IN ('pending', 'running')`), resets `cursor_day_start = NULL`, recomputes `total_days`, resets `processed_days = 0`, `updated_days = 0`, `attempt_count = 0`, `last_error = NULL`, and sets `status = 'pending'`. Each chunk transaction in `runSiteReattribution` reads `expectedGeneration` at chunk start and fences its final cursor update (`UPDATE "SiteTariffReattribution" ... WHERE site_id = $1 AND generation = $2`). If 0 rows update (because a newer save superseded the job mid-chunk), the transaction rolls back `EnergyDayArchive`/`EnergyDaySummary` writes cleanly and exits (`outcome: 'superseded'`) without overwriting the reset cursor.
 
 ### 2.5 Backfill Migration (`db-migrations/`)
 
@@ -203,41 +212,42 @@ Instead of relying on a single static batch size for the entire invocation, exec
 
 1. **Metadata scan (newest-first):** Fetch up to `chunkDays` rows from `"EnergyDayArchive"` for `site_id` matching `(day_start < cursor_day_start OR cursor_day_start IS NULL)` and within `[from_date, to_date]` (converted to site-local date boundaries), ordered by `day_start DESC`, selecting **metadata only** (`day_start`, `revision`, `schema_version`, `sample_count`, `attribution`)—excluding heavy `payload` bytes.
 2. **Phase 1 fast-skip vs Phase 2 candidate selection:**
-   - For each day row, resolve `tariff` and `schedule` for `dayLocalDate`, and compute `nextAttribution = deriveDayAttribution(dayStart, timezone, schedule, sampleCount, tariffTimelineRevision(tariff.id))`.
-   - If `row.attribution?.timelineRevision === nextAttribution.timelineRevision` and `segmentsEqual(row.attribution.segments, nextAttribution.segments)`, skip `payload` fetch and `replaceDay` completely.
+   - For each day row, resolve `tariff` and `schedule` for `dayLocalDate`, and compute `nextAttribution = deriveDayAttribution(schedule, tariff.id, dayStart, dayEnd)`.
+   - Because each stored segment embeds immutable `(offset, tariffId, scheduleId)` values (existing records store `timelineRevision = "current-tariff:${tariffId}"`, while new/rewritten records store `"effective-tariff:${tariffId}"`), Phase 1 fast-skips whenever `segmentsEqual(row.attribution?.segments, nextAttribution.segments)` and `row.attributionComplete === expectedAttributionComplete`—without forcing redundant payload decodes on historical days whose tariff assignment did not change!
    - Otherwise, add the day to the rewrite list for Phase 2.
-3. **Phase 2 rewrite & checkpoint:**
-   - Batch-fetch `payload` only for the rewrite list, decompress (`gunzip`/`brotli` via `compact-day-record.ts`), run `rollupSamples(decodedSamples, nextAttribution, tariffSchedules)`, and rebuild the v3 compact day blob + `"EnergyDaySummary"` rows.
-   - Acquire `claimMutation(client, siteId)` around each small rewrite chunk inside a bounded transaction (`transactionTimeoutMs <= 15_000` in [`CompactHistoryStore`](../../../cmd/next-app/src/lib/prototypes/compact-history-store.ts#L76)) so live telemetry ingestion via Tesla polling never starves and partial progress commits frequently. If `claimMutation` returns busy after retries, release and leave `cursor_day_start` untouched so the next tick resumes seamlessly.
-4. **Advance cursor & loop check:** Increment `processed_days` and `updated_days` on `"SiteTariffReattribution"`, advance `cursor_day_start` to the oldest `day_start` processed in the chunk, and transition `status = 'idle'` when no earlier archived days remain in `[from_date, to_date]`. Before starting the next chunk, check remaining wall-clock budget; if exhausted, exit cleanly (`stopped: 'time-budget'`) so the next cron invocation picks up at `cursor_day_start`.
+3. **Phase 2 rewrite & fenced checkpoint:**
+   - Batch-fetch `payload` only for the rewrite list, decompress (`gunzip`/`brotli` via `compact-day-record.ts`), run `buildDayMetadataV3(...)` + `replaceDay(...)` inside a chunk transaction guarded by `claimMutation(client, siteId)` and `transactionTimeoutMs <= 15_000` in [`CompactHistoryStore`](../../../cmd/next-app/src/lib/prototypes/compact-history-store.ts#L76), updating `"SiteTariffReattribution"` fenced by `WHERE site_id = $1 AND generation = $2`. If the fence matches 0 rows (superseded by a newer save), roll back the chunk transaction cleanly.
+4. **Advance cursor & loop check:** Increment `processed_days` and `updated_days`, advance `cursor_day_start` to the oldest `day_start` processed in the chunk, and transition `status = 'idle'` when no earlier archived days remain in `[from_date, to_date]`. Before starting the next chunk, check remaining wall-clock budget; if exhausted, exit cleanly (`stopped: 'time-budget'`) so the next cron invocation picks up at `cursor_day_start`.
 
 ### 3.4 Scheduling, Time Budgets & Empirical Tuning
 
 1. **Immediate inline + `after()` drain on save/delete:**
-   - `POST / PATCH / DELETE /api/site/[id]/tariffs` synchronously commits `"Tariff"` + `"TariffEffectivePeriod"` + `"SiteTariffReattribution"` (`status = 'pending'`) rows and returns `200/201` immediately.
+   - `POST / PATCH / DELETE /api/site/[id]/tariffs` synchronously commits `"Tariff"` + `"TariffEffectivePeriod"` + `"SiteTariffReattribution"` (`status = 'pending'`) rows, calls `new SiteRepo().invalidateCache(siteId)` on exit, and returns `200/201` immediately.
    - Using Next.js `after(...)`, the route runs a short time-budgeted loop (`AFTER_MAX_TIME_MS = 6_000`, `withIoDeadline(10_000, ...)`), typically completing the current billing cycle + ~15–60 recent days right away while checkpointing anything remaining to Postgres.
-2. **Background cron `/api/cron/reattribute-tariffs`:**
+2. **DB-gated background cron `/api/cron/reattribute-tariffs`:**
    - Configured with `maxDuration = 60` (matching the Vercel Hobby limit and [`heal-gaps/route.ts`](../../../cmd/next-app/src/app/api/cron/heal-gaps/route.ts)).
-   - Wraps the run in `withIoDeadline(50_000, ...)` (`HARD_DEADLINE_MS = 50_000`) and stops starting new chunks or sites once elapsed wall-clock exceeds `REATTRIBUTION_MAX_TIME_MS = 35_000` (leaving ~15–25s headroom before the hard deadline / Hobby kill, mirroring `GAP_HEAL_MAX_TIME_MS`). Because chunks are small and Phase 1 skips are near-zero cost, fast runs automatically drain far more days (hundreds of skipped days or dozens of rewrites) within the 35s window rather than halting after one fixed batch.
-   - Triggered every minute by `pg_cron` + `pg_net.http_get` (authenticating via Vault `cron_secret`), selecting sites where `status IN ('pending', 'running')` (or stale `'running'` rows whose `updated_at < now() - interval '2 minutes'`).
-   - On unhandled exception, increments `attempt_count`, records `last_error`, marks `status = 'failed'` once `attempt_count >= 5`, and supports manual retry via API.
+   - Wraps the run in `withIoDeadline(50_000, ...)` (`HARD_DEADLINE_MS = 50_000`) and stops starting new chunks or sites once elapsed wall-clock exceeds `REATTRIBUTION_MAX_TIME_MS = 35_000`.
+   - Scheduled every minute by `pg_cron` + `pg_net.http_get`, **gated in SQL** with `AND EXISTS (SELECT 1 FROM public."SiteTariffReattribution" WHERE status = 'pending' OR (status = 'running' AND updated_at < now() - interval '2 minutes'))` so idle minutes incur zero HTTP invocations, zero Postgres connection egress, and zero Axiom events.
+   - Add a rule to [`sanitize-dev-copy.sql`](../../../cmd/next-app/scripts/sanitize-dev-copy.sql) resetting copied `status IN ('pending', 'running')` rows to `'idle'` so a mid-run prod dump never triggers background re-attribution on dev/beta.
+   - On unhandled exception, increments `attempt_count`, records sanitized diagnostic token in `last_error`, marks `status = 'failed'` once `attempt_count >= 5`, and supports manual retry via API.
 3. **Observability & dialing in `REATTRIBUTION_CHUNK_DAYS`:**
    - Emit structured `logEvent` chunk and site timing metrics (`chunkDays`, `skippedDays`, `rewrittenDays`, `scanMs`, `rewriteMs`, `remainingMs`, `claimBusy`, `stopped`) via [`observability.ts`](../../../cmd/next-app/src/lib/observability.ts) (see §8 for the full event catalog and Axiom safety rules).
    - Use initial production/dev timing telemetry to dial `REATTRIBUTION_CHUNK_DAYS` (and any sub-transaction split size if needed) so each Phase 2 write transaction completes comfortably within ~`2–5 s` on live Supabase pooler latency without starving `writeDay` or risking the `15_000 ms` `CompactHistoryStore` transaction timeout.
 
 ### 3.5 Bill Calculation & Caching Interaction
 
-Inspecting `src/lib/mobile-bill-revision.ts`, `src/lib/bill-pricing.ts`, and `src/lib/tou-aggregation.ts`:
+Inspecting [`src/lib/mobile-bill-revision.ts`](../../../cmd/next-app/src/lib/mobile-bill-revision.ts), `src/lib/bill-pricing.ts`, and `src/lib/tou-aggregation.ts`:
 
-- `EnergyDaySummary` rows store `tariff_id` and `tariff_schedule_id` per period per day, and `bill-pricing.ts` groups billing cycle energy without filtering by `Tariff.is_current` (per `DesignDecisions.md` §Billing).
-- Because `CompactHistoryStore.replaceDay` generates a fresh `revision` UUID on updated `"EnergyDayArchive"` rows, `readMobileHistoryRevision` automatically invalidates cached mobile bill snapshots whenever any day inside a billing cycle finishes re-attributing.
-- Additionally, bill endpoints (`/api/mobile/bill` and bill detail routes) include an optional `reattribution` status object whenever `SiteTariffReattribution.status IN ('pending', 'running')` overlaps the requested cycle, allowing iOS and Web to show an honest *"Updating historical rates..."* indicator while older cycles catch up.
+- Every `"TariffEffectivePeriod"` / `"Tariff"` mutation calls `new SiteRepo().invalidateCache(siteId)` so the 15-minute in-memory site cache never serves stale tariffs.
+- `EnergyDaySummary` rows store `tariff_id` and `tariff_schedule_id` per period per day, and `bill-pricing.ts` groups billing cycle energy by `(tariffName, touName)` without filtering by `Tariff.is_current` (per `DesignDecisions.md` §Billing). Keeping the **same rate plan name** across revisions preserves cross-revision netting inside cycles spanning an effective-date boundary.
+- Because `CompactHistoryStore.replaceDay` generates a fresh `revision` UUID on updated `"EnergyDayArchive"` rows, `readMobileHistoryRevision` invalidates cached mobile bill snapshots when cycle days change. To prevent a `304 Not Modified` from stranding an active `"Updating historical rates..."` banner after pre-cycle days finish updating, `readMobileBillRevision` also hashes the site's non-idle `SiteTariffReattribution` state (`status, processedDays, updatedDays`, or `null` when idle/absent).
+- Bill endpoints (`/api/mobile/bill-summary`) attach optional `tariffReattribution: ReattributionStatusDTO | null` when a re-attribution job is active or failed on the site.
 
 ---
 
 ## 4. API Contracts
 
-All `/api/site/[id]/tariffs*` endpoints enforce authenticated session/bearer access (`getCurrentUser()` + `verifySiteAccess(siteId)`, returning `401`/`403` otherwise) so every non-Tesla mutation records the acting `user.id`, and validate inputs strictly (server validates schedule completeness, non-overlapping periods, 0–5 decimal precision, and date range syntax, returning `400` on invalid input). Because the iOS app is in beta, iOS and Next.js migrate directly to the v2 timeline contract in one synchronized change without maintaining dual v1/v2 decoders or response shims.
+All `/api/site/[id]/tariffs*` endpoints enforce authenticated session/bearer access (`getCurrentUser()` + `verifySiteAccess(siteId)`, returning `401`/`403` otherwise) so every non-Tesla mutation records the acting `user.id`, guard cookie-authenticated mutating endpoints (`POST` / `PATCH` / `DELETE` `/api/site/[id]/tariffs*` and `POST /api/site/[id]/refresh-tariffs`) with `isCrossOriginRequest(req)` (`403`, matching other cookie write routes while permitting native iOS `URLSession` requests that omit `Origin`), and validate inputs strictly (`400` on invalid input). Because the iOS app is in beta, iOS and Next.js migrate directly to the v2 timeline contract in one synchronized change without maintaining dual v1/v2 decoders or response shims.
 
 ### 4.1 `GET /api/site/[id]/tariffs`
 
@@ -269,7 +279,6 @@ export interface TariffPeriodDTO {
   effectiveTo: string | null; // YYYY-MM-DD or null (ongoing)
   isCurrentToday: boolean;
   updatedBy: {
-    userId: string;
     email: string | null;
     isCurrentUser: boolean;
   } | null;
@@ -309,7 +318,8 @@ export interface ReattributionStatusDTO {
 **Mapping `TariffSeasonInput` <-> `"TariffSchedule"` rows:**
 - `weekdayPeriods` compile to `"TariffSchedule"` rows for weekdays `0..4` (`Mon..Fri`), matching [`toTeslaWeekday`](../../../cmd/next-app/src/lib/schedule.ts#L16-L20).
 - `weekendPeriods` compile to `"TariffSchedule"` rows for weekdays `5..6` (`Sat..Sun`). US observed holidays continue to map to weekend schedules via [`isObservedHoliday`](../../../cmd/next-app/src/lib/schedule.ts).
-- All half-hour boundaries map identically to Tesla Fleet API schedules (`fromHour`, `fromMinute`, `toHour`, `toMinute`), supporting wrap-around intervals (e.g. `20:00 -> 08:00`) and all-day single-period intervals (`00:00 -> 24:00` or `00:00 -> 00:00`) normalized cleanly into contiguous 30-minute ticks covering all 48 half-hour slots without gaps or overlaps.
+- **Decompiling layered Tesla schedules (`decompileTariffToSeasons`):** Tesla often emits layered overrides (e.g., an all-day `0..6` `OFF_PEAK` rule paired with a `0..4` `08:00–20:00` `ON_PEAK` override). Rather than filtering raw rows blindly, decompilation evaluates each of the 48 half-hour slots for canonical weekday (Monday) and weekend (Saturday) using the exact specificity order of `Schedule.getTariffPeriodByComponents`, then coalesces adjacent matching slots into contiguous non-overlapping `TimePeriodWindowInput[]` windows.
+- All half-hour boundaries map identically to Tesla Fleet API schedules (`fromHour`, `fromMinute`, `toHour`, `toMinute`), supporting wrap-around intervals (e.g. `20:00 -> 08:00`) and all-day single-period intervals (`00:00 -> 24:00` or `00:00 -> 00:00` for slot 0) while rejecting non-zero degenerate zero-length intervals (`08:00 -> 08:00`).
 
 ### 4.2 `POST /api/site/[id]/tariffs`
 
@@ -353,14 +363,17 @@ All rate plan writes enforce the following server invariants before opening or c
    - Each season has a non-empty trimmed `name` (max 64 chars) and `fromMonth`, `toMonth` integers in `1..12`.
    - Expanding each season across its inclusive circular month range (`Oct -> May` expands to `{10,11,12,1,2,3,4,5}`) must cover **all 12 months exactly once** (no missing month, no month in multiple seasons).
 2. **24-hour schedule coverage (weekday and weekend per season):**
+   - `1` to `48` period entries per schedule (`periods.length <= 48`).
    - Minutes use 30-minute increments (`0` or `30`).
+   - Reject degenerate zero-length periods (`startSlot === endSlot`) except for the explicit single-period all-day encoding (`00:00 -> 24:00`, or `00:00 -> 00:00` when `periods.length === 1` and `fromHour === 0`).
    - Expanding each period `[from, to)` on the 48-slot (30-minute) day circle `[00:00, 24:00)` must cover **all 48 slots (1440 minutes) exactly once** (no gaps, no overlapping slots). Wraparound windows such as `20:00 -> 08:00` expand cleanly to `[20:00, 24:00) U [00:00, 08:00)`.
    - `touName` must be one of `ON_PEAK | PARTIAL_PEAK | OFF_PEAK | SUPER_OFF_PEAK`.
 3. **Rates & precision:**
    - `buyRate` and `sellRate` are finite numbers `>= 0` and `<= 10.0` (sanity ceiling), rounded/validated to at most 5 decimal places (`Math.round(val * 100000) / 100000`).
-4. **Effective dates:**
+4. **Effective dates & span ceiling:**
    - Valid `YYYY-MM-DD` dates; `effectiveTo === null || effectiveTo >= effectiveFrom`.
    - `effectiveFrom >= '2015-01-01'` and `effectiveFrom <= today + 365 days`.
+   - After applying overlap splits/trims, total `"TariffEffectivePeriod"` rows for the site must remain `<= 50` (`400` otherwise).
 
 ---
 
@@ -391,16 +404,18 @@ Users can either step forward (`Seasons -> Schedule -> Pricing -> Summary`) when
 ### 6.2 Detailed Screen Specifications
 
 1. **Rate Plans Timeline (`TariffSheet` upgrade):**
-   - **Live updates banner:** If `reattribution.status` is `pending` or `running`, shows a calm inline banner (`ProgressView` + `"Updating historical rates · {processedDays} of {totalDays} days"`), polling `/api/site/{id}/tariffs` cleanly every few seconds while visible and stopping on exit/idle. If `failed`, shows `"Could not finish updating history"` + **Retry** button.
+   - **No 1-second timer / safe sheet polling:** Remove the existing 1-second `TimelineView` from `TariffSheet` (nothing on Rate Plans ticks every second; minute-boundary updates stay on `.task`), and pause background re-attribution polling whenever a child editor sheet (`isPresentingEditor == true`) is open so parent refreshes cannot disrupt slider gestures.
+   - **Live updates banner:** If `reattribution.status` is `pending` or `running`, shows a calm inline banner (`ProgressView` + `"Updating historical rates · {processedDays} of {totalDays} days"`), polling `/api/site/{id}/tariffs` cleanly every few seconds while visible and stopping on exit/idle or while an editor sheet is presented. If `failed`, shows `"Could not finish updating history"` + **Retry** button.
    - **Tesla divergence notice:** When `teslaSync.differsFromActiveManual == true`, shows a subtle non-alarming card noting Tesla reported different rounded rates while keeping the user's custom rate plan active, with a quick **"Compare / Add from Tesla"** option if the user actually wants to switch forward.
-   - **Timeline cards:** Each card shows:
+   - **Timeline cards & explicit gap rows:** Sorted newest-first; if any non-contiguous gap remains between consecutive effective periods (or before the earliest period when history exists), render a subtle inline row (e.g., `"Jan 1, 2025 – May 31, 2025 · Uses previous rate plan"`) so fallback behavior stays visible. Each period card shows:
      - Rate plan name + source badge (`"Custom"` vs `"Tesla"`), plus `"Current"` pill if `isCurrentToday`. For shared sites (or whenever `updatedBy` is present), show lightweight attribution metadata (`"Edited by you"` or `"Edited by <email>"`).
      - Effective date range (`"Jan 1, 2026 – Present"` or `"Jan 1, 2025 – Dec 31, 2025"`).
      - Compact season summary rows with horizontal Weekday/Weekend 24h bar strips and exact Buy/Sell prices formatted dynamically from 2 up to **5 decimal places** (e.g., `$0.30335`, `$0.10`, never truncating non-zero trailing thousandths/ten-thousandths/hundred-thousandths).
      - **Context actions:** Manual cards offer **Edit**, **Copy to New Dates**, **Delete**; Tesla cards offer **Customize Rates**, **Adjust Dates**.
 
 2. **Summary Screen:**
-   - Inline editable Rate Plan Name (`TextField`), **Effective Dates** row (`Starts` DatePicker + `"Ongoing"` toggle / `Ends` DatePicker). Notice below dates previews impact: e.g., *"Replaces Tesla plan from Jan 1, 2025 to Dec 31, 2025 and updates stored history for those dates."*
+   - Inline editable Rate Plan Name (`TextField`), **pre-filled with the source plan's exact name** on `"Copy & Customize"` / `"+ Add Rate Plan"` (without appending years/dates), plus a brief caption underneath: *"Keep the same rate plan name when updating rates for the same utility plan so billing cycles that cross the start date combine your export cushion accurately."*
+   - **Effective Dates** row (`Starts` DatePicker + `"Ongoing"` toggle / `Ends` DatePicker). Notice below dates previews impact: e.g., *"Replaces Tesla plan from Jan 1, 2025 to Dec 31, 2025 and updates stored history for those dates."*
    - Expandable disclosure row per season (`Season 1 · October – May`): expands in place to show the exact horizontal Weekday bar, Weekend bar, and Off-Peak / Peak Buy & Sell prices (`$0.XXXXX / kWh`) with blue `Edit` links matching the Tesla app hierarchy.
    - Primary bottom action button: **Save Rate Plan** (disabled with inline explanation if validation fails; shows loading spinner while POST/PATCH completes).
 
@@ -435,7 +450,8 @@ Users can either step forward (`Seasons -> Schedule -> Pricing -> Summary`) when
 Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/components/site/TariffList.tsx) and the site page data loader:
 
 - Read from the same `/api/site/[id]/tariffs` timeline data model (`SiteTariffsTimelineResponse`).
-- Display all effective-dated rate plans in chronological newest-first order with `"Active today"` / date badges (`Jan 1, 2026 – Present`, `Jan 1, 2025 – Dec 31, 2025`), source badge (`"Custom"` / `"Synced from Tesla"`) with optional author attribution (`updatedBy` when set), expanded season schedules, and **5-decimal rate formatting** (removing the current 4-decimal truncation).
+- Update copy to comply cleanly with [`docs/voice-and-terms.md`](../../voice-and-terms.md) (replacing existing `"Time-of-Use (TOU) rates or tariff settings"` prose with *"Rate Plan"* wording, using `·` for metadata separators, and using compact `"Buy $0.30335/kWh · Sell $0.04906/kWh"` / column labels rather than `"tariff"`/`"TOU"`).
+- Display all effective-dated rate plans in chronological newest-first order (plus explicit gap indicator rows when a non-contiguous gap exists between plans) with `"Active today"` / date badges (`Jan 1, 2026 – Present`, `Jan 1, 2025 – Dec 31, 2025`), source badge (`"Custom"` / `"Synced from Tesla"`) with optional author attribution (`updatedBy` when set), expanded season schedules, and **5-decimal rate formatting** (removing the current 4-decimal truncation).
 - Display the same calm re-attribution progress banner if `reattribution.status` is `pending`, `running`, or `failed` (with a **Retry** button on failure), plus the `"Sync from Tesla"` action and optional non-destructive Tesla divergence notice.
 - Add a clean helper note pointing users to the PWUsage iOS app to create or edit custom rate plans until interactive Web editing is added.
 
@@ -483,8 +499,9 @@ All tariff mutation, sync, and re-attribution code follows [`observability.ts`](
 
 1. **Database migration & constraint tests (`cmd/next-app`):**
    - Verify backfill on sample sites creates expected `'tesla'` `"TariffEffectivePeriod"` spans (`created_by_user_id` / `updated_by_user_id` `NULL`) without queuing unnecessary re-attribution.
-   - Verify `btree_gist` exclusion constraint rejects overlapping intervals if invoked directly.
-   - Verify user account deletion (`ON DELETE SET NULL`) clears `created_by_user_id` / `updated_by_user_id` / `requested_by_user_id` without blocking user deletion or losing shared site rate plans (`account-deletion-postgres.test.ts`).
+   - Verify `btree_gist` exclusion constraint rejects overlapping intervals and `GRANT ALL ON SEQUENCE "TariffEffectivePeriod_id_seq" TO service_role` + `tariff_current_uidx (site_id)` are applied idempotently.
+   - Verify full `"Site"` deletion and `"User"` account deletion (`account-deletion-postgres.test.ts`, with `"TariffEffectivePeriod"` and `"SiteTariffReattribution"` seeded) succeed cleanly with `TariffEffectivePeriod.tariff_id ON DELETE CASCADE` and `ON DELETE SET NULL` user FKs without triggering FK cascade-order errors.
+   - Verify [`sanitize-dev-copy.sql`](../../../cmd/next-app/scripts/sanitize-dev-copy.sql) resets any `'pending'` / `'running'` rows in `"SiteTariffReattribution"` to `'idle'`.
 2. **Next.js unit & integration tests (`vitest`):**
    - Pure timeline math: span split (enclosing `[2024-01-01, NULL]` split by manual `[2025-01-01, 2025-12-31]`), left/right trim, full overwrite, manual delete restoring fallback, `is_current` invariant.
    - Validation tests: 12-month coverage (including wraparound `Oct -> May`), 48-slot 24h coverage, 5-decimal rounding bounds, rejection of gaps/overlaps/invalid rates.

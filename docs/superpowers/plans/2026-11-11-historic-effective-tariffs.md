@@ -29,14 +29,16 @@
 - Generate via CLI: `cmd/next-app/db-migrations/<ts>_historic_effective_tariffs.sql`
 - Generate via CLI: `cmd/next-app/db-migrations/<ts>_reattribute_tariffs_cron.sql`
 - Modify: `cmd/next-app/src/lib/db-types.ts:49-83`
+- Modify: `cmd/next-app/scripts/sanitize-dev-copy.sql`
+- Modify: `cmd/next-app/src/lib/account-deletion-postgres.test.ts`
 - Test: `cmd/next-app/src/lib/tariff-effective-migration-postgres.test.ts`
 
 **Interfaces:**
-- Produces SQL tables/columns:
-  - `"Tariff"`: `source TEXT NOT NULL DEFAULT 'tesla' CHECK (source IN ('tesla', 'manual'))`, `created_by_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL`
-  - `"TariffEffectivePeriod"`: `(id, site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id, created_at)` + `tariff_effective_period_no_overlap` GIST exclusion constraint
-  - `"SiteTariffReattribution"`: `(site_id, status, from_date, to_date, cursor_day_start, total_days, processed_days, updated_days, attempt_count, last_error, requested_by_user_id, updated_at)`
-- Produces TypeScript interfaces in `cmd/next-app/src/lib/db-types.ts`: `Tariff` (`source`, `created_by_user_id`, `version`, `is_current`, `content_hash`), `TariffEffectivePeriodRow`, `SiteTariffReattributionRow`
+- Produces SQL tables/columns/indexes:
+  - `"Tariff"`: `source TEXT NOT NULL DEFAULT 'tesla' CHECK (source IN ('tesla', 'manual'))`, `created_by_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL`, and tightened partial unique index `tariff_current_uidx ON "Tariff"(site_id) WHERE is_current`
+  - `"TariffEffectivePeriod"`: `(id, site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id, created_at)` (`tariff_id` uses `ON DELETE CASCADE`, sequence grant `GRANT ALL ON SEQUENCE "TariffEffectivePeriod_id_seq" TO service_role`) + `tariff_effective_period_no_overlap` GIST exclusion constraint
+  - `"SiteTariffReattribution"`: `(site_id, status, generation, from_date, to_date, cursor_day_start, total_days, processed_days, updated_days, attempt_count, last_error, requested_by_user_id, updated_at)`
+- Produces TypeScript interfaces in `cmd/next-app/src/lib/db-types.ts`: `Tariff` (`source`, `created_by_user_id`, `version`, `is_current`, `content_hash`), `TariffEffectivePeriodRow`, `SiteTariffReattributionRow` (`generation: number`)
 
 - [ ] **Step 1: Generate the two empty migration shells with the repo generator**
 
@@ -141,9 +143,24 @@ describe('historic_effective_tariffs migration (postgres)', () => {
     expect(tariffAfter.created_by_user_id).toBeNull();
     expect(periodAfter.updated_by_user_id).toBeNull();
     expect(jobAfter.requested_by_user_id).toBeNull();
+
+    // Tightened unique index allows at most one is_current row per site even across different names.
+    await expect(
+      db.query(
+        `INSERT INTO "Tariff" (site_id, name, version, is_current, content_hash, source)
+         VALUES ('s1', 'Another Plan', 3, true, 'h3', 'manual')`
+      )
+    ).rejects.toThrow(/tariff_current_uidx/);
+
+    // Deleting Site cascades cleanly through Tariff -> TariffEffectivePeriod without FK trigger-order failure.
+    await expect(db.query(`DELETE FROM "Site" WHERE id = 's1'`)).resolves.toBeDefined();
+    expect((await db.query(`SELECT 1 FROM "TariffEffectivePeriod" WHERE site_id = 's1'`)).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM "SiteTariffReattribution" WHERE site_id = 's1'`)).rowCount).toBe(0);
   });
 });
 ```
+
+Also update `cmd/next-app/src/lib/account-deletion-postgres.test.ts` to include `"TariffEffectivePeriod"` and `"SiteTariffReattribution"` rows in its schema + fixture setup so account/site deletion cascade ordering stays continuously regression-tested.
 
 - [ ] **Step 3: Run test to verify it fails**
 
@@ -168,10 +185,24 @@ BEGIN
   END IF;
 END $$;
 
+-- Deduplicate any pre-existing sites with multiple is_current rows across different names before tightening the index.
+WITH ranked AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY id DESC) AS rn
+  FROM "Tariff"
+  WHERE is_current = TRUE
+)
+UPDATE "Tariff" t
+SET is_current = FALSE
+FROM ranked r
+WHERE t.id = r.id AND r.rn > 1;
+
+DROP INDEX IF EXISTS tariff_current_uidx;
+CREATE UNIQUE INDEX tariff_current_uidx ON "Tariff" (site_id) WHERE is_current;
+
 CREATE TABLE IF NOT EXISTS "TariffEffectivePeriod" (
   id                 SERIAL PRIMARY KEY,
   site_id            TEXT NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
-  tariff_id          INTEGER NOT NULL REFERENCES "Tariff"(id),
+  tariff_id          INTEGER NOT NULL REFERENCES "Tariff"(id) ON DELETE CASCADE,
   effective_from     DATE NOT NULL,
   effective_to       DATE,
   source             TEXT NOT NULL CHECK (source IN ('tesla', 'manual')),
@@ -198,10 +229,12 @@ END $$;
 ALTER TABLE "TariffEffectivePeriod" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON "TariffEffectivePeriod" FROM PUBLIC, anon, authenticated;
 GRANT ALL ON "TariffEffectivePeriod" TO service_role;
+GRANT ALL ON SEQUENCE "TariffEffectivePeriod_id_seq" TO service_role;
 
 CREATE TABLE IF NOT EXISTS "SiteTariffReattribution" (
   site_id              TEXT PRIMARY KEY REFERENCES "Site"(id) ON DELETE CASCADE,
   status               TEXT NOT NULL CHECK (status IN ('pending', 'running', 'idle', 'failed')),
+  generation           INTEGER NOT NULL DEFAULT 1,
   from_date            DATE NOT NULL,
   to_date              DATE,
   cursor_day_start     TIMESTAMPTZ,
@@ -242,7 +275,7 @@ WHERE t.is_current = TRUE
   );
 ```
 
-Populate the generated `*_reattribute_tariffs_cron.sql` migration:
+Populate the generated `*_reattribute_tariffs_cron.sql` migration (gated in SQL so idle minutes issue zero HTTP requests, zero Vercel invocations, and zero Axiom events):
 ```sql
 SELECT cron.schedule(
   'reattribute-tariffs-trigger',
@@ -259,9 +292,21 @@ SELECT cron.schedule(
     SELECT regexp_replace(decrypted_secret, '/api/cron/restore-reserve$', '/api/cron/reattribute-tariffs') AS url
     FROM vault.decrypted_secrets WHERE name = 'battery_restore_cron_target_url' LIMIT 1
   ) target
-  WHERE target.url LIKE 'https://%/api/cron/reattribute-tariffs';
+  WHERE target.url LIKE 'https://%/api/cron/reattribute-tariffs'
+    AND EXISTS (
+      SELECT 1 FROM public."SiteTariffReattribution"
+      WHERE status = 'pending'
+         OR (status = 'running' AND updated_at < now() - interval '2 minutes')
+    );
   $$
 );
+```
+
+Also update `cmd/next-app/scripts/sanitize-dev-copy.sql` (inside its `DO $$` block) so restoring a prod dump onto dev resets mid-flight re-attribution jobs without firing workers on beta:
+```sql
+IF to_regclass('public."SiteTariffReattribution"') IS NOT NULL THEN
+  EXECUTE 'UPDATE public."SiteTariffReattribution" SET status = ''idle'', cursor_day_start = NULL WHERE status IN (''pending'', ''running'')';
+END IF;
 ```
 
 Update `Tariff` and add `TariffEffectivePeriodRow` / `SiteTariffReattributionRow` in `cmd/next-app/src/lib/db-types.ts`:
@@ -297,6 +342,7 @@ export type TariffReattributionStatus = 'pending' | 'running' | 'idle' | 'failed
 export interface SiteTariffReattributionRow {
   site_id: string;
   status: TariffReattributionStatus;
+  generation: number;
   from_date: string;
   to_date: string | null;
   cursor_day_start: Date | null;
@@ -312,10 +358,10 @@ export interface SiteTariffReattributionRow {
 
 - [ ] **Step 5: Run Postgres migration test & commit**
 
-Run: `npm test -- --run src/lib/tariff-effective-migration-postgres.test.ts`
+Run: `npm test -- --run src/lib/tariff-effective-migration-postgres.test.ts src/lib/account-deletion-postgres.test.ts`
 Expected: PASS
 ```bash
-git add db-migrations/*historic_effective_tariffs.sql db-migrations/*reattribute_tariffs_cron.sql src/lib/db-types.ts src/lib/tariff-effective-migration-postgres.test.ts
+git add db-migrations/*historic_effective_tariffs.sql db-migrations/*reattribute_tariffs_cron.sql scripts/sanitize-dev-copy.sql src/lib/db-types.ts src/lib/tariff-effective-migration-postgres.test.ts src/lib/account-deletion-postgres.test.ts
 git commit -m "feat(db): add effective-dated tariff periods and reattribution state tables"
 ```
 
@@ -325,12 +371,14 @@ git commit -m "feat(db): add effective-dated tariff periods and reattribution st
 
 **Files:**
 - Create: `cmd/next-app/src/lib/tariff-timeline.ts`
+- Modify: `cmd/next-app/src/lib/schedule.ts` (extract/export pure `sortSchedulesBySpecificity` and `matchesScheduleForDay` so `decompileTariffToSeasons` shares `Schedule`'s exact specificity logic without duplication)
 - Modify: `cmd/next-app/src/lib/tariff-contract.ts` (update cleanly to export v2 timeline DTO types + formatters)
 - Test: `cmd/next-app/src/lib/tariff-timeline.test.ts`
 
 **Interfaces:**
-- Produces in `tariff-contract.ts`: `SiteTariffsTimelineResponse`, `TariffPeriodDTO`, `TariffSeasonInput`, `TimePeriodWindowInput`, `ReattributionStatusDTO`, `TariffUpdatedByDTO`, `TariffPeriodName` (`'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK'`)
+- Produces in `tariff-contract.ts`: `SiteTariffsTimelineResponse`, `TariffPeriodDTO`, `TariffSeasonInput`, `TimePeriodWindowInput`, `ReattributionStatusDTO`, `TariffUpdatedByDTO` (`{ email: string | null; isCurrentUser: boolean }`), `TariffPeriodName` (`'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK'`)
 - Produces in `tariff-timeline.ts`:
+  - `MAX_EFFECTIVE_PERIODS_PER_SITE = 50`
   - `validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLocal: string): TariffPlanWriteInput` (throws `TariffValidationError` with `message` and HTTP `status = 400`)
   - `compileSeasonsToParsedTariff(name: string, seasons: TariffSeasonInput[]): ParsedTariff`
   - `decompileTariffToSeasons(tariff: Tariff): TariffSeasonInput[]`
@@ -352,7 +400,7 @@ import {
 } from './tariff-timeline';
 import type { TariffSeasonInput } from './tariff-contract';
 
-const weEnergies2026Seasons: TariffSeasonInput[] = [
+const weEnergiesSeasons: TariffSeasonInput[] = [
   {
     name: 'Winter',
     fromMonth: 10,
@@ -383,35 +431,58 @@ const weEnergies2026Seasons: TariffSeasonInput[] = [
 describe('validateTariffPlanInput', () => {
   it('accepts valid 5-decimal rates, wraparound seasons, and midnight-crossing windows', () => {
     const validated = validateTariffPlanInput({
-      name: '  We Energies Rg2 2026  ',
+      name: '  We Energies Rg2  ',
       effectiveFrom: '2026-01-01',
       effectiveTo: null,
-      seasons: weEnergies2026Seasons,
+      seasons: weEnergiesSeasons,
     }, '2026-11-11');
-    expect(validated.name).toBe('We Energies Rg2 2026');
+    expect(validated.name).toBe('We Energies Rg2');
     expect(validated.seasons[1].weekdayPeriods[0].buyRate).toBe(0.10279);
   });
 
-  it('rejects > 5 decimal places, missing months, or gaps in 24h weekday schedule', () => {
-    const badDecimal = structuredClone(weEnergies2026Seasons);
+  it('rejects > 5 decimal places, missing months, zero-length periods, > 48 periods, or gaps in 24h weekday schedule', () => {
+    const badDecimal = structuredClone(weEnergiesSeasons);
     badDecimal[0].weekdayPeriods[0].buyRate = 0.123456;
     expect(() => validateTariffPlanInput({
       name: 'Bad', effectiveFrom: '2026-01-01', effectiveTo: null, seasons: badDecimal,
     }, '2026-11-11')).toThrow(TariffValidationError);
 
-    const missingMonth = structuredClone(weEnergies2026Seasons);
+    const missingMonth = structuredClone(weEnergiesSeasons);
     missingMonth[0].toMonth = 4; // drops May
     expect(() => validateTariffPlanInput({
       name: 'Gap', effectiveFrom: '2026-01-01', effectiveTo: null, seasons: missingMonth,
     }, '2026-11-11')).toThrow(/12 months/i);
 
-    const gapHours = structuredClone(weEnergies2026Seasons);
+    const gapHours = structuredClone(weEnergiesSeasons);
     gapHours[1].weekendPeriods = [
       { touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 23, toMinute: 30, buyRate: 0.1, sellRate: 0.03 },
     ];
     expect(() => validateTariffPlanInput({
       name: 'GapHour', effectiveFrom: '2026-01-01', effectiveTo: null, seasons: gapHours,
     }, '2026-11-11')).toThrow(/24 hours/i);
+
+    const zeroLength = structuredClone(weEnergiesSeasons);
+    zeroLength[1].weekendPeriods = [
+      { touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 0, toMinute: 0, buyRate: 0.1, sellRate: 0.03 },
+      { touName: 'ON_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.2, sellRate: 0.03 },
+    ];
+    expect(() => validateTariffPlanInput({
+      name: 'ZeroLen', effectiveFrom: '2026-01-01', effectiveTo: null, seasons: zeroLength,
+    }, '2026-11-11')).toThrow(TariffValidationError);
+
+    const tooManyPeriods = structuredClone(weEnergiesSeasons);
+    tooManyPeriods[1].weekendPeriods = Array.from({ length: 49 }, (_, i) => ({
+      touName: 'OFF_PEAK' as const,
+      fromHour: Math.floor((i % 48) / 2),
+      fromMinute: (i % 2) * 30,
+      toHour: Math.floor(((i % 48) + 1) / 2),
+      toMinute: ((i % 48 + 1) % 2) * 30,
+      buyRate: 0.1,
+      sellRate: 0.03,
+    }));
+    expect(() => validateTariffPlanInput({
+      name: 'TooMany', effectiveFrom: '2026-01-01', effectiveTo: null, seasons: tooManyPeriods,
+    }, '2026-11-11')).toThrow(TariffValidationError);
   });
 });
 
@@ -442,6 +513,43 @@ describe('compileSeasonsToParsedTariff & decompileTariffToSeasons', () => {
       })),
     });
     expect(roundTripped[0].weekdayPeriods[0].buyRate).toBe(0.10279);
+  });
+
+  it('resolves layered Tesla schedules into non-overlapping 24h windows using Schedule specificity', () => {
+    const decompiled = decompileTariffToSeasons({
+      id: 2,
+      site_id: 's1',
+      updated: new Date(),
+      name: 'Layered Tesla Plan',
+      seasons: [{
+        id: 10,
+        tariff_id: 2,
+        name: 'All Year',
+        from_month: 1,
+        from_day: 1,
+        to_month: 12,
+        to_day: 31,
+        buy_rate: 0.1,
+        sell_rate: 0.03,
+        schedules: [
+          // Every day all-day baseline
+          { id: 1, season_id: 10, name: 'OFF_PEAK', buy_rate: 0.1, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 },
+          // Narrower Mon-Fri peak override (overlaps 0..6 baseline in raw rows)
+          { id: 2, season_id: 10, name: 'ON_PEAK', buy_rate: 0.3, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 4, from_hour: 8, from_minute: 0, to_hour: 20, to_minute: 0 },
+        ],
+      }],
+    });
+    expect(decompiled[0].weekdayPeriods).toEqual([
+      { touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 8, toMinute: 0, buyRate: 0.1, sellRate: 0.03 },
+      { touName: 'ON_PEAK', fromHour: 8, fromMinute: 0, toHour: 20, toMinute: 0, buyRate: 0.3, sellRate: 0.05 },
+      { touName: 'OFF_PEAK', fromHour: 20, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 },
+    ]);
+    expect(decompiled[0].weekendPeriods).toEqual([
+      { touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 },
+    ]);
+    expect(() => validateTariffPlanInput({
+      name: 'Layered Tesla Plan', effectiveFrom: '2026-01-01', effectiveTo: null, seasons: decompiled,
+    }, '2026-11-11')).not.toThrow();
   });
 });
 
@@ -494,7 +602,6 @@ export interface TariffSeasonInput {
 }
 
 export interface TariffUpdatedByDTO {
-  userId: string;
   email: string | null;
   isCurrentUser: boolean;
 }
@@ -543,8 +650,10 @@ Create `cmd/next-app/src/lib/tariff-timeline.ts`:
 ```ts
 import type { Tariff, TariffSchedule, TariffSource } from './db-types';
 import type { ParsedSchedule, ParsedSeason, ParsedTariff } from './importer/tariff-parser';
+import { matchesScheduleForDay, sortSchedulesBySpecificity } from './schedule';
 import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
 
+export const MAX_EFFECTIVE_PERIODS_PER_SITE = 50;
 const VALID_TOU_NAMES = new Set<TariffPeriodName>(['ON_PEAK', 'PARTIAL_PEAK', 'OFF_PEAK', 'SUPER_OFF_PEAK']);
 const MONTH_MAX_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -643,8 +752,8 @@ function slotIndex(hour: number, minute: number, allow24 = false): number {
 }
 
 function validateDaySlots(periods: TimePeriodWindowInput[], label: string): TimePeriodWindowInput[] {
-  if (!Array.isArray(periods) || periods.length === 0) {
-    throw new TariffValidationError(`${label} must cover 24 hours with at least one period`);
+  if (!Array.isArray(periods) || periods.length === 0 || periods.length > 48) {
+    throw new TariffValidationError(`${label} must contain 1–48 periods covering 24 hours`);
   }
   const seen = new Array<boolean>(48).fill(false);
   const normalized: TimePeriodWindowInput[] = periods.map(p => {
@@ -653,7 +762,11 @@ function validateDaySlots(periods: TimePeriodWindowInput[], label: string): Time
     }
     const startSlot = slotIndex(p.fromHour, p.fromMinute, false);
     const endSlot = slotIndex(p.toHour, p.toMinute, true);
-    const span = endSlot > startSlot ? endSlot - startSlot : (48 - startSlot) + endSlot;
+    const isSingleAllDay = periods.length === 1 && startSlot === 0 && (endSlot === 48 || endSlot === 0);
+    if (startSlot === endSlot && !isSingleAllDay) {
+      throw new TariffValidationError(`${label} contains a zero-length period`);
+    }
+    const span = isSingleAllDay ? 48 : (endSlot > startSlot ? endSlot - startSlot : (48 - startSlot) + endSlot);
     for (let offset = 0; offset < span; offset++) {
       const idx = (startSlot + offset) % 48;
       if (seen[idx]) {
@@ -665,8 +778,8 @@ function validateDaySlots(periods: TimePeriodWindowInput[], label: string): Time
       touName: p.touName,
       fromHour: p.fromHour,
       fromMinute: p.fromMinute,
-      toHour: endSlot === 0 && startSlot === 0 ? 24 : p.toHour,
-      toMinute: endSlot === 0 && startSlot === 0 ? 0 : p.toMinute,
+      toHour: isSingleAllDay ? 24 : p.toHour,
+      toMinute: isSingleAllDay ? 0 : p.toMinute,
       buyRate: checkRate(p.buyRate, 'buyRate'),
       sellRate: checkRate(p.sellRate, 'sellRate'),
     };
@@ -778,41 +891,60 @@ export function compileSeasonsToParsedTariff(name: string, seasons: TariffSeason
   return { name, seasons: parsedSeasons };
 }
 
-function normalizeScheduleWindows(rows: TariffSchedule[], fallbackBuy: number, fallbackSell: number, includeAllDayRule: boolean): TimePeriodWindowInput[] {
-  const mapped: TimePeriodWindowInput[] = rows
-    .filter(r => r.from_hour !== null || r.to_hour !== null || includeAllDayRule)
-    .map(r => {
-      const allDay = r.from_hour === null && r.to_hour === null;
-      return {
-        touName: ((r.name || 'OFF_PEAK') as TariffPeriodName),
-        fromHour: allDay ? 0 : (r.from_hour ?? 0),
-        fromMinute: allDay ? 0 : (r.from_minute ?? 0),
-        toHour: allDay ? 24 : ((r.to_hour === 0 && (r.to_minute ?? 0) === 0 && (r.from_hour ?? 0) === 0) ? 24 : (r.to_hour ?? 24)),
-        toMinute: allDay ? 0 : (r.to_minute ?? 0),
-        buyRate: r.buy_rate ?? fallbackBuy,
-        sellRate: r.sell_rate ?? fallbackSell,
-      };
-    });
-  return mapped.sort((a, b) => (a.fromHour * 60 + a.fromMinute) - (b.fromHour * 60 + b.fromMinute));
+function normalizeTouName(raw: string | null | undefined): TariffPeriodName {
+  if (raw && VALID_TOU_NAMES.has(raw as TariffPeriodName)) return raw as TariffPeriodName;
+  return 'OFF_PEAK';
+}
+
+function resolveDayWindows(
+  sortedSchedules: TariffSchedule[],
+  jsWeekday: number,
+  fallbackBuy: number,
+  fallbackSell: number
+): TimePeriodWindowInput[] {
+  const slots = Array.from({ length: 48 }, (_, slot) => {
+    const hour = Math.floor(slot / 2);
+    const minute = (slot % 2) * 30;
+    const match = sortedSchedules.find(sch => matchesScheduleForDay(jsWeekday, hour, minute, sch));
+    return {
+      touName: normalizeTouName(match?.name),
+      buyRate: match?.buy_rate ?? fallbackBuy,
+      sellRate: match?.sell_rate ?? fallbackSell,
+    };
+  });
+
+  const windows: TimePeriodWindowInput[] = [];
+  for (let slot = 0; slot < 48; slot++) {
+    const cur = slots[slot];
+    const prev = windows[windows.length - 1];
+    if (prev && prev.touName === cur.touName && prev.buyRate === cur.buyRate && prev.sellRate === cur.sellRate) {
+      prev.toHour = Math.floor((slot + 1) / 2);
+      prev.toMinute = ((slot + 1) % 2) * 30;
+    } else {
+      windows.push({
+        touName: cur.touName,
+        fromHour: Math.floor(slot / 2),
+        fromMinute: (slot % 2) * 30,
+        toHour: Math.floor((slot + 1) / 2),
+        toMinute: ((slot + 1) % 2) * 30,
+        buyRate: cur.buyRate,
+        sellRate: cur.sellRate,
+      });
+    }
+  }
+  return windows;
 }
 
 export function decompileTariffToSeasons(tariff: Tariff): TariffSeasonInput[] {
   return (tariff.seasons ?? []).map(season => {
-    const schedules = season.schedules ?? [];
-    const weekdayRows = schedules.filter(s => {
-      const from = s.from_day_of_week ?? 0;
-      const to = s.to_day_of_week ?? 6;
-      return from <= 4 && to >= 0;
-    });
-    const weekendSpecific = schedules.filter(s => (s.from_day_of_week ?? 0) >= 5 || (s.to_day_of_week ?? 6) >= 5);
-    const hasWeekendOverride = weekendSpecific.some(s => (s.from_day_of_week ?? 0) >= 5);
-    const weekendRows = hasWeekendOverride ? weekendSpecific.filter(s => (s.from_day_of_week ?? 0) >= 5) : schedules;
+    const sorted = sortSchedulesBySpecificity(season.schedules ?? []);
     return {
       name: season.name || 'Season',
       fromMonth: season.from_month,
       toMonth: season.to_month,
-      weekdayPeriods: normalizeScheduleWindows(weekdayRows, season.buy_rate, season.sell_rate, !hasWeekendOverride),
-      weekendPeriods: normalizeScheduleWindows(weekendRows, season.buy_rate, season.sell_rate, true),
+      // Canonical Monday (JS 1 -> Tesla 0) and Saturday (JS 6 -> Tesla 5) resolve layered Tesla rules into clean windows.
+      weekdayPeriods: resolveDayWindows(sorted, 1, season.buy_rate, season.sell_rate),
+      weekendPeriods: resolveDayWindows(sorted, 6, season.buy_rate, season.sell_rate),
     };
   });
 }
@@ -866,15 +998,17 @@ export function computeSpanMutations(
 }
 ```
 
+In `cmd/next-app/src/lib/schedule.ts`, extract pure `export function sortSchedulesBySpecificity(schedules: TariffSchedule[]): TariffSchedule[]` and `export function matchesScheduleForDay(jsWeekday: number, hour: number, minute: number, schedule: TariffSchedule): boolean` from `Schedule`'s existing methods and call them from both `Schedule` and `decompileTariffToSeasons`.
+
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `npm test -- --run src/lib/tariff-timeline.test.ts`
+Run: `npm test -- --run src/lib/tariff-timeline.test.ts src/lib/schedule.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/lib/tariff-contract.ts src/lib/tariff-timeline.ts src/lib/tariff-timeline.test.ts
+git add src/lib/schedule.ts src/lib/tariff-contract.ts src/lib/tariff-timeline.ts src/lib/tariff-timeline.test.ts
 git commit -m "feat(tariffs): add v2 timeline contracts, schedule validation, and span math"
 ```
 
@@ -889,7 +1023,7 @@ git commit -m "feat(tariffs): add v2 timeline contracts, schedule validation, an
 - Modify tests if broken: check `cmd/next-app/src/lib/tariff-repo.test.ts`
 
 **Interfaces:**
-- Consumes: `TariffPlanWriteInput`, `compileSeasonsToParsedTariff`, `decompileTariffToSeasons`, `computeSpanMutations`, `siteLocalDateString`, `addCalendarDays` (`tariff-timeline.ts`); `tariffContentHash` (`importer/tariff-parser.ts`); `logEvent` (`observability.ts`)
+- Consumes: `MAX_EFFECTIVE_PERIODS_PER_SITE`, `TariffPlanWriteInput`, `compileSeasonsToParsedTariff`, `decompileTariffToSeasons`, `computeSpanMutations`, `siteLocalDateString`, `addCalendarDays` (`tariff-timeline.ts`); `tariffContentHash` (`importer/tariff-parser.ts`); `SiteRepo.invalidateCache` (`site-repo.ts`); `logEvent` (`observability.ts`)
 - Produces in `tariff-timeline-repo.ts`:
   - `TariffTimelineRepo` class:
     - `getTimeline(siteId: string, viewerUserId: string | null): Promise<SiteTariffsTimelineResponse>`
@@ -902,9 +1036,9 @@ git commit -m "feat(tariffs): add v2 timeline contracts, schedule validation, an
 
 Create `cmd/next-app/src/lib/tariff-timeline-repo.test.ts` (using `createActivityTestDatabase` with mock `observability` or spy) testing:
 1. Creating a historical manual period (`2025-01-01 .. 2025-12-31`) splits an existing open-ended `'tesla'` span (`2024-01-01 .. NULL`), preserves `updated_by_user_id = NULL` on `'tesla'` fragments, keeps `'tesla'` as `is_current = true`, and records `created_by_user_id = userId` on the new manual tariff.
-2. Updating `'manual'` period rates creates a new immutable `"Tariff"` version (`version` incremented), keeps the old `"Tariff"` row intact, and leaves `is_current` accurate.
-3. Calling `TariffRepo.addTariffVersion` when a manual plan covers `today` saves the new `'tesla'` tariff (`source = 'tesla'`) ONLY if its hash differs from the prior `'tesla'` version, keeps the manual tariff `is_current = true` and untouched, and flags `teslaSync.differsFromActiveManual = true`.
-4. Calling `deleteManualPeriod` removes only the period row (not the `"Tariff"` row), promotes the latest `'tesla'` span if today became uncovered, and returns `removedRange`.
+2. Updating `'manual'` period rates creates a new immutable `"Tariff"` version (`version` incremented) **including when sharing the same `(site_id, name)`**, keeps the old `"Tariff"` row intact, demotes before promoting so `tariff_current_uidx` never trips, and enforces `MAX_EFFECTIVE_PERIODS_PER_SITE`.
+3. Calling `TariffRepo.addTariffVersion` when a manual plan covers `today` saves the new `'tesla'` tariff (`source = 'tesla'`) ONLY if its hash differs from the prior `'tesla'` version, keeps the manual tariff `is_current = true` and untouched, flags `teslaSync.differsFromActiveManual = true`, and invalidates `SiteRepo` cache.
+4. Calling `deleteManualPeriod` removes only the period row (not the `"Tariff"` row), coalesces/heals abutting `'tesla'` spans for the same `tariff_id`, promotes the latest `'tesla'` span if today became uncovered, and returns `removedRange`.
 
 ```ts
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -991,7 +1125,7 @@ describe('TariffTimelineRepo & Tesla sync precedence (postgres)', () => {
     const active = timeline.periods.find(p => p.isCurrentToday);
     expect(active?.name).toBe('Exact 2026');
     expect(active?.source).toBe('manual');
-    expect(active?.updatedBy).toEqual({ userId: 'u2', email: 'member@example.com', isCurrentUser: false });
+    expect(active?.updatedBy).toEqual({ email: 'member@example.com', isCurrentUser: false });
     expect(timeline.teslaSync.differsFromActiveManual).toBe(true);
 
     // Deleting manual span keeps Tariff row in DB and restores active tesla coverage
@@ -1081,18 +1215,26 @@ export async function recomputeIsCurrentTariff(client: PoolClient, siteId: strin
     [siteId]
   )).rows[0]?.tariff_id ?? null;
   if (fallback === null) return null;
-  await client.query('UPDATE "Tariff" SET is_current = (id = $2) WHERE site_id = $1 AND (is_current OR id = $2)', [siteId, fallback]);
+  // Demote before promoting so non-deferrable partial unique index tariff_current_uidx never trips on scan order.
+  await client.query(
+    'UPDATE "Tariff" SET is_current = FALSE WHERE site_id = $1 AND is_current = TRUE AND id <> $2',
+    [siteId, fallback]
+  );
+  await client.query(
+    'UPDATE "Tariff" SET is_current = TRUE WHERE id = $1 AND is_current = FALSE',
+    [fallback]
+  );
   return fallback;
 }
 ```
 Also implement `TariffTimelineRepo` in the same file:
-- `getTimeline(siteId, viewerUserId)`: loads `"Site"`, `"TariffEffectivePeriod"` joined with `"Tariff"` and optional `"User"` (`creator`/`editor`), `"TariffSeason"`, `"TariffSchedule"`, latest `'tesla'` tariff vs current `'manual'` tariff for `teslaSync`, and latest `"SiteTariffReattribution"` row.
-- `createManualPeriod(siteId, userId, input)`: validates `validateTariffPlanInput`, locks `"Site"`, inserts new immutable `'manual'` tariff via `insertTariffGraph`, applies `computeSpanMutations` to overlapping spans (preserving `updated_by_user_id` on untouched fragments), runs `recomputeIsCurrentTariff`, logs `tariff.period.created` (`accountId: accountFingerprint(userId)`), commits, returns `getTimeline`.
-- `updatePeriod(siteId, periodId, userId, patch)`: rejects `name`/`seasons` changes when `period.source === 'tesla'` (`TariffValidationError`); for `'manual'`, only inserts a new immutable `"Tariff"` version when `tariffContentHash(compiled)` differs from the existing tariff's `content_hash`; deletes `periodId` and inserts `[newFrom, newTo]` with `computeSpanMutations`, runs `recomputeIsCurrentTariff`, logs `tariff.period.updated`.
-- `deleteManualPeriod(siteId, periodId, userId)`: returns `null`/throws 404 if missing, `TariffValidationError` (400) if `source === 'tesla'`; deletes only the `"TariffEffectivePeriod"` row; if today has no span and a `'tesla'` tariff exists, inserts `[todaySiteLocal, nextSpanMinus1]` for the latest `'tesla'` tariff; runs `recomputeIsCurrentTariff`, logs `tariff.period.deleted`.
+- `getTimeline(siteId, viewerUserId)`: loads `"Site"`, `"TariffEffectivePeriod"` joined with `"Tariff"` and optional `"User"` (`creator`/`editor`, projecting `updatedBy: { email, isCurrentUser }` with no `userId`), `"TariffSeason"`, `"TariffSchedule"`, latest `'tesla'` tariff vs current `'manual'` tariff for `teslaSync`, and latest `"SiteTariffReattribution"` row.
+- `createManualPeriod(siteId, userId, input)`: validates `validateTariffPlanInput`, locks `"Site"`, inserts new immutable `'manual'` tariff via `insertTariffGraph`, applies `computeSpanMutations` to overlapping spans (preserving `updated_by_user_id` on untouched fragments), asserts total `"TariffEffectivePeriod"` rows for `siteId` `<= MAX_EFFECTIVE_PERIODS_PER_SITE`, runs `recomputeIsCurrentTariff`, logs `tariff.period.created` (`accountId: accountFingerprint(userId)`), commits, calls `new SiteRepo().invalidateCache(siteId)`, returns `getTimeline`.
+- `updatePeriod(siteId, periodId, userId, patch)`: rejects `name`/`seasons` changes when `period.source === 'tesla'` (`TariffValidationError`); for `'manual'`, only inserts a new immutable `"Tariff"` version when `tariffContentHash(compiled)` differs from the existing tariff's `content_hash`; deletes `periodId` and inserts `[newFrom, newTo]` with `computeSpanMutations`, heals any abutting `'tesla'` spans with matching `tariff_id` if the range shrank, asserts `<= MAX_EFFECTIVE_PERIODS_PER_SITE`, runs `recomputeIsCurrentTariff`, commits, calls `new SiteRepo().invalidateCache(siteId)`, logs `tariff.period.updated`.
+- `deleteManualPeriod(siteId, periodId, userId)`: returns `null`/throws 404 if missing, `TariffValidationError` (400) if `source === 'tesla'`; deletes only the `"TariffEffectivePeriod"` row; heals abutting `'tesla'` spans sharing the same `tariff_id` across the removed gap (or, if `today` has no span and a `'tesla'` tariff exists, inserts/extends `[todaySiteLocal, nextSpanMinus1]` for the latest `'tesla'` tariff); runs `recomputeIsCurrentTariff`, commits, calls `new SiteRepo().invalidateCache(siteId)`, logs `tariff.period.deleted`.
 - `resolveTariffForDate(client, siteId, siteLocalDate)`: resolves exact covering span -> nearest prior span -> earliest site span -> `is_current = TRUE`, returning `{ tariffs, schedules }` hydrated cleanly.
 
-Update `cmd/next-app/src/lib/tariff-repo.ts`:
+Update `cmd/next-app/src/lib/tariff-repo.ts` (calling `new SiteRepo().invalidateCache(siteId)` after `COMMIT` whenever spans/tariffs changed):
 ```ts
 // Inside TariffRepo.addTariffVersion(siteId: string, parsed: ParsedTariff):
 const newHash = tariffContentHash(parsed);
@@ -1122,6 +1264,8 @@ if (coveringToday?.source === 'manual') {
   }));
   await recomputeIsCurrentTariff(client, siteId, today);
 }
+// After client.query('COMMIT'):
+new SiteRepo().invalidateCache(siteId);
 ```
 
 - [ ] **Step 4: Run `tariff-timeline-repo.test.ts` and `tariff-repo.test.ts`**
@@ -1155,13 +1299,13 @@ git commit -m "feat(tariffs): implement TariffTimelineRepo and manual-precedence
   - `getSiteReattributionStatus(siteId: string): Promise<ReattributionStatusDTO | null>`
   - Constants: `REATTRIBUTION_CHUNK_DAYS = 15`, `REATTRIBUTION_MAX_TIME_MS = 35_000`, `REATTRIBUTION_AFTER_MAX_TIME_MS = 6_000`, `REATTRIBUTION_MAX_ATTEMPTS = 5`
 
-- [ ] **Step 1: Write failing tests for date-aware `writeDay`, two-phase skip/rewrite, time-budget stopping, coalescing & retries**
+- [ ] **Step 1: Write failing tests for date-aware `writeDay`, two-phase skip/rewrite, time-budget stopping, generation fencing, coalescing & retries**
 
 Create `cmd/next-app/src/lib/tariff-reattribution.test.ts` testing:
 1. `writeDay` attributes historical `2025-07-15` against the `2025` effective tariff rather than `is_current` (`2026`).
-2. `runSiteReattribution` skips rows whose `attribution.timelineRevision === 'effective-tariff:<id>'` and matching `segments` without rewriting `revision`, while rewriting rows whose `tariff_id` changed (`tariff_id` + `EnergyDaySummary` updated, telemetry samples bit-exact).
+2. `runSiteReattribution` fast-skips legacy rows carrying `"current-tariff:<id>"` (or `"effective-tariff:<id>"`) whenever `segmentsEqual(...) && attribution_complete === expected` without rewriting `revision`, while rewriting rows whose `tariff_id` or segments changed (`tariff_id` + `EnergyDaySummary` updated, telemetry samples bit-exact).
 3. Simulated slow clock causes `runSiteReattribution` to stop cleanly at `maxTimeMs` preserving `cursor_day_start`, then finish cleanly on the next tick.
-4. Concurrent `enqueueTariffReattribution` widens `[from_date, to_date]`, resets `cursor_day_start = null`, resets `attempt_count = 0`.
+4. Concurrent `enqueueTariffReattribution` widens `[from_date, to_date]`, increments `generation`, resets `cursor_day_start = null`, resets `attempt_count = 0`, and causes an in-flight worker holding the stale `generation` to roll back its chunk write and checkpoint cleanly (`generation` fencing).
 5. Failures increment `attempt_count`, store sanitized `errorName`/`errorCode` in `last_error`, and mark `'failed'` at attempt 5.
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1181,9 +1325,9 @@ And ensure `deriveDayAttribution(schedule, tariffId, start, end)` sets `timeline
 
 2. In `cmd/next-app/src/lib/prototypes/compact-history-store.ts`:
    - Inside `writeDay`, compute `const siteLocalDate = siteLocalDateString(start, timezone)` and call `new TariffTimelineRepo().resolveTariffForDate(client, siteId, siteLocalDate)` instead of `this.tariffs(client, siteId, true)`.
-   - Add `reattributeArchiveChunk(...)`: takes metadata rows `{ dayStart, dayEnd, sampleCount, attribution }[]`, determines which rows need rewrite (`row.attribution?.timelineRevision !== tariffTimelineRevision(tariffId) || !segmentsEqual(row.attribution.segments, nextAttribution.segments)`), skips unchanged rows without reading `payload`, fetches `payload` + `fetched_at` only for changed `day_start` keys, decodes samples via `decodeDaySamples`, builds `prepareSamples(..., targetTariff, fetchedAt, now)`, acquires `claimMutation`, and calls `this.replaceDay(...)`.
+   - Add `reattributeArchiveChunk(...)`: takes metadata rows `{ dayStart, dayEnd, attribution, attributionComplete }[]`, computes `nextAttribution` from the effective tariff for each `dayStart`, fast-skips without reading `payload` whenever `segmentsEqual(row.attribution?.segments, nextAttribution.segments) && row.attributionComplete === isAttributionComplete(nextAttribution)` (regardless of whether `timelineRevision` has `'current-tariff:'` or `'effective-tariff:'` prefix), fetches `payload` + `fetched_at` only for changed `day_start` keys, decodes samples via `decodeDaySamples`, builds `prepareSamples(..., targetTariff, fetchedAt, now)`, runs inside the same DB transaction as the fenced `"SiteTariffReattribution"` checkpoint (`generation` check -> rollback if superseded), acquires `claimMutation`, and calls `this.replaceDay(...)`.
 
-3. Create `cmd/next-app/src/lib/tariff-reattribution.ts` with time-budgeted loop & Axiom telemetry:
+3. Create `cmd/next-app/src/lib/tariff-reattribution.ts` with generation-fenced time-budgeted loop & Axiom telemetry:
 ```ts
 export const REATTRIBUTION_CHUNK_DAYS = 15;
 export const REATTRIBUTION_MAX_TIME_MS = 35_000;
@@ -1201,14 +1345,16 @@ export async function runSiteReattribution(params: {
   const maxTimeMs = params.maxTimeMs ?? REATTRIBUTION_MAX_TIME_MS;
   const chunkDays = params.chunkDays ?? REATTRIBUTION_CHUNK_DAYS;
   const startedAt = clock();
-  // Read SiteTariffReattribution + claim status = 'running'; emit tariff.reattribution.site.started.
+  // Read SiteTariffReattribution + claim status = 'running' capturing its monotonic `generation`; emit tariff.reattribution.site.started.
   // Loop while maxTimeMs - (clock() - startedAt) > 0:
   //   scan metadata-only chunk newest-first (ORDER BY day_start DESC LIMIT $chunkDays)
-  //   run two-phase skip/rewrite in CompactHistoryStore
-  //   checkpoint processed_days, updated_days, cursor_day_start in Postgres
+  //   inside one transaction: run two-phase skip/rewrite in CompactHistoryStore, then fence checkpoint:
+  //     UPDATE "SiteTariffReattribution" SET processed_days = ..., updated_days = ..., cursor_day_start = ..., status = ...
+  //     WHERE site_id = $1 AND generation = $generation
+  //   If rowCount === 0: ROLLBACK transaction cleanly (superseded by concurrent edit), emit 'tariff.reattribution.superseded', return.
   //   emit logEvent('info', 'tariff.reattribution.chunk', { chunkDays, skippedDays, rewrittenDays, scanMs, rewriteMs, remainingMs, claimBusy })
   //   flushLogEvents()
-  // On error: sanitize diagnostic token (`errorFields(err)`), increment attempt_count, transition to 'failed' once attempt_count >= 5 + emit 'tariff.reattribution.site.failed'.
+  // On error: sanitize diagnostic token (`errorFields(err)`), increment attempt_count (fenced on generation), transition to 'failed' once attempt_count >= 5 + emit 'tariff.reattribution.site.failed'.
 }
 ```
 
@@ -1235,21 +1381,23 @@ git commit -m "feat(history): resolve effective tariff per day and add time-budg
 - Create: `cmd/next-app/src/app/api/cron/reattribute-tariffs/route.ts` (`GET` with `maxDuration = 60`, `HARD_DEADLINE_MS = 50_000`)
 - Modify: `cmd/next-app/src/app/api/site/[id]/refresh-tariffs/route.ts` (keep `POST` returning `{ success, updatedFromTesla, timeline }`, retire `GET`)
 - Modify: `cmd/next-app/src/app/api/mobile/bill-summary/route.ts` (attach optional `tariffReattribution` when active/failed job exists on the site)
+- Modify: `cmd/next-app/src/lib/mobile-bill-revision.ts` (hash active/failed `tariffReattribution` `status`, `processedDays`, `updatedDays` into the bill revision so `/api/mobile/bill-summary` never returns stale `304 Not Modified` during/after re-attribution transitions)
 - Modify: `cmd/next-app/src/lib/mobile-dashboard-contract.ts` (add optional `tariffReattribution?: ReattributionStatusDTO | null` — remember cross-app sync in Task 7!)
-- Test: `cmd/next-app/src/app/api/site/[id]/tariffs/route.test.ts` & `cmd/next-app/src/app/api/cron/reattribute-tariffs/route.test.ts` & update `cmd/next-app/src/app/api/site/[id]/refresh-tariffs/route.test.ts`
+- Test: `cmd/next-app/src/app/api/site/[id]/tariffs/route.test.ts`, `cmd/next-app/src/app/api/cron/reattribute-tariffs/route.test.ts`, `cmd/next-app/src/lib/mobile-bill-revision.test.ts`, & update `cmd/next-app/src/app/api/site/[id]/refresh-tariffs/route.test.ts`
 
 **Interfaces:**
-- Auth: `getCurrentUser()` + `verifySiteAccess(siteId)` (`src/lib/auth-checks.ts`) on site routes; `CRON_SECRET` Bearer auth on `/api/cron/reattribute-tariffs`.
+- Auth & CSRF: `getCurrentUser()` + `verifySiteAccess(siteId)` (`src/lib/auth-checks.ts`) on site routes; `if (isCrossOriginRequest(req)) return json({ error: 'Cross-origin requests are not allowed' }, 403);` (`src/lib/request-security.ts`) on every cookie-authenticated mutating route (`POST`/`PATCH`/`DELETE` `/api/site/[id]/tariffs*` and `POST /api/site/[id]/refresh-tariffs`); `CRON_SECRET` Bearer auth on `/api/cron/reattribute-tariffs`.
 - Observability: `observeRoute`, `setLogContext`, `logEvent`, `flushLogEvents`, `errorFields`, `accountFingerprint`.
 - Scheduling: Next.js `after(() => runSiteReattribution({ siteId, trigger: 'after', maxTimeMs: REATTRIBUTION_AFTER_MAX_TIME_MS }))` inside `withIoDeadline(10_000, ...)`.
 
 - [ ] **Step 1: Write failing route & cron tests**
 
 Create `cmd/next-app/src/app/api/site/[id]/tariffs/route.test.ts` and `cmd/next-app/src/app/api/cron/reattribute-tariffs/route.test.ts` testing:
-- `401` / `403` when unauthenticated or unauthorized for `siteId`.
+- `401` / `403` when unauthenticated, unauthorized for `siteId`, or cross-origin browser `Origin` mismatches on `POST` / `PATCH` / `DELETE` (`isCrossOriginRequest`).
 - `GET /api/site/[id]/tariffs` returns `SiteTariffsTimelineResponse` v2.
 - `POST /api/site/[id]/tariffs` returns `400` on invalid schedules/rates and `201` on valid 5-decimal payload, enqueuing re-attribution + scheduling `after()`.
 - `PATCH` / `DELETE` enforce `'manual'` rules (`DELETE` on `'tesla'` -> `400`; non-existent `periodId` -> `404`).
+- `readMobileBillRevision` produces a new ETag/revision whenever `tariffReattribution` status/progress changes (`pending` -> `running` -> `idle`) even when `[cycleStart, cycleEnd]` history is unchanged.
 - `GET /api/cron/reattribute-tariffs` rejects bad `CRON_SECRET` (`401`), invokes `runPendingReattributionsCron` under `withIoDeadline(50_000)`, emits `cron.reattribute-tariffs.*`.
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1265,6 +1413,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
+import { isCrossOriginRequest } from '@/lib/request-security';
 import { enqueueTariffReattribution, REATTRIBUTION_AFTER_MAX_TIME_MS, runSiteReattribution } from '@/lib/tariff-reattribution';
 import { TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
@@ -1285,6 +1434,9 @@ export function GET(_req: NextRequest, context: { params: Promise<{ id: string }
 
 export function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   return observeRoute('/api/site/[id]/tariffs', async () => {
+    if (isCrossOriginRequest(req)) {
+      return json({ error: 'Cross-origin requests are not allowed' }, 403);
+    }
     const { id: siteId } = await context.params;
     setLogContext({ siteId });
     const user = await getCurrentUser();
@@ -1308,17 +1460,17 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
   })(req);
 }
 ```
-Follow the exact same pattern for `[periodId]/route.ts` (`PATCH` / `DELETE`), `tariffs/reattribute/route.ts` (`POST`), `/api/cron/reattribute-tariffs/route.ts` (`maxDuration = 60`, `HARD_DEADLINE_MS = 50_000`, Bearer `CRON_SECRET`, `flushLogEvents()`), `refresh-tariffs/route.ts` (`POST` only), and `mobile/bill-summary/route.ts` (`tariffReattribution`).
+Follow the exact same pattern (including `isCrossOriginRequest(req)` on every mutating handler) for `[periodId]/route.ts` (`PATCH` / `DELETE`), `tariffs/reattribute/route.ts` (`POST`), `/api/cron/reattribute-tariffs/route.ts` (`maxDuration = 60`, `HARD_DEADLINE_MS = 50_000`, Bearer `CRON_SECRET`, `flushLogEvents()`), `refresh-tariffs/route.ts` (`POST` only), `mobile-bill-revision.ts` (`tariffReattribution` included in revision digest), and `mobile/bill-summary/route.ts` (`tariffReattribution`).
 
 - [ ] **Step 4: Run tests**
 
-Run: `npm test -- --run src/app/api/site/\[id\]/tariffs/route.test.ts src/app/api/site/\[id\]/refresh-tariffs/route.test.ts src/app/api/cron/reattribute-tariffs/route.test.ts`
+Run: `npm test -- --run src/app/api/site/\[id\]/tariffs/route.test.ts src/app/api/site/\[id\]/refresh-tariffs/route.test.ts src/app/api/cron/reattribute-tariffs/route.test.ts src/lib/mobile-bill-revision.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/app/api/site/[id]/tariffs src/app/api/site/[id]/refresh-tariffs src/app/api/cron/reattribute-tariffs src/app/api/mobile/bill-summary/route.ts src/lib/mobile-dashboard-contract.ts
+git add src/app/api/site/[id]/tariffs src/app/api/site/[id]/refresh-tariffs src/app/api/cron/reattribute-tariffs src/app/api/mobile/bill-summary/route.ts src/lib/mobile-bill-revision.ts src/lib/mobile-bill-revision.test.ts src/lib/mobile-dashboard-contract.ts
 git commit -m "feat(api): add tariff timeline CRUD routes, reattribution cron, and v2 cutover"
 ```
 
@@ -1338,10 +1490,11 @@ git commit -m "feat(api): add tariff timeline CRUD routes, reattribution cron, a
 - [ ] **Step 1: Write failing component test `TariffList.test.tsx`**
 
 Verify rendering of:
-1. Active & historical effective-date spans with `"Active today"` / `"Custom"` / `"Synced from Tesla"` badges and `updatedBy` label.
-2. Up to **5-decimal** rate formatting (`$0.30335`, `$0.10` — no truncation to 4 decimals).
-3. Re-attribution progress banner (`pending` / `running` / `failed` with **Retry** button) and Tesla divergence notice.
-4. Helper note stating rate plan editing is available in the PWUsage iOS app; no `"tariff"` or `"TOU"` copy leaks.
+1. Active & historical effective-date spans with `"Active today"` / `"Custom"` / `"Synced from Tesla"` badges and `updatedBy` label separated with middle dots (`·`).
+2. Explicit timeline gap fallback rows whenever consecutive spans have uncovered calendar days between `effectiveTo + 1 day` and the next `effectiveFrom` (`"<gapStart> – <gapEnd> · Uses nearest prior plan"`).
+3. Up to **5-decimal** rate formatting (`$0.30335`, `$0.10` — no truncation to 4 decimals).
+4. Re-attribution progress banner (`pending` / `running` / `failed` with **Retry** button) and Tesla divergence notice.
+5. Helper note stating rate plan editing is available in the PWUsage iOS app; replace all legacy `"tariff"` and `"TOU"` labels/prose in `TariffList.tsx` (`"Rate Plan"`, `"Rate Period"`) so zero forbidden terms leak.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1350,7 +1503,7 @@ Expected: FAIL
 
 - [ ] **Step 3: Update `TariffList.tsx`, `SettingsView.tsx`, and settings server page loader**
 
-Format prices dynamically with minimum 2, maximum 5 fraction digits (`Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 5 })`).
+Format prices dynamically with minimum 2, maximum 5 fraction digits (`Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 5 })`), render explicit gap fallback rows between non-adjacent spans, use `·` metadata separators, and scrub all legacy `"TOU"`/`"tariff"` strings from `TariffList.tsx`.
 
 - [ ] **Step 4: Run all Next.js checks (`lint`, `typecheck`, `test`, `build`)**
 
@@ -1457,7 +1610,7 @@ enum RateFormatting {
     }
 }
 ```
-Replace `cmd/ios-app/PWUsage/Models/Bill/MobileTariffs.swift` with `SiteTariffsTimelineResponse`, `TariffPeriodDTO`, `TariffSeasonInput`, `TimePeriodWindowInput`, `TariffPeriodName`, `TariffUpdatedByDTO`, `TariffPlanWriteRequest`, `TariffPlanPatchRequest`, and `MobileTariffDataAPI`, and place shared `ReattributionStatusDTO` in `cmd/ios-app/Shared/MobileLiveContract.swift` so both `MobileBillResponse` and `SiteTariffsTimelineResponse` share the exact same `Sendable, Codable, Equatable` definition. Keep all lines `<= 120` chars, functions `<= 50` lines, and zero `!` force unwraps.
+Replace `cmd/ios-app/PWUsage/Models/Bill/MobileTariffs.swift` with `SiteTariffsTimelineResponse`, `TariffPeriodDTO`, `TariffSeasonInput`, `TimePeriodWindowInput`, `TariffPeriodName`, `TariffUpdatedByDTO` (`email: String?`, `isCurrentUser: Bool` — omitting internal `userId`), `TariffPlanWriteRequest`, `TariffPlanPatchRequest`, and `MobileTariffDataAPI`, and place shared `ReattributionStatusDTO` in `cmd/ios-app/Shared/MobileLiveContract.swift` so both `MobileBillResponse` and `SiteTariffsTimelineResponse` share the exact same `Sendable, Codable, Equatable` definition. Keep all lines `<= 120` chars, functions `<= 50` lines, and zero `!` force unwraps.
 
 - [ ] **Step 4: Run `./cmd/ios-app/lint.sh` and `./cmd/ios-app/run-tests.sh --quick`**
 
@@ -1483,8 +1636,8 @@ git commit -m "feat(ios): migrate tariff contracts to v2 timeline APIs and add 5
 **Interfaces:**
 - Consumes: Task 7 DTOs & `MobileTariffDataAPI`, `RateFormatting`, `DashboardCoordinator`
 - Produces:
-  - `RatePlanDraft`: `init(from period: TariffPeriodDTO)`, `init(blankIn siteTimezone: TimeZone)`, `toWriteRequest()`, `validate()`, `addSeason()`, `removeSeason(at:)`, `moveSeasonBoundary(...)`, `addTimePeriod(inSeason:isWeekday:)`, `removeTimePeriod(...)`, `movePeriodBoundary(...)`
-  - `TariffSheet`: interactive Rate Plans timeline showing re-attribution polling banner (`Task.sleep(for: .seconds(3))` while `pending`/`running`), Tesla divergence card, period cards with horizontal weekday/weekend bars, `updatedBy` shared-site attribution, and context actions (`Edit Plan`, `Copy & Customize`, `Edit Dates`, `Delete`) launching Task 9's editor sheet.
+  - `RatePlanDraft`: `init(from period: TariffPeriodDTO)` (copying exact `period.name` without appending year/copy suffixes), `init(blankIn siteTimezone: TimeZone)` (empty name with `"Utility Rate Plan"` placeholder), `toWriteRequest()`, `validate()`, `addSeason()`, `removeSeason(at:)`, `moveSeasonBoundary(...)`, `addTimePeriod(inSeason:isWeekday:)`, `removeTimePeriod(...)`, `movePeriodBoundary(...)`
+  - `TariffSheet`: interactive Rate Plans timeline showing re-attribution polling banner (`Task.sleep(for: .seconds(3))` while `pending`/`running` **and paused while `isPresentingEditor` is true**), Tesla divergence card, explicit timeline gap fallback rows (`"<gapStart> – <gapEnd> · Uses nearest prior plan"`), period cards with static `"Active today"` / `"Active now"` schedule display (**removing the existing 1-second `TimelineView` ticking loop**), horizontal weekday/weekend bars, `updatedBy` shared-site attribution, and context actions (`Edit Plan`, `Copy & Customize`, `Edit Dates`, `Delete`) launching Task 9's editor sheet.
 
 - [ ] **Step 1: Write failing `RatePlanDraftTests.swift` unit tests**
 
@@ -1526,7 +1679,7 @@ Expected: FAIL
 
 - [ ] **Step 3: Implement `RatePlanDraft.swift`, timeline subviews, upgraded `TariffSheet.swift`, and `SettingsView.swift` hookup**
 
-Note `docs/voice-and-terms.md`: zero occurrences of `"tariff"` or `"TOU"` in UI strings; use `"Rate Plans"`, `"Custom"`, `"Tesla"`, `"Edited by you"` / `"Edited by <email>"`, `"Updating historical rates · X of Y days"`. Model slot arrays using integer 30-minute ticks `0..<48` (`startSlot` in `0...47`, `endSlot` in `0...48`, where `endSlot <= startSlot` represents midnight wraparound) so both validation and the interactive slider share identical math.
+Note `docs/voice-and-terms.md`: zero occurrences of `"tariff"` or `"TOU"` in UI strings; use `"Rate Plans"`, `"Custom"`, `"Tesla"`, `"Edited by you"` / `"Edited by <email>"`, `"Updating historical rates · X of Y days"`. Remove the legacy 1-second `TimelineView` from `TariffSheet.swift`, pause re-attribution polling whenever `isPresentingEditor == true`, render explicit fallback rows for any gap between adjacent spans, and model slot arrays using integer 30-minute ticks `0..<48` (`startSlot` in `0...47`, `endSlot` in `0...48`, where `endSlot <= startSlot` represents midnight wraparound) so both validation and the interactive slider share identical math.
 
 - [ ] **Step 4: Run `./cmd/ios-app/lint.sh` and `./cmd/ios-app/run-tests.sh --quick`**
 
@@ -1544,10 +1697,10 @@ git commit -m "feat(ios): add RatePlanDraft state engine and interactive Rate Pl
 ## Task 9: iOS Tesla-Style Editor Screens (Summary, Seasons Slider, 24h Schedule Slider, Pricing) (`cmd/ios-app`)
 
 **Files:**
-- Create: `cmd/ios-app/PWUsage/Views/Bill/RatePlanEditorFlow.swift` (NavigationStack coordinator + Summary screen with expandable Season disclosure rows, Effective Dates row & preview impact text, `"Save Rate Plan"`)
+- Create: `cmd/ios-app/PWUsage/Views/Bill/RatePlanEditorFlow.swift` (NavigationStack coordinator + Summary screen with exact plan name pre-fill on `"Copy & Customize"`/`"Edit"`, empty `"Utility Rate Plan"` placeholder on new blank plan, expandable Season disclosure rows, Effective Dates row & preview impact text, `"Save Rate Plan"`)
 - Create: `cmd/ios-app/PWUsage/Views/Bill/RatePlanSeasonsEditorView.swift` (12-month vertical block slider, `Add Season`/`Remove Season`, haptic snap handles, wraparound support + VoiceOver +/- steppers)
 - Create: `cmd/ios-app/PWUsage/Views/Bill/RateScheduleEditorView.swift` (`Weekdays (Mon – Fri)` / `Weekends (Sat – Sun)` toggle, `"Same schedule as weekdays"` toggle, left period list with `+ Add Time Period` / type picker / delete + right 24h vertical color track slider with 30-min snapping pill handles + accessible +/- 30m buttons)
-- Create: `cmd/ios-app/PWUsage/Views/Bill/RatePricingEditorView.swift` (top Weekday/Weekend horizontal bars, per-period Buy/Sell numeric cards supporting 0–5 decimals with `.decimalPad`, inline validation)
+- Create: `cmd/ios-app/PWUsage/Views/Bill/RatePricingEditorView.swift` (top Weekday/Weekend horizontal bars, per-period Buy/Sell numeric cards supporting 0–5 decimals with `.decimalPad`, inline validation, and concise export netting helper caption explaining how Sell rates feed savings/export-cushion estimates)
 - Modify: `cmd/ios-app/PWUsage/Views/Bill/TariffSheet.swift` (present `RatePlanEditorFlow` on `+ Add Rate Plan`, `Edit`, and `Customize Rates`)
 - Test: `cmd/ios-app/PWUsageTests/RatePlanEditorFlowTests.swift` (view-model/interaction logic tests for stepping, direct Summary->Edit->Summary jumps, error mapping on save failure, demo save behavior)
 
