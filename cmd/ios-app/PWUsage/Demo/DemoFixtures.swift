@@ -261,20 +261,88 @@ enum DemoFixtures {
         )
     }
 
-    static func tariffs(asOf: Date) -> MobileTariffsResponse {
-        MobileTariffsResponse(
-            version: 1,
-            site: .init(id: site.id, name: site.name, timezone: timeZone.identifier),
+    static func tariffs(asOf _: Date) -> SiteTariffsTimelineResponse {
+        SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: site.id,
+            timezone: timeZone.identifier,
             currency: "USD",
-            asOf: asOf,
-            tariffs: [.init(id: 1, name: tariffName, seasons: [.init(
-                id: 1, name: "All year", dates: "Jan 1 – Dec 31", isActive: true,
-                periods: [
-                    .init(id: 1, name: onPeak.name, days: "Every day", times: "12 hours a day",
-                          buyRate: onPeak.buy, sellRate: onPeak.sell, isActive: true),
-                    .init(id: 2, name: offPeak.name, days: "Every day", times: "The other 12 hours",
-                          buyRate: offPeak.buy, sellRate: offPeak.sell, isActive: false)]
-            )])]
+            periods: [demoCurrentPeriod(), demoPriorPeriod()],
+            reattribution: nil,
+            teslaSync: TeslaSyncDTO(
+                latestTariffId: 10,
+                latestTariffName: tariffName,
+                latestUpdatedAt: "2025-01-01T00:00:00Z",
+                differsFromActiveManual: false
+            )
+        )
+    }
+
+    private static func demoCurrentPeriod() -> TariffPeriodDTO {
+        let peakWindow = demoWindow(.onPeak, startHour: 8, endHour: 20, buy: onPeak.buy, sell: onPeak.sell)
+        let offPeakWindow = demoWindow(.offPeak, startHour: 20, endHour: 8, buy: offPeak.buy, sell: offPeak.sell)
+        let weekendOffPeak = demoWindow(.offPeak, startHour: 0, endHour: 24, buy: offPeak.buy, sell: offPeak.sell)
+        return TariffPeriodDTO(
+            periodId: 2,
+            tariffId: 20,
+            name: tariffName,
+            version: 1,
+            source: .manual,
+            effectiveFrom: "2026-01-01",
+            effectiveTo: nil,
+            isCurrentToday: true,
+            updatedBy: TariffUpdatedByDTO(email: nil, isCurrentUser: true),
+            seasons: [
+                TariffSeasonInput(
+                    name: "All year",
+                    fromMonth: 1,
+                    toMonth: 12,
+                    weekdayPeriods: [peakWindow, offPeakWindow],
+                    weekendPeriods: [weekendOffPeak]
+                )
+            ]
+        )
+    }
+
+    private static func demoPriorPeriod() -> TariffPeriodDTO {
+        let priorWindow = demoWindow(.offPeak, startHour: 0, endHour: 24, buy: 0.145, sell: 0.03)
+        return TariffPeriodDTO(
+            periodId: 1,
+            tariffId: 10,
+            name: tariffName,
+            version: 1,
+            source: .tesla,
+            effectiveFrom: "2025-01-01",
+            effectiveTo: "2025-12-31",
+            isCurrentToday: false,
+            updatedBy: nil,
+            seasons: [
+                TariffSeasonInput(
+                    name: "All year",
+                    fromMonth: 1,
+                    toMonth: 12,
+                    weekdayPeriods: [priorWindow],
+                    weekendPeriods: [priorWindow]
+                )
+            ]
+        )
+    }
+
+    private static func demoWindow(
+        _ name: TariffPeriodName,
+        startHour: Int,
+        endHour: Int,
+        buy: Double,
+        sell: Double
+    ) -> TimePeriodWindowInput {
+        TimePeriodWindowInput(
+            touName: name,
+            fromHour: startHour,
+            fromMinute: 0,
+            toHour: endHour,
+            toMinute: 0,
+            buyRate: buy,
+            sellRate: sell
         )
     }
 }

@@ -4,29 +4,93 @@ import Testing
 
 @Suite("Tariff sheet")
 struct TariffSheetTests {
-    @Test func decodesSeasonsAndPeriods() throws {
-        let response = try MobileContractDecoder.make().decode(MobileTariffsResponse.self,
-                                                               from: Data(Self.fixture.utf8))
-        #expect(response.tariffs[0].seasons[0].periods[0].buyRate == 0.3)
-        #expect(response.activeSummary(now: response.asOf) == "Winter · Peak")
-        #expect(response.activeSummary(now: response.asOf.addingTimeInterval(61)) == nil)
-        #expect(response.activeSummary(now: response.asOf.addingTimeInterval(-1)) == nil)
+    @Test("Decodes v2 timeline periods, updatedBy attribution, reattribution, and teslaSync")
+    func decodesV2TimelineResponse() throws {
+        let response = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(Self.fixture.utf8)
+        )
+        #expect(response.version == 2)
+        #expect(response.periods.count == 2)
+        #expect(response.periods[0].source == .manual)
+        #expect(response.periods[0].updatedBy?.email == "owner@example.com")
+        #expect(response.periods[0].updatedBy?.isCurrentUser == true)
+        #expect(response.periods[0].seasons[0].weekdayPeriods[0].buyRate == 0.30335)
+        #expect(response.reattribution?.status == .running)
+        #expect(response.reattribution?.processedDays == 40)
+        #expect(response.teslaSync.differsFromActiveManual == true)
     }
-    @Test func rejectsWrongSiteAndVersion() throws {
-        let response = try MobileContractDecoder.make().decode(MobileTariffsResponse.self,
-                                                               from: Data(Self.fixture.utf8))
+
+    @Test("Rejects wrong site and non-v2 timeline version")
+    func rejectsWrongSiteAndVersion() throws {
+        let response = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(Self.fixture.utf8)
+        )
         #expect(throws: PWUsageAPIError.invalidResponse) { _ = try response.validating(siteID: "other") }
         #expect(throws: PWUsageAPIError.invalidResponse) {
-            let version2 = Self.fixture.replacingOccurrences(of: "\"version\":1", with: "\"version\":2")
-            _ = try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: Data(version2.utf8))
-                .validating(siteID: "a")
+            let version1 = Self.fixture.replacingOccurrences(of: "\"version\":2", with: "\"version\":1")
+            _ = try MobileContractDecoder.make().decode(
+                SiteTariffsTimelineResponse.self,
+                from: Data(version1.utf8)
+            )
+            .validating(siteID: "a")
         }
     }
-    static let fixture = #"{"version":1,"site":{"id":"a","name":"Home","timezone":"America/Chicago"},"#
-        + #""currency":"USD","asOf":"2026-10-01T13:00:00Z","tariffs":[{"id":1,"name":"Residential","#
-        + #""seasons":[{"id":2,"name":"Winter","dates":"Oct 1 – Apr 30","isActive":true,"#
-        + #""periods":[{"id":3,"name":"Peak","days":"Mon – Fri","times":"8 AM – 8 PM","buyRate":0.3,"#
-        + #""sellRate":0.1,"isActive":true}]}]}]}"#
+
+    @Test("Computes explicit timeline gap label between non-adjacent rate periods")
+    func computesTimelineGapLabelBetweenNonAdjacentPeriods() {
+        let older = TariffPeriodDTO(
+            periodId: 1,
+            tariffId: 10,
+            name: "Prior Plan",
+            version: 1,
+            source: .tesla,
+            effectiveFrom: "2025-01-01",
+            effectiveTo: "2025-09-30",
+            isCurrentToday: false,
+            updatedBy: nil,
+            seasons: []
+        )
+        let newer = TariffPeriodDTO(
+            periodId: 2,
+            tariffId: 20,
+            name: "Current Plan",
+            version: 1,
+            source: .manual,
+            effectiveFrom: "2026-01-01",
+            effectiveTo: nil,
+            isCurrentToday: true,
+            updatedBy: nil,
+            seasons: []
+        )
+        let gap = RatePlanTimelineFormatting.gapDescription(newer: newer, older: older)
+        #expect(gap == "Oct 1, 2025 – Dec 31, 2025 · Uses nearest prior plan")
+    }
+
+    static let fixture = #"{"version":2,"siteId":"a","timezone":"America/Chicago","currency":"USD","periods":["#
+        + #"{"periodId":2,"tariffId":20,"name":"Residential","version":2,"source":"manual","#
+        + #""effectiveFrom":"2026-01-01","effectiveTo":null,"isCurrentToday":true,"#
+        + #""updatedBy":{"email":"owner@example.com","isCurrentUser":true},"#
+        + #""seasons":[{"name":"Winter","fromMonth":10,"toMonth":4,"weekdayPeriods":["#
+        + #"{"touName":"ON_PEAK","fromHour":8,"fromMinute":0,"toHour":20,"toMinute":0,"#
+        + #""buyRate":0.30335,"sellRate":0.04906},"#
+        + #"{"touName":"OFF_PEAK","fromHour":20,"fromMinute":0,"toHour":8,"toMinute":0,"#
+        + #""buyRate":0.10,"sellRate":0.0329}],"weekendPeriods":["#
+        + #"{"touName":"OFF_PEAK","fromHour":0,"fromMinute":0,"toHour":24,"toMinute":0,"#
+        + #""buyRate":0.10,"sellRate":0.0329}]}]},"#
+        + #"{"periodId":1,"tariffId":10,"name":"Tesla Plan","version":1,"source":"tesla","#
+        + #""effectiveFrom":"2025-01-01","effectiveTo":"2025-12-31","isCurrentToday":false,"#
+        + #""updatedBy":null,"seasons":[{"name":"All Year","fromMonth":1,"toMonth":12,"weekdayPeriods":["#
+        + #"{"touName":"OFF_PEAK","fromHour":0,"fromMinute":0,"toHour":24,"toMinute":0,"#
+        + #""buyRate":0.20,"sellRate":0.05}],"weekendPeriods":["#
+        + #"{"touName":"OFF_PEAK","fromHour":0,"fromMinute":0,"toHour":24,"toMinute":0,"#
+        + #""buyRate":0.20,"sellRate":0.05}]}]}],"#
+        + #""reattribution":{"status":"running","fromDate":"2026-01-01","toDate":null,"#
+        + #""totalDays":100,"processedDays":40,"updatedDays":25,"lastError":null,"#
+        + #""updatedAt":"2026-10-01T13:00:00Z"},"#
+        + #""teslaSync":{"latestTariffId":10,"latestTariffName":"Tesla Plan","#
+        + #""latestUpdatedAt":"2026-10-01T12:00:00Z","differsFromActiveManual":true}}"#
 }
 
 @MainActor
@@ -36,13 +100,13 @@ struct TariffAuthorizationTests {
         let api = TariffTestAPI()
         let coordinator = DashboardCoordinator(siteID: "a", api: api, timerInterval: nil)
         coordinator.restoreLaunchCache(nil, sessionVerified: false)
-        await #expect(throws: PWUsageAPIError.signInRequired) { try await coordinator.fetchTariffs() }
+        await #expect(throws: PWUsageAPIError.signInRequired) { try await coordinator.fetchTariffTimeline() }
         #expect(api.calls == 0)
         coordinator.authenticationRestored()
-        _ = try await coordinator.fetchTariffs()
+        _ = try await coordinator.fetchTariffTimeline()
         #expect(api.calls == 1)
         coordinator.authenticationInvalidated()
-        await #expect(throws: PWUsageAPIError.signInRequired) { try await coordinator.fetchTariffs() }
+        await #expect(throws: PWUsageAPIError.signInRequired) { try await coordinator.fetchTariffTimeline() }
         #expect(api.calls == 1)
     }
 
@@ -51,7 +115,7 @@ struct TariffAuthorizationTests {
         let coordinator = DashboardCoordinator(siteID: "a", api: api, timerInterval: nil)
         coordinator.authenticationRestored()
         api.beforeReturn = { coordinator.selectSite("b") }
-        await #expect(throws: CancellationError.self) { try await coordinator.fetchTariffs() }
+        await #expect(throws: CancellationError.self) { try await coordinator.fetchTariffTimeline() }
     }
 
     @Test func unauthorizedResponseInvalidatesSession() async throws {
@@ -59,7 +123,7 @@ struct TariffAuthorizationTests {
         let coordinator = DashboardCoordinator(siteID: "a", api: api, timerInterval: nil)
         coordinator.authenticationRestored()
         api.error = .signInRequired
-        await #expect(throws: PWUsageAPIError.signInRequired) { try await coordinator.fetchTariffs() }
+        await #expect(throws: PWUsageAPIError.signInRequired) { try await coordinator.fetchTariffTimeline() }
         #expect(coordinator.requiresSignIn)
     }
 }
@@ -69,15 +133,47 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
     var calls = 0
     var beforeReturn: (() -> Void)?
     var error: PWUsageAPIError?
-    func fetchTariffs(siteID: String) async throws -> MobileTariffsResponse {
+
+    func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
         calls += 1
         if let error { throw error }
         beforeReturn?()
-        return try MobileContractDecoder.make().decode(MobileTariffsResponse.self,
-                                                       from: Data(TariffSheetTests.fixture.utf8))
+        return try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
     }
+
+    func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func createTariffPeriod(
+        siteID: String,
+        body: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func updateTariffPeriod(
+        siteID: String,
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         throw PWUsageAPIError.invalidResponse
     }
+
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
 }

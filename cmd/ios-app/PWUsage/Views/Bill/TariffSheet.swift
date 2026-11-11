@@ -1,190 +1,371 @@
 import SwiftUI
 
-/// The Rate Plans page. Pushed from Settings, so it has no stack or Done button
-/// of its own; the host supplies those.
+private enum TariffSheetModal: Identifiable, Equatable {
+    case effectiveDates(TariffPeriodDTO)
+    case editor(RatePlanEditorMode)
+
+    var id: String {
+        switch self {
+        case .effectiveDates(let period): "dates-\(period.periodId)"
+        case .editor(let mode): "editor-\(mode.id)"
+        }
+    }
+}
+
 struct TariffSheet: View {
     let site: MobileSite
-    let load: @MainActor () async throws -> MobileTariffsResponse
+    let actions: TariffTimelineActions
+
     @Environment(\.scenePhase) private var scenePhase
-    @State private var response: MobileTariffsResponse?
+    @State private var timeline: SiteTariffsTimelineResponse?
+    @State private var loadError: String?
+    @State private var actionError: String?
     @State private var isLoading = false
-    @State private var failed = false
+    @State private var isSyncing = false
+    @State private var isRetryingReattribution = false
+    @State private var activeModal: TariffSheetModal?
+    @State private var pendingDeletion: TariffPeriodDTO?
+    @State private var minuteTick = Date()
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            List {
-                if let response {
-                    Section("Currently active") {
-                        if let summary = response.activeSummary(now: context.date), !failed {
-                            Label(summary, systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Text(
-                                failed
-                                    ? "Current activity unavailable"
-                                    : response.activityIsCurrent(now: context.date)
-                                    ? "No period matches the current time."
-                                    : "Updating current activity…"
-                            )
-                            .foregroundStyle(.secondary)
-                        }
-                        Text("Times shown in \(response.site.timezone)")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    ForEach(response.tariffs) { tariff in
-                        if tariff.seasons.isEmpty {
-                            Section(tariff.name) { Text("No seasons defined.").foregroundStyle(.secondary) }
-                        }
-                        ForEach(tariff.seasons) { season in
-                            Section {
-                                if season.periods.isEmpty {
-                                    Text("No periods defined.").foregroundStyle(.secondary)
-                                }
-                                ForEach(season.periods) { period in
-                                    periodRow(period, currency: response.currency,
-                                              active: period.isActive && !failed
-                                                  && response.activityIsCurrent(now: context.date))
-                                }
-                            } header: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(tariff.name)
-                                    let isSeasonActive = season.isActive && !failed
-                                        && response.activityIsCurrent(now: context.date)
-                                    Text(season.name + (isSeasonActive ? " · Active season" : ""))
-                                        .font(.headline)
-                                    Text(season.dates)
-                                }
-                            }
-                        }
-                    }
-                    if response.tariffs.isEmpty {
-                        ContentUnavailableView("No rate plans",
-                                               systemImage: "tag",
-                                               description: Text("No rate plans are set up for this site."))
-                    }
-                } else if isLoading {
-                    HStack { Spacer(); ProgressView("Loading rate plans…"); Spacer() }
-                }
-                if failed {
-                    Section {
-                        Text(
-                            response == nil
-                                ? "Rate plans could not be loaded."
-                                : "Showing previously loaded rates. Current activity could not be refreshed."
-                        )
-                        .foregroundStyle(.secondary)
-                        Button("Retry") { Task { await refresh() } }.disabled(isLoading)
-                    }
-                }
-                Section {
-                    Text(
-                        "Rates are saved from your Powerwall settings in the Tesla app. "
-                            + "Holiday overrides are included when determining the active period."
-                    )
-                    .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
+        contentView
             .navigationTitle("Rate Plans")
-            .inlineNavigationTitle()
-            .refreshable { await refresh() }
-            .task(id: scenePhase) {
-                guard scenePhase == .active else { return }
-                await refresh()
-                while !Task.isCancelled {
-                    // Refresh at minute boundaries, when tariff activity can change.
-                    let seconds = 60 - Date.now.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
-                    do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-                    await refresh()
+        #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+        #endif
+            .toolbar { toolbarContent }
+            .task(id: site.id) { await initialLoad() }
+            .task(id: pollingKey) { await pollReattributionWhileActive() }
+            .task(id: scenePhase) { await refreshAndTickMinute() }
+            .sheet(item: $activeModal) { modalView(for: $0) }
+            .confirmationDialog(
+                "Delete Rate Plan?",
+                isPresented: isDeletingBinding,
+                titleVisibility: .visible,
+                presenting: pendingDeletion,
+                actions: deleteDialogActions,
+                message: deleteDialogMessage
+            )
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        if let timeline {
+            timelineScrollView(timeline)
+        } else if let loadError {
+            EmptyStateScreen(
+                symbol: "exclamationmark.triangle",
+                title: "Couldn't load rate plans",
+                message: loadError,
+                actionTitle: "Try Again"
+            ) {
+                Task { await performLoad(showSpinner: true) }
+            }
+        } else {
+            ProgressView("Loading rate plans...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(SectionTheme.groupedBackground)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                syncFromTesla()
+            } label: {
+                if isSyncing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("Sync from Tesla", systemImage: "arrow.triangle.2.circlepath")
                 }
+            }
+            .disabled(isSyncing || isLoading)
+        }
+    }
+
+    private func timelineScrollView(_ data: SiteTariffsTimelineResponse) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                headerBannerSection(data)
+                timelinePeriodsSection(data)
+                addPlanButton
+            }
+            .padding(16)
+            .frame(maxWidth: SectionTheme.maxContentWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .background { SectionTheme.bill.screenBackground }
+        .refreshable { await performLoad(showSpinner: false) }
+    }
+
+    @ViewBuilder
+    private func headerBannerSection(_ data: SiteTariffsTimelineResponse) -> some View {
+        if let actionError {
+            errorBanner(actionError)
+        }
+        if let reattribution = data.reattribution {
+            ReattributionBannerView(
+                status: reattribution,
+                isRetrying: isRetryingReattribution,
+                onRetry: retryReattribution
+            )
+        }
+        if data.teslaSync.differsFromActiveManual {
+            teslaDivergenceBanner(data.teslaSync)
+        }
+        ActiveRatePlanCardView(timeline: data, now: minuteTick)
+    }
+
+    @ViewBuilder
+    private func timelinePeriodsSection(_ data: SiteTariffsTimelineResponse) -> some View {
+        let sortedPeriods = data.periods.sorted { $0.effectiveFrom > $1.effectiveFrom }
+        if sortedPeriods.isEmpty {
+            CardContainer(padding: 18, cornerRadius: 16, spacing: 8) {
+                Text("No rate plans yet")
+                    .font(.headline)
+                Text("Sync your plan from Tesla or create a custom Rate Plan.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text("Rate Plan History")
+                .font(.headline)
+                .padding(.top, 4)
+            ForEach(Array(sortedPeriods.enumerated()), id: \.element.periodId) { index, period in
+                if index > 0,
+                   let gapText = RatePlanTimelineFormatting.gapDescription(
+                       newer: sortedPeriods[index - 1],
+                       older: period
+                   ) {
+                    timelineGapRow(gapText)
+                }
+                TariffPeriodCardView(
+                    period: period,
+                    currency: data.currency,
+                    onEditPlan: { activeModal = .editor(.edit(period)) },
+                    onCopyPlan: { activeModal = .editor(.copy(period)) },
+                    onEditDates: { activeModal = .effectiveDates(period) },
+                    onDelete: { pendingDeletion = period }
+                )
             }
         }
     }
 
-    private func periodRow(_ period: MobileTariffsResponse.Period, currency: String, active: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(period.name).font(.headline)
-                if active {
-                    Label("Active", systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.green)
+    private func timelineGapRow(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                .foregroundStyle(.secondary.opacity(0.4))
+        )
+    }
+
+    private func teslaDivergenceBanner(_ sync: TeslaSyncDTO) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bolt.badge.clock")
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Tesla has an updated rate plan")
+                    .font(.subheadline.weight(.medium))
+                if let name = sync.latestTariffName, !name.isEmpty {
+                    Text("\"\(name)\" is saved in your Tesla account.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-            Text("\(period.days) · \(period.times)").font(.subheadline).foregroundStyle(.secondary)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 20) { rates(period, currency: currency) }
-                VStack(alignment: .leading, spacing: 4) { rates(period, currency: currency) }
-            }
-            .font(.subheadline).monospacedDigit()
+            Spacer(minLength: 8)
+            Button("Sync") { syncFromTesla() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isSyncing)
         }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
+        .padding(14)
+        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    @ViewBuilder private func rates(_ period: MobileTariffsResponse.Period, currency: String) -> some View {
-        Text("Buy \(rate(period.buyRate, currency: currency))/kWh")
-        Text("Sell \(rate(period.sellRate, currency: currency))/kWh")
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.red)
+            Text(message).font(.caption).foregroundStyle(.red)
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func rate(_ value: Double?, currency: String) -> String {
-        guard let value, value.isFinite else { return "—" }
-        return value.formatted(.currency(code: currency).precision(.fractionLength(4)))
+    private var addPlanButton: some View {
+        Button {
+            activeModal = .editor(.add)
+        } label: {
+            Label("Add Rate Plan", systemImage: "plus.circle.fill")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .padding(.top, 4)
     }
 
-    @MainActor private func refresh() async {
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
+    @ViewBuilder
+    private func modalView(for modal: TariffSheetModal) -> some View {
+        switch modal {
+        case .effectiveDates(let period):
+            EffectiveDatesSheet(period: period) { periodID, patch in
+                let updated = try await actions.updatePeriod(periodID, patch)
+                timeline = updated
+            }
+        case .editor(let mode):
+            RatePlanEditorFlow(
+                mode: mode,
+                timeZone: timeline.flatMap { TimeZone(identifier: $0.timezone) } ?? .current,
+                currency: timeline?.currency ?? "USD",
+                onCreate: { writeRequest in
+                    timeline = try await actions.createPeriod(writeRequest)
+                },
+                onUpdate: { periodID, patch in
+                    timeline = try await actions.updatePeriod(periodID, patch)
+                }
+            )
+        }
+    }
+
+    private var isDeletingBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeletion != nil },
+            set: { if !$0 { pendingDeletion = nil } }
+        )
+    }
+
+    @ViewBuilder
+    private func deleteDialogActions(for period: TariffPeriodDTO) -> some View {
+        Button("Delete Rate Plan", role: .destructive) {
+            pendingDeletion = nil
+            deletePeriod(period)
+        }
+        Button("Cancel", role: .cancel) {
+            pendingDeletion = nil
+        }
+    }
+
+    private func deleteDialogMessage(for period: TariffPeriodDTO) -> some View {
+        Text(
+            "Removing \"\(period.name)\" restores any prior Tesla or custom plan covering its dates "
+                + "and recalculates historical costs."
+        )
+    }
+
+    private var isPresentingEditor: Bool { activeModal != nil }
+
+    private var shouldPollReattribution: Bool {
+        guard let status = timeline?.reattribution?.status else { return false }
+        return status == .pending || status == .running
+    }
+
+    private var pollingKey: String {
+        let token = timeline?.reattribution?.updatedAt ?? "none"
+        return "\(site.id)-\(isPresentingEditor)-\(shouldPollReattribution)-\(token)"
+    }
+
+    private func initialLoad() async {
+        await performLoad(showSpinner: timeline == nil)
+    }
+
+    private func performLoad(showSpinner: Bool) async {
+        if showSpinner { isLoading = true }
+        defer { if showSpinner { isLoading = false } }
         do {
-            let result = try await load().validating(siteID: site.id)
-            guard !Task.isCancelled else { return }
-            response = result
-            failed = false
+            let loaded = try await actions.load()
+            timeline = loaded
+            loadError = nil
         } catch is CancellationError {
             return
         } catch {
-            guard !Task.isCancelled else { return }
-            failed = true
+            if timeline == nil {
+                loadError = error.localizedDescription
+            } else {
+                actionError = error.localizedDescription
+            }
         }
     }
-}
 
-#Preview("Rate Plans · Empty") {
-    NavigationStack {
-        TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
-            MobileTariffsResponse(
-                version: 1,
-                site: .init(id: "preview", name: "Home", timezone: "America/Chicago"),
-                currency: "USD",
-                asOf: .now,
-                tariffs: []
-            )
-        })
+    private func pollReattributionWhileActive() async {
+        guard !isPresentingEditor, shouldPollReattribution else { return }
+        while !Task.isCancelled && !isPresentingEditor && shouldPollReattribution {
+            do {
+                try await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, !isPresentingEditor else { return }
+                timeline = try await actions.load()
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
     }
-}
 
-#Preview("Rate Plans · Seasons and periods") {
-    NavigationStack { TariffSheet(site: MobileSite(id: "preview", name: "Home", utility: "Utility"), load: {
-        MobileTariffsResponse(
-            version: 1, site: .init(id: "preview", name: "Home", timezone: "America/Chicago"),
-            currency: "USD", asOf: .now,
-            tariffs: [.init(id: 1, name: "Residential", seasons: [
-                .init(id: 2, name: "Winter", dates: "Oct 1 – Apr 30", isActive: true, periods: [
-                    .init(id: 3, name: "Peak", days: "Mon – Fri",
-                          times: "08:00 – 20:00", buyRate: 0.30, sellRate: 0.10,
-                          isActive: true),
-                    .init(id: 4, name: "Off peak", days: "Mon – Fri",
-                          times: "20:00 – 08:00", buyRate: 0.15, sellRate: 0.08,
-                          isActive: false),
-                    .init(id: 5, name: "Weekend", days: "Sat – Sun",
-                          times: "All Day", buyRate: 0.15, sellRate: 0.08,
-                          isActive: false)
-                ]),
-                .init(id: 6, name: "Summer", dates: "May 1 – Sep 30", isActive: false, periods: [
-                    .init(id: 7, name: "Standard", days: "Every day",
-                          times: "All Day", buyRate: 0.25, sellRate: 0.10,
-                          isActive: false)
-                ])
-            ])]
-        )
-    }) }
+    private func refreshAndTickMinute() async {
+        guard scenePhase == .active else { return }
+        minuteTick = Date()
+        while !Task.isCancelled && scenePhase == .active {
+            let seconds = Calendar.current.component(.second, from: Date())
+            let delay = max(1, 60 - seconds)
+            do {
+                try await Task.sleep(for: .seconds(delay))
+                minuteTick = Date()
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func syncFromTesla() {
+        actionError = nil
+        isSyncing = true
+        Task {
+            do {
+                timeline = try await actions.refreshFromTesla()
+                isSyncing = false
+            } catch {
+                isSyncing = false
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    private func retryReattribution() {
+        actionError = nil
+        isRetryingReattribution = true
+        Task {
+            do {
+                timeline = try await actions.retryReattribution()
+                isRetryingReattribution = false
+            } catch {
+                isRetryingReattribution = false
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    private func deletePeriod(_ period: TariffPeriodDTO) {
+        actionError = nil
+        Task {
+            do {
+                timeline = try await actions.deletePeriod(period.periodId)
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+    }
 }
