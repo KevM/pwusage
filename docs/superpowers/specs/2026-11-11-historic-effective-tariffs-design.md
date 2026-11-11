@@ -199,28 +199,31 @@ Storing `attribution.timelineRevision = "effective-tariff:${tariffId}"` lets dia
 
 Note that in our engine, a price-only change between two `"Tariff"` versions creates a distinct `"Tariff"` row (`tariff_id`), so `"EnergyDaySummary"` must be rewritten to reference the updated `tariff_id` and `tariff_schedule_id` even when daily segment boundaries remain identical. Conversely, when a re-attribution pass revisits days already pointing to the same `tariff_id` and identical `segments`, those days are skipped completely without decoding telemetry payloads.
 
-Per batch (default `BATCH_SIZE = 45` days, newest-first):
+Instead of relying on a single static batch size for the entire invocation, execution uses a **time-budgeted outer loop** (matching [`heal-gaps/route.ts`](../../../cmd/next-app/src/app/api/cron/heal-gaps/route.ts) and [`gap-heal.ts`](../../../cmd/next-app/src/lib/gap-heal.ts)) over **small checkpointed chunks** (`REATTRIBUTION_CHUNK_DAYS = 15` default, configurable for tuning):
 
-1. Fetch up to `BATCH_SIZE` rows from `"EnergyDayArchive"` for `site_id` matching `(day_start < cursor_day_start OR cursor_day_start IS NULL)` and within `[from_date, to_date]` (converted to site-local date boundaries), ordered by `day_start DESC`, selecting **metadata only** (`day_start`, `revision`, `schema_version`, `sample_count`, `attribution`)—excluding heavy `payload` bytes.
-2. For each day row:
-   - Resolve `tariff` and `schedule` for `dayLocalDate`.
-   - Compute expected `nextAttribution = deriveDayAttribution(dayStart, timezone, schedule, sampleCount, tariffTimelineRevision(tariff.id))`.
-   - **Phase 1 fast-skip check:** If `row.attribution?.timelineRevision === nextAttribution.timelineRevision` and `segmentsEqual(row.attribution.segments, nextAttribution.segments)`:
-     - Day is already attributed to the exact target `tariff_id` and identical `segments`. Skip `payload` fetch and `replaceDay`!
-   - **Phase 2 rewrite:** Collect `day_start` keys needing rewrite. Batch-fetch `payload` for only those rows, decompress (`gunzip`/`brotli` via `compact-day-record.ts`), run `rollupSamples(decodedSamples, nextAttribution, tariffSchedules)`, rebuild the v3 compact day blob + `"EnergyDaySummary"` rows, and call `replaceDay(...)`.
-3. Acquire `claimMutation(client, siteId)` around the database write step of each day (or chunk) with bounded timeout so live telemetry ingestion via Tesla polling never starves. If `claimMutation` returns busy after retries, release and leave `cursor_day_start` untouched so the next cron/after tick resumes seamlessly.
-4. Update `"SiteTariffReattribution"`: increment `processed_days` and `updated_days`, advance `cursor_day_start` to the oldest `day_start` processed in the batch, and transition `status = 'idle'` when no earlier archived days remain in `[from_date, to_date]`.
+1. **Metadata scan (newest-first):** Fetch up to `chunkDays` rows from `"EnergyDayArchive"` for `site_id` matching `(day_start < cursor_day_start OR cursor_day_start IS NULL)` and within `[from_date, to_date]` (converted to site-local date boundaries), ordered by `day_start DESC`, selecting **metadata only** (`day_start`, `revision`, `schema_version`, `sample_count`, `attribution`)—excluding heavy `payload` bytes.
+2. **Phase 1 fast-skip vs Phase 2 candidate selection:**
+   - For each day row, resolve `tariff` and `schedule` for `dayLocalDate`, and compute `nextAttribution = deriveDayAttribution(dayStart, timezone, schedule, sampleCount, tariffTimelineRevision(tariff.id))`.
+   - If `row.attribution?.timelineRevision === nextAttribution.timelineRevision` and `segmentsEqual(row.attribution.segments, nextAttribution.segments)`, skip `payload` fetch and `replaceDay` completely.
+   - Otherwise, add the day to the rewrite list for Phase 2.
+3. **Phase 2 rewrite & checkpoint:**
+   - Batch-fetch `payload` only for the rewrite list, decompress (`gunzip`/`brotli` via `compact-day-record.ts`), run `rollupSamples(decodedSamples, nextAttribution, tariffSchedules)`, and rebuild the v3 compact day blob + `"EnergyDaySummary"` rows.
+   - Acquire `claimMutation(client, siteId)` around each small rewrite chunk inside a bounded transaction (`transactionTimeoutMs <= 15_000` in [`CompactHistoryStore`](../../../cmd/next-app/src/lib/prototypes/compact-history-store.ts#L76)) so live telemetry ingestion via Tesla polling never starves and partial progress commits frequently. If `claimMutation` returns busy after retries, release and leave `cursor_day_start` untouched so the next tick resumes seamlessly.
+4. **Advance cursor & loop check:** Increment `processed_days` and `updated_days` on `"SiteTariffReattribution"`, advance `cursor_day_start` to the oldest `day_start` processed in the chunk, and transition `status = 'idle'` when no earlier archived days remain in `[from_date, to_date]`. Before starting the next chunk, check remaining wall-clock budget; if exhausted, exit cleanly (`stopped: 'time-budget'`) so the next cron invocation picks up at `cursor_day_start`.
 
-### 3.4 Scheduling & Runtime Execution
+### 3.4 Scheduling, Time Budgets & Empirical Tuning
 
 1. **Immediate inline + `after()` drain on save/delete:**
-   - `POST / PATCH / DELETE /api/site/[id]/tariffs` synchronously commits the `"Tariff"` + `"TariffEffectivePeriod"` + `"SiteTariffReattribution"` (`status = 'pending'`) rows and returns `200/201` immediately.
-   - Using Next.js `after(...)`, the route runs an initial re-attribution tick right after responding (typically completing the current billing cycle + ~30–60 recent days in `< 500 ms`), so the user immediately sees accurate numbers when switching back to the Bill / Overview screen.
+   - `POST / PATCH / DELETE /api/site/[id]/tariffs` synchronously commits `"Tariff"` + `"TariffEffectivePeriod"` + `"SiteTariffReattribution"` (`status = 'pending'`) rows and returns `200/201` immediately.
+   - Using Next.js `after(...)`, the route runs a short time-budgeted loop (`AFTER_MAX_TIME_MS = 6_000`, `withIoDeadline(10_000, ...)`), typically completing the current billing cycle + ~15–60 recent days right away while checkpointing anything remaining to Postgres.
 2. **Background cron `/api/cron/reattribute-tariffs`:**
-   - Configured with `maxDuration = 60` (matching Hobby plan budget in [`20261017203000_heal_gaps_cron.sql`](../../../cmd/next-app/db-migrations/20261017203000_heal_gaps_cron.sql)).
+   - Configured with `maxDuration = 60` (matching the Vercel Hobby limit and [`heal-gaps/route.ts`](../../../cmd/next-app/src/app/api/cron/heal-gaps/route.ts)).
+   - Wraps the run in `withIoDeadline(50_000, ...)` (`HARD_DEADLINE_MS = 50_000`) and stops starting new chunks or sites once elapsed wall-clock exceeds `REATTRIBUTION_MAX_TIME_MS = 35_000` (leaving ~15–25s headroom before the hard deadline / Hobby kill, mirroring `GAP_HEAL_MAX_TIME_MS`). Because chunks are small and Phase 1 skips are near-zero cost, fast runs automatically drain far more days (hundreds of skipped days or dozens of rewrites) within the 35s window rather than halting after one fixed batch.
    - Triggered every minute by `pg_cron` + `pg_net.http_get` (authenticating via Vault `cron_secret`), selecting sites where `status IN ('pending', 'running')` (or stale `'running'` rows whose `updated_at < now() - interval '2 minutes'`).
-   - Stops iterating within a single invocation once elapsed wall-clock exceeds `45s` (`BATCH_SIZE = 45`), persisting `cursor_day_start`.
    - On unhandled exception, increments `attempt_count`, records `last_error`, marks `status = 'failed'` once `attempt_count >= 5`, and supports manual retry via API.
+3. **Observability & dialing in `REATTRIBUTION_CHUNK_DAYS`:**
+   - Emit structured `logEvent` telemetry per chunk and per site (`chunkDays`, `skippedDays`, `rewrittenDays`, `scanMs`, `rewriteMs`, `remainingMs`, `stopped`) matching `cron.heal-gaps.*`.
+   - Use initial production/dev timing telemetry to dial `REATTRIBUTION_CHUNK_DAYS` (and any sub-transaction split size if needed) so each Phase 2 write transaction completes comfortably within ~`2–5 s` on live Supabase pooler latency without starving `writeDay` or risking the `15_000 ms` `CompactHistoryStore` transaction timeout.
 
 ### 3.5 Bill Calculation & Caching Interaction
 
@@ -459,7 +462,7 @@ Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/compone
    - Pure timeline math: span split (enclosing `[2024-01-01, NULL]` split by manual `[2025-01-01, 2025-12-31]`), left/right trim, full overwrite, manual delete restoring fallback, `is_current` invariant.
    - Validation tests: 12-month coverage (including wraparound `Oct -> May`), 48-slot 24h coverage, 5-decimal rounding bounds, rejection of gaps/overlaps/invalid rates.
    - `TariffRepo.addTariffVersion`: verifies `'tesla'` changes do not overwrite `'manual'` spans covering today and deduplicate against the last `'tesla'` version rather than manual `is_current`.
-   - Re-attribution engine: verifies metadata-only phase skips rows already matching `timelineRevision` + `segments`, updates rows whose `tariff_id` or `segments` changed while preserving telemetry samples, handles bounded `BATCH_SIZE` continuation via `cursor_day_start`, coalesces overlapping concurrent edits, and transitions `pending -> running -> idle` / `failed`.
+   - Re-attribution engine: verifies metadata-only phase skips rows already matching `timelineRevision` + `segments`, updates rows whose `tariff_id` or `segments` changed while preserving telemetry samples, stops cleanly when the mocked wall-clock time budget is reached while preserving `cursor_day_start`, drains across multiple ticks, coalesces overlapping concurrent edits, and transitions `pending -> running -> idle` / `failed`.
    - Regression test using Harrison's real 2025 and 2026 We Energies rates (`0.27006`/`0.30084` + riders, `0.04906`/`0.03290`, etc.) to confirm exact 5-decimal storage and bill totals without floating-point/cent rounding loss.
 3. **iOS unit tests (`swift test` / Xcode `PWUsageTests`, Swift Testing `import Testing`):**
    - Pure tests for `RatePlanDraft` validation (12-month coverage, 24h wraparound periods, 30-min snapping constraints), 5-decimal `RateFormatting` & input parser, DTO round-trip encoding/decoding, and editor actions (`addSeason`, `removeSeason`, `addTimePeriod`, boundary drags).
