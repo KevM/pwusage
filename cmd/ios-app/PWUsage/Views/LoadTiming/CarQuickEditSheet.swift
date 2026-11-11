@@ -46,7 +46,7 @@ struct CarQuickEditSheet: View {
             }
         }
         .presentationDetents([.height(340), .large])
-        .presentationBackgroundInteraction(.enabled(upThrough: .height(340)))
+        .presentationBackgroundInteraction(.disabled)
         .presentationDragIndicator(.visible)
     }
 
@@ -60,8 +60,8 @@ struct CarQuickEditSheet: View {
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 14)
                             .frame(minHeight: 44)
-                            .foregroundStyle(isSelected ? Color.white : Color.primary)
-                            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.15), in: Capsule())
+                            .foregroundStyle(isSelected ? Color.onEmphasis : Color.primary)
+                            .background(isSelected ? Color.emphasis : Color.secondary.opacity(0.15), in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])

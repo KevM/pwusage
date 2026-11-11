@@ -135,3 +135,18 @@ extension LoadProfileStoreTests {
         #expect(LoadProfileStore(userDefaults: defaults).lastEVProfileID == "car")
     }
 }
+
+extension LoadProfileStoreTests {
+    @Test("Setting a car's charge to what it already is does not rewrite the jobs")
+    @MainActor
+    func unchangedChargeUpdateIsANoOp() throws {
+        let store = ProfileStoreFixture().store
+        var publishes = 0
+        let subscription = store.$profiles.dropFirst().sink { _ in publishes += 1 }
+        try store.updateCarCharge(id: "car", current: 20, target: 80)
+        #expect(publishes == 0)
+        try store.updateCarCharge(id: "car", current: 25, target: nil)
+        #expect(publishes == 1)
+        subscription.cancel()
+    }
+}

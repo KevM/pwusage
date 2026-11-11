@@ -150,6 +150,7 @@ final class LoadProfileStore: ObservableObject {
         guard updated.kind == .car, var settings = updated.carSettings else { throw LoadProfileError.invalidProfile }
         if let current { settings = CarChargeSteps.settings(settings, settingCurrent: current) }
         if let target { settings = CarChargeSteps.settings(settings, settingTarget: target) }
+        guard settings != updated.carSettings else { return }
         updated.carSettings = settings
         if let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings), estimate.batteryKwh > 0 {
             updated.energyKwh = estimate.batteryKwh
