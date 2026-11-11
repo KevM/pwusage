@@ -159,6 +159,9 @@ if [[ "$mode" == default && "$#" -eq 0 ]]; then
 fi
 
 artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/pwusage-ios-tests.XXXXXX")"
+# CI points this at a directory it caches between runs; otherwise the build products are throwaway.
+derived_data="${PWUSAGE_DERIVED_DATA:-$artifacts_dir/DerivedData}"
+mkdir -p "$derived_data"
 echo "Testing PWUsage ($mode run) on simulator $simulator_id (limit: ${timeout_seconds}s)"
 if [[ "${#test_filter_args[@]}" -gt 0 ]]; then
   echo "Filters: ${test_filter_args[*]}"
@@ -172,7 +175,7 @@ python3 - "$timeout_seconds" xcodebuild \
   -destination "id=$simulator_id" \
   -parallel-testing-enabled NO \
   -collect-test-diagnostics on-failure \
-  -derivedDataPath "$artifacts_dir/DerivedData" \
+  -derivedDataPath "$derived_data" \
   -resultBundlePath "$artifacts_dir/TestResults.xcresult" \
   CODE_SIGNING_ALLOWED=NO \
   COMPILER_INDEX_STORE_ENABLE=NO \
