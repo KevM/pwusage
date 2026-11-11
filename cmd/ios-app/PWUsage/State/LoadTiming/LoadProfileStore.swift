@@ -74,7 +74,8 @@ final class LoadProfileStore: ObservableObject {
             durationHours: new.durationHours,
             carSettings: new.carSettings,
             size: new.size,
-            actionVerb: Self.trimmedVerb(new.actionVerb)
+            actionVerb: Self.trimmedVerb(new.actionVerb),
+            symbol: Self.trimmedVerb(new.symbol)
         )
         try Self.validate(profile)
         profiles.append(profile)
@@ -88,7 +89,7 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @discardableResult
-    func createCarProfile(name: String, settings: CarLoadSettings) throws -> LoadProfile {
+    func createCarProfile(name: String, settings: CarLoadSettings, symbol: String? = nil) throws -> LoadProfile {
         guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else {
             throw LoadProfileError.invalidProfile
         }
@@ -97,7 +98,7 @@ final class LoadProfileStore: ObservableObject {
             name: name, kind: .car,
             energyKwh: estimate.batteryKwh > 0 ? estimate.batteryKwh : Defaults.carEnergyKwh,
             durationHours: estimate.batteryKwh > 0 ? estimate.durationHours : Defaults.carDurationHours,
-            carSettings: settings))
+            carSettings: settings, symbol: symbol))
     }
 
     @discardableResult
@@ -107,7 +108,7 @@ final class LoadProfileStore: ObservableObject {
         let copy = LoadProfile(
             id: UUID().uuidString, name: "\(source.name) copy", kind: source.kind,
             energyKwh: source.energyKwh, durationHours: source.durationHours, carSettings: source.carSettings,
-            size: source.size, actionVerb: source.actionVerb)
+            size: source.size, actionVerb: source.actionVerb, symbol: source.symbol)
         profiles.insert(copy, at: index + 1)
         persist()
         return copy
@@ -133,6 +134,7 @@ final class LoadProfileStore: ObservableObject {
         updated.durationHours = edit.durationHours
         if edit.updatesSize { updated.size = edit.size } else if let size = edit.size { updated.size = size }
         if let actionVerb = edit.actionVerb { updated.actionVerb = Self.trimmedVerb(actionVerb) }
+        if let symbol = edit.symbol { updated.symbol = Self.trimmedVerb(symbol) }
         if updated.kind == .car {
             updated.carSettings = edit.carSettings ?? updated.carSettings
         }

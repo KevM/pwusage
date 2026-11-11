@@ -9,6 +9,7 @@ struct ProfileDraft: Identifiable, Equatable {
     var carSettings: CarLoadSettings?
     var size: JobSize?
     var actionVerb: String?
+    var symbol: String?
 
     var sheetID: String { id ?? (kind == .car ? "new-car" : "new-custom") }
     var isValid: Bool {
@@ -30,11 +31,13 @@ struct ProfileDraft: Identifiable, Equatable {
         carSettings = profile.carSettings
         size = profile.size
         actionVerb = profile.actionVerb
+        symbol = JobGlyphs.symbol(for: profile)
     }
 
     /// A job that doesn't exist yet; the store assigns its id when it is saved.
     init(name: String, kind: LoadProfileKind, energyKwh: Double, durationHours: Double,
-         carSettings: CarLoadSettings? = nil, size: JobSize? = nil, actionVerb: String? = nil) {
+         carSettings: CarLoadSettings? = nil, size: JobSize? = nil, actionVerb: String? = nil,
+         symbol: String? = nil) {
         id = nil
         self.name = name
         self.kind = kind
@@ -43,11 +46,12 @@ struct ProfileDraft: Identifiable, Equatable {
         self.carSettings = carSettings
         self.size = size
         self.actionVerb = actionVerb
+        self.symbol = symbol
     }
 
     static func newCustom() -> ProfileDraft {
         ProfileDraft(name: "Custom job", kind: .custom, energyKwh: JobSize.medium.defaultEnergyKwh,
-                     durationHours: JobSize.medium.defaultDurationHours, size: .medium)
+                     durationHours: JobSize.medium.defaultDurationHours, size: .medium, symbol: "slider.horizontal.3")
     }
 
     static func newCar() -> ProfileDraft {
@@ -56,7 +60,8 @@ struct ProfileDraft: Identifiable, Equatable {
             name: "Car", kind: .car, energyKwh: defaults.carEnergyKwh, durationHours: defaults.carDurationHours,
             carSettings: CarLoadSettings(
                 capacityKwh: defaults.carCapacityKwh, initialStateOfCharge: defaults.carInitialSOC,
-                targetStateOfCharge: defaults.carTargetSOC, chargingLevel: defaults.carLevel))
+                targetStateOfCharge: defaults.carTargetSOC, chargingLevel: defaults.carLevel),
+            symbol: "car.fill")
     }
 
     /// Picking a size starts from that size's usual energy and hours; stepping either afterwards leaves it alone.
@@ -89,7 +94,7 @@ struct ProfileDraft: Identifiable, Equatable {
 
     var newProfile: NewProfile {
         NewProfile(name: name, kind: kind, energyKwh: energyKwh, durationHours: durationHours,
-                   carSettings: carSettings, size: size, actionVerb: actionVerb)
+                   carSettings: carSettings, size: size, actionVerb: actionVerb, symbol: symbol)
     }
 
     /// Whether closing the editor now would lose something the person typed.

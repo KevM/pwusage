@@ -63,7 +63,7 @@ struct CarQuickEditSheet: View {
                 ForEach(store.carProfiles) { profile in
                     let isSelected = profile.id == car?.id
                     Button { onSelect(profile.id) } label: {
-                        Text(profile.name)
+                        Label(profile.name, systemImage: JobGlyphs.symbol(for: profile))
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 14)
                             .frame(minHeight: 44)

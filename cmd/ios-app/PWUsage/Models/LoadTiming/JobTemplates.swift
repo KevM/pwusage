@@ -18,16 +18,16 @@ enum JobTemplates {
                     symbol: "car.fill", draft: .newCar()),
         appliance(id: "dishwasher", symbol: "dishwasher.fill", draft: ProfileDraft(
             name: "Wash the dishes", kind: .appliance, energyKwh: Defaults.dishwasherKwh,
-            durationHours: Defaults.dishwasherHours)),
+            durationHours: Defaults.dishwasherHours, symbol: "dishwasher.fill")),
         appliance(id: "washer", symbol: "washer.fill", draft: ProfileDraft(
             name: "Wash the laundry", kind: .appliance, energyKwh: Defaults.washerKwh,
-            durationHours: Defaults.washerHours)),
+            durationHours: Defaults.washerHours, symbol: "washer.fill")),
         appliance(id: "dryer", symbol: "dryer.fill", draft: ProfileDraft(
             name: "Dry the laundry", kind: .appliance, energyKwh: Defaults.dryerKwh,
-            durationHours: Defaults.dryerHours)),
+            durationHours: Defaults.dryerHours, symbol: "dryer.fill")),
         appliance(id: "washer-dryer-combo", symbol: "washer.fill", draft: ProfileDraft(
             name: "Wash and dry the laundry", kind: .appliance, energyKwh: Defaults.comboKwh,
-            durationHours: Defaults.comboHours)),
+            durationHours: Defaults.comboHours, symbol: "washer.fill")),
         JobTemplate(id: "custom", title: "Custom job", subtitle: "Pick Small, Medium or Large",
                     symbol: "slider.horizontal.3", draft: .newCustom())
     ]

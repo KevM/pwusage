@@ -73,6 +73,8 @@ struct LoadProfile: Codable, Equatable, Identifiable {
     var size: JobSize?
     /// The word Smart Shift uses for starting this job ("Wash", "Heat"); nil falls back to the job's kind.
     var actionVerb: String?
+    /// An SF Symbol name picked from the glyph gallery; nil falls back to the job's usual glyph.
+    var symbol: String?
 }
 
 /// Everything needed to add a job; the store assigns the id.
@@ -84,9 +86,11 @@ struct NewProfile {
     var carSettings: CarLoadSettings?
     var size: JobSize?
     var actionVerb: String?
+    var symbol: String?
 
     init(name: String, kind: LoadProfileKind, energyKwh: Double, durationHours: Double,
-         carSettings: CarLoadSettings? = nil, size: JobSize? = nil, actionVerb: String? = nil) {
+         carSettings: CarLoadSettings? = nil, size: JobSize? = nil, actionVerb: String? = nil,
+         symbol: String? = nil) {
         self.name = name
         self.kind = kind
         self.energyKwh = energyKwh
@@ -94,6 +98,7 @@ struct NewProfile {
         self.carSettings = carSettings
         self.size = size
         self.actionVerb = actionVerb
+        self.symbol = symbol
     }
 }
 
@@ -105,17 +110,19 @@ struct ProfileEdit {
     var carSettings: CarLoadSettings?
     var size: JobSize?
     var actionVerb: String?
+    var symbol: String?
     /// True when `size` should replace the saved one even if nil (turning a sized job back into an exact one).
     var updatesSize: Bool
 
     init(name: String? = nil, energyKwh: Double, durationHours: Double, carSettings: CarLoadSettings? = nil,
-         size: JobSize? = nil, actionVerb: String? = nil, updatesSize: Bool = false) {
+         size: JobSize? = nil, actionVerb: String? = nil, symbol: String? = nil, updatesSize: Bool = false) {
         self.name = name
         self.energyKwh = energyKwh
         self.durationHours = durationHours
         self.carSettings = carSettings
         self.size = size
         self.actionVerb = actionVerb
+        self.symbol = symbol
         self.updatesSize = updatesSize
     }
 }
