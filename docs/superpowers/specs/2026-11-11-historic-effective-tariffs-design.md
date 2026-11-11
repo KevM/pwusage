@@ -46,36 +46,42 @@ This design adopts **Approach A**: preserve the existing append-only `"Tariff"` 
 
 ### 2.1 `"Tariff"` Changes
 
-Add a `source` column to `"Tariff"`:
+Add `source` and `created_by_user_id` columns to `"Tariff"`:
 
 ```sql
 ALTER TABLE "Tariff"
   ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'tesla'
-  CHECK (source IN ('tesla', 'manual'));
+  CHECK (source IN ('tesla', 'manual')),
+  ADD COLUMN IF NOT EXISTS created_by_user_id TEXT
+  REFERENCES "User"(id) ON DELETE SET NULL;
 ```
 
-- Existing rows default to `'tesla'`.
+- Existing rows default to `source = 'tesla'` and `created_by_user_id = NULL`.
+- All new `source = 'manual'` rows record `created_by_user_id = actingUserId` (while `source = 'tesla'` system syncs leave `created_by_user_id = NULL`). Using `ON DELETE SET NULL` matches [`20261109135834_add_site_member.sql`](../../../cmd/next-app/db-migrations/20261109135834_add_site_member.sql) and [`20261110084828_user_account_deletion_cascades.sql`](../../../cmd/next-app/db-migrations/20261110084828_user_account_deletion_cascades.sql) so shared sites keep their rate history if a member deletes their account.
 - Existing unique index `tariff_site_name_version_uidx (site_id, name, version)` and partial unique index `tariff_current_uidx (site_id) WHERE is_current = TRUE` remain intact.
 - **`is_current` invariant:** `Tariff.is_current = TRUE` always points to the `"Tariff"` row referenced by the `"TariffEffectivePeriod"` covering *today* in `site.timezone` (or the latest span covering/preceding today if no open-ended span exists). All mutations to `"TariffEffectivePeriod"` recompute `is_current` atomically inside the same database transaction.
-- **No delete/mutate rule:** `"Tariff"`, `"TariffSeason"`, and `"TariffSchedule"` rows remain strictly append-only. Editing a manual rate plan creates a new immutable `"Tariff"` version (`version = MAX(version) + 1` for `(site_id, name)`) and updates `"TariffEffectivePeriod"` pointers for the edited date span rather than mutating schedules referenced by historical `"EnergyDaySummary"` rows.
+- **No delete/mutate rule:** `"Tariff"`, `"TariffSeason"`, and `"TariffSchedule"` rows remain strictly append-only. Editing a manual rate plan creates a new immutable `"Tariff"` version (`version = MAX(version) + 1` for `(site_id, name)`) attributed to the editing user and updates `"TariffEffectivePeriod"` pointers for the edited date span rather than mutating schedules referenced by historical `"EnergyDaySummary"` rows.
 
 ### 2.2 `"TariffEffectivePeriod"` Table
 
 ```sql
 CREATE TABLE IF NOT EXISTS "TariffEffectivePeriod" (
-  id             SERIAL PRIMARY KEY,
-  site_id        TEXT NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
-  tariff_id      INTEGER NOT NULL REFERENCES "Tariff"(id),
-  effective_from DATE NOT NULL,
-  effective_to   DATE,
-  source         TEXT NOT NULL CHECK (source IN ('tesla', 'manual')),
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id                 SERIAL PRIMARY KEY,
+  site_id            TEXT NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
+  tariff_id          INTEGER NOT NULL REFERENCES "Tariff"(id),
+  effective_from     DATE NOT NULL,
+  effective_to       DATE,
+  source             TEXT NOT NULL CHECK (source IN ('tesla', 'manual')),
+  updated_by_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (effective_to IS NULL OR effective_to >= effective_from)
 );
 
 CREATE INDEX IF NOT EXISTS tariff_effective_period_site_dates_idx
   ON "TariffEffectivePeriod" (site_id, effective_from, effective_to);
 ```
+
+- `updated_by_user_id` tracks which user created or last modified that effective span (populated for `'manual'` span writes and for user date adjustments on `'tesla'` spans; `NULL` for automatic Tesla syncs or after user account deletion).
 
 - **Date semantics:** `effective_from` and `effective_to` are inclusive **site-local calendar dates** (`YYYY-MM-DD` in `Site.timezone`). `effective_to = NULL` means ongoing (`+infinity`).
 - **Non-overlap invariant:** For any `site_id`, no two rows in `"TariffEffectivePeriod"` may share any calendar date. Non-overlap is enforced in application transaction code under a `SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE` lock and optionally reinforced with an exclusion constraint:
@@ -99,8 +105,9 @@ All span writes run inside a Postgres transaction holding `SELECT 1 FROM "Site" 
    - An existing span strictly contained inside `[A, B]` is deleted from `"TariffEffectivePeriod"` (the underlying `"Tariff"` row stays untouched).
    - An existing span partially overlapping `[A, B]` on the left is trimmed to end at `A - 1 day`.
    - An existing span partially overlapping `[A, B]` on the right is trimmed to start at `B + 1 day`.
-   - An existing span `[X, Y]` that strictly encloses a finite `[A, B]` (`X < A` and `B < Y`) is split into `[X, A - 1 day]` and `[B + 1 day, Y]`, both pointing to the original `tariff_id` and `source`.
-   - Insert the new manual span `[A, B]`.
+   - An existing span `[X, Y]` that strictly encloses a finite `[A, B]` (`X < A` and `B < Y`) is split into `[X, A - 1 day]` and `[B + 1 day, Y]`, preserving the existing fragment's original `tariff_id`, `source`, and `updated_by_user_id` so untouched dates keep their original author attribution.
+   - Trimming an existing overlapping span on the left or right likewise preserves the surviving fragment's `updated_by_user_id`.
+   - Insert the new manual span `[A, B]` with `updated_by_user_id = actingUserId`.
    - Coalesce adjacent spans only if desired; keeping split fragments separate is valid and preserves creation timestamps.
 2. **Edit schedule/rates or dates of an existing manual period (`PATCH /api/site/[id]/tariffs/[periodId]`):**
    - Look up the existing `"TariffEffectivePeriod"` row (and its old `[oldFrom, oldTo]`).
@@ -118,17 +125,18 @@ Tracks per-site re-attribution state so work stays idempotent across retries, co
 
 ```sql
 CREATE TABLE IF NOT EXISTS "SiteTariffReattribution" (
-  site_id          TEXT PRIMARY KEY REFERENCES "Site"(id) ON DELETE CASCADE,
-  status           TEXT NOT NULL CHECK (status IN ('pending', 'running', 'idle', 'failed')),
-  from_date        DATE NOT NULL,
-  to_date          DATE,
-  cursor_day_start TIMESTAMPTZ,
-  total_days       INTEGER NOT NULL DEFAULT 0,
-  processed_days   INTEGER NOT NULL DEFAULT 0,
-  updated_days     INTEGER NOT NULL DEFAULT 0,
-  attempt_count    INTEGER NOT NULL DEFAULT 0,
-  last_error       TEXT,
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+  site_id              TEXT PRIMARY KEY REFERENCES "Site"(id) ON DELETE CASCADE,
+  status               TEXT NOT NULL CHECK (status IN ('pending', 'running', 'idle', 'failed')),
+  from_date            DATE NOT NULL,
+  to_date              DATE,
+  cursor_day_start     TIMESTAMPTZ,
+  total_days           INTEGER NOT NULL DEFAULT 0,
+  processed_days       INTEGER NOT NULL DEFAULT 0,
+  updated_days         INTEGER NOT NULL DEFAULT 0,
+  attempt_count        INTEGER NOT NULL DEFAULT 0,
+  last_error           TEXT,
+  requested_by_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
@@ -226,7 +234,7 @@ Inspecting `src/lib/mobile-bill-revision.ts`, `src/lib/bill-pricing.ts`, and `sr
 
 ## 4. API Contracts
 
-All `/api/site/[id]/tariffs*` endpoints enforce authenticated session/bearer access and `verifySiteAccess(siteId)` (`401`/`403` otherwise), validate inputs strictly (server validates schedule completeness, non-overlapping periods, 0–5 decimal precision, and date range syntax, returning `400` on invalid input), and leave `GET /api/site/[id]/refresh-tariffs` and `POST /api/site/[id]/refresh-tariffs` backward-compatible with `MobileTariffsResponse` v1.
+All `/api/site/[id]/tariffs*` endpoints enforce authenticated session/bearer access (`getCurrentUser()` + `verifySiteAccess(siteId)`, returning `401`/`403` otherwise) so every non-Tesla mutation records the acting `user.id`, validate inputs strictly (server validates schedule completeness, non-overlapping periods, 0–5 decimal precision, and date range syntax, returning `400` on invalid input), and leave `GET /api/site/[id]/refresh-tariffs` and `POST /api/site/[id]/refresh-tariffs` backward-compatible with `MobileTariffsResponse` v1.
 
 ### 4.1 `GET /api/site/[id]/tariffs`
 
@@ -257,6 +265,11 @@ export interface TariffPeriodDTO {
   effectiveFrom: string; // YYYY-MM-DD (site-local)
   effectiveTo: string | null; // YYYY-MM-DD or null (ongoing)
   isCurrentToday: boolean;
+  updatedBy: {
+    userId: string;
+    email: string | null;
+    isCurrentUser: boolean;
+  } | null;
   seasons: TariffSeasonInput[];
 }
 
@@ -378,7 +391,7 @@ Users can either step forward (`Seasons -> Schedule -> Pricing -> Summary`) when
    - **Live updates banner:** If `reattribution.status` is `pending` or `running`, shows a calm inline banner (`ProgressView` + `"Updating historical rates · {processedDays} of {totalDays} days"`), polling `/api/site/{id}/tariffs` cleanly every few seconds while visible and stopping on exit/idle. If `failed`, shows `"Could not finish updating history"` + **Retry** button.
    - **Tesla divergence notice:** When `teslaSync.differsFromActiveManual == true`, shows a subtle non-alarming card noting Tesla reported different rounded rates while keeping the user's custom rate plan active, with a quick **"Compare / Add from Tesla"** option if the user actually wants to switch forward.
    - **Timeline cards:** Each card shows:
-     - Rate plan name + source badge (`"Custom"` vs `"Tesla"`), plus `"Current"` pill if `isCurrentToday`.
+     - Rate plan name + source badge (`"Custom"` vs `"Tesla"`), plus `"Current"` pill if `isCurrentToday`. For shared sites (or whenever `updatedBy` is present), show lightweight attribution metadata (`"Edited by you"` or `"Edited by <email>"`).
      - Effective date range (`"Jan 1, 2026 – Present"` or `"Jan 1, 2025 – Dec 31, 2025"`).
      - Compact season summary rows with horizontal Weekday/Weekend 24h bar strips and exact Buy/Sell prices formatted dynamically from 2 up to **5 decimal places** (e.g., `$0.30335`, `$0.10`, never truncating non-zero trailing thousandths/ten-thousandths/hundred-thousandths).
      - **Context actions:** Manual cards offer **Edit**, **Copy to New Dates**, **Delete**; Tesla cards offer **Customize Rates**, **Adjust Dates**.
@@ -419,7 +432,7 @@ Users can either step forward (`Seasons -> Schedule -> Pricing -> Summary`) when
 Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/components/site/TariffList.tsx) and the site page data loader:
 
 - Read from the same `/api/site/[id]/tariffs` timeline data model (`SiteTariffsTimelineResponse`).
-- Display all effective-dated rate plans in chronological newest-first order with `"Active today"` / date badges (`Jan 1, 2026 – Present`, `Jan 1, 2025 – Dec 31, 2025`), source badge (`"Custom"` / `"Synced from Tesla"`), expanded season schedules, and **5-decimal rate formatting** (removing the current 4-decimal truncation).
+- Display all effective-dated rate plans in chronological newest-first order with `"Active today"` / date badges (`Jan 1, 2026 – Present`, `Jan 1, 2025 – Dec 31, 2025`), source badge (`"Custom"` / `"Synced from Tesla"`) with optional author attribution (`updatedBy` when set), expanded season schedules, and **5-decimal rate formatting** (removing the current 4-decimal truncation).
 - Display the same calm re-attribution progress banner if `reattribution.status` is `pending`, `running`, or `failed` (with a **Retry** button on failure), plus the `"Sync from Tesla"` action and optional non-destructive Tesla divergence notice.
 - Add a clean helper note pointing users to the PWUsage iOS app to create or edit custom rate plans until interactive Web editing is added.
 
@@ -427,7 +440,8 @@ Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/compone
 
 ## 8. Error Handling & Edge Cases
 
-- **Concurrent edits on two devices:** Every write holds `SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE` and returns the complete fresh `SiteTariffsTimelineResponse`. Deleting an already-deleted `periodId` returns `404` gracefully so the client reloads the timeline.
+- **Concurrent edits on shared sites / two devices:** Every write holds `SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE`, records the acting member in `created_by_user_id` / `updated_by_user_id`, preserves untouched neighbor fragments' original `updated_by_user_id` when splitting/trimming, and returns the complete fresh `SiteTariffsTimelineResponse`. Deleting an already-deleted `periodId` returns `404` gracefully so the client reloads the timeline.
+- **Member account deletion on shared sites:** Because `created_by_user_id`, `updated_by_user_id`, and `requested_by_user_id` all use `REFERENCES "User"(id) ON DELETE SET NULL`, deleting one site member's account leaves the shared site's rate plan versions, spans, and historical re-attribution intact with `NULL` author attribution (`account-deletion-postgres.test.ts`).
 - **Historical day inside a gap:** `resolveTariffForSiteDate` never fails when a day predates the user's earliest configured plan or lands inside a deleted gap; it deterministically picks the nearest prior or earliest plan so telemetry ingestion (`writeDay`) never drops samples.
 - **Deleted/reattributed cycle impacts cached bills:** Because `replaceDay` updates `EnergyDayArchive.revision` and regenerates `"EnergyDaySummary"`, existing `readMobileHistoryRevision` ETag/cache checks invalidate automatically. Any active job overlapping a billing cycle triggers `tariffReattribution` banner metadata on bill views.
 - **Wrap-around seasons and midnight-crossing periods:** Both server validator (`tariff-timeline.ts`) and Swift `RatePlanDraft` normalize circular month ranges (`Oct..May`) and wrap-around daily periods (`8:00 PM..8:00 AM`) identically, with explicit unit tests covering midnight crossings, year-end season wraparound, `12:00 AM – 12:00 AM` all-day Off-Peak, and leap-year Feb 29 boundaries (`2024-02-29`).
@@ -438,8 +452,9 @@ Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/compone
 ## 9. Verification & Testing Strategy
 
 1. **Database migration & constraint tests (`cmd/next-app`):**
-   - Verify backfill on sample sites creates expected `'tesla'` `"TariffEffectivePeriod"` spans without queuing unnecessary re-attribution.
+   - Verify backfill on sample sites creates expected `'tesla'` `"TariffEffectivePeriod"` spans (`created_by_user_id` / `updated_by_user_id` `NULL`) without queuing unnecessary re-attribution.
    - Verify `btree_gist` exclusion constraint rejects overlapping intervals if invoked directly.
+   - Verify user account deletion (`ON DELETE SET NULL`) clears `created_by_user_id` / `updated_by_user_id` / `requested_by_user_id` without blocking user deletion or losing shared site rate plans (`account-deletion-postgres.test.ts`).
 2. **Next.js unit & integration tests (`vitest`):**
    - Pure timeline math: span split (enclosing `[2024-01-01, NULL]` split by manual `[2025-01-01, 2025-12-31]`), left/right trim, full overwrite, manual delete restoring fallback, `is_current` invariant.
    - Validation tests: 12-month coverage (including wraparound `Oct -> May`), 48-slot 24h coverage, 5-decimal rounding bounds, rejection of gaps/overlaps/invalid rates.
