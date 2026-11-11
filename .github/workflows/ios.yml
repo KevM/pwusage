@@ -77,9 +77,26 @@ jobs:
       - name: Test runner checks
         run: ./test-run-tests.sh
 
+      # A fresh checkout stamps every file with the checkout time, so Xcode would rebuild everything.
+      # Giving each file its last commit time lets the cached build products below stay valid.
+      - name: Restore source file times
+        working-directory: .
+        run: python3 cmd/ios-app/restore-git-mtimes.py cmd/ios-app
+
+      # Pull requests build Debug and main builds optimized, so each keeps its own cache. A run starts from
+      # the newest cache for its kind and saves its own when the tests pass.
+      - name: Cache build products
+        uses: actions/cache@v6.1.0
+        with:
+          path: /tmp/pwusage-derived-data
+          key: ios-derived-data-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'full' }}-${{ hashFiles('cmd/ios-app/project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ios-derived-data-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'full' }}-${{ hashFiles('cmd/ios-app/project.yml') }}-
+
       - name: Run iOS Tests
         env:
           TMPDIR: /tmp
+          PWUSAGE_DERIVED_DATA: /tmp/pwusage-derived-data
           # 20 minutes accommodates optimized build time variance under macos-15 runner load.
           PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
           # Pushes to main and manual workflow dispatch force the full -O suite.

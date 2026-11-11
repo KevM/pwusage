@@ -233,6 +233,20 @@ grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
 grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests$' "$PWUSAGE_TEST_ARGS"
 
+# CI keeps a stable derived-data directory between runs; without it the build products are throwaway.
+derived_data="$fixture_dir/derived-data"
+PWUSAGE_DERIVED_DATA="$derived_data" "$script_dir/run-tests.sh"
+grep -qxF -- "$derived_data" "$PWUSAGE_TEST_ARGS" || {
+  echo 'PWUSAGE_DERIVED_DATA did not set -derivedDataPath' >&2
+  exit 1
+}
+[[ -d "$derived_data" ]] || { echo 'PWUSAGE_DERIVED_DATA was not created' >&2; exit 1; }
+"$script_dir/run-tests.sh"
+grep -qE '/pwusage-ios-tests\.[^/]+/DerivedData$' "$PWUSAGE_TEST_ARGS" || {
+  echo 'The default derived-data path is no longer a throwaway directory' >&2
+  exit 1
+}
+
 export PWUSAGE_TEST_HANG=1
 export PWUSAGE_TEST_TIMEOUT_SECONDS=1
 started=$SECONDS
