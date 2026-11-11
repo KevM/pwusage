@@ -12,7 +12,9 @@ import sys
 
 def last_commit_times(paths):
     log = subprocess.run(
-        ["git", "log", "--no-renames", "--name-only", "--format=%ct", "--", *paths],
+        # -m lists a merge's differences from each parent. Without it a merge prints no files, so a file
+        # changed only by a conflict resolution would keep an older parent's time and look unchanged.
+        ["git", "log", "-m", "--no-renames", "--name-only", "--format=%ct", "--", *paths],
         check=True, capture_output=True, text=True).stdout
     times = {}
     stamp = 0

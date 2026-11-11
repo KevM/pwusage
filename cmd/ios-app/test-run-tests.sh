@@ -2,6 +2,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+# Runs against real git, before the fake git below goes on PATH.
+"$script_dir/test-restore-git-mtimes.sh"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 mkdir -p "$fixture_dir/bin"
