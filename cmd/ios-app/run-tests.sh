@@ -153,6 +153,8 @@ if [[ "$mode" == default && "$#" -eq 0 ]]; then
     echo 'Skipping detector parity suites: no detector changes on this branch (PWUSAGE_DETECTOR_PARITY=1 forces them; --full runs them).'
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests")
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutClearDaysParityTests")
+    # Minutes in a Debug build (about 4.5 of CI's 6); seconds under --full's optimized build.
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutFitTests")
   fi
 fi
 

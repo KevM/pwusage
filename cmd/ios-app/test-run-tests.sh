@@ -140,10 +140,14 @@ fi
 
 # The default run skips detector parity unless the branch touches the detector or its fixtures.
 parity_skip='-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests'
+# The layout fit parity suite takes minutes in a Debug build, so it is gated with the detector suites.
+fit_skip='-skip-testing:PWUsageTests/SolarLayoutFitTests'
 expect_parity() {
   local expected="$1" label="$2"
   if grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS"; then local ran=0; else local ran=1; fi
   [[ "$ran" == "$expected" ]] || { echo "Detector parity: $label (ran=$ran, want $expected)" >&2; exit 1; }
+  if grep -qxF -- "$fit_skip" "$PWUSAGE_TEST_ARGS"; then local fit_ran=0; else local fit_ran=1; fi
+  [[ "$fit_ran" == "$expected" ]] || { echo "Fit parity: $label (ran=$fit_ran, want $expected)" >&2; exit 1; }
 }
 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh"
 expect_parity 0 'ran without detector changes'
