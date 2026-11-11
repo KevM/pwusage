@@ -222,7 +222,7 @@ Instead of relying on a single static batch size for the entire invocation, exec
    - Triggered every minute by `pg_cron` + `pg_net.http_get` (authenticating via Vault `cron_secret`), selecting sites where `status IN ('pending', 'running')` (or stale `'running'` rows whose `updated_at < now() - interval '2 minutes'`).
    - On unhandled exception, increments `attempt_count`, records `last_error`, marks `status = 'failed'` once `attempt_count >= 5`, and supports manual retry via API.
 3. **Observability & dialing in `REATTRIBUTION_CHUNK_DAYS`:**
-   - Emit structured `logEvent` telemetry per chunk and per site (`chunkDays`, `skippedDays`, `rewrittenDays`, `scanMs`, `rewriteMs`, `remainingMs`, `stopped`) matching `cron.heal-gaps.*`.
+   - Emit structured `logEvent` chunk and site timing metrics (`chunkDays`, `skippedDays`, `rewrittenDays`, `scanMs`, `rewriteMs`, `remainingMs`, `claimBusy`, `stopped`) via [`observability.ts`](../../../cmd/next-app/src/lib/observability.ts) (see §8 for the full event catalog and Axiom safety rules).
    - Use initial production/dev timing telemetry to dial `REATTRIBUTION_CHUNK_DAYS` (and any sub-transaction split size if needed) so each Phase 2 write transaction completes comfortably within ~`2–5 s` on live Supabase pooler latency without starving `writeDay` or risking the `15_000 ms` `CompactHistoryStore` transaction timeout.
 
 ### 3.5 Bill Calculation & Caching Interaction
@@ -441,7 +441,34 @@ Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/compone
 
 ---
 
-## 8. Error Handling & Edge Cases
+## 8. Observability & Diagnostics
+
+All tariff mutation, sync, and re-attribution code follows [`observability.ts`](../../../cmd/next-app/src/lib/observability.ts) conventions so Axiom captures the full lifecycle safely without exposing PII or losing events on Hobby timeouts:
+
+1. **Route scoping & context:**
+   - Wrap `/api/site/[id]/tariffs`, `/api/site/[id]/tariffs/[periodId]`, `/api/site/[id]/tariffs/reattribute`, and `/api/cron/reattribute-tariffs` with `observeRoute(...)`, and call `setLogContext({ siteId })` as soon as the site is resolved (or `setLogContext({ siteIds })` at cron completion, matching `heal-gaps/route.ts`).
+2. **Checkpoint flushing (`flushLogEvents()`):**
+   - Call `flushLogEvents()` at cron start, after each site finishes (or stops on `time-budget`), and inside the `after()` drain so buffered events flush to Axiom even if Vercel terminates a slow invocation early.
+   - Emit per-chunk and per-site events rather than per-day events so large backfills stay well under `MAX_EVENTS = 200` per request scope.
+3. **Structured lifecycle event catalog:**
+   - **Plan timeline edits:**
+     - `tariff.period.created`, `tariff.period.updated`, `tariff.period.deleted` (`periodId`, `tariffId`, `source`, `effectiveFrom`, `effectiveTo`, `seasonCount`, `accountId: accountFingerprint(userId)`)
+     - `tariff.tesla_sync.divergence_detected` (`latestTariffId`, `activeManualTariffId`, `contentHashChanged`) when Tesla pushes a changed plan while a `'manual'` span covers today
+   - **Re-attribution job lifecycle:**
+     - `tariff.reattribution.enqueued` (`trigger: 'create' | 'update' | 'delete' | 'retry'`, `fromDate`, `toDate`, `totalDays`, `coalesced`, `accountId: accountFingerprint(userId)`)
+     - `tariff.reattribution.site.started` (`trigger: 'after' | 'cron'`, `fromDate`, `toDate`, `totalDays`, `attemptCount`)
+     - `tariff.reattribution.chunk` (`chunkDays`, `skippedDays`, `rewrittenDays`, `scanMs`, `rewriteMs`, `remainingMs`, `claimBusy`, `stoppedReason?`)
+     - `tariff.reattribution.site.completed` (`trigger: 'after' | 'cron'`, `outcome: 'idle' | 'partial' | 'busy' | 'failed'`, `processedDays`, `updatedDays`, `durationMs`, `attemptCount`, `error?` via `errorFields(err)`)
+     - `tariff.reattribution.site.failed` (`level: 'error'`, logged when `attempt_count` reaches terminal threshold `5`, ready for Axiom Monitor alerting)
+   - **Cron wrapper (matching `cron.heal-gaps.*`):**
+     - `cron.reattribute-tariffs.started`, `cron.reattribute-tariffs.completed` (`checked`, `stopped`, site outcome summaries), `cron.reattribute-tariffs.failed` (`error: errorFields(e)`)
+4. **Redaction & safe error storage:**
+   - Never log raw `userId`, `email`, raw `Error.message`, tariff JSON payloads, or compressed archive blobs—use `accountFingerprint(userId)` and `errorFields(error)` (`errorName`, `errorCode`, `constraint`, `errorStatus`).
+   - Populate `"SiteTariffReattribution".last_error` with sanitized diagnostic summary tokens (`errorName` / `errorCode`, never arbitrary stack traces or credential strings) so returning `lastError` to iOS/Web stays safe as well.
+
+---
+
+## 9. Error Handling & Edge Cases
 
 - **Concurrent edits on shared sites / two devices:** Every write holds `SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE`, records the acting member in `created_by_user_id` / `updated_by_user_id`, preserves untouched neighbor fragments' original `updated_by_user_id` when splitting/trimming, and returns the complete fresh `SiteTariffsTimelineResponse`. Deleting an already-deleted `periodId` returns `404` gracefully so the client reloads the timeline.
 - **Member account deletion on shared sites:** Because `created_by_user_id`, `updated_by_user_id`, and `requested_by_user_id` all use `REFERENCES "User"(id) ON DELETE SET NULL`, deleting one site member's account leaves the shared site's rate plan versions, spans, and historical re-attribution intact with `NULL` author attribution (`account-deletion-postgres.test.ts`).
@@ -452,7 +479,7 @@ Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/compone
 
 ---
 
-## 9. Verification & Testing Strategy
+## 10. Verification & Testing Strategy
 
 1. **Database migration & constraint tests (`cmd/next-app`):**
    - Verify backfill on sample sites creates expected `'tesla'` `"TariffEffectivePeriod"` spans (`created_by_user_id` / `updated_by_user_id` `NULL`) without queuing unnecessary re-attribution.
@@ -462,7 +489,7 @@ Upgrade [`src/components/site/TariffList.tsx`](../../../cmd/next-app/src/compone
    - Pure timeline math: span split (enclosing `[2024-01-01, NULL]` split by manual `[2025-01-01, 2025-12-31]`), left/right trim, full overwrite, manual delete restoring fallback, `is_current` invariant.
    - Validation tests: 12-month coverage (including wraparound `Oct -> May`), 48-slot 24h coverage, 5-decimal rounding bounds, rejection of gaps/overlaps/invalid rates.
    - `TariffRepo.addTariffVersion`: verifies `'tesla'` changes do not overwrite `'manual'` spans covering today and deduplicate against the last `'tesla'` version rather than manual `is_current`.
-   - Re-attribution engine: verifies metadata-only phase skips rows already matching `timelineRevision` + `segments`, updates rows whose `tariff_id` or `segments` changed while preserving telemetry samples, stops cleanly when the mocked wall-clock time budget is reached while preserving `cursor_day_start`, drains across multiple ticks, coalesces overlapping concurrent edits, and transitions `pending -> running -> idle` / `failed`.
+   - Re-attribution engine: verifies metadata-only phase skips rows already matching `timelineRevision` + `segments`, updates rows whose `tariff_id` or `segments` changed while preserving telemetry samples, stops cleanly when the mocked wall-clock time budget is reached while preserving `cursor_day_start`, drains across multiple ticks, coalesces overlapping concurrent edits, transitions `pending -> running -> idle` / `failed`, and emits expected sanitized `logEvent` lifecycle entries (`tariff.reattribution.*`, `cron.reattribute-tariffs.*`, `accountFingerprint` / `errorFields`).
    - Regression test using Harrison's real 2025 and 2026 We Energies rates (`0.27006`/`0.30084` + riders, `0.04906`/`0.03290`, etc.) to confirm exact 5-decimal storage and bill totals without floating-point/cent rounding loss.
 3. **iOS unit tests (`swift test` / Xcode `PWUsageTests`, Swift Testing `import Testing`):**
    - Pure tests for `RatePlanDraft` validation (12-month coverage, 24h wraparound periods, 30-min snapping constraints), 5-decimal `RateFormatting` & input parser, DTO round-trip encoding/decoding, and editor actions (`addSeason`, `removeSeason`, `addTimePeriod`, boundary drags).
