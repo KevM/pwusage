@@ -76,13 +76,25 @@ struct SolarLayout: Codable, Equatable, Sendable {
     let acClipKw: Double?
     let confidence: SolarLayoutConfidence
     let detectedAt: Date?
+    /// Built from faces the owner entered, not fitted. Entered faces are known, so the detector's
+    /// three-plane limit does not apply. Never serialized: it is derived on the phone.
+    let isManual: Bool
 
-    init(planes: [SolarLayoutPlane], acClipKw: Double?, confidence: SolarLayoutConfidence, detectedAt: Date?) {
+    private enum CodingKeys: String, CodingKey { case planes, acClipKw, confidence, detectedAt }
+
+    init(
+        planes: [SolarLayoutPlane], acClipKw: Double?, confidence: SolarLayoutConfidence, detectedAt: Date?,
+        isManual: Bool = false
+    ) {
         self.planes = planes
         self.acClipKw = acClipKw
         self.confidence = confidence
         self.detectedAt = detectedAt
+        self.isManual = isManual
     }
+
+    /// One to three planes for a detected layout, any number for an entered one.
+    var hasValidPlaneCount: Bool { isManual ? !planes.isEmpty : (1 ... 3).contains(planes.count) }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -90,6 +102,7 @@ struct SolarLayout: Codable, Equatable, Sendable {
         acClipKw = try values.decodeIfPresent(Double.self, forKey: .acClipKw)
         confidence = try values.decode(SolarLayoutConfidence.self, forKey: .confidence)
         detectedAt = try values.decodeIfPresent(Date.self, forKey: .detectedAt)
+        isManual = false
         guard (1 ... 3).contains(planes.count), planes.allSatisfy(\.isValid),
               acClipKw.map({ $0.isFinite && $0 > 0 }) ?? true else {
             throw DecodingError.dataCorruptedError(

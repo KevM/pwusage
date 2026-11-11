@@ -21,6 +21,8 @@ struct SolarSystemView: View {
     @State private var isConfirmingLocation = false
     @State private var outcome: SolarLocationShareResult?
     @State private var didStartAtLocation = false
+    @State private var record: SolarLayoutRecord?
+    @State private var isEditingLayout = false
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -40,6 +42,14 @@ struct SolarSystemView: View {
                 onLocationSaved()
             }
         }
+        .sheet(isPresented: $isEditingLayout) {
+            ManualLayoutEditor(initial: record?.manualLayout, detected: record?.result) { layout in
+                guard await coordinator.saveManualLayout(layout) else { return false }
+                record = await coordinator.manualLayoutRecord()
+                return true
+            }
+        }
+        .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
@@ -79,7 +89,10 @@ struct SolarSystemView: View {
                         .id(Self.visualID)
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
-                        SolarSystemDetailsRows(layout: layout, isImproving: presentation.phase == .foundImproving)
+                        SolarSystemDetailsRows(
+                            layout: layout, manual: record?.manualLayout,
+                            isImproving: presentation.phase == .foundImproving,
+                            onEditLayout: { isEditingLayout = true })
                     }
                 } header: {
                     Text(layout == nil ? "Find Your Solar System" : "System")
