@@ -24,8 +24,13 @@ struct CarQuickEditSheet: View {
                     if let car, let settings = car.carSettings {
                         CarChargeRow(
                             title: "Current charge", value: settings.initialStateOfCharge,
-                            range: 0 ... 100,
+                            range: 0 ... 100, isEnabled: store.canEditCharge,
                             onChange: { setCharge(for: car, current: $0, target: nil) })
+                        if !store.canEditCharge {
+                            Text("Synced from your car")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                         CarChargeRow(
                             // A fixed range keeps this thumb still while the top slider moves; the store
                             // lifts the target when current passes it.
@@ -82,6 +87,7 @@ private struct CarChargeRow: View {
     let title: String
     let value: Double
     let range: ClosedRange<Double>
+    var isEnabled = true
     let onChange: (Double) -> Void
 
     var body: some View {
@@ -93,16 +99,21 @@ private struct CarChargeRow: View {
                     .font(.title3.weight(.bold))
                     .monospacedDigit()
             }
-            HStack(spacing: 8) {
-                stepButton(systemImage: "minus.circle.fill", label: "Decrease \(title.lowercased()) by 5 percent") {
-                    onChange(CarChargeSteps.steppedDown(value))
-                }
-                Slider(value: Binding(get: { value }, set: { onChange($0) }), in: range, step: CarChargeSteps.step)
-                    .accessibilityLabel(title)
-                    .accessibilityValue("\(value.formatted(.number.precision(.fractionLength(0)))) percent")
-                stepButton(systemImage: "plus.circle.fill", label: "Increase \(title.lowercased()) by 5 percent") {
-                    onChange(CarChargeSteps.steppedUp(value))
-                }
+            controls
+        }
+        .disabled(!isEnabled)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            stepButton(systemImage: "minus.circle.fill", label: "Decrease \(title.lowercased()) by 5 percent") {
+                onChange(CarChargeSteps.steppedDown(value))
+            }
+            Slider(value: Binding(get: { value }, set: { onChange($0) }), in: range, step: CarChargeSteps.step)
+                .accessibilityLabel(title)
+                .accessibilityValue("\(value.formatted(.number.precision(.fractionLength(0)))) percent")
+            stepButton(systemImage: "plus.circle.fill", label: "Increase \(title.lowercased()) by 5 percent") {
+                onChange(CarChargeSteps.steppedUp(value))
             }
         }
     }

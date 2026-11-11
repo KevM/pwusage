@@ -27,4 +27,26 @@ extension SmartShiftPresentationTests {
             billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC"))
         #expect(try #require(breakdowns.last).title == "Start now")
     }
+
+    @Test("An explicit action word wins over the kind")
+    func explicitVerbWins() throws {
+        let harrison = Self.harrisonSunday()
+        let tub = LoadProfile(id: "tub", name: "Hot tub", kind: .custom, energyKwh: 20, durationHours: 4,
+                              carSettings: nil, size: .large, actionVerb: "Heat")
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
+            comparison: harrison.comparison, profile: tub, timing: harrison.timing, now: harrison.now,
+            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC"))
+        #expect(try #require(breakdowns.last).title == "Heat now")
+    }
+
+    @Test("A blank action word falls back to the kind")
+    func blankVerbFallsBack() throws {
+        let harrison = Self.harrisonSunday()
+        var car = harrison.car
+        car.actionVerb = "  "
+        let breakdowns = SmartShiftPresentation.costBreakdowns(.init(
+            comparison: harrison.comparison, profile: car, timing: harrison.timing, now: harrison.now,
+            billingCycleEnd: Self.at(480), currencyCode: "USD", timeZone: "UTC"))
+        #expect(try #require(breakdowns.last).title == "Charge now")
+    }
 }

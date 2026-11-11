@@ -56,12 +56,7 @@ struct ProfileEditorSheet: View {
                 }
 
                 if draft.kind != .car {
-                    Section("Job Estimate") {
-                        decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: 0.5, unit: "kWh")
-                        decimalStepper(
-                            "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5,
-                            unit: "hours")
-                    }
+                    estimateSections
                 } else {
                     Section {
                         Text(carEstimateSummary)
@@ -71,7 +66,7 @@ struct ProfileEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(newJobTitle)
+            .navigationTitle(draft.editorTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -131,9 +126,51 @@ struct ProfileEditorSheet: View {
         )
     }
 
-    var newJobTitle: String {
-        guard draft.id == nil else { return "Edit Job" }
-        return draft.kind == .car ? "New Car" : "New Custom Job"
+    @ViewBuilder
+    var estimateSections: some View {
+        if draft.kind == .custom {
+            Section("Size") {
+                Picker("Size", selection: sizeBinding) {
+                    ForEach(JobSize.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
+                    Text("Exact").tag(JobSize?.none)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Job size")
+            }
+        }
+        Section("Job Estimate") {
+            if draft.kind == .custom, draft.size == nil {
+                exactField("Energy", value: $draft.energyKwh, unit: "kWh")
+                exactField("Duration", value: $draft.durationHours, unit: "hours")
+            } else {
+                decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: draft.energyStepKwh,
+                               unit: "kWh")
+                decimalStepper(
+                    "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5, unit: "hours")
+            }
+        }
+    }
+
+    /// Exact mode: type the number instead of stepping to it.
+    func exactField(_ title: String, value: Binding<Double>, unit: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer(minLength: 8)
+            TextField("0", value: value, format: .number.precision(.fractionLength(0 ... 2)))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(maxWidth: 90)
+                .accessibilityLabel(title)
+            Text(unit).foregroundStyle(.secondary)
+        }
+    }
+
+    var sizeBinding: Binding<JobSize?> {
+        Binding(
+            get: { draft.size },
+            set: { size in draft = size.map { draft.applying(size: $0) } ?? draft.applyingExact() }
+        )
     }
 
     /// Steppers add 5 to the exact saved value; the setter snaps the result to the 5% grid and keeps the
