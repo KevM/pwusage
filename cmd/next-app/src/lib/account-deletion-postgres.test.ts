@@ -14,9 +14,30 @@ import { createActivityTestDatabase, safeActivityTestSocket as safeSocket } from
 
 // Mirrors the production foreign keys for the tables this test creates by hand.
 const TARIFF_TABLES = `
-  CREATE TABLE "Tariff" (id serial PRIMARY KEY, site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE);
+  CREATE TABLE "Tariff" (
+    id serial PRIMARY KEY,
+    site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
+    source text NOT NULL DEFAULT 'tesla',
+    created_by_user_id text REFERENCES "User"(id) ON DELETE SET NULL
+  );
   CREATE TABLE "TariffSeason" (id serial PRIMARY KEY, tariff_id int NOT NULL REFERENCES "Tariff"(id) ON DELETE CASCADE);
-  CREATE TABLE "TariffSchedule" (id serial PRIMARY KEY, season_id int NOT NULL REFERENCES "TariffSeason"(id) ON DELETE CASCADE);`;
+  CREATE TABLE "TariffSchedule" (id serial PRIMARY KEY, season_id int NOT NULL REFERENCES "TariffSeason"(id) ON DELETE CASCADE);
+  CREATE TABLE "TariffEffectivePeriod" (
+    id serial PRIMARY KEY,
+    site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
+    tariff_id int NOT NULL REFERENCES "Tariff"(id) ON DELETE CASCADE,
+    effective_from date NOT NULL,
+    effective_to date,
+    source text NOT NULL DEFAULT 'manual',
+    updated_by_user_id text REFERENCES "User"(id) ON DELETE SET NULL
+  );
+  CREATE TABLE "SiteTariffReattribution" (
+    site_id text PRIMARY KEY REFERENCES "Site"(id) ON DELETE CASCADE,
+    status text NOT NULL DEFAULT 'idle',
+    generation int NOT NULL DEFAULT 1,
+    from_date date NOT NULL,
+    requested_by_user_id text REFERENCES "User"(id) ON DELETE SET NULL
+  );`;
 const ARCHIVE_TABLE = `
   CREATE TABLE "EnergyDayArchive" (
     site_id text NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE, day_start date NOT NULL, revision int NOT NULL,
@@ -60,9 +81,19 @@ async function seedAccount(userId: string, siteId: string, name = 'Home'): Promi
   );
   await db.query('INSERT INTO "SiteMember" (site_id, user_id, tesla_energy_site_id) VALUES ($1, $2, $1)', [siteId, userId]);
   await db.query('UPDATE "Site" SET tesla_connection_user_id = $1 WHERE id = $2', [userId, siteId]);
-  const tariff = (await db.query('INSERT INTO "Tariff" (site_id) VALUES ($1) RETURNING id', [siteId])).rows[0].id;
+  const tariff = (await db.query('INSERT INTO "Tariff" (site_id, source, created_by_user_id) VALUES ($1, \'manual\', $2) RETURNING id', [siteId, userId])).rows[0].id;
   const season = (await db.query('INSERT INTO "TariffSeason" (tariff_id) VALUES ($1) RETURNING id', [tariff])).rows[0].id;
   const schedule = (await db.query('INSERT INTO "TariffSchedule" (season_id) VALUES ($1) RETURNING id', [season])).rows[0].id;
+  await db.query(
+    `INSERT INTO "TariffEffectivePeriod" (site_id, tariff_id, effective_from, source, updated_by_user_id)
+     VALUES ($1, $2, '2026-01-01', 'manual', $3)`,
+    [siteId, tariff, userId],
+  );
+  await db.query(
+    `INSERT INTO "SiteTariffReattribution" (site_id, status, from_date, requested_by_user_id)
+     VALUES ($1, 'idle', '2026-01-01', $2)`,
+    [siteId, userId],
+  );
   await db.query(`INSERT INTO "EnergyDayArchive" VALUES ($1, '2026-01-01', 1)`, [siteId]);
   await db.query(`INSERT INTO "EnergyDaySummary" VALUES ($1, '2026-01-01', 1, $2, $3)`, [siteId, tariff, schedule]);
   await db.query('INSERT INTO "LoadTag" (site_id) VALUES ($1)', [siteId]);
@@ -102,7 +133,7 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       expect(result).toEqual({ deletedSiteIds: ['site-a'], survivingSiteIds: [] });
       expect(await countFor('User', 'id', 'leaving')).toBe(0);
       expect(await countFor('Site', 'id', 'site-a')).toBe(0);
-      for (const table of ['SiteMember', 'Tariff', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag', 'TrmnlInstallation']) {
+      for (const table of ['SiteMember', 'Tariff', 'TariffEffectivePeriod', 'SiteTariffReattribution', 'EnergyDayArchive', 'EnergyDaySummary', 'LoadTag', 'TrmnlInstallation']) {
         expect(await countFor(table, 'site_id', 'site-a'), table).toBe(0);
         expect(await countFor(table, 'site_id', 'site-b'), table).toBe(1);
       }
@@ -131,6 +162,10 @@ describe.skipIf(!safeSocket)('AccountDeletionRepo isolated PostgreSQL', () => {
       expect(await countFor('EnergyDaySummary', 'site_id', 'site-shared')).toBe(1);
       expect(await countFor('SiteMember', 'site_id', 'site-shared')).toBe(1);
       expect(await countFor('TrmnlInstallation', 'site_id', 'site-shared')).toBe(1);
+      expect(await countFor('TariffEffectivePeriod', 'site_id', 'site-shared')).toBe(1);
+      expect(await countFor('SiteTariffReattribution', 'site_id', 'site-shared')).toBe(1);
+      const sharedPeriod = (await db.query('SELECT updated_by_user_id FROM "TariffEffectivePeriod" WHERE site_id = \'site-shared\'')).rows[0];
+      expect(sharedPeriod.updated_by_user_id).toBeNull();
       const siteRow = (await db.query('SELECT user_id, tesla_connection_user_id FROM "Site" WHERE id = \'site-shared\'')).rows[0];
       expect(siteRow).toEqual({ user_id: null, tesla_connection_user_id: null });
 

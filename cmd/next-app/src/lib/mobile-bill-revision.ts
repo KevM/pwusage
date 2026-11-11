@@ -5,6 +5,8 @@ import { readMobileHistoryRevision } from './mobile-history-revision';
 import { getRequestContext } from './request-context';
 import type { SiteRepo } from './site-repo';
 import type { Schedule } from './schedule';
+import type { ReattributionStatusDTO } from './tariff-contract';
+import { getSiteReattributionStatus } from './tariff-reattribution';
 
 const HOUR_NS = 3_600_000_000_000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -72,12 +74,19 @@ export async function readMobileBillRevision(
     cycleEnd: Date,
     now: Date,
     includeOutlook: boolean,
+    reattribution?: ReattributionStatusDTO | null,
 ): Promise<string | null> {
     const history = await readMobileHistoryRevision(site.id, cycleStart, cycleEnd);
     if (!history.latest || history.latest >= now || history.hasFutureSamples) return null;
     const active = schedule.getTariffPeriod(now);
+    const activeReattribution = reattribution === undefined
+        ? await getSiteReattributionStatus(site.id)
+        : reattribution;
+    const reattributionKey = activeReattribution && activeReattribution.status !== 'idle'
+        ? [activeReattribution.status, activeReattribution.processedDays, activeReattribution.updatedDays]
+        : null;
     return createHash('sha256').update(JSON.stringify([
         1, site.id, config, cycleStart, cycleEnd, history.revision, includeOutlook,
-        timingWindow(now, schedule), active?.schedule.id,
+        timingWindow(now, schedule), active?.schedule.id, reattributionKey,
     ])).digest('hex');
 }
