@@ -16,26 +16,26 @@ enum JobTemplates {
     static let all: [JobTemplate] = [
         JobTemplate(id: "ev", title: "Electric car", subtitle: "Battery size, charge now and target",
                     symbol: "car.fill", draft: .newCar()),
-        appliance(id: "dishwasher", title: "Wash the dishes", verb: "Wash", symbol: "dishwasher.fill",
-                  energyKwh: Defaults.dishwasherKwh, durationHours: Defaults.dishwasherHours),
-        appliance(id: "washer", title: "Wash the laundry", verb: "Wash", symbol: "washer.fill",
-                  energyKwh: Defaults.washerKwh, durationHours: Defaults.washerHours),
-        appliance(id: "dryer", title: "Dry the laundry", verb: "Dry", symbol: "dryer.fill",
-                  energyKwh: Defaults.dryerKwh, durationHours: Defaults.dryerHours),
-        appliance(id: "washer-dryer-combo", title: "Wash and dry the laundry", verb: "Wash", symbol: "washer.fill",
-                  energyKwh: Defaults.comboKwh, durationHours: Defaults.comboHours),
+        appliance(id: "dishwasher", symbol: "dishwasher.fill", draft: ProfileDraft(
+            name: "Wash the dishes", kind: .appliance, energyKwh: Defaults.dishwasherKwh,
+            durationHours: Defaults.dishwasherHours, actionVerb: "Wash")),
+        appliance(id: "washer", symbol: "washer.fill", draft: ProfileDraft(
+            name: "Wash the laundry", kind: .appliance, energyKwh: Defaults.washerKwh,
+            durationHours: Defaults.washerHours, actionVerb: "Wash")),
+        appliance(id: "dryer", symbol: "dryer.fill", draft: ProfileDraft(
+            name: "Dry the laundry", kind: .appliance, energyKwh: Defaults.dryerKwh,
+            durationHours: Defaults.dryerHours, actionVerb: "Dry")),
+        appliance(id: "washer-dryer-combo", symbol: "washer.fill", draft: ProfileDraft(
+            name: "Wash and dry the laundry", kind: .appliance, energyKwh: Defaults.comboKwh,
+            durationHours: Defaults.comboHours, actionVerb: "Wash")),
         JobTemplate(id: "custom", title: "Custom job", subtitle: "Pick Small, Medium or Large",
                     symbol: "slider.horizontal.3", draft: .newCustom())
     ]
 
-    private static func appliance(
-        id: String, title: String, verb: String, symbol: String, energyKwh: Double, durationHours: Double
-    ) -> JobTemplate {
-        let energy = energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))
-        let duration = durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))
-        return JobTemplate(
-            id: id, title: title, subtitle: "\(energy) kWh · \(duration) hr", symbol: symbol,
-            draft: ProfileDraft(name: title, kind: .appliance, energyKwh: energyKwh,
-                                durationHours: durationHours, actionVerb: verb))
+    private static func appliance(id: String, symbol: String, draft: ProfileDraft) -> JobTemplate {
+        let energy = draft.energyKwh.formatted(.number.precision(.fractionLength(0 ... 1)))
+        let duration = draft.durationHours.formatted(.number.precision(.fractionLength(0 ... 1)))
+        return JobTemplate(id: id, title: draft.name, subtitle: "\(energy) kWh · \(duration) hr",
+                           symbol: symbol, draft: draft)
     }
 }
