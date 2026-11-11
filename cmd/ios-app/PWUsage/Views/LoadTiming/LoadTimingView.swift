@@ -231,26 +231,38 @@ struct LoadTimingView: View {
         }
     }
 
-    /// The selected car's charge at a glance; one tap opens the quick editor. Other jobs have no row.
+    /// The selected job's glyph and name. A car shows its charge too; one tap opens the quick editor.
     @ViewBuilder
     var carSummaryRow: some View {
-        if let profile = selectedProfile, let summary = LoadTimingPresentation.carSummary(profile) {
-            Button {
-                isCarSheetPresented = true
-            } label: {
+        if let profile = selectedProfile {
+            let glyph = JobGlyphs.symbol(for: profile)
+            if let summary = LoadTimingPresentation.carSummary(profile) {
+                Button {
+                    isCarSheetPresented = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: glyph).foregroundStyle(.tint)
+                        Text(summary).foregroundStyle(.primary)
+                        Spacer(minLength: 8)
+                        Text("Edit").foregroundStyle(.tint)
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(LoadTimingPresentation.carSummaryAccessibilityLabel(profile) ?? summary)
+                .accessibilityHint("Opens the charge editor")
+            } else {
                 HStack(spacing: 10) {
-                    Image(systemName: "car.fill").foregroundStyle(.secondary)
-                    Text(summary).foregroundStyle(.primary)
-                    Spacer(minLength: 8)
-                    Text("Edit").foregroundStyle(.tint)
+                    Image(systemName: glyph).foregroundStyle(.tint)
+                    Text(profile.name).foregroundStyle(.primary)
+                    Spacer(minLength: 0)
                 }
                 .font(.subheadline.weight(.medium))
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .accessibilityElement(children: .combine)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(LoadTimingPresentation.carSummaryAccessibilityLabel(profile) ?? summary)
-            .accessibilityHint("Opens the charge editor")
         }
     }
 
@@ -268,7 +280,8 @@ struct LoadTimingView: View {
                 Button {
                     selectJob(hint.id)
                 } label: {
-                    Label(hint.text, systemImage: "lightbulb")
+                    Label(hint.text, systemImage: profileStore.profile(id: hint.id)
+                        .map(JobGlyphs.symbol(for:)) ?? "lightbulb")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -326,7 +339,8 @@ struct LoadTimingView: View {
                         selectJob(profile.id)
                         isJobPickerPresented = false
                     } label: {
-                        Text(LoadTimingPresentation.profileChipTitle(profile))
+                        Label(LoadTimingPresentation.profileChipTitle(profile),
+                              systemImage: JobGlyphs.symbol(for: profile))
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .accessibilityLabel(LoadTimingPresentation.profileChipAccessibilityLabel(profile))

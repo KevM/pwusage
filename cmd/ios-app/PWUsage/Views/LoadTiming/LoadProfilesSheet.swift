@@ -98,6 +98,10 @@ struct LoadProfilesSheet: View {
                 draft = ProfileDraft(profile: profile)
             } label: {
                 HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: JobGlyphs.symbol(for: profile))
+                        .foregroundStyle(.tint)
+                        .frame(width: 28, height: 28)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(profile.name)
                             .font(.body.weight(.medium))
@@ -142,7 +146,7 @@ struct LoadProfilesSheet: View {
                 saved = try store.editProfile(id: id, edit: ProfileEdit(
                     name: draft.name, energyKwh: draft.energyKwh, durationHours: draft.durationHours,
                     carSettings: draft.carSettings, size: draft.size, actionVerb: draft.actionVerb,
-                    updatesSize: draft.kind == .custom))
+                    symbol: draft.symbol, updatesSize: draft.kind == .custom))
             } else if draft.kind == .car, let settings = draft.carSettings {
                 saved = try store.createCarProfile(name: draft.name, settings: settings)
             } else {

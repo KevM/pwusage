@@ -143,3 +143,24 @@ extension LoadProfileStoreTests {
         #expect(untouched.size == nil)
     }
 }
+
+extension LoadProfileStoreTests {
+    @Test("A job's symbol is stored, edited, duplicated and trimmed")
+    @MainActor
+    func symbolIsStoredEditedAndDuplicated() throws {
+        let fixture = ProfileStoreFixture()
+        let added = try fixture.store.addProfile(NewProfile(
+            name: "Hot tub", kind: .custom, energyKwh: 20, durationHours: 4, symbol: " bathtub.fill "))
+        #expect(added.symbol == "bathtub.fill")
+        #expect(LoadProfileStore(userDefaults: fixture.defaults).profile(id: added.id)?.symbol == "bathtub.fill")
+        let edited = try fixture.store.editProfile(id: added.id, edit: ProfileEdit(
+            energyKwh: 20, durationHours: 4, symbol: "flame.fill"))
+        #expect(edited.symbol == "flame.fill")
+        let kept = try fixture.store.editProfile(id: added.id, edit: ProfileEdit(energyKwh: 21, durationHours: 4))
+        #expect(kept.symbol == "flame.fill")
+        #expect(try fixture.store.duplicateProfile(id: added.id).symbol == "flame.fill")
+        let blank = try fixture.store.addProfile(NewProfile(
+            name: "Oven", kind: .custom, energyKwh: 3, durationHours: 1, symbol: "  "))
+        #expect(blank.symbol == nil)
+    }
+}

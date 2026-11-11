@@ -36,6 +36,10 @@ struct ProfileEditorSheet: View {
                         .accessibilityLabel("Job name")
                 }
 
+                Section("Icon") {
+                    JobGlyphPicker(symbol: $draft.symbol)
+                }
+
                 if draft.kind == .car, let settings = draft.carSettings {
                     Section("Car") {
                         decimalStepper(
