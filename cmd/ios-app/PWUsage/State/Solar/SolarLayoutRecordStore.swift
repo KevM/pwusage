@@ -117,6 +117,15 @@ actor SolarLayoutRecordStore {
         if value.result == nil { try? acknowledgeReveal(scope: scope) }
     }
 
+    /// Stores the owner's entered layout, or clears it with nil. A clear keeps its date so it syncs.
+    func setManualLayout(_ layout: ManualSolarLayout?, scope: SolarForecastSiteScope, at date: Date = .now) throws {
+        try authorizeLocalWrite(scope)
+        var value = try record(scope: scope) ?? SolarLayoutRecord()
+        value.manualLayout = layout
+        value.manualSetAt = date
+        try commitLocal(value, scope: scope)
+    }
+
     @discardableResult
     func saveResult(
         _ result: DetectedSolarLayout, scope: SolarForecastSiteScope, for location: SolarHomeLocation, at date: Date
