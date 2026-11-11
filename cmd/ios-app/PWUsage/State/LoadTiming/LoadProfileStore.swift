@@ -60,14 +60,16 @@ final class LoadProfileStore: ObservableObject {
     var carProfiles: [LoadProfile] { profiles.filter { $0.kind == .car } }
 
     @discardableResult
-    func createCustomProfile(name: String, energyKwh: Double, durationHours: Double) throws -> LoadProfile {
+    func addProfile(_ new: NewProfile) throws -> LoadProfile {
         let profile = LoadProfile(
             id: UUID().uuidString,
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            kind: .custom,
-            energyKwh: energyKwh,
-            durationHours: durationHours,
-            carSettings: nil
+            name: new.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            kind: new.kind,
+            energyKwh: new.energyKwh,
+            durationHours: new.durationHours,
+            carSettings: new.carSettings,
+            size: new.size,
+            actionVerb: Self.trimmedVerb(new.actionVerb)
         )
         try Self.validate(profile)
         profiles.append(profile)
@@ -76,23 +78,21 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @discardableResult
+    func createCustomProfile(name: String, energyKwh: Double, durationHours: Double) throws -> LoadProfile {
+        try addProfile(NewProfile(name: name, kind: .custom, energyKwh: energyKwh, durationHours: durationHours))
+    }
+
+    @discardableResult
     func createCarProfile(name: String, settings: CarLoadSettings) throws -> LoadProfile {
         guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else {
             throw LoadProfileError.invalidProfile
         }
-        let profile = LoadProfile(
-            id: UUID().uuidString,
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            kind: .car,
-            // A car already at its target adds no energy; the stored fields only need to stay valid.
+        // A car already at its target adds no energy; the stored fields only need to stay valid.
+        return try addProfile(NewProfile(
+            name: name, kind: .car,
             energyKwh: estimate.batteryKwh > 0 ? estimate.batteryKwh : Defaults.carEnergyKwh,
             durationHours: estimate.batteryKwh > 0 ? estimate.durationHours : Defaults.carDurationHours,
-            carSettings: settings
-        )
-        try Self.validate(profile)
-        profiles.append(profile)
-        persist()
-        return profile
+            carSettings: settings))
     }
 
     @discardableResult
@@ -101,7 +101,8 @@ final class LoadProfileStore: ObservableObject {
         let source = profiles[index]
         let copy = LoadProfile(
             id: UUID().uuidString, name: "\(source.name) copy", kind: source.kind,
-            energyKwh: source.energyKwh, durationHours: source.durationHours, carSettings: source.carSettings)
+            energyKwh: source.energyKwh, durationHours: source.durationHours, carSettings: source.carSettings,
+            size: source.size, actionVerb: source.actionVerb)
         profiles.insert(copy, at: index + 1)
         persist()
         return copy
@@ -112,15 +113,23 @@ final class LoadProfileStore: ObservableObject {
         id: String, name: String? = nil, energyKwh: Double, durationHours: Double,
         carSettings: CarLoadSettings? = nil
     ) throws -> LoadProfile {
+        try editProfile(id: id, edit: ProfileEdit(
+            name: name, energyKwh: energyKwh, durationHours: durationHours, carSettings: carSettings))
+    }
+
+    @discardableResult
+    func editProfile(id: String, edit: ProfileEdit) throws -> LoadProfile {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
         var updated = profiles[index]
-        if let name {
+        if let name = edit.name {
             updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        updated.energyKwh = energyKwh
-        updated.durationHours = durationHours
+        updated.energyKwh = edit.energyKwh
+        updated.durationHours = edit.durationHours
+        if let size = edit.size { updated.size = size }
+        if let actionVerb = edit.actionVerb { updated.actionVerb = Self.trimmedVerb(actionVerb) }
         if updated.kind == .car {
-            updated.carSettings = carSettings ?? updated.carSettings
+            updated.carSettings = edit.carSettings ?? updated.carSettings
         }
         try Self.validate(updated)
         profiles[index] = updated
@@ -226,7 +235,13 @@ final class LoadProfileStore: ObservableObject {
             && collection.profiles.allSatisfy { (try? validate($0)) != nil }
     }
 
+    private static func trimmedVerb(_ verb: String?) -> String? {
+        guard let trimmed = verb?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
     private static func validate(_ profile: LoadProfile) throws {
+        if profile.size != nil && profile.kind != .custom { throw LoadProfileError.invalidProfile }
         guard profile.energyKwh.isFinite, profile.energyKwh > 0,
               profile.durationHours.isFinite, profile.durationHours > 0 else {
             throw LoadProfileError.invalidProfile
