@@ -31,12 +31,14 @@ final class LoadProfileStore: ObservableObject {
 
     @Published private(set) var profiles: [LoadProfile]
     @Published private(set) var selectedProfileID: String?
+    @Published private(set) var lastEVProfileID: String?
 
     private let userDefaults: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        if let saved = Self.loadCollection(from: userDefaults) {
+        let saved = Self.loadCollection(from: userDefaults)
+        if let saved {
             profiles = saved.profiles
             selectedProfileID = saved.selectedProfileID.flatMap { id in
                 saved.profiles.contains(where: { $0.id == id }) ? id : nil
@@ -45,12 +47,17 @@ final class LoadProfileStore: ObservableObject {
             profiles = Self.defaultProfiles
             selectedProfileID = Self.defaultProfiles.first?.id
         }
+        lastEVProfileID = Self.resolvedLastEVID(
+            saved: saved?.lastEVProfileID, profiles: profiles,
+            selectedID: selectedProfileID)
         persist()
     }
 
     func profile(id: String) -> LoadProfile? {
         profiles.first { $0.id == id }
     }
+
+    var carProfiles: [LoadProfile] { profiles.filter { $0.kind == .car } }
 
     @discardableResult
     func createCustomProfile(name: String, energyKwh: Double, durationHours: Double) throws -> LoadProfile {
@@ -124,12 +131,32 @@ final class LoadProfileStore: ObservableObject {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
         profiles.remove(at: index)
         if selectedProfileID == id { selectedProfileID = profiles.first?.id }
+        if lastEVProfileID == id {
+            lastEVProfileID = Self.resolvedLastEVID(saved: nil, profiles: profiles, selectedID: selectedProfileID)
+        }
         persist()
     }
 
     func selectProfile(id: String) throws {
-        guard profiles.contains(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
+        guard let profile = profile(id: id) else { throw LoadProfileError.profileNotFound }
         selectedProfileID = id
+        if profile.kind == .car { lastEVProfileID = id }
+        persist()
+    }
+
+    func updateCarCharge(id: String, current: Double?, target: Double?) throws {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
+        var updated = profiles[index]
+        guard updated.kind == .car, var settings = updated.carSettings else { throw LoadProfileError.invalidProfile }
+        if let current { settings = CarChargeSteps.settings(settings, settingCurrent: current) }
+        if let target { settings = CarChargeSteps.settings(settings, settingTarget: target) }
+        updated.carSettings = settings
+        if let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings), estimate.batteryKwh > 0 {
+            updated.energyKwh = estimate.batteryKwh
+            updated.durationHours = estimate.durationHours
+        }
+        try Self.validate(updated)
+        profiles[index] = updated
         persist()
     }
 
@@ -146,7 +173,8 @@ final class LoadProfileStore: ObservableObject {
 
     private func persist() {
         let collection = PersistedCollection(
-            version: Self.schemaVersion, profiles: profiles, selectedProfileID: selectedProfileID)
+            version: Self.schemaVersion, profiles: profiles, selectedProfileID: selectedProfileID,
+            lastEVProfileID: lastEVProfileID)
         guard let data = try? JSONEncoder().encode(collection) else { return }
         userDefaults.set(data, forKey: Self.storageKey)
     }
@@ -168,7 +196,8 @@ final class LoadProfileStore: ObservableObject {
             profiles[index].carSettings = settings
         }
         let normalized = PersistedCollection(
-            version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID)
+            version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID,
+            lastEVProfileID: saved.lastEVProfileID)
         return isValidCollection(normalized) ? normalized : nil
     }
 
@@ -221,6 +250,15 @@ final class LoadProfileStore: ObservableObject {
         let version: Int
         let profiles: [LoadProfile]
         let selectedProfileID: String?
+        var lastEVProfileID: String?
+    }
+
+    /// A saved last EV that still exists wins; otherwise the selected job if it is a car, else the first car.
+    private static func resolvedLastEVID(saved: String?, profiles: [LoadProfile], selectedID: String?) -> String? {
+        let cars = profiles.filter { $0.kind == .car }
+        if let saved, cars.contains(where: { $0.id == saved }) { return saved }
+        if let selectedID, cars.contains(where: { $0.id == selectedID }) { return selectedID }
+        return cars.first?.id
     }
 
     private static let defaultProfiles: [LoadProfile] = [

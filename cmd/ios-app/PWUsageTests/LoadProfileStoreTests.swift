@@ -7,7 +7,7 @@ struct LoadProfileStoreTests {
     @Test("Seeds built-in profiles and the removable Custom example")
     @MainActor
     func seedsDefaults() {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         #expect(store.profiles.map(\.id) ==
             ["car", "dishwasher", "washer", "dryer", "washer-dryer-combo", "custom-example"])
         #expect(store.profile(id: "car")?.carSettings?.capacityKwh == 60)
@@ -22,7 +22,7 @@ struct LoadProfileStoreTests {
     @Test("Creates, renames, edits, and deletes custom loads")
     @MainActor
     func managesCustomLoads() throws {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         let created = try store.createCustomProfile(name: "Pool pump", energyKwh: 4, durationHours: 2)
         #expect(UUID(uuidString: created.id) != nil)
         let edited = try store.editProfile(id: created.id, name: "Pool pump (summer)", energyKwh: 5, durationHours: 3)
@@ -36,7 +36,7 @@ struct LoadProfileStoreTests {
     @Test("Edits starter jobs like any other job")
     @MainActor
     func editsStarterJobs() throws {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         _ = try store.editProfile(id: "dishwasher", name: "Dishwasher", energyKwh: 6, durationHours: 4)
         #expect(store.profile(id: "dishwasher")?.energyKwh == 6)
     }
@@ -44,7 +44,7 @@ struct LoadProfileStoreTests {
     @Test("Deletes any job, starter or custom")
     @MainActor
     func deletesAnyJob() throws {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         try store.deleteProfile(id: "car")
         try store.deleteProfile(id: "dishwasher")
         #expect(store.profile(id: "car") == nil)
@@ -55,7 +55,7 @@ struct LoadProfileStoreTests {
     @Test("Deleting every job reopens empty instead of reseeding")
     @MainActor
     func deletingAllJobsPersistsEmpty() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         for profile in fixture.store.profiles { try fixture.store.deleteProfile(id: profile.id) }
         #expect(fixture.store.selectedProfileID == nil)
         let restored = LoadProfileStore(userDefaults: fixture.defaults)
@@ -66,7 +66,7 @@ struct LoadProfileStoreTests {
     @Test("Deleting the selected job selects the first remaining one")
     @MainActor
     func deletingSelectedJobSelectsFirstRemaining() throws {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         try store.selectProfile(id: "washer")
         try store.deleteProfile(id: "washer")
         #expect(store.selectedProfileID == "car")
@@ -78,7 +78,7 @@ struct LoadProfileStoreTests {
     @Test("A saved selection that no longer exists is ignored")
     @MainActor
     func staleSavedSelectionIsIgnored() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         try fixture.store.selectProfile(id: "washer")
         let data = try #require(fixture.defaults.data(forKey: LoadProfileStore.storageKey))
         var payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -94,7 +94,7 @@ struct LoadProfileStoreTests {
     @Test("A version 2 payload keeps every job and edit and makes them all deletable")
     @MainActor
     func versionTwoPayloadKeepsEveryJobAndEdit() throws {
-        let defaults = Fixture.emptyDefaults()
+        let defaults = ProfileStoreFixture.emptyDefaults()
         let poolPumpID = UUID().uuidString
         var profiles = VersionOneCollection.builtIns.map { profile -> LoadProfile in
             var renamed = profile
@@ -115,67 +115,10 @@ struct LoadProfileStoreTests {
         #expect(store.profiles.isEmpty)
     }
 
-    @Test("Adds a second car with its own battery size")
-    @MainActor
-    func createsASecondCarWithItsOwnCapacity() throws {
-        let fixture = Fixture()
-        let small = CarLoadSettings(capacityKwh: 40, initialStateOfCharge: 30,
-                                    targetStateOfCharge: 80, chargingLevel: .level1)
-        let created = try fixture.store.createCarProfile(name: "  Leaf ", settings: small)
-        #expect(created.kind == .car)
-        #expect(created.name == "Leaf")
-        #expect(UUID(uuidString: created.id) != nil)
-        #expect(created.energyKwh > 0)
-        #expect(created.durationHours > 0)
-        let restored = LoadProfileStore(userDefaults: fixture.defaults)
-        #expect(restored.profile(id: "car")?.carSettings?.capacityKwh == 60)
-        #expect(restored.profile(id: created.id)?.carSettings?.capacityKwh == 40)
-        #expect(restored.profiles.last?.id == created.id)
-    }
-
-    @Test("Duplicates a job right after its source with a copy name")
-    @MainActor
-    func duplicateInsertsAfterSourceWithCopyName() throws {
-        let store = Fixture().store
-        let copy = try store.duplicateProfile(id: "car")
-        #expect(copy.id != "car")
-        #expect(UUID(uuidString: copy.id) != nil)
-        #expect(copy.name == "Charge the car copy")
-        #expect(copy.kind == .car)
-        #expect(copy.carSettings == store.profile(id: "car")?.carSettings)
-        #expect(store.profiles.map(\.id).prefix(2) == ["car", copy.id])
-        #expect(throws: LoadProfileError.profileNotFound) { try store.duplicateProfile(id: "missing") }
-    }
-
-    @Test("Renames any kind of job")
-    @MainActor
-    func renamesAnyJob() throws {
-        let store = Fixture().store
-        _ = try store.editProfile(id: "dishwasher", name: "Dishwasher (garage)", energyKwh: 5, durationHours: 2)
-        #expect(store.profile(id: "dishwasher")?.name == "Dishwasher (garage)")
-        let car = try #require(store.profile(id: "car"))
-        _ = try store.editProfile(id: "car", name: " Model Y ", energyKwh: car.energyKwh,
-                                  durationHours: car.durationHours, carSettings: car.carSettings)
-        #expect(store.profile(id: "car")?.name == "Model Y")
-    }
-
-    @Test("Rejects a blank name for any job")
-    @MainActor
-    func rejectsBlankNames() throws {
-        let store = Fixture().store
-        let settings = try #require(store.profile(id: "car")?.carSettings)
-        #expect(throws: LoadProfileError.invalidProfile) {
-            try store.createCarProfile(name: "   ", settings: settings)
-        }
-        #expect(throws: LoadProfileError.invalidProfile) {
-            try store.editProfile(id: "dishwasher", name: " ", energyKwh: 5, durationHours: 2)
-        }
-    }
-
     @Test("Persists selection and profile changes across store instances")
     @MainActor
     func persistsSelectionAndEdits() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         let store = fixture.store
         let created = try store.createCustomProfile(name: "Oven", energyKwh: 3, durationHours: 1)
         try store.selectProfile(id: created.id)
@@ -187,7 +130,7 @@ struct LoadProfileStoreTests {
     @Test("Reorders built-in and custom profiles together without changing selection")
     @MainActor
     func reordersAllProfilesAcrossKinds() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         let store = fixture.store
         let custom = try store.createCustomProfile(name: "Pool pump", energyKwh: 4, durationHours: 2)
         try store.selectProfile(id: "washer")
@@ -205,7 +148,7 @@ struct LoadProfileStoreTests {
     @Test("Clamps an earlier Car capacity without losing other saved profiles")
     @MainActor
     func preservesProfilesWhenOlderCarCapacityExceedsHorizon() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         let custom = try fixture.store.createCustomProfile(name: "Pool pump", energyKwh: 4, durationHours: 2)
         try fixture.store.selectProfile(id: custom.id)
         let data = try #require(fixture.defaults.data(forKey: LoadProfileStore.storageKey))
@@ -229,7 +172,7 @@ struct LoadProfileStoreTests {
     @Test("Keeps the removable Custom example deleted after reopening")
     @MainActor
     func deletionOfCustomExampleSurvivesReinitialization() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         try fixture.store.deleteProfile(id: "custom-example")
         let restored = LoadProfileStore(userDefaults: fixture.defaults)
         #expect(restored.profile(id: "custom-example") == nil)
@@ -238,7 +181,7 @@ struct LoadProfileStoreTests {
     @Test("Rejects malformed values and recovers malformed saved data")
     @MainActor
     func validatesAndRecovers() throws {
-        let fixture = Fixture()
+        let fixture = ProfileStoreFixture()
         fixture.defaults.set(Data("not-json".utf8), forKey: LoadProfileStore.storageKey)
         let store = LoadProfileStore(userDefaults: fixture.defaults)
         #expect(store.profile(id: "dishwasher")?.energyKwh == 5)
@@ -268,7 +211,7 @@ struct LoadProfileStoreTests {
     @Test("Trims names and validates SOC ordering and range")
     @MainActor
     func trimsNamesAndValidatesCarSettings() throws {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         let created = try store.createCustomProfile(name: "  Workshop  ", energyKwh: 2, durationHours: 1)
         #expect(created.name == "Workshop")
         var car = try #require(store.profile(id: "car"))
@@ -282,7 +225,7 @@ struct LoadProfileStoreTests {
     @Test("Fresh installs name every Job as a verb phrase")
     @MainActor
     func freshInstallUsesVerbNames() {
-        let store = Fixture().store
+        let store = ProfileStoreFixture().store
         #expect(store.profiles.map(\.name) ==
             ["Charge the car", "Wash the dishes", "Wash the laundry", "Dry the laundry",
              "Wash and dry the laundry", "Bake bread"])
@@ -291,7 +234,7 @@ struct LoadProfileStoreTests {
     @Test("Version 1 built-in names migrate to verb phrases without touching custom Jobs or settings")
     @MainActor
     func migratesVersionOneBuiltInNames() throws {
-        let defaults = Fixture.emptyDefaults()
+        let defaults = ProfileStoreFixture.emptyDefaults()
         let poolPumpID = UUID().uuidString
         let car = CarLoadSettings(capacityKwh: 75, initialStateOfCharge: 30,
                                   targetStateOfCharge: 90, chargingLevel: .level1)
@@ -327,7 +270,7 @@ struct LoadProfileStoreTests {
     @MainActor
     func renamesSeededCustomExampleOnlyWhileUnchanged() throws {
         for (savedName, expected) in [("Custom", "Bake bread"), ("Hot tub", "Hot tub")] {
-            let defaults = Fixture.emptyDefaults()
+            let defaults = ProfileStoreFixture.emptyDefaults()
             let saved = VersionOneCollection(version: 1, profiles: VersionOneCollection.builtIns + [
                 LoadProfile(id: "custom-example", name: savedName, kind: .custom, energyKwh: 20,
                             durationHours: 4, carSettings: nil)
@@ -355,7 +298,7 @@ struct LoadProfileStoreTests {
 }
 
 @MainActor
-private struct Fixture {
+struct ProfileStoreFixture {
     let defaults: UserDefaults
     let store: LoadProfileStore
 
@@ -376,7 +319,7 @@ private struct Fixture {
 }
 
 /// The persisted shape written by schema version 1, before Jobs were named as verb phrases.
-private struct VersionOneCollection: Codable {
+struct VersionOneCollection: Codable {
     let version: Int
     let profiles: [LoadProfile]
     let selectedProfileID: String?
