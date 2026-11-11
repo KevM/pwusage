@@ -69,13 +69,44 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @discardableResult
+    func createCarProfile(name: String, settings: CarLoadSettings) throws -> LoadProfile {
+        guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else {
+            throw LoadProfileError.invalidProfile
+        }
+        let profile = LoadProfile(
+            id: UUID().uuidString,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            kind: .car,
+            energyKwh: estimate.batteryKwh,
+            durationHours: estimate.durationHours,
+            carSettings: settings
+        )
+        try Self.validate(profile)
+        profiles.append(profile)
+        persist()
+        return profile
+    }
+
+    @discardableResult
+    func duplicateProfile(id: String) throws -> LoadProfile {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
+        let source = profiles[index]
+        let copy = LoadProfile(
+            id: UUID().uuidString, name: "\(source.name) copy", kind: source.kind,
+            energyKwh: source.energyKwh, durationHours: source.durationHours, carSettings: source.carSettings)
+        profiles.insert(copy, at: index + 1)
+        persist()
+        return copy
+    }
+
+    @discardableResult
     func editProfile(
         id: String, name: String? = nil, energyKwh: Double, durationHours: Double,
         carSettings: CarLoadSettings? = nil
     ) throws -> LoadProfile {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
         var updated = profiles[index]
-        if updated.kind == .custom, let name {
+        if let name {
             updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         updated.energyKwh = energyKwh
@@ -169,7 +200,7 @@ final class LoadProfileStore: ObservableObject {
               profile.durationHours.isFinite, profile.durationHours > 0 else {
             throw LoadProfileError.invalidProfile
         }
-        if profile.kind == .custom && profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw LoadProfileError.invalidProfile
         }
         if profile.kind == .car {

@@ -115,6 +115,63 @@ struct LoadProfileStoreTests {
         #expect(store.profiles.isEmpty)
     }
 
+    @Test("Adds a second car with its own battery size")
+    @MainActor
+    func createsASecondCarWithItsOwnCapacity() throws {
+        let fixture = Fixture()
+        let small = CarLoadSettings(capacityKwh: 40, initialStateOfCharge: 30,
+                                    targetStateOfCharge: 80, chargingLevel: .level1)
+        let created = try fixture.store.createCarProfile(name: "  Leaf ", settings: small)
+        #expect(created.kind == .car)
+        #expect(created.name == "Leaf")
+        #expect(UUID(uuidString: created.id) != nil)
+        #expect(created.energyKwh > 0)
+        #expect(created.durationHours > 0)
+        let restored = LoadProfileStore(userDefaults: fixture.defaults)
+        #expect(restored.profile(id: "car")?.carSettings?.capacityKwh == 60)
+        #expect(restored.profile(id: created.id)?.carSettings?.capacityKwh == 40)
+        #expect(restored.profiles.last?.id == created.id)
+    }
+
+    @Test("Duplicates a job right after its source with a copy name")
+    @MainActor
+    func duplicateInsertsAfterSourceWithCopyName() throws {
+        let store = Fixture().store
+        let copy = try store.duplicateProfile(id: "car")
+        #expect(copy.id != "car")
+        #expect(UUID(uuidString: copy.id) != nil)
+        #expect(copy.name == "Charge the car copy")
+        #expect(copy.kind == .car)
+        #expect(copy.carSettings == store.profile(id: "car")?.carSettings)
+        #expect(store.profiles.map(\.id).prefix(2) == ["car", copy.id])
+        #expect(throws: LoadProfileError.profileNotFound) { try store.duplicateProfile(id: "missing") }
+    }
+
+    @Test("Renames any kind of job")
+    @MainActor
+    func renamesAnyJob() throws {
+        let store = Fixture().store
+        _ = try store.editProfile(id: "dishwasher", name: "Dishwasher (garage)", energyKwh: 5, durationHours: 2)
+        #expect(store.profile(id: "dishwasher")?.name == "Dishwasher (garage)")
+        let car = try #require(store.profile(id: "car"))
+        _ = try store.editProfile(id: "car", name: " Model Y ", energyKwh: car.energyKwh,
+                                  durationHours: car.durationHours, carSettings: car.carSettings)
+        #expect(store.profile(id: "car")?.name == "Model Y")
+    }
+
+    @Test("Rejects a blank name for any job")
+    @MainActor
+    func rejectsBlankNames() throws {
+        let store = Fixture().store
+        let settings = try #require(store.profile(id: "car")?.carSettings)
+        #expect(throws: LoadProfileError.invalidProfile) {
+            try store.createCarProfile(name: "   ", settings: settings)
+        }
+        #expect(throws: LoadProfileError.invalidProfile) {
+            try store.editProfile(id: "dishwasher", name: " ", energyKwh: 5, durationHours: 2)
+        }
+    }
+
     @Test("Persists selection and profile changes across store instances")
     @MainActor
     func persistsSelectionAndEdits() throws {
@@ -286,7 +343,7 @@ struct LoadProfileStoreTests {
     @Test("Describes every profile failure in user-facing language")
     func describesProfileErrors() {
         let cases: [(LoadProfileError, String)] = [
-            (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. "
+            (.invalidProfile, "Enter a name, and energy and duration greater than zero. "
                 + "Check the car charge settings too."),
             (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles.")
         ]

@@ -39,7 +39,7 @@ enum LoadProfileError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidProfile:
-            return "Enter a name for custom loads, and energy and duration greater than zero. "
+            return "Enter a name, and energy and duration greater than zero. "
                 + "Check the car charge settings too."
         case .profileNotFound:
             return "That load profile is no longer available. Close and reopen load profiles."
