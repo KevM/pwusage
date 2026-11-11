@@ -148,7 +148,7 @@ struct LoadProfilesSheet: View {
                     carSettings: draft.carSettings, size: draft.size, actionVerb: draft.actionVerb,
                     symbol: draft.symbol, updatesSize: draft.kind == .custom))
             } else if draft.kind == .car, let settings = draft.carSettings {
-                saved = try store.createCarProfile(name: draft.name, settings: settings)
+                saved = try store.createCarProfile(name: draft.name, settings: settings, symbol: draft.symbol)
             } else {
                 saved = try store.addProfile(draft.newProfile)
             }

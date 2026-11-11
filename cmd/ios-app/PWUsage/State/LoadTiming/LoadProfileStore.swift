@@ -89,7 +89,7 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @discardableResult
-    func createCarProfile(name: String, settings: CarLoadSettings) throws -> LoadProfile {
+    func createCarProfile(name: String, settings: CarLoadSettings, symbol: String? = nil) throws -> LoadProfile {
         guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else {
             throw LoadProfileError.invalidProfile
         }
@@ -98,7 +98,7 @@ final class LoadProfileStore: ObservableObject {
             name: name, kind: .car,
             energyKwh: estimate.batteryKwh > 0 ? estimate.batteryKwh : Defaults.carEnergyKwh,
             durationHours: estimate.batteryKwh > 0 ? estimate.durationHours : Defaults.carDurationHours,
-            carSettings: settings))
+            carSettings: settings, symbol: symbol))
     }
 
     @discardableResult

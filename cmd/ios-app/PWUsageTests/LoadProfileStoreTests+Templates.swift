@@ -164,3 +164,15 @@ extension LoadProfileStoreTests {
         #expect(blank.symbol == nil)
     }
 }
+
+extension LoadProfileStoreTests {
+    @Test("A new car keeps the glyph picked for it")
+    @MainActor
+    func createCarProfileKeepsTheSymbol() throws {
+        let store = ProfileStoreFixture().store
+        let settings = try #require(store.profile(id: "car")?.carSettings)
+        let withGlyph = try store.createCarProfile(name: "Leaf", settings: settings, symbol: "bolt.car.fill")
+        #expect(withGlyph.symbol == "bolt.car.fill")
+        #expect(try store.createCarProfile(name: "Bolt", settings: settings).symbol == nil)
+    }
+}
