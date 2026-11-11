@@ -237,7 +237,7 @@ Inspecting `src/lib/mobile-bill-revision.ts`, `src/lib/bill-pricing.ts`, and `sr
 
 ## 4. API Contracts
 
-All `/api/site/[id]/tariffs*` endpoints enforce authenticated session/bearer access (`getCurrentUser()` + `verifySiteAccess(siteId)`, returning `401`/`403` otherwise) so every non-Tesla mutation records the acting `user.id`, validate inputs strictly (server validates schedule completeness, non-overlapping periods, 0–5 decimal precision, and date range syntax, returning `400` on invalid input), and leave `GET /api/site/[id]/refresh-tariffs` and `POST /api/site/[id]/refresh-tariffs` backward-compatible with `MobileTariffsResponse` v1.
+All `/api/site/[id]/tariffs*` endpoints enforce authenticated session/bearer access (`getCurrentUser()` + `verifySiteAccess(siteId)`, returning `401`/`403` otherwise) so every non-Tesla mutation records the acting `user.id`, and validate inputs strictly (server validates schedule completeness, non-overlapping periods, 0–5 decimal precision, and date range syntax, returning `400` on invalid input). Because the iOS app is in beta, iOS and Next.js migrate directly to the v2 timeline contract in one synchronized change without maintaining dual v1/v2 decoders or response shims.
 
 ### 4.1 `GET /api/site/[id]/tariffs`
 
@@ -336,11 +336,11 @@ Removes a `manual` `"TariffEffectivePeriod"` row (`400` if `source = 'tesla'`), 
 
 Retries a `'failed'` job (or triggers an explicit catch-up re-attribution across a date range), resetting `attempt_count = 0`, setting `status = 'pending'`, and running an `after()` batch immediately.
 
-### 4.6 Backward-Compatible `refresh-tariffs` & Bill Endpoints
+### 4.6 `refresh-tariffs` & Bill Endpoints (Clean v2 Cutover)
 
-- `GET /api/site/[id]/refresh-tariffs` continues returning `MobileTariffsResponse` v1 for existing callers/widgets, reading the tariff covering today in `site.timezone` (instead of assuming `'tesla'` blindly) and formatting/sending unrounded numbers from `"TariffSchedule"`.
-- `POST /api/site/[id]/refresh-tariffs` fetches latest Tesla rates, invokes updated `TariffRepo.addTariffVersion` (respecting `'manual'` precedence), and returns `MobileTariffsResponse` v1.
-- Existing `MobileBillResponse` (and web bill payloads) gain an optional `tariffReattribution: ReattributionStatusDTO?` field decoded safely by older iOS builds (`Decodable` optional).
+- Because the iOS app is currently in beta, replace `MobileTariffsResponse` v1 across [`tariff-contract.ts`](../../../cmd/next-app/src/lib/tariff-contract.ts), [`MobileTariffs.swift`](../../../cmd/ios-app/PWUsage/Models/Bill/MobileTariffs.swift), [`DemoFixtures.swift`](../../../cmd/ios-app/PWUsage/Demo/DemoFixtures.swift), [`PWUsageAPI.swift`](../../../cmd/ios-app/PWUsage/Networking/PWUsageAPI.swift), and `GET /api/site/[id]/tariffs` directly rather than keeping a legacy v1 response format alive.
+- Keep `POST /api/site/[id]/refresh-tariffs` as the dedicated Tesla sync action (used by [`SettingsView.tsx`](../../../cmd/next-app/src/components/site/SettingsView.tsx), the Web timeline `"Sync from Tesla"` button, and iOS), invoking updated `TariffRepo.addTariffVersion` (respecting `'manual'` precedence) and returning the updated `SiteTariffsTimelineResponse` (plus `updatedFromTesla: boolean`). `GET /api/site/[id]/refresh-tariffs` is retired in favor of `GET /api/site/[id]/tariffs`.
+- Existing `MobileBillResponse` (and web bill payloads) gain an optional `tariffReattribution: ReattributionStatusDTO?` field so Bill views can show when re-attribution overlaps the active billing cycle.
 
 ---
 
@@ -425,7 +425,7 @@ Users can either step forward (`Seasons -> Schedule -> Pricing -> Summary`) when
 ### 6.3 Shared Client Models & ViewModels (`cmd/ios-app`)
 
 - Add `RatePlanEditorState` (`@Observable @MainActor`) holding an editable draft graph (`RatePlanDraft`, `SeasonDraft`, `DayPeriodDraft`) cleanly separated from read-only DTOs, with pure Swift validation helpers testable without UI.
-- Update [`MobileTariffs.swift`](../../../cmd/ios-app/PWUsage/Models/Bill/MobileTariffs.swift) / add `RatePlanTimelineModels.swift` and `PWUsageAPI` methods (`fetchTariffTimeline`, `createTariffPeriod`, `updateTariffPeriod`, `deleteTariffPeriod`, `retryTariffReattribution`).
+- Replace [`MobileTariffs.swift`](../../../cmd/ios-app/PWUsage/Models/Bill/MobileTariffs.swift) v1 models directly with the `SiteTariffsTimelineResponse` v2 DTOs (updating `DemoAPI`, `DemoFixtures`, `DashboardCoordinator`, and `PWUsageAPI` methods: `fetchTariffTimeline`, `refreshTariffsFromTesla`, `createTariffPeriod`, `updateTariffPeriod`, `deleteTariffPeriod`, `retryTariffReattribution`).
 - Format helper `RateFormatting.formatRate(_ value: Double) -> String` showing between 2 and 5 significant fraction digits (e.g., `0.10 -> "$0.10"`, `0.30335 -> "$0.30335"`, `0.0005 -> "$0.0005"`).
 
 ---
