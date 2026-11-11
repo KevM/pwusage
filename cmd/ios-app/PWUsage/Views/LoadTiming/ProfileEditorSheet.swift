@@ -29,17 +29,11 @@ struct ProfileEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if draft.kind == .custom {
-                    Section("Name") {
-                        TextField("Bake bread", text: $draft.name)
-                            .textContentType(.name)
-                            .focused($nameFocused)
-                            .accessibilityLabel("Custom job name")
-                    }
-                } else {
-                    Section("Job Details") {
-                        LabeledContent("Job Name", value: draft.name)
-                    }
+                Section("Name") {
+                    TextField(draft.kind == .car ? "Model Y" : "Bake bread", text: $draft.name)
+                        .textContentType(.name)
+                        .focused($nameFocused)
+                        .accessibilityLabel("Job name")
                 }
 
                 if draft.kind == .car, let settings = draft.carSettings {
@@ -48,11 +42,11 @@ struct ProfileEditorSheet: View {
                             "Battery capacity", value: carValue(\.capacityKwh),
                             range: 1 ... LoadProfile.maximumCarCapacityKwh, step: 1, unit: "kWh")
                         decimalStepper(
-                            "Current charge", value: carValue(\.initialStateOfCharge), range: 0 ... 100,
-                            step: 1, unit: "%")
+                            "Current charge", value: currentChargeBinding, range: 0 ... 100,
+                            step: CarChargeSteps.step, unit: "%")
                         decimalStepper(
-                            "Target charge", value: carValue(\.targetStateOfCharge),
-                            range: settings.initialStateOfCharge ... 100, step: 1, unit: "%")
+                            "Target charge", value: targetChargeBinding,
+                            range: settings.initialStateOfCharge ... 100, step: CarChargeSteps.step, unit: "%")
                         Picker("Charging level", selection: carLevelBinding) {
                             Text("Level 1").tag(CarChargingLevel.level1)
                             Text("Level 2").tag(CarChargingLevel.level2)
@@ -77,7 +71,7 @@ struct ProfileEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(draft.id == nil ? "New Custom Job" : "Edit Job")
+            .navigationTitle(newJobTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -90,11 +84,6 @@ struct ProfileEditorSheet: View {
                     }
                     .disabled(!draft.isValid)
                 }
-            }
-            .onChange(of: draft.carSettings?.initialStateOfCharge) { _, current in
-                guard let current, var settings = draft.carSettings else { return }
-                settings.targetStateOfCharge = max(settings.targetStateOfCharge, current)
-                draft.carSettings = settings
             }
             .confirmationDialog(
                 "Discard changes to this job?", isPresented: $isConfirmingDiscard, titleVisibility: .visible) {
@@ -138,6 +127,33 @@ struct ProfileEditorSheet: View {
                 guard var settings = draft.carSettings else { return }
                 settings[keyPath: keyPath] = newValue
                 draft.carSettings = settings
+            }
+        )
+    }
+
+    var newJobTitle: String {
+        guard draft.id == nil else { return "Edit Job" }
+        return draft.kind == .car ? "New Car" : "New Custom Job"
+    }
+
+    /// Steppers add 5 to the exact saved value; the setter snaps the result to the 5% grid and keeps the
+    /// target at or above the current charge.
+    var currentChargeBinding: Binding<Double> {
+        Binding(
+            get: { draft.carSettings?.initialStateOfCharge ?? 0 },
+            set: { newValue in
+                guard let settings = draft.carSettings else { return }
+                draft.carSettings = CarChargeSteps.settings(settings, settingCurrent: newValue)
+            }
+        )
+    }
+
+    var targetChargeBinding: Binding<Double> {
+        Binding(
+            get: { draft.carSettings?.targetStateOfCharge ?? 0 },
+            set: { newValue in
+                guard let settings = draft.carSettings else { return }
+                draft.carSettings = CarChargeSteps.settings(settings, settingTarget: newValue)
             }
         )
     }

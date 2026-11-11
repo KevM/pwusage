@@ -17,6 +17,7 @@ struct LoadTimingView: View {
 
     @StateObject var profileStore: LoadProfileStore
     @State var isProfileSheetPresented = false
+    @State var isCarSheetPresented = false
     @State var isJobPickerPresented = false
     @State var isSolarForecastSheetPresented = false
     @State var detailsSnapshot: SmartShiftDetailsSnapshot?
@@ -50,7 +51,7 @@ struct LoadTimingView: View {
 
     /// The Job on screen: one picked here, else the last one viewed.
     static func initialJobID(store: LoadProfileStore) -> String? {
-        store.profile(id: store.selectedProfileID)?.id ?? store.profiles.first?.id
+        store.selectedProfileID.flatMap { store.profile(id: $0) }?.id ?? store.profiles.first?.id
     }
 
     var selectedProfile: LoadProfile? {
@@ -155,6 +156,9 @@ struct LoadTimingView: View {
         .sheet(isPresented: $isProfileSheetPresented) {
             LoadProfilesSheet(store: profileStore)
         }
+        .sheet(isPresented: $isCarSheetPresented) {
+            CarQuickEditSheet(store: profileStore, selectedID: selectedProfile?.id, onSelect: selectJob)
+        }
         .sheet(isPresented: $isSolarForecastSheetPresented) {
             SolarForecastSettingsSheet(coordinator: coordinator)
         }
@@ -192,6 +196,7 @@ struct LoadTimingView: View {
         LoadTimingCard {
             switch state.screen.content {
             case .verdict(let verdict):
+                carSummaryRow
                 SmartShiftVerdictView(
                     verdict: verdict, timeZone: timeZone, isSelected: isSelected,
                     onOpenDetails: { detailsSnapshot = detailsSnapshot(state, verdict: verdict, selected: $0) },
@@ -202,7 +207,9 @@ struct LoadTimingView: View {
                     .onDisappear { barRecommendation = nil }
                 jobRows(hint: state.hint)
             case .blocked(let message):
-                if let profile = selectedProfile {
+                // A car at its target is "blocked" (nothing to charge); its charge must stay editable.
+                carSummaryRow
+                if let profile = selectedProfile, LoadTimingPresentation.carSummary(profile) == nil {
                     Text(profile.name)
                         .font(.title3.weight(.bold))
                         .fixedSize(horizontal: false, vertical: true)
@@ -221,6 +228,29 @@ struct LoadTimingView: View {
                 Button("Add a Job", systemImage: "plus") { isProfileSheetPresented = true }
                     .frame(minHeight: 44)
             }
+        }
+    }
+
+    /// The selected car's charge at a glance; one tap opens the quick editor. Other jobs have no row.
+    @ViewBuilder
+    var carSummaryRow: some View {
+        if let profile = selectedProfile, let summary = LoadTimingPresentation.carSummary(profile) {
+            Button {
+                isCarSheetPresented = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "car.fill").foregroundStyle(.secondary)
+                    Text(summary).foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Text("Edit").foregroundStyle(.tint)
+                }
+                .font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(LoadTimingPresentation.carSummaryAccessibilityLabel(profile) ?? summary)
+            .accessibilityHint("Opens the charge editor")
         }
     }
 

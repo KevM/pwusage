@@ -17,10 +17,18 @@ extension SmartShiftPresentation {
 
         func shortDate(_ date: Date) -> String { SmartShiftPresentation.shortDate(date, timeZone: timeZone) }
 
+        /// The action word comes from the kind, never the name: names are the person's to change. Appliances
+        /// keep the starter verbs ("Wash the dishes" → "Wash") while a name still opens with one.
         var verb: String {
-            guard profile.kind != .custom, let first = profile.name.split(separator: " ").first else { return "Start" }
-            return String(first)
+            if profile.kind == .car { return "Charge" }
+            if profile.kind == .appliance, let first = profile.name.split(separator: " ").first,
+               Self.starterApplianceVerbs.contains(first.lowercased()) {
+                return String(first)
+            }
+            return "Start"
         }
+
+        private static let starterApplianceVerbs: Set<String> = ["wash", "dry"]
 
         var nowLabel: String { "\(verb) now" }
 

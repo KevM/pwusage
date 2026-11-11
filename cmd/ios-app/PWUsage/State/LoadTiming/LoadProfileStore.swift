@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class LoadProfileStore: ObservableObject {
     static let storageKey = "pwusage.loadProfiles.v1"
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     /// Payloads written before the 200 kWh cap could reach this value; clamp those
     /// into range instead of discarding every profile. Larger values fail validation.
     private static let maximumLegacyCarCapacityKwh = 250.0
@@ -30,27 +30,34 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @Published private(set) var profiles: [LoadProfile]
-    @Published private(set) var selectedProfileID: String
+    @Published private(set) var selectedProfileID: String?
+    @Published private(set) var lastEVProfileID: String?
 
     private let userDefaults: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        if let saved = Self.loadCollection(from: userDefaults) {
+        let saved = Self.loadCollection(from: userDefaults)
+        if let saved {
             profiles = saved.profiles
             selectedProfileID = saved.selectedProfileID.flatMap { id in
                 saved.profiles.contains(where: { $0.id == id }) ? id : nil
-            } ?? Self.defaultProfiles[0].id
+            } ?? saved.profiles.first?.id
         } else {
             profiles = Self.defaultProfiles
-            selectedProfileID = Self.defaultProfiles[0].id
+            selectedProfileID = Self.defaultProfiles.first?.id
         }
+        lastEVProfileID = Self.resolvedLastEVID(
+            saved: saved?.lastEVProfileID, profiles: profiles,
+            selectedID: selectedProfileID)
         persist()
     }
 
     func profile(id: String) -> LoadProfile? {
         profiles.first { $0.id == id }
     }
+
+    var carProfiles: [LoadProfile] { profiles.filter { $0.kind == .car } }
 
     @discardableResult
     func createCustomProfile(name: String, energyKwh: Double, durationHours: Double) throws -> LoadProfile {
@@ -69,13 +76,45 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @discardableResult
+    func createCarProfile(name: String, settings: CarLoadSettings) throws -> LoadProfile {
+        guard let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) else {
+            throw LoadProfileError.invalidProfile
+        }
+        let profile = LoadProfile(
+            id: UUID().uuidString,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            kind: .car,
+            // A car already at its target adds no energy; the stored fields only need to stay valid.
+            energyKwh: estimate.batteryKwh > 0 ? estimate.batteryKwh : Defaults.carEnergyKwh,
+            durationHours: estimate.batteryKwh > 0 ? estimate.durationHours : Defaults.carDurationHours,
+            carSettings: settings
+        )
+        try Self.validate(profile)
+        profiles.append(profile)
+        persist()
+        return profile
+    }
+
+    @discardableResult
+    func duplicateProfile(id: String) throws -> LoadProfile {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
+        let source = profiles[index]
+        let copy = LoadProfile(
+            id: UUID().uuidString, name: "\(source.name) copy", kind: source.kind,
+            energyKwh: source.energyKwh, durationHours: source.durationHours, carSettings: source.carSettings)
+        profiles.insert(copy, at: index + 1)
+        persist()
+        return copy
+    }
+
+    @discardableResult
     func editProfile(
         id: String, name: String? = nil, energyKwh: Double, durationHours: Double,
         carSettings: CarLoadSettings? = nil
     ) throws -> LoadProfile {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
         var updated = profiles[index]
-        if updated.kind == .custom, let name {
+        if let name {
             updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         updated.energyKwh = energyKwh
@@ -89,26 +128,37 @@ final class LoadProfileStore: ObservableObject {
         return updated
     }
 
-    func deleteCustomProfile(id: String) throws {
+    func deleteProfile(id: String) throws {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
-        guard profiles[index].kind == .custom else { throw LoadProfileError.cannotDeleteBuiltIn }
         profiles.remove(at: index)
-        if selectedProfileID == id { selectedProfileID = Self.defaultProfiles[0].id }
-        persist()
-    }
-
-    func resetBuiltInProfile(id: String) throws {
-        guard let defaults = Self.defaultProfiles.first(where: { $0.id == id }), defaults.kind != .custom else {
-            throw LoadProfileError.cannotResetCustom
+        if selectedProfileID == id { selectedProfileID = profiles.first?.id }
+        if lastEVProfileID == id {
+            lastEVProfileID = Self.resolvedLastEVID(saved: nil, profiles: profiles, selectedID: selectedProfileID)
         }
-        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
-        profiles[index] = defaults
         persist()
     }
 
     func selectProfile(id: String) throws {
-        guard profiles.contains(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
+        guard let profile = profile(id: id) else { throw LoadProfileError.profileNotFound }
         selectedProfileID = id
+        if profile.kind == .car { lastEVProfileID = id }
+        persist()
+    }
+
+    func updateCarCharge(id: String, current: Double?, target: Double?) throws {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
+        var updated = profiles[index]
+        guard updated.kind == .car, var settings = updated.carSettings else { throw LoadProfileError.invalidProfile }
+        if let current { settings = CarChargeSteps.settings(settings, settingCurrent: current) }
+        if let target { settings = CarChargeSteps.settings(settings, settingTarget: target) }
+        guard settings != updated.carSettings else { return }
+        updated.carSettings = settings
+        if let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings), estimate.batteryKwh > 0 {
+            updated.energyKwh = estimate.batteryKwh
+            updated.durationHours = estimate.durationHours
+        }
+        try Self.validate(updated)
+        profiles[index] = updated
         persist()
     }
 
@@ -125,7 +175,8 @@ final class LoadProfileStore: ObservableObject {
 
     private func persist() {
         let collection = PersistedCollection(
-            version: Self.schemaVersion, profiles: profiles, selectedProfileID: selectedProfileID)
+            version: Self.schemaVersion, profiles: profiles, selectedProfileID: selectedProfileID,
+            lastEVProfileID: lastEVProfileID)
         guard let data = try? JSONEncoder().encode(collection) else { return }
         userDefaults.set(data, forKey: Self.storageKey)
     }
@@ -147,7 +198,8 @@ final class LoadProfileStore: ObservableObject {
             profiles[index].carSettings = settings
         }
         let normalized = PersistedCollection(
-            version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID)
+            version: schemaVersion, profiles: profiles, selectedProfileID: saved.selectedProfileID,
+            lastEVProfileID: saved.lastEVProfileID)
         return isValidCollection(normalized) ? normalized : nil
     }
 
@@ -170,17 +222,8 @@ final class LoadProfileStore: ObservableObject {
 
     private static func isValidCollection(_ collection: PersistedCollection) -> Bool {
         let ids = collection.profiles.map(\.id)
-        guard Set(ids).count == ids.count,
-              defaultProfiles.filter({ $0.kind != .custom }).allSatisfy({ defaults in
-                  collection.profiles.contains(where: { $0.id == defaults.id && $0.kind == defaults.kind })
-              }),
-              collection.profiles.allSatisfy({ profile in
-                  if let reservedProfile = defaultProfiles.first(where: { $0.id == profile.id }) {
-                      return reservedProfile.kind == profile.kind
-                  }
-                  return profile.kind == .custom && UUID(uuidString: profile.id) != nil
-              }) else { return false }
-        return collection.profiles.allSatisfy { (try? validate($0)) != nil }
+        return Set(ids).count == ids.count
+            && collection.profiles.allSatisfy { (try? validate($0)) != nil }
     }
 
     private static func validate(_ profile: LoadProfile) throws {
@@ -188,7 +231,7 @@ final class LoadProfileStore: ObservableObject {
               profile.durationHours.isFinite, profile.durationHours > 0 else {
             throw LoadProfileError.invalidProfile
         }
-        if profile.kind == .custom && profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw LoadProfileError.invalidProfile
         }
         if profile.kind == .car {
@@ -209,6 +252,15 @@ final class LoadProfileStore: ObservableObject {
         let version: Int
         let profiles: [LoadProfile]
         let selectedProfileID: String?
+        var lastEVProfileID: String?
+    }
+
+    /// A saved last EV that still exists wins; otherwise the selected job if it is a car, else the first car.
+    private static func resolvedLastEVID(saved: String?, profiles: [LoadProfile], selectedID: String?) -> String? {
+        let cars = profiles.filter { $0.kind == .car }
+        if let saved, cars.contains(where: { $0.id == saved }) { return saved }
+        if let selectedID, cars.contains(where: { $0.id == selectedID }) { return selectedID }
+        return cars.first?.id
     }
 
     private static let defaultProfiles: [LoadProfile] = [

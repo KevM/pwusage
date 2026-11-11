@@ -8,7 +8,6 @@ struct LoadProfilesSheet: View {
 
     @State var draft: ProfileDraft?
     @State var pendingDeletion: LoadProfile?
-    @State var pendingReset: LoadProfile?
     @State var validationMessage: String?
 
     var body: some View {
@@ -21,6 +20,12 @@ struct LoadProfilesSheet: View {
                     .onMove { offsets, destination in
                         store.moveProfiles(fromOffsets: offsets, toOffset: destination)
                     }
+                    Button {
+                        draft = ProfileDraft.newCar()
+                    } label: {
+                        Label("Add a Car", systemImage: "car.fill")
+                    }
+                    .accessibilityHint("Creates a car with its own battery size and charge settings")
                     Button {
                         draft = ProfileDraft.newCustom()
                     } label: {
@@ -54,17 +59,17 @@ struct LoadProfilesSheet: View {
                 )
             }
             .confirmationDialog(
-                "Delete \(pendingDeletion?.name ?? "custom job")?",
+                "Delete \(pendingDeletion?.name ?? "this job")?",
                 isPresented: Binding(
                     get: { pendingDeletion != nil },
                     set: { if !$0 { pendingDeletion = nil } }
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Delete Custom Job", role: .destructive) {
+                Button("Delete Job", role: .destructive) {
                     guard let profile = pendingDeletion else { return }
                     do {
-                        try store.deleteCustomProfile(id: profile.id)
+                        try store.deleteProfile(id: profile.id)
                         pendingDeletion = nil
                     } catch {
                         validationMessage = message(for: error)
@@ -73,25 +78,6 @@ struct LoadProfilesSheet: View {
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
             } message: {
                 Text("This removes the job from this device.")
-            }
-            .confirmationDialog(
-                "Reset \(pendingReset?.name ?? "profile") to its default settings?",
-                isPresented: Binding(
-                    get: { pendingReset != nil },
-                    set: { if !$0 { pendingReset = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Reset to Defaults", role: .destructive) {
-                    guard let profile = pendingReset else { return }
-                    do {
-                        try store.resetBuiltInProfile(id: profile.id)
-                        pendingReset = nil
-                    } catch {
-                        validationMessage = message(for: error)
-                    }
-                }
-                Button("Cancel", role: .cancel) { pendingReset = nil }
             }
             .alert("Couldn’t update jobs", isPresented: Binding(
                 get: { validationMessage != nil },
@@ -130,11 +116,8 @@ struct LoadProfilesSheet: View {
 
             Menu {
                 Button("Edit") { draft = ProfileDraft(profile: profile) }
-                if profile.kind == .custom {
-                    Button("Delete", role: .destructive) { pendingDeletion = profile }
-                } else {
-                    Button("Reset to Defaults", role: .destructive) { pendingReset = profile }
-                }
+                Button("Duplicate") { duplicate(profile) }
+                Button("Delete", role: .destructive) { pendingDeletion = profile }
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(minWidth: 44, minHeight: 44)
@@ -147,9 +130,8 @@ struct LoadProfilesSheet: View {
 
     func save(_ draft: ProfileDraft) {
         guard draft.isValid else {
-            validationMessage = draft.kind == .custom
-                && draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Enter a name for this custom job."
+            validationMessage = draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Enter a name for this job."
                 : "Energy and duration must be greater than zero. Check the car charge settings too."
             return
         }
@@ -158,17 +140,27 @@ struct LoadProfilesSheet: View {
             if let id = draft.id {
                 saved = try store.editProfile(
                     id: id,
-                    name: draft.kind == .custom ? draft.name : nil,
+                    name: draft.name,
                     energyKwh: draft.energyKwh,
                     durationHours: draft.durationHours,
                     carSettings: draft.carSettings
                 )
+            } else if draft.kind == .car, let settings = draft.carSettings {
+                saved = try store.createCarProfile(name: draft.name, settings: settings)
             } else {
                 saved = try store.createCustomProfile(name: draft.name, energyKwh: draft.energyKwh,
                                                       durationHours: draft.durationHours)
             }
             try store.selectProfile(id: saved.id)
             self.draft = nil
+        } catch {
+            validationMessage = message(for: error)
+        }
+    }
+
+    func duplicate(_ profile: LoadProfile) {
+        do {
+            try store.duplicateProfile(id: profile.id)
         } catch {
             validationMessage = message(for: error)
         }

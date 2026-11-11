@@ -51,4 +51,34 @@ struct ProfileDraftTests {
         edited.energyKwh = 3.5
         #expect(!edited.hasUnsavedChanges(from: original))
     }
+
+    @Test("A new car draft is valid and starts from the car defaults")
+    func newCarDraftIsValidAndUsesCarDefaults() {
+        let draft = ProfileDraft.newCar()
+        #expect(draft.id == nil)
+        #expect(draft.kind == .car)
+        #expect(draft.carSettings?.capacityKwh == 60)
+        #expect(draft.carSettings?.initialStateOfCharge == 20)
+        #expect(draft.carSettings?.targetStateOfCharge == 80)
+        #expect(draft.isValid)
+        #expect(draft.sheetID != ProfileDraft.newCustom().sheetID)
+    }
+
+    @Test("A blank name is invalid for every kind of job")
+    func blankNameIsInvalidForEveryKind() {
+        for original in [ProfileDraft(profile: washer), .newCar(), .newCustom()] {
+            var draft = original
+            #expect(draft.isValid)
+            draft.name = "   "
+            #expect(!draft.isValid)
+        }
+    }
+
+    @Test("Renaming a car is an unsaved change")
+    func changingCarNameIsAnUnsavedChange() {
+        let original = ProfileDraft(profile: car)
+        var renamed = original
+        renamed.name = "Leaf"
+        #expect(renamed.hasUnsavedChanges(from: original))
+    }
 }

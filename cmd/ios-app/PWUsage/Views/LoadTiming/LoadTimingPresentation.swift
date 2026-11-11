@@ -11,6 +11,23 @@ enum LoadTimingPresentation {
         detail: "The latest refresh failed and no saved bill data is available, "
             + "so no recommendation or job estimates can be shown."
     )
+    /// "Model Y · 30% → 80%": the car's name, charge now and charge target, shown exactly as saved.
+    static func carSummary(_ profile: LoadProfile) -> String? {
+        guard profile.kind == .car, let settings = profile.carSettings else { return nil }
+        return "\(profile.name) · \(percent(settings.initialStateOfCharge)) → \(percent(settings.targetStateOfCharge))"
+    }
+
+    static func carSummaryAccessibilityLabel(_ profile: LoadProfile) -> String? {
+        guard profile.kind == .car, let settings = profile.carSettings else { return nil }
+        return "\(profile.name), charge now \(percent(settings.initialStateOfCharge, word: true)), "
+            + "charging to \(percent(settings.targetStateOfCharge, word: true))"
+    }
+
+    private static func percent(_ value: Double, word: Bool = false) -> String {
+        let number = value.formatted(.number.precision(.fractionLength(0)))
+        return word ? "\(number) percent" : "\(number)%"
+    }
+
     static func profileChipTitle(_ profile: LoadProfile) -> String {
         if profile.kind == .car, let settings = profile.carSettings,
            let estimate = LoadTimingEstimator.carChargeEstimate(settings: settings) {
