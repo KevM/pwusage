@@ -128,27 +128,48 @@ struct ProfileEditorSheet: View {
 
     @ViewBuilder
     var estimateSections: some View {
-        if draft.kind == .custom, draft.size != nil {
+        if draft.kind == .custom {
             Section("Size") {
                 Picker("Size", selection: sizeBinding) {
-                    ForEach(JobSize.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(JobSize.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
+                    Text("Exact").tag(JobSize?.none)
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Job size")
             }
         }
         Section("Job Estimate") {
-            decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: draft.energyStepKwh,
-                           unit: "kWh")
-            decimalStepper(
-                "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5, unit: "hours")
+            if draft.kind == .custom, draft.size == nil {
+                exactField("Energy", value: $draft.energyKwh, unit: "kWh")
+                exactField("Duration", value: $draft.durationHours, unit: "hours")
+            } else {
+                decimalStepper("Energy", value: $draft.energyKwh, range: 0.1 ... 500, step: draft.energyStepKwh,
+                               unit: "kWh")
+                decimalStepper(
+                    "Duration", value: $draft.durationHours, range: 0.1 ... 48, step: 0.5, unit: "hours")
+            }
         }
     }
 
-    var sizeBinding: Binding<JobSize> {
+    /// Exact mode: type the number instead of stepping to it.
+    func exactField(_ title: String, value: Binding<Double>, unit: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer(minLength: 8)
+            TextField("0", value: value, format: .number.precision(.fractionLength(0 ... 2)))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(maxWidth: 90)
+                .accessibilityLabel(title)
+            Text(unit).foregroundStyle(.secondary)
+        }
+    }
+
+    var sizeBinding: Binding<JobSize?> {
         Binding(
-            get: { draft.size ?? .medium },
-            set: { draft = draft.applying(size: $0) }
+            get: { draft.size },
+            set: { size in draft = size.map { draft.applying(size: $0) } ?? draft.applyingExact() }
         )
     }
 

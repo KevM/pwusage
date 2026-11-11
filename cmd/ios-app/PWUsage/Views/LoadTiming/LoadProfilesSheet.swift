@@ -141,7 +141,8 @@ struct LoadProfilesSheet: View {
             if let id = draft.id {
                 saved = try store.editProfile(id: id, edit: ProfileEdit(
                     name: draft.name, energyKwh: draft.energyKwh, durationHours: draft.durationHours,
-                    carSettings: draft.carSettings, size: draft.size, actionVerb: draft.actionVerb))
+                    carSettings: draft.carSettings, size: draft.size, actionVerb: draft.actionVerb,
+                    updatesSize: draft.kind == .custom))
             } else if draft.kind == .car, let settings = draft.carSettings {
                 saved = try store.createCarProfile(name: draft.name, settings: settings)
             } else {

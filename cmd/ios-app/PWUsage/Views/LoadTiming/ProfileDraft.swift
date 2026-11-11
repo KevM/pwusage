@@ -68,6 +68,13 @@ struct ProfileDraft: Identifiable, Equatable {
         return resized
     }
 
+    /// Exact mode: the numbers stay as they are and no size applies, so they can be typed in directly.
+    func applyingExact() -> ProfileDraft {
+        var exact = self
+        exact.size = nil
+        return exact
+    }
+
     /// How far the Energy stepper moves: bigger sizes take bigger steps.
     var energyStepKwh: Double { size?.energyStepKwh ?? 0.5 }
 

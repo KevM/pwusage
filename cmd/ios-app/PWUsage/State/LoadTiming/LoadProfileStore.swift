@@ -131,7 +131,7 @@ final class LoadProfileStore: ObservableObject {
         }
         updated.energyKwh = edit.energyKwh
         updated.durationHours = edit.durationHours
-        if let size = edit.size { updated.size = size }
+        if edit.updatesSize { updated.size = edit.size } else if let size = edit.size { updated.size = size }
         if let actionVerb = edit.actionVerb { updated.actionVerb = Self.trimmedVerb(actionVerb) }
         if updated.kind == .car {
             updated.carSettings = edit.carSettings ?? updated.carSettings

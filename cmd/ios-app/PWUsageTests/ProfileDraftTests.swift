@@ -133,4 +133,16 @@ struct ProfileDraftTests {
         #expect(dishes.editorTitle == "New Job")
         #expect(ProfileDraft(profile: washer).editorTitle == "Edit Job")
     }
+
+    @Test("Choosing Exact keeps the numbers and drops the size")
+    func applyingExactKeepsTheNumbersAndDropsTheSize() {
+        var draft = ProfileDraft.newCustom().applying(size: .large)
+        draft.energyKwh = 22
+        let exact = draft.applyingExact()
+        #expect(exact.size == nil)
+        #expect(exact.energyKwh == 22)
+        #expect(exact.durationHours == 4)
+        #expect(exact.energyStepKwh == 0.5)
+        #expect(exact.hasUnsavedChanges(from: draft))
+    }
 }

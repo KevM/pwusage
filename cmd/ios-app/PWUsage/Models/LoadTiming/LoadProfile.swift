@@ -105,15 +105,18 @@ struct ProfileEdit {
     var carSettings: CarLoadSettings?
     var size: JobSize?
     var actionVerb: String?
+    /// True when `size` should replace the saved one even if nil (turning a sized job back into an exact one).
+    var updatesSize: Bool
 
     init(name: String? = nil, energyKwh: Double, durationHours: Double, carSettings: CarLoadSettings? = nil,
-         size: JobSize? = nil, actionVerb: String? = nil) {
+         size: JobSize? = nil, actionVerb: String? = nil, updatesSize: Bool = false) {
         self.name = name
         self.energyKwh = energyKwh
         self.durationHours = durationHours
         self.carSettings = carSettings
         self.size = size
         self.actionVerb = actionVerb
+        self.updatesSize = updatesSize
     }
 }
 

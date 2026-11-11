@@ -126,3 +126,20 @@ extension LoadProfileStoreTests {
         #expect(LoadProfileStore(userDefaults: fixture.defaults).profiles.map(\.id) == [added.id])
     }
 }
+
+extension LoadProfileStoreTests {
+    @Test("An edit can turn a sized job back into an exact one")
+    @MainActor
+    func editProfileCanClearTheSize() throws {
+        let store = ProfileStoreFixture().store
+        let added = try store.addProfile(NewProfile(name: "Oven", kind: .custom, energyKwh: 20, durationHours: 4,
+                                                    size: .large, actionVerb: "Bake"))
+        let exact = try store.editProfile(id: added.id, edit: ProfileEdit(
+            energyKwh: 22, durationHours: 3.5, size: nil, updatesSize: true))
+        #expect(exact.size == nil)
+        #expect(exact.energyKwh == 22)
+        #expect(exact.actionVerb == "Bake")
+        let untouched = try store.editProfile(id: added.id, edit: ProfileEdit(energyKwh: 23, durationHours: 3.5))
+        #expect(untouched.size == nil)
+    }
+}
