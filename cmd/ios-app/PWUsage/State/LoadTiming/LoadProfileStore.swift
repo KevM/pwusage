@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class LoadProfileStore: ObservableObject {
     static let storageKey = "pwusage.loadProfiles.v1"
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     /// Payloads written before the 200 kWh cap could reach this value; clamp those
     /// into range instead of discarding every profile. Larger values fail validation.
     private static let maximumLegacyCarCapacityKwh = 250.0
@@ -30,7 +30,7 @@ final class LoadProfileStore: ObservableObject {
     }
 
     @Published private(set) var profiles: [LoadProfile]
-    @Published private(set) var selectedProfileID: String
+    @Published private(set) var selectedProfileID: String?
 
     private let userDefaults: UserDefaults
 
@@ -40,10 +40,10 @@ final class LoadProfileStore: ObservableObject {
             profiles = saved.profiles
             selectedProfileID = saved.selectedProfileID.flatMap { id in
                 saved.profiles.contains(where: { $0.id == id }) ? id : nil
-            } ?? Self.defaultProfiles[0].id
+            } ?? saved.profiles.first?.id
         } else {
             profiles = Self.defaultProfiles
-            selectedProfileID = Self.defaultProfiles[0].id
+            selectedProfileID = Self.defaultProfiles.first?.id
         }
         persist()
     }
@@ -89,20 +89,10 @@ final class LoadProfileStore: ObservableObject {
         return updated
     }
 
-    func deleteCustomProfile(id: String) throws {
+    func deleteProfile(id: String) throws {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
-        guard profiles[index].kind == .custom else { throw LoadProfileError.cannotDeleteBuiltIn }
         profiles.remove(at: index)
-        if selectedProfileID == id { selectedProfileID = Self.defaultProfiles[0].id }
-        persist()
-    }
-
-    func resetBuiltInProfile(id: String) throws {
-        guard let defaults = Self.defaultProfiles.first(where: { $0.id == id }), defaults.kind != .custom else {
-            throw LoadProfileError.cannotResetCustom
-        }
-        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw LoadProfileError.profileNotFound }
-        profiles[index] = defaults
+        if selectedProfileID == id { selectedProfileID = profiles.first?.id }
         persist()
     }
 
@@ -170,17 +160,8 @@ final class LoadProfileStore: ObservableObject {
 
     private static func isValidCollection(_ collection: PersistedCollection) -> Bool {
         let ids = collection.profiles.map(\.id)
-        guard Set(ids).count == ids.count,
-              defaultProfiles.filter({ $0.kind != .custom }).allSatisfy({ defaults in
-                  collection.profiles.contains(where: { $0.id == defaults.id && $0.kind == defaults.kind })
-              }),
-              collection.profiles.allSatisfy({ profile in
-                  if let reservedProfile = defaultProfiles.first(where: { $0.id == profile.id }) {
-                      return reservedProfile.kind == profile.kind
-                  }
-                  return profile.kind == .custom && UUID(uuidString: profile.id) != nil
-              }) else { return false }
-        return collection.profiles.allSatisfy { (try? validate($0)) != nil }
+        return Set(ids).count == ids.count
+            && collection.profiles.allSatisfy { (try? validate($0)) != nil }
     }
 
     private static func validate(_ profile: LoadProfile) throws {

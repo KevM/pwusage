@@ -8,7 +8,6 @@ struct LoadProfilesSheet: View {
 
     @State var draft: ProfileDraft?
     @State var pendingDeletion: LoadProfile?
-    @State var pendingReset: LoadProfile?
     @State var validationMessage: String?
 
     var body: some View {
@@ -54,17 +53,17 @@ struct LoadProfilesSheet: View {
                 )
             }
             .confirmationDialog(
-                "Delete \(pendingDeletion?.name ?? "custom job")?",
+                "Delete \(pendingDeletion?.name ?? "this job")?",
                 isPresented: Binding(
                     get: { pendingDeletion != nil },
                     set: { if !$0 { pendingDeletion = nil } }
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Delete Custom Job", role: .destructive) {
+                Button("Delete Job", role: .destructive) {
                     guard let profile = pendingDeletion else { return }
                     do {
-                        try store.deleteCustomProfile(id: profile.id)
+                        try store.deleteProfile(id: profile.id)
                         pendingDeletion = nil
                     } catch {
                         validationMessage = message(for: error)
@@ -73,25 +72,6 @@ struct LoadProfilesSheet: View {
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
             } message: {
                 Text("This removes the job from this device.")
-            }
-            .confirmationDialog(
-                "Reset \(pendingReset?.name ?? "profile") to its default settings?",
-                isPresented: Binding(
-                    get: { pendingReset != nil },
-                    set: { if !$0 { pendingReset = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Reset to Defaults", role: .destructive) {
-                    guard let profile = pendingReset else { return }
-                    do {
-                        try store.resetBuiltInProfile(id: profile.id)
-                        pendingReset = nil
-                    } catch {
-                        validationMessage = message(for: error)
-                    }
-                }
-                Button("Cancel", role: .cancel) { pendingReset = nil }
             }
             .alert("Couldn’t update jobs", isPresented: Binding(
                 get: { validationMessage != nil },
@@ -130,11 +110,7 @@ struct LoadProfilesSheet: View {
 
             Menu {
                 Button("Edit") { draft = ProfileDraft(profile: profile) }
-                if profile.kind == .custom {
-                    Button("Delete", role: .destructive) { pendingDeletion = profile }
-                } else {
-                    Button("Reset to Defaults", role: .destructive) { pendingReset = profile }
-                }
+                Button("Delete", role: .destructive) { pendingDeletion = profile }
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(minWidth: 44, minHeight: 44)

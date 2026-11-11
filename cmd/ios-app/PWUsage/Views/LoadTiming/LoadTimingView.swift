@@ -50,7 +50,7 @@ struct LoadTimingView: View {
 
     /// The Job on screen: one picked here, else the last one viewed.
     static func initialJobID(store: LoadProfileStore) -> String? {
-        store.profile(id: store.selectedProfileID)?.id ?? store.profiles.first?.id
+        store.selectedProfileID.flatMap { store.profile(id: $0) }?.id ?? store.profiles.first?.id
     }
 
     var selectedProfile: LoadProfile? {

@@ -29,19 +29,90 @@ struct LoadProfileStoreTests {
         #expect(edited.name == "Pool pump (summer)")
         #expect(edited.energyKwh == 5)
         #expect(edited.durationHours == 3)
-        try store.deleteCustomProfile(id: created.id)
+        try store.deleteProfile(id: created.id)
         #expect(store.profile(id: created.id) == nil)
     }
 
-    @Test("Edits and resets built-in profiles")
+    @Test("Edits starter jobs like any other job")
     @MainActor
-    func editsAndResetsBuiltIns() throws {
+    func editsStarterJobs() throws {
         let store = Fixture().store
         _ = try store.editProfile(id: "dishwasher", name: "Dishwasher", energyKwh: 6, durationHours: 4)
         #expect(store.profile(id: "dishwasher")?.energyKwh == 6)
-        try store.resetBuiltInProfile(id: "dishwasher")
-        #expect(store.profile(id: "dishwasher")?.energyKwh == 5)
-        #expect(throws: LoadProfileError.self) { try store.resetBuiltInProfile(id: "custom-example") }
+    }
+
+    @Test("Deletes any job, starter or custom")
+    @MainActor
+    func deletesAnyJob() throws {
+        let store = Fixture().store
+        try store.deleteProfile(id: "car")
+        try store.deleteProfile(id: "dishwasher")
+        #expect(store.profile(id: "car") == nil)
+        #expect(store.profile(id: "dishwasher") == nil)
+        #expect(throws: LoadProfileError.profileNotFound) { try store.deleteProfile(id: "car") }
+    }
+
+    @Test("Deleting every job reopens empty instead of reseeding")
+    @MainActor
+    func deletingAllJobsPersistsEmpty() throws {
+        let fixture = Fixture()
+        for profile in fixture.store.profiles { try fixture.store.deleteProfile(id: profile.id) }
+        #expect(fixture.store.selectedProfileID == nil)
+        let restored = LoadProfileStore(userDefaults: fixture.defaults)
+        #expect(restored.profiles.isEmpty)
+        #expect(restored.selectedProfileID == nil)
+    }
+
+    @Test("Deleting the selected job selects the first remaining one")
+    @MainActor
+    func deletingSelectedJobSelectsFirstRemaining() throws {
+        let store = Fixture().store
+        try store.selectProfile(id: "washer")
+        try store.deleteProfile(id: "washer")
+        #expect(store.selectedProfileID == "car")
+        try store.selectProfile(id: "dryer")
+        try store.deleteProfile(id: "car")
+        #expect(store.selectedProfileID == "dryer")
+    }
+
+    @Test("A saved selection that no longer exists is ignored")
+    @MainActor
+    func staleSavedSelectionIsIgnored() throws {
+        let fixture = Fixture()
+        try fixture.store.selectProfile(id: "washer")
+        let data = try #require(fixture.defaults.data(forKey: LoadProfileStore.storageKey))
+        var payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        payload["selectedProfileID"] = "gone"
+        fixture.defaults.set(try JSONSerialization.data(withJSONObject: payload), forKey: LoadProfileStore.storageKey)
+        #expect(LoadProfileStore(userDefaults: fixture.defaults).selectedProfileID == "car")
+
+        payload["profiles"] = [[String: Any]]()
+        fixture.defaults.set(try JSONSerialization.data(withJSONObject: payload), forKey: LoadProfileStore.storageKey)
+        #expect(LoadProfileStore(userDefaults: fixture.defaults).selectedProfileID == nil)
+    }
+
+    @Test("A version 2 payload keeps every job and edit and makes them all deletable")
+    @MainActor
+    func versionTwoPayloadKeepsEveryJobAndEdit() throws {
+        let defaults = Fixture.emptyDefaults()
+        let poolPumpID = UUID().uuidString
+        var profiles = VersionOneCollection.builtIns.map { profile -> LoadProfile in
+            var renamed = profile
+            if profile.id == "dishwasher" { renamed.energyKwh = 7 }
+            return renamed
+        }
+        profiles.append(LoadProfile(id: poolPumpID, name: "Pool pump", kind: .custom, energyKwh: 4,
+                                    durationHours: 2, carSettings: nil))
+        let saved = VersionOneCollection(version: 2, profiles: profiles, selectedProfileID: poolPumpID)
+        defaults.set(try JSONEncoder().encode(saved), forKey: LoadProfileStore.storageKey)
+
+        let store = LoadProfileStore(userDefaults: defaults)
+
+        #expect(store.profiles.map(\.id) == profiles.map(\.id))
+        #expect(store.profile(id: "dishwasher")?.energyKwh == 7)
+        #expect(store.selectedProfileID == poolPumpID)
+        for profile in profiles { try store.deleteProfile(id: profile.id) }
+        #expect(store.profiles.isEmpty)
     }
 
     @Test("Persists selection and profile changes across store instances")
@@ -102,26 +173,9 @@ struct LoadProfileStoreTests {
     @MainActor
     func deletionOfCustomExampleSurvivesReinitialization() throws {
         let fixture = Fixture()
-        try fixture.store.deleteCustomProfile(id: "custom-example")
+        try fixture.store.deleteProfile(id: "custom-example")
         let restored = LoadProfileStore(userDefaults: fixture.defaults)
         #expect(restored.profile(id: "custom-example") == nil)
-    }
-
-    @Test("Recovers when a reserved profile ID is saved with the wrong kind")
-    @MainActor
-    func recoversReservedIDKindMismatch() throws {
-        let fixture = Fixture()
-        let saved = try #require(fixture.defaults.data(forKey: LoadProfileStore.storageKey))
-        var json = try #require(JSONSerialization.jsonObject(with: saved) as? [String: Any])
-        var profiles = try #require(json["profiles"] as? [[String: Any]])
-        let index = try #require(profiles.firstIndex(where: { $0["id"] as? String == "custom-example" }))
-        profiles[index]["kind"] = "appliance"
-        json["profiles"] = profiles
-        fixture.defaults.set(try JSONSerialization.data(withJSONObject: json), forKey: LoadProfileStore.storageKey)
-
-        let recovered = LoadProfileStore(userDefaults: fixture.defaults)
-        #expect(recovered.profile(id: "custom-example")?.kind == .custom)
-        #expect(recovered.profile(id: "custom-example")?.energyKwh == 20)
     }
 
     @Test("Rejects malformed values and recovers malformed saved data")
@@ -208,7 +262,8 @@ struct LoadProfileStoreTests {
         #expect(store.profile(id: "dishwasher")?.energyKwh == 6)
         #expect(store.profile(id: "dishwasher")?.durationHours == 3)
         let persisted = try #require(defaults.data(forKey: LoadProfileStore.storageKey))
-        #expect(try JSONDecoder().decode(VersionOneCollection.self, from: persisted).version == 2)
+        let migrated = try JSONDecoder().decode(VersionOneCollection.self, from: persisted)
+        #expect(migrated.version == LoadProfileStore.schemaVersion)
     }
 
     @Test("The seeded Custom example is renamed only while it keeps its seeded name")
@@ -233,10 +288,7 @@ struct LoadProfileStoreTests {
         let cases: [(LoadProfileError, String)] = [
             (.invalidProfile, "Enter a name for custom loads, and energy and duration greater than zero. "
                 + "Check the car charge settings too."),
-            (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles."),
-            (.cannotDeleteBuiltIn, "Built-in load profiles can’t be deleted. Edit them instead, "
-                + "or reset them to their default settings."),
-            (.cannotResetCustom, "Custom loads can’t be reset to defaults. Delete the load and add it again instead.")
+            (.profileNotFound, "That load profile is no longer available. Close and reopen load profiles.")
         ]
         for (error, expected) in cases {
             #expect(error.errorDescription == expected)
