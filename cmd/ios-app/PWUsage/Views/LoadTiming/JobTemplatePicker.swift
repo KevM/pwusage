@@ -15,10 +15,11 @@ struct JobTemplatePicker: View {
                         Text(template.subtitle).font(.footnote).foregroundStyle(.secondary)
                     }
                 } icon: {
-                    Image(systemName: template.symbol)
+                    Image(systemName: template.symbol).foregroundStyle(.tint)
                 }
                 .frame(minHeight: 44)
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("\(template.title), \(template.subtitle)")
         }
         .navigationTitle("Add a Job")

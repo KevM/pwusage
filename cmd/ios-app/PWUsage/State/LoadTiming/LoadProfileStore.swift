@@ -34,9 +34,11 @@ final class LoadProfileStore: ObservableObject {
     @Published private(set) var lastEVProfileID: String?
 
     private let userDefaults: UserDefaults
+    let chargeSource: any CarChargeSource
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults = .standard, chargeSource: any CarChargeSource = ManualCarChargeSource()) {
         self.userDefaults = userDefaults
+        self.chargeSource = chargeSource
         let saved = Self.loadCollection(from: userDefaults)
         if let saved {
             profiles = saved.profiles
@@ -58,6 +60,14 @@ final class LoadProfileStore: ObservableObject {
     }
 
     var carProfiles: [LoadProfile] { profiles.filter { $0.kind == .car } }
+
+    /// False when the charge comes from somewhere other than the person, so the app shouldn't offer to edit it.
+    var canEditCharge: Bool { chargeSource.isManual }
+
+    /// The charge to show for a car: the source's value, else what is saved.
+    func currentCharge(for car: LoadProfile) -> Double {
+        chargeSource.currentCharge(for: car) ?? car.carSettings?.initialStateOfCharge ?? 0
+    }
 
     @discardableResult
     func addProfile(_ new: NewProfile) throws -> LoadProfile {
