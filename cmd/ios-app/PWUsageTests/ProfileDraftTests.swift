@@ -124,4 +124,13 @@ struct ProfileDraftTests {
         #expect(draft.size == .large)
         #expect(draft.actionVerb == "Heat")
     }
+
+    @Test("The editor title matches the kind of job")
+    func editorTitleMatchesTheKindOfJob() throws {
+        #expect(ProfileDraft.newCar().editorTitle == "New Car")
+        #expect(ProfileDraft.newCustom().editorTitle == "New Custom Job")
+        let dishes = try #require(JobTemplates.all.first { $0.id == "dishwasher" }).draft
+        #expect(dishes.editorTitle == "New Job")
+        #expect(ProfileDraft(profile: washer).editorTitle == "Edit Job")
+    }
 }

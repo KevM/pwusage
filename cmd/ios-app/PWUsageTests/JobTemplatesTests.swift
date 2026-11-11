@@ -21,18 +21,18 @@ struct JobTemplatesTests {
         }
     }
 
-    @Test("Appliance templates carry their verbs and values")
-    func applianceTemplatesCarryTheirVerbs() throws {
+    @Test("Appliance templates leave the action word to the name")
+    func applianceTemplatesLeaveTheVerbToTheName() throws {
         func draft(_ id: String) throws -> ProfileDraft {
             try #require(JobTemplates.all.first { $0.id == id }).draft
         }
         let dishwasher = try draft("dishwasher")
         #expect(dishwasher.kind == .appliance)
-        #expect(dishwasher.actionVerb == "Wash")
+        #expect(dishwasher.actionVerb == nil)
         #expect(dishwasher.energyKwh == 5)
         #expect(dishwasher.durationHours == 2)
         #expect(try draft("washer").energyKwh == 2)
-        #expect(try draft("dryer").actionVerb == "Dry")
+        #expect(try draft("dryer").actionVerb == nil)
         #expect(try draft("dryer").durationHours == 1)
         #expect(try draft("washer-dryer-combo").energyKwh == 8)
     }

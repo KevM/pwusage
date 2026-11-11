@@ -38,23 +38,41 @@ struct CarChargeSourceTests {
         #expect(store.canEditCharge)
     }
 
-    @Test("A store keeps an injected source, reads from it and stops hand edits")
+    @Test("A store keeps an injected source and stops hand edits")
     @MainActor
-    func storeKeepsAnInjectedSource() throws {
+    func storeKeepsAnInjectedSource() {
         let store = LoadProfileStore(userDefaults: Self.emptyDefaults(), chargeSource: SyncedChargeSource(charge: 61))
         #expect(!store.chargeSource.isManual)
         #expect(!store.canEditCharge)
-        let seeded = try #require(store.profile(id: "car"))
-        #expect(store.currentCharge(for: seeded) == 61)
-        #expect(seeded.carSettings?.initialStateOfCharge == 20)
     }
 
-    @Test("With the manual source the displayed charge is the saved one")
+    @Test("Syncing writes the source's charge into the saved car and keeps the target above it")
     @MainActor
-    func displayedChargeIsTheSavedChargeForManualSource() throws {
+    func syncWritesTheStoredCharge() throws {
+        let defaults = Self.emptyDefaults()
+        let store = LoadProfileStore(userDefaults: defaults, chargeSource: SyncedChargeSource(charge: 85))
+        store.syncChargesFromSource()
+        let car = try #require(store.profile(id: "car"))
+        #expect(car.carSettings?.initialStateOfCharge == 85)
+        #expect(car.carSettings?.targetStateOfCharge == 85)
+        #expect(LoadProfileStore(userDefaults: defaults).profile(id: "car")?.carSettings?.initialStateOfCharge == 85)
+    }
+
+    @Test("Syncing does nothing for the manual source")
+    @MainActor
+    func syncIsANoOpForManualSource() {
         let store = LoadProfileStore(userDefaults: Self.emptyDefaults())
-        let seeded = try #require(store.profile(id: "car"))
-        #expect(store.currentCharge(for: seeded) == 20)
+        let before = store.profiles
+        store.syncChargesFromSource()
+        #expect(store.profiles == before)
+    }
+
+    @Test("Syncing clamps a wild value into 0 to 100")
+    @MainActor
+    func syncClampsTheSourceValue() throws {
+        let store = LoadProfileStore(userDefaults: Self.emptyDefaults(), chargeSource: SyncedChargeSource(charge: 140))
+        store.syncChargesFromSource()
+        #expect(store.profile(id: "car")?.carSettings?.initialStateOfCharge == 100)
     }
 
     private static func emptyDefaults() -> UserDefaults {

@@ -64,11 +64,6 @@ final class LoadProfileStore: ObservableObject {
     /// False when the charge comes from somewhere other than the person, so the app shouldn't offer to edit it.
     var canEditCharge: Bool { chargeSource.isManual }
 
-    /// The charge to show for a car: the source's value, else what is saved.
-    func currentCharge(for car: LoadProfile) -> Double {
-        chargeSource.currentCharge(for: car) ?? car.carSettings?.initialStateOfCharge ?? 0
-    }
-
     @discardableResult
     func addProfile(_ new: NewProfile) throws -> LoadProfile {
         let profile = LoadProfile(
@@ -162,6 +157,24 @@ final class LoadProfileStore: ObservableObject {
         selectedProfileID = id
         if profile.kind == .car { lastEVProfileID = id }
         persist()
+    }
+
+    /// Brings every car's saved charge in line with the charge source. A manual source has nothing to
+    /// bring in, so this does nothing until a vehicle sync supplies its own values.
+    func syncChargesFromSource() {
+        guard !chargeSource.isManual else { return }
+        var changed = false
+        for index in profiles.indices {
+            guard var settings = profiles[index].carSettings,
+                  let value = chargeSource.currentCharge(for: profiles[index]), value.isFinite else { continue }
+            let charge = min(100, max(0, value))
+            guard charge != settings.initialStateOfCharge else { continue }
+            settings.initialStateOfCharge = charge
+            settings.targetStateOfCharge = max(settings.targetStateOfCharge, charge)
+            profiles[index].carSettings = settings
+            changed = true
+        }
+        if changed { persist() }
     }
 
     func updateCarCharge(id: String, current: Double?, target: Double?) throws {

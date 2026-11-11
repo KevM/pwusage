@@ -71,6 +71,15 @@ struct ProfileDraft: Identifiable, Equatable {
     /// How far the Energy stepper moves: bigger sizes take bigger steps.
     var energyStepKwh: Double { size?.energyStepKwh ?? 0.5 }
 
+    var editorTitle: String {
+        guard id == nil else { return "Edit Job" }
+        switch kind {
+        case .car: return "New Car"
+        case .appliance: return "New Job"
+        case .custom: return "New Custom Job"
+        }
+    }
+
     var newProfile: NewProfile {
         NewProfile(name: name, kind: kind, energyKwh: energyKwh, durationHours: durationHours,
                    carSettings: carSettings, size: size, actionVerb: actionVerb)

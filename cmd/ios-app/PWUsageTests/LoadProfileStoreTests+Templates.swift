@@ -112,7 +112,7 @@ extension LoadProfileStoreTests {
         let second = try store.addProfile(template.draft.newProfile)
         #expect(first.id != second.id)
         #expect(store.profiles.filter { $0.name == "Wash the dishes" }.count == 3)
-        #expect(first.actionVerb == "Wash")
+        #expect(first.actionVerb == nil)
     }
 
     @Test("A template can be added when no jobs are left")

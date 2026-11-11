@@ -23,7 +23,7 @@ struct CarQuickEditSheet: View {
                     }
                     if let car, let settings = car.carSettings {
                         CarChargeRow(
-                            title: "Current charge", value: store.currentCharge(for: car),
+                            title: "Current charge", value: settings.initialStateOfCharge,
                             range: 0 ... 100, isEnabled: store.canEditCharge,
                             onChange: { setCharge(for: car, current: $0, target: nil) })
                         if !store.canEditCharge {

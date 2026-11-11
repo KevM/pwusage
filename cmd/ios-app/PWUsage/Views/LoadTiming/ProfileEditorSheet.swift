@@ -66,7 +66,7 @@ struct ProfileEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(newJobTitle)
+            .navigationTitle(draft.editorTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -150,11 +150,6 @@ struct ProfileEditorSheet: View {
             get: { draft.size ?? .medium },
             set: { draft = draft.applying(size: $0) }
         )
-    }
-
-    var newJobTitle: String {
-        guard draft.id == nil else { return "Edit Job" }
-        return draft.kind == .car ? "New Car" : "New Custom Job"
     }
 
     /// Steppers add 5 to the exact saved value; the setter snaps the result to the 5% grid and keeps the
