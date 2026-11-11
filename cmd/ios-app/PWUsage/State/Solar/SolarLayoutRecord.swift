@@ -13,6 +13,10 @@ struct SolarLayoutRecord: Codable, Equatable, Sendable {
     var attemptedAt: Date?
     var detectorVersion: Int?
     var resultLocation: SolarHomeLocation?
+    /// What the owner entered. Redetection, a detector version bump and a location change never touch it.
+    var manualLayout: ManualSolarLayout?
+    /// When the owner last entered or cleared the layout. A clear keeps its date so it wins a merge.
+    var manualSetAt: Date?
 
     /// Whether the stored result is a layout, whichever detector version found it.
     var hasUsableResult: Bool {
