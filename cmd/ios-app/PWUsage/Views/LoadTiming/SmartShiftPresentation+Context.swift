@@ -20,6 +20,10 @@ extension SmartShiftPresentation {
         /// The action word comes from the kind, never the name: names are the person's to change. Appliances
         /// keep the starter verbs ("Wash the dishes" → "Wash") while a name still opens with one.
         var verb: String {
+            if let explicit = profile.actionVerb?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !explicit.isEmpty {
+                return explicit
+            }
             if profile.kind == .car { return "Charge" }
             if profile.kind == .appliance, let first = profile.name.split(separator: " ").first,
                Self.starterApplianceVerbs.contains(first.lowercased()) {

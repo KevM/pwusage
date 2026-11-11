@@ -7,6 +7,8 @@ struct ProfileDraft: Identifiable, Equatable {
     var energyKwh: Double
     var durationHours: Double
     var carSettings: CarLoadSettings?
+    var size: JobSize?
+    var actionVerb: String?
 
     var sheetID: String { id ?? (kind == .car ? "new-car" : "new-custom") }
     var isValid: Bool {
@@ -26,31 +28,40 @@ struct ProfileDraft: Identifiable, Equatable {
         energyKwh = profile.energyKwh
         durationHours = profile.durationHours
         carSettings = profile.carSettings
+        size = profile.size
+        actionVerb = profile.actionVerb
     }
 
-    private init() {
+    /// A job that doesn't exist yet; the store assigns its id when it is saved.
+    init(name: String, kind: LoadProfileKind, energyKwh: Double, durationHours: Double,
+         carSettings: CarLoadSettings? = nil, size: JobSize? = nil, actionVerb: String? = nil) {
         id = nil
-        name = "Custom job"
-        kind = .custom
-        energyKwh = 20
-        durationHours = 4
-        carSettings = nil
+        self.name = name
+        self.kind = kind
+        self.energyKwh = energyKwh
+        self.durationHours = durationHours
+        self.carSettings = carSettings
+        self.size = size
+        self.actionVerb = actionVerb
     }
 
-    static func newCustom() -> ProfileDraft { ProfileDraft() }
+    static func newCustom() -> ProfileDraft {
+        ProfileDraft(name: "Custom job", kind: .custom, energyKwh: JobSize.medium.defaultEnergyKwh,
+                     durationHours: JobSize.medium.defaultDurationHours, size: .medium)
+    }
 
     static func newCar() -> ProfileDraft {
-        var draft = ProfileDraft()
-        draft.name = "Car"
-        draft.kind = .car
-        draft.energyKwh = LoadProfileStore.Defaults.carEnergyKwh
-        draft.durationHours = LoadProfileStore.Defaults.carDurationHours
-        draft.carSettings = CarLoadSettings(
-            capacityKwh: LoadProfileStore.Defaults.carCapacityKwh,
-            initialStateOfCharge: LoadProfileStore.Defaults.carInitialSOC,
-            targetStateOfCharge: LoadProfileStore.Defaults.carTargetSOC,
-            chargingLevel: LoadProfileStore.Defaults.carLevel)
-        return draft
+        let defaults = LoadProfileStore.Defaults.self
+        return ProfileDraft(
+            name: "Car", kind: .car, energyKwh: defaults.carEnergyKwh, durationHours: defaults.carDurationHours,
+            carSettings: CarLoadSettings(
+                capacityKwh: defaults.carCapacityKwh, initialStateOfCharge: defaults.carInitialSOC,
+                targetStateOfCharge: defaults.carTargetSOC, chargingLevel: defaults.carLevel))
+    }
+
+    var newProfile: NewProfile {
+        NewProfile(name: name, kind: kind, energyKwh: energyKwh, durationHours: durationHours,
+                   carSettings: carSettings, size: size, actionVerb: actionVerb)
     }
 
     /// Whether closing the editor now would lose something the person typed.

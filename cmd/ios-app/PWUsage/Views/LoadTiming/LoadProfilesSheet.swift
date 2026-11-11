@@ -7,6 +7,7 @@ struct LoadProfilesSheet: View {
     @Environment(\.dynamicTypeSize) var dynamicTypeSize
 
     @State var draft: ProfileDraft?
+    @State var isChoosingTemplate = false
     @State var pendingDeletion: LoadProfile?
     @State var validationMessage: String?
 
@@ -21,17 +22,11 @@ struct LoadProfilesSheet: View {
                         store.moveProfiles(fromOffsets: offsets, toOffset: destination)
                     }
                     Button {
-                        draft = ProfileDraft.newCar()
+                        isChoosingTemplate = true
                     } label: {
-                        Label("Add a Car", systemImage: "car.fill")
+                        Label("Add a Job", systemImage: "plus.circle.fill")
                     }
-                    .accessibilityHint("Creates a car with its own battery size and charge settings")
-                    Button {
-                        draft = ProfileDraft.newCustom()
-                    } label: {
-                        Label("Add a Custom Job", systemImage: "plus.circle.fill")
-                    }
-                    .accessibilityHint("Creates a named job with energy and duration settings")
+                    .accessibilityHint("Starts from a template such as a car, dishwasher or custom job")
                 }
 
                 Section {
@@ -49,6 +44,12 @@ struct LoadProfilesSheet: View {
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .navigationDestination(isPresented: $isChoosingTemplate) {
+                JobTemplatePicker { template in
+                    isChoosingTemplate = false
+                    draft = template
                 }
             }
             .sheet(item: $draft) { value in
@@ -138,18 +139,13 @@ struct LoadProfilesSheet: View {
         do {
             let saved: LoadProfile
             if let id = draft.id {
-                saved = try store.editProfile(
-                    id: id,
-                    name: draft.name,
-                    energyKwh: draft.energyKwh,
-                    durationHours: draft.durationHours,
-                    carSettings: draft.carSettings
-                )
+                saved = try store.editProfile(id: id, edit: ProfileEdit(
+                    name: draft.name, energyKwh: draft.energyKwh, durationHours: draft.durationHours,
+                    carSettings: draft.carSettings, size: draft.size, actionVerb: draft.actionVerb))
             } else if draft.kind == .car, let settings = draft.carSettings {
                 saved = try store.createCarProfile(name: draft.name, settings: settings)
             } else {
-                saved = try store.createCustomProfile(name: draft.name, energyKwh: draft.energyKwh,
-                                                      durationHours: draft.durationHours)
+                saved = try store.addProfile(draft.newProfile)
             }
             try store.selectProfile(id: saved.id)
             self.draft = nil

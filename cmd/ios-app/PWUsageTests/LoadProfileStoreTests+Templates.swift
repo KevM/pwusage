@@ -101,3 +101,28 @@ extension LoadProfileStoreTests {
         #expect(copy.actionVerb == "Bake")
     }
 }
+
+extension LoadProfileStoreTests {
+    @Test("Adding the same template twice makes two independent jobs")
+    @MainActor
+    func addingTheSameTemplateTwiceMakesTwoJobs() throws {
+        let store = ProfileStoreFixture().store
+        let template = try #require(JobTemplates.all.first { $0.id == "dishwasher" })
+        let first = try store.addProfile(template.draft.newProfile)
+        let second = try store.addProfile(template.draft.newProfile)
+        #expect(first.id != second.id)
+        #expect(store.profiles.filter { $0.name == "Wash the dishes" }.count == 3)
+        #expect(first.actionVerb == "Wash")
+    }
+
+    @Test("A template can be added when no jobs are left")
+    @MainActor
+    func addsFromEmptyStore() throws {
+        let fixture = ProfileStoreFixture()
+        for profile in fixture.store.profiles { try fixture.store.deleteProfile(id: profile.id) }
+        let template = try #require(JobTemplates.all.first { $0.id == "ev" })
+        let added = try fixture.store.addProfile(template.draft.newProfile)
+        #expect(fixture.store.profiles.map(\.id) == [added.id])
+        #expect(LoadProfileStore(userDefaults: fixture.defaults).profiles.map(\.id) == [added.id])
+    }
+}
