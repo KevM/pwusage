@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let manualLayoutLogger = Logger(subsystem: "fm.rodeo.pwusage", category: "solar-layout")
 
 extension DashboardCoordinator {
     /// The selected site's stored record, for the layout editor: what was entered and what was detected.
@@ -14,6 +17,7 @@ extension DashboardCoordinator {
             try await records.setManualLayout(layout?.normalized(), scope: scope)
             return true
         } catch {
+            manualLayoutLogger.error("Saving the manual layout failed: \(String(describing: error), privacy: .public)")
             return false
         }
     }
