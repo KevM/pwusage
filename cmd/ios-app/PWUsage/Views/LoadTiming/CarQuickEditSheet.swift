@@ -23,12 +23,14 @@ struct CarQuickEditSheet: View {
                     }
                     if let car, let settings = car.carSettings {
                         CarChargeRow(
-                            title: "Charge now", value: settings.initialStateOfCharge,
+                            title: "Current charge", value: settings.initialStateOfCharge,
                             range: 0 ... 100,
                             onChange: { setCharge(for: car, current: $0, target: nil) })
                         CarChargeRow(
-                            title: "Charge to", value: settings.targetStateOfCharge,
-                            range: settings.initialStateOfCharge ... 100,
+                            // A fixed range keeps this thumb still while the top slider moves; the store
+                            // lifts the target when current passes it.
+                            title: "Target charge", value: settings.targetStateOfCharge,
+                            range: 0 ... 100,
                             onChange: { setCharge(for: car, current: nil, target: $0) })
                     } else {
                         Text("Add a car in Manage Jobs to set its charge here.")
