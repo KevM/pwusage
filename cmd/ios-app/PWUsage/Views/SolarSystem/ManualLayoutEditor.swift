@@ -169,44 +169,70 @@ private struct ManualFaceFields: View {
 
     @State private var isExpanded = true
 
-    /// The face is a group: its title row swipes away the whole face, and its fields sit inset
-    /// beneath it. Each field is still its own list row, since several fields in one row compete
-    /// for the tap and the caret lands in the wrong one, or nowhere.
+    /// The face is a group: a title row that collapses it and swipes it away, and its fields inset
+    /// beneath. The title is its own row and the fields are separate rows (not a DisclosureGroup,
+    /// whose swipe action spreads to every row inside it), so only the title swipes. Each field is
+    /// also its own row: several fields in one row compete for the tap and the caret lands in the
+    /// wrong one, or nowhere.
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            TextField("Face name (optional)", text: $face.label.textFieldValue)
-            numberRow("Panels", field: .panels(face.id)) {
-                TextField("Count", value: $face.panelCount, format: .number)
+        header
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if let onRemove {
+                    Button("Remove", role: .destructive, action: onRemove)
+                }
             }
-            numberRow("Panel watts", field: .watts(face.id)) {
-                TextField("Watts", value: $face.panelWatts, format: .number)
-            }
-            numberRow("Direction (°)", field: .azimuth(face.id)) {
-                TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
-            }
-            numberRow("Tilt (°)", field: .tilt(face.id)) {
-                TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
-            }
+        if isExpanded {
+            fields
+        }
+    }
+
+    private var header: some View {
+        Button {
+            withAnimation { isExpanded.toggle() }
         } label: {
-            HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 Text(face.label ?? "Face \(number)").font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("\(face.panelCount) × \(Int(face.panelWatts.rounded())) W")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if let onRemove {
-                Button("Remove", role: .destructive, action: onRemove)
-            }
+        .buttonStyle(.plain)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+
+    @ViewBuilder private var fields: some View {
+        TextField("Face name (optional)", text: $face.label.textFieldValue)
+            .listRowInsets(Self.fieldInsets)
+        numberRow("Panels", field: .panels(face.id)) {
+            TextField("Count", value: $face.panelCount, format: .number)
+        }
+        numberRow("Panel watts", field: .watts(face.id)) {
+            TextField("Watts", value: $face.panelWatts, format: .number)
+        }
+        numberRow("Direction (°)", field: .azimuth(face.id)) {
+            TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
+        }
+        numberRow("Tilt (°)", field: .tilt(face.id)) {
+            TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
         }
     }
+
+    /// The fields sit inset under the title.
+    private static let fieldInsets = EdgeInsets(top: 0, leading: 40, bottom: 0, trailing: 20)
 
     private func numberRow(
         _ title: String, field: ManualLayoutField, @ViewBuilder content: () -> some View
     ) -> some View {
         ManualNumberRow(title: title, field: field, focus: focus, content: content)
+            .listRowInsets(Self.fieldInsets)
     }
 
     /// The detected value for a face, shown where the field is empty.
