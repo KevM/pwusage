@@ -100,7 +100,8 @@ export async function enqueueTariffReattribution(params: {
       [params.siteId]
     );
     const existing = existingRes.rows[0];
-    if (existing && (existing.status === 'pending' || existing.status === 'running')) {
+    // A failed job still has unfinished work, so its range must survive the replacement upsert.
+    if (existing && (existing.status === 'pending' || existing.status === 'running' || existing.status === 'failed')) {
       coalesced = true;
       const oldFrom = formatDateCol(existing.from_date) ?? params.fromDate;
       const oldTo = formatDateCol(existing.to_date);

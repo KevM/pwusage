@@ -73,6 +73,26 @@ struct RatePlanDraftTests {
         #expect(season.validateWeekdaySlots() == nil)
     }
 
+    @Test("Dragging a schedule boundary stops at the neighbouring boundary instead of overlapping")
+    func boundaryDragClampsToAdjacentWindows() {
+        func window(_ name: TariffPeriodName, _ start: Int, _ end: Int) -> DayPeriodDraft {
+            DayPeriodDraft(touName: name, startSlot: start, endSlot: end, buyRateText: "0.1", sellRateText: "0.03")
+        }
+        var season = SeasonDraft.makeDefault(name: "Summer", fromMonth: 6, toMonth: 9)
+        season.weekdayWindows = [window(.offPeak, 0, 12), window(.partialPeak, 12, 24), window(.onPeak, 24, 48)]
+
+        // Past the middle window's end (slot 30 is inside the third window): stops at the neighbour.
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 30, isWeekday: true)
+        #expect(season.validateWeekdaySlots() == nil)
+        #expect(season.weekdayWindows[0].endSlot == 23)
+        #expect(season.weekdayWindows[1].startSlot == 23)
+
+        // Ordinary in-span drags still move freely.
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 6, isWeekday: true)
+        #expect(season.weekdayWindows[0].endSlot == 6)
+        #expect(season.validateWeekdaySlots() == nil)
+    }
+
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")
     func copyPreservesExactPlanName() throws {
         let timeline = try MobileContractDecoder.make().decode(

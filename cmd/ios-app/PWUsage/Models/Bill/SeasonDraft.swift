@@ -219,7 +219,20 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         var list = isWeekday ? weekdayWindows : weekendWindows
         guard list.count >= 2, list.indices.contains(index) else { return }
         let nextIndex = (index + 1) % list.count
-        let snapped = max(0, min(47, candidateSlot))
+        // Keep the boundary inside the two adjacent windows' combined span so it can never
+        // cross a neighbouring boundary and wrap into an overlapping schedule.
+        let spanStart = list[index].startSlot % 48
+        var span = ((list[nextIndex].endSlot - spanStart) % 48 + 48) % 48
+        if span == 0 { span = 48 }
+        guard span >= 2 else { return }
+        let candidate = ((max(0, min(47, candidateSlot)) - spanStart) % 48 + 48) % 48
+        var offset = candidate
+        if candidate == 0 {
+            offset = 1
+        } else if candidate > span - 1 {
+            offset = candidate - span <= 48 - candidate ? span - 1 : 1
+        }
+        let snapped = (spanStart + offset) % 48
         var updatedFirst = list[index]
         var updatedSecond = list[nextIndex]
         updatedFirst.endSlot = snapped

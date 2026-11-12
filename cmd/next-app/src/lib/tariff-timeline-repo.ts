@@ -557,12 +557,14 @@ export class TariffTimelineRepo {
       // If shrinking vacated dates adjacent to a 'tesla' span, heal/extend that tesla span cleanly.
       // Bound each vacated interval to the original period so dates it never covered
       // (already preserved as Tesla fragments) are not re-extended into an overlap.
-      if (oldFrom < nextFrom) {
+      // Only manual edits heal: for a Tesla edit the replacement span would be found as its own
+      // Tesla neighbour and restore the dates the user just changed.
+      if (source === 'manual' && oldFrom < nextFrom) {
         const dayBeforeNext = addCalendarDays(nextFrom, -1);
         const vacatedTo = oldTo !== null ? minDate(oldTo, dayBeforeNext) : dayBeforeNext;
         await healVacatedIntervalWithTesla(client, siteId, oldFrom, vacatedTo);
       }
-      if (nextTo !== null && (oldTo === null || oldTo > nextTo)) {
+      if (source === 'manual' && nextTo !== null && (oldTo === null || oldTo > nextTo)) {
         const dayAfterNext = addCalendarDays(nextTo, 1);
         const vacatedFrom = dayAfterNext > oldFrom ? dayAfterNext : oldFrom;
         await healVacatedIntervalWithTesla(client, siteId, vacatedFrom, oldTo);

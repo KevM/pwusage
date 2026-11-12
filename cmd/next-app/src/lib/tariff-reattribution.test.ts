@@ -326,6 +326,30 @@ describe('tariff-reattribution engine', () => {
     }));
   });
 
+  it('keeps a failed job\'s unfinished range when a later edit replaces it', async () => {
+    let countParams: unknown[] = [];
+    clientHandler = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
+      if (sql.includes('SELECT * FROM "SiteTariffReattribution"')) {
+        return { rows: [{ site_id: 's1', status: 'failed', generation: 2, from_date: '2026-01-01', to_date: '2026-02-01' }] };
+      }
+      if (sql.includes('SELECT COUNT(*)')) { countParams = params ?? []; return { rows: [{ count: '10' }] }; }
+      if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+        return { rows: [{
+          site_id: 's1', status: 'pending', generation: 3, from_date: '2026-01-01', to_date: '2026-06-01',
+          cursor_day_start: null, total_days: 10, processed_days: 0, updated_days: 0, attempt_count: 0,
+          last_error: null, requested_by_user_id: 'u1', updated_at: new Date(),
+        }] };
+      }
+      return { rows: [] };
+    };
+
+    await enqueueTariffReattribution({
+      siteId: 's1', fromDate: '2026-05-01', toDate: '2026-06-01', requestedByUserId: 'u1', trigger: 'update',
+    });
+    expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', '2026-06-01']);
+  });
+
   it('marks job failed with sanitized error token once attempt_count reaches REATTRIBUTION_MAX_ATTEMPTS', async () => {
     mocks.queryMock.mockImplementation(async (sql: string) => {
       if (sql.includes('UPDATE "SiteTariffReattribution"') && sql.includes("status = 'running'")) {

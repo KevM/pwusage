@@ -157,4 +157,22 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       ['manual', '2026-04-01', '2026-04-30'],
     ]);
   });
+  it('keeps the requested dates when a Tesla period is edited', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s3', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    await new TariffRepo().addTariffVersion('s3', {
+      name: 'Utility Tesla Edit',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.1, sell_rate: 0.03,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.1, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+    const repo = new TariffTimelineRepo();
+    const tesla = (await repo.getTimeline('s3', 'u1')).periods.find(p => p.source === 'tesla')!;
+    const to = '2099-12-31';
+    await repo.updatePeriod('s3', tesla.periodId, 'u1', { effectiveTo: to });
+    const { rows } = await local.database.query<{ effective_to: string | null }>(
+      `SELECT effective_to::text FROM "TariffEffectivePeriod" WHERE site_id = 's3'`
+    );
+    expect(rows).toEqual([{ effective_to: to }]);
+  });
 });
