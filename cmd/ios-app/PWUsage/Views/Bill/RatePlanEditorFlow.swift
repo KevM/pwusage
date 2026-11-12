@@ -4,6 +4,7 @@ struct RatePlanEditorFlow: View {
     @Environment(\.dismiss) private var dismiss
     @State private var state: RatePlanEditorState
     @State private var expandedSeasonIDs: Set<UUID> = []
+    @State private var isConfirmingDiscard = false
 
     init(
         mode: RatePlanEditorMode,
@@ -28,11 +29,29 @@ struct RatePlanEditorFlow: View {
             RatePlanSummaryScreen(
                 state: state,
                 expandedSeasonIDs: $expandedSeasonIDs,
-                onDismiss: { dismiss() }
+                onDismiss: { dismiss() },
+                onCancel: requestDismiss
             )
             .navigationDestination(for: RatePlanEditorRoute.self) { route in
                 destinationView(for: route)
             }
+        }
+        .interactiveDismissDisabled(state.hasUnsavedChanges || state.isSaving)
+        .background(SheetDismissAttemptObserver(onAttempt: requestDismiss))
+        .confirmationDialog(
+            "Discard changes to this rate plan?", isPresented: $isConfirmingDiscard, titleVisibility: .visible
+        ) {
+            Button("Discard Changes", role: .destructive) { dismiss() }
+            Button("Keep Editing", role: .cancel) {}
+        }
+    }
+
+    private func requestDismiss() {
+        guard !state.isSaving else { return }
+        if state.hasUnsavedChanges {
+            isConfirmingDiscard = true
+        } else {
+            dismiss()
         }
     }
 
@@ -68,6 +87,7 @@ private struct RatePlanSummaryScreen: View {
     @Bindable var state: RatePlanEditorState
     @Binding var expandedSeasonIDs: Set<UUID>
     let onDismiss: () -> Void
+    let onCancel: () -> Void
 
     var body: some View {
         Form {
@@ -83,7 +103,7 @@ private struct RatePlanSummaryScreen: View {
         #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onDismiss).disabled(state.isSaving)
+                    Button("Cancel", action: onCancel).disabled(state.isSaving)
                 }
             }
             .onAppear {

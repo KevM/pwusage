@@ -25,6 +25,7 @@ final class RatePlanEditorState {
     let mode: RatePlanEditorMode
     let currency: String
     var draft: RatePlanDraft
+    private let initialDraft: RatePlanDraft
     var path: [RatePlanEditorRoute]
     var isSaving = false
     var saveError: String?
@@ -43,18 +44,24 @@ final class RatePlanEditorState {
         self.currency = currency
         self.onCreate = onCreate
         self.onUpdate = onUpdate
+        let initial: RatePlanDraft
         switch mode {
         case .add:
-            draft = .makeBlank(timeZone: timeZone)
+            initial = .makeBlank(timeZone: timeZone)
             path = [.seasons(isWizard: true)]
         case .copy(let period):
-            draft = RatePlanDraft(copyingFrom: period, timeZone: timeZone)
+            initial = RatePlanDraft(copyingFrom: period, timeZone: timeZone)
             path = []
         case .edit(let period):
-            draft = RatePlanDraft(editing: period, timeZone: timeZone)
+            initial = RatePlanDraft(editing: period, timeZone: timeZone)
             path = []
         }
+        draft = initial
+        initialDraft = initial
     }
+
+    /// True once the user has changed anything, so a stray swipe cannot throw the work away.
+    var hasUnsavedChanges: Bool { draft != initialDraft }
 
     var validationError: String? { draft.validate() }
     var canSave: Bool { validationError == nil && !isSaving }

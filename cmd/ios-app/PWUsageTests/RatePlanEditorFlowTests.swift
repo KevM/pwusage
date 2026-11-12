@@ -82,6 +82,21 @@ struct RatePlanEditorFlowTests {
     }
 
     @MainActor
+    @Test("Editor reports unsaved changes only after the draft differs from where it started")
+    func tracksUnsavedChanges() {
+        let state = RatePlanEditorState(
+            mode: .add,
+            timeZone: TimeZone(identifier: "America/Chicago") ?? .gmt,
+            currency: "USD"
+        )
+        #expect(!state.hasUnsavedChanges)
+        state.draft.name = "My Plan"
+        #expect(state.hasUnsavedChanges)
+        state.draft.name = ""
+        #expect(!state.hasUnsavedChanges)
+    }
+
+    @MainActor
     @Test("Copy starts on Summary with exact source name and supports direct Summary -> Edit -> Summary jumps")
     func copyStartsOnSummaryWithDirectJumps() {
         let state = RatePlanEditorState(
