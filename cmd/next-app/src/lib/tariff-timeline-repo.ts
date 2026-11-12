@@ -390,7 +390,6 @@ export class TariffTimelineRepo {
       const effectiveFrom = r.effective_from.slice(0, 10);
       const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
       const tariff = tariffMap.get(Number(r.tariff_id));
-      const isCurrentToday = effectiveFrom <= today && (effectiveTo === null || effectiveTo >= today);
       return {
         periodId: Number(r.period_id),
         tariffId: Number(r.tariff_id),
@@ -399,7 +398,7 @@ export class TariffTimelineRepo {
         source: r.source,
         effectiveFrom,
         effectiveTo,
-        isCurrentToday,
+        isCurrentToday: false,
         updatedBy: r.updated_by_user_id
           ? {
               email: r.updated_by_email ?? null,
@@ -409,6 +408,16 @@ export class TariffTimelineRepo {
         seasons: tariff ? decompileTariffToSeasons(tariff) : [],
       };
     });
+
+    // Same pick as resolveTariffForDate: the plan covering today, else (in a gap) the nearest earlier
+    // plan by end date, else (before every plan) the earliest. Keeps "Active today" in step with billing.
+    const activeToday =
+      periods.find(p => p.effectiveFrom <= today && (p.effectiveTo === null || p.effectiveTo >= today)) ??
+      periods
+        .filter(p => p.effectiveTo !== null && p.effectiveTo < today)
+        .sort((a, b) => (b.effectiveTo as string).localeCompare(a.effectiveTo as string) || b.periodId - a.periodId)[0] ??
+      [...periods].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.periodId - b.periodId)[0];
+    if (activeToday) activeToday.isCurrentToday = true;
 
     const latestTeslaRes = await pool.query<{
       id: number;

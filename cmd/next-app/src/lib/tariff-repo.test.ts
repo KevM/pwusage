@@ -52,6 +52,9 @@ describe('TariffRepo.addTariffVersion', () => {
       if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Los_Angeles' }] };
       if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) return { rows: [] };
       if (sql.includes('INSERT INTO "TariffEffectivePeriod"')) return { rows: [{ id: 12 }] };
+      if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+        return { rows: [{ status: 'pending', from_date: '2026-11-12', to_date: null, total_days: 0, processed_days: 0, updated_days: 0, last_error: null, updated_at: new Date() }] };
+      }
       if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('effective_from <=')) return { rows: [{ tariff_id: 8 }] };
       return { rows: [] };
     });
@@ -64,6 +67,10 @@ describe('TariffRepo.addTariffVersion', () => {
     expect(sqls.some((s) => s.includes('UPDATE "Tariff" SET is_current = TRUE'))).toBe(true);
     expect(sqls.some((s) => s.includes('INSERT INTO "Tariff"(') && s.includes('is_current'))).toBe(true);
     expect(sqls.some((s) => s.includes('COMMIT'))).toBe(true);
+    // The re-attribution job is queued in the same transaction, before it commits.
+    const enqueueAt = sqls.findIndex((s) => s.includes('INSERT INTO "SiteTariffReattribution"'));
+    expect(enqueueAt).toBeGreaterThan(-1);
+    expect(enqueueAt).toBeLessThan(sqls.findIndex((s) => s.includes('COMMIT')));
     expect(invalidateCacheMock).toHaveBeenCalledWith('site-1');
   });
 

@@ -229,4 +229,15 @@ struct RatePlanDraftTests {
         #expect(draft.name == source.name)
         #expect(!draft.name.contains("Copy"))
     }
+    @Test("A plan that starts in the future stays editable; more than a year ahead is rejected")
+    func futureStartWithinAYearIsValid() {
+        let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
+        var draft = RatePlanDraft.makeBlank(timeZone: chicago)
+        draft.name = "Next year"
+        let now = Date()
+        draft.effectiveFrom = now.addingTimeInterval(30 * 86400)
+        #expect(draft.validate(today: now) == nil)
+        draft.effectiveFrom = now.addingTimeInterval(400 * 86400)
+        #expect(draft.validate(today: now) != nil)
+    }
 }

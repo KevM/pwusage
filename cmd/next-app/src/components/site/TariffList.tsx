@@ -5,6 +5,24 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 import { Button } from '@/components/ui/Button';
 
+function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** Says which plan is newer, matching the iOS banner. */
+export function teslaDivergenceCopy(sync: SiteTariffsTimelineResponse['teslaSync']): { title: string; detail: string } {
+  const planName = sync.latestTariffName ? `"${sync.latestTariffName}"` : 'Its plan';
+  const ours = sync.activeManualUpdatedAt ? Date.parse(sync.activeManualUpdatedAt) : NaN;
+  const theirs = sync.latestUpdatedAt ? Date.parse(sync.latestUpdatedAt) : NaN;
+  if (!Number.isNaN(ours) && !Number.isNaN(theirs)) {
+    return ours >= theirs
+      ? { title: "Your custom plan is newer than Tesla's", detail: `${planName} in your Tesla account hasn't changed since ${formatDay(sync.latestUpdatedAt as string)}.` }
+      : { title: 'Tesla changed its plan after your custom plan', detail: `${planName} was updated in your Tesla account on ${formatDay(sync.latestUpdatedAt as string)}; yours was saved ${formatDay(sync.activeManualUpdatedAt as string)}.` };
+  }
+  return { title: "Tesla's plan differs from your custom plan", detail: `${planName} is saved in your Tesla account.` };
+}
+
+
 interface TariffListProps {
   timeline: SiteTariffsTimelineResponse | null;
   onRefresh: () => Promise<void>;
@@ -162,11 +180,15 @@ export function TariffList({
         </div>
       )}
 
-      {differsFromManual && (
-        <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          Tesla reported different rounded rates ({timeline?.teslaSync.latestTariffName || 'Utility Plan'}). Your custom rate plan remains active.
-        </div>
-      )}
+      {differsFromManual && timeline && (() => {
+        const copy = teslaDivergenceCopy(timeline.teslaSync);
+        return (
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+            <p className="font-medium">{copy.title}</p>
+            <p>{copy.detail} Your custom plan stays active.</p>
+          </div>
+        );
+      })()}
     </div>
   );
 
@@ -218,7 +240,7 @@ export function TariffList({
                         <span
                           className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             period.source === 'manual'
-                              ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200'
+                              ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200'
                               : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300'
                           }`}
                         >

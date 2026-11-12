@@ -117,6 +117,24 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const manualTariffStillExists = await local.database.query(`SELECT id FROM "Tariff" WHERE site_id = 's1' AND name = 'Exact 2026'`);
     expect(manualTariffStillExists.rowCount).toBe(1);
   });
+  it('marks the nearest earlier plan as active when today falls in a gap, like billing does', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-gap', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    const input = (name: string) => ({
+      name,
+      effectiveFrom: '2024-01-01',
+      effectiveTo: '2024-12-31',
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+      }],
+    });
+    await repo.createManualPeriod('s-gap', 'u1', input('Ended long ago'));
+    const timeline = await repo.getTimeline('s-gap', 'u1');
+    expect(timeline.periods.filter(p => p.isCurrentToday).map(p => p.name)).toEqual(['Ended long ago']);
+  });
+
   it('bounds Tesla healing to the dates a moved manual period actually vacated', async () => {
     await local.database.query(`INSERT INTO "Site" VALUES ('s2', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
     const tariffRepo = new TariffRepo();

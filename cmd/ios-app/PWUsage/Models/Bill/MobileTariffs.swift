@@ -153,11 +153,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
             return nil
         }
         let today = String(format: "%04d-%02d-%02d", year, month, day)
-        guard let period = periods.first(where: {
-            $0.effectiveFrom <= today && ($0.effectiveTo == nil || today <= ($0.effectiveTo ?? ""))
-        }) else {
-            return nil
-        }
+        guard let period = period(on: today) else { return nil }
         guard let season = period.seasons.first(where: {
             Self.monthMatches(month, startMonth: $0.fromMonth, endMonth: $0.toMonth)
         }) else {
@@ -170,6 +166,21 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
             return nil
         }
         return ActiveTariffPeriodMatch(period: period, season: season, window: window)
+    }
+
+    /// The plan the server prices `day` with: the one covering it, else (in a gap) the nearest
+    /// earlier plan by end date, else (before every plan) the earliest. Mirrors `resolveTariffForDate`.
+    private func period(on day: String) -> TariffPeriodDTO? {
+        if let exact = periods.first(where: {
+            $0.effectiveFrom <= day && ($0.effectiveTo == nil || day <= ($0.effectiveTo ?? ""))
+        }) {
+            return exact
+        }
+        if let earlier = periods.filter({ ($0.effectiveTo ?? "") != "" && ($0.effectiveTo ?? "") < day })
+            .max(by: { ($0.effectiveTo ?? "") < ($1.effectiveTo ?? "") }) {
+            return earlier
+        }
+        return periods.min(by: { $0.effectiveFrom < $1.effectiveFrom })
     }
 
     private static func monthMatches(_ month: Int, startMonth: Int, endMonth: Int) -> Bool {

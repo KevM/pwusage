@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { SiteTariffsTimelineResponse } from '@/lib/tariff-contract';
-import { TariffList } from './TariffList';
+import { TariffList, teslaDivergenceCopy } from './TariffList';
 
 const baseTimeline: SiteTariffsTimelineResponse = {
   version: 2,
@@ -165,7 +165,7 @@ describe('TariffList v2 timeline', () => {
       },
     });
     expect(runningHtml).toContain('Updating historical rates · 45 of 120 days');
-    expect(runningHtml).toContain('Your custom rate plan remains active');
+    expect(runningHtml).toContain('Your custom plan stays active');
 
     const failedHtml = renderTimeline({
       ...baseTimeline,
@@ -193,5 +193,24 @@ describe('TariffList v2 timeline', () => {
     const emptyHtml = renderTimeline({ ...baseTimeline, periods: [] });
     expect(emptyHtml.toLowerCase()).not.toContain('tariff');
     expect(emptyHtml).not.toMatch(/\bTOU\b/i);
+  });
+});
+
+describe('teslaDivergenceCopy', () => {
+  const base = { latestTariffId: 1, latestTariffName: 'We Energies Prior', differsFromActiveManual: true };
+
+  it('says the custom plan is newer when it was saved after Tesla last changed', () => {
+    const copy = teslaDivergenceCopy({ ...base, latestUpdatedAt: '2026-10-01T00:00:00Z', activeManualUpdatedAt: '2026-11-01T00:00:00Z' });
+    expect(copy.title).toBe("Your custom plan is newer than Tesla's");
+    expect(copy.detail).toContain('Oct 1, 2026');
+  });
+
+  it('says Tesla changed after the custom plan when Tesla is newer', () => {
+    const copy = teslaDivergenceCopy({ ...base, latestUpdatedAt: '2026-11-02T00:00:00Z', activeManualUpdatedAt: '2026-10-01T00:00:00Z' });
+    expect(copy.title).toBe('Tesla changed its plan after your custom plan');
+  });
+
+  it('falls back to a neutral message without dates', () => {
+    expect(teslaDivergenceCopy({ ...base, latestUpdatedAt: null }).title).toBe("Tesla's plan differs from your custom plan");
   });
 });

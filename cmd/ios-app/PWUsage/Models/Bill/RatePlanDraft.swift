@@ -231,9 +231,12 @@ struct RatePlanDraft: Equatable, Sendable {
 
     private func validateDates(today: Date) -> String? {
         let fromStr = RatePlanTimelineFormatting.formatYMD(effectiveFrom, in: timeZone)
-        let todayStr = RatePlanTimelineFormatting.formatYMD(today, in: timeZone)
-        if fromStr > todayStr {
-            return "Effective start date cannot be in the future."
+        // The server accepts a start up to a year ahead, so an existing future-dated plan stays editable.
+        let latestStart = RatePlanTimelineFormatting.formatYMD(
+            today.addingTimeInterval(365 * 86400), in: timeZone
+        )
+        if fromStr > latestStart {
+            return "Effective start date can be at most a year from today."
         }
         if !isOngoing {
             let toStr = RatePlanTimelineFormatting.formatYMD(effectiveTo, in: timeZone)

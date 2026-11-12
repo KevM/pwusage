@@ -230,4 +230,31 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
         timeline.holidayDates = ["2026-11-26"]
         #expect(timeline.activePeriodNow(at: noon)?.window.touName == .offPeak)
     }
+    @Test("In a gap the active rate comes from the nearest earlier plan, and before every plan from the earliest")
+    func gapFallsBackLikeTheServer() throws {
+        var timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timeline.timezone) ?? .gmt
+        // Fixture plans: 2025 and 2026-ongoing. End the newer one so mid-February is in a gap (Winter covers it).
+        let ended = timeline.periods.map { period -> TariffPeriodDTO in
+            guard period.effectiveTo == nil else { return period }
+            return TariffPeriodDTO(
+                periodId: period.periodId, tariffId: period.tariffId, name: period.name, version: period.version,
+                source: period.source, effectiveFrom: period.effectiveFrom, effectiveTo: "2026-01-31",
+                isCurrentToday: false, updatedBy: period.updatedBy, seasons: period.seasons
+            )
+        }
+        timeline = SiteTariffsTimelineResponse(
+            version: timeline.version, siteId: timeline.siteId, timezone: timeline.timezone,
+            currency: timeline.currency, periods: ended, reattribution: timeline.reattribution,
+            holidayDates: nil, teslaSync: timeline.teslaSync
+        )
+        let inGap = try #require(calendar.date(from: DateComponents(year: 2026, month: 2, day: 10, hour: 12)))
+        #expect(timeline.activePeriodNow(at: inGap)?.period.effectiveFrom == "2026-01-01")
+        let beforeAll = try #require(calendar.date(from: DateComponents(year: 2024, month: 6, day: 10, hour: 12)))
+        #expect(timeline.activePeriodNow(at: beforeAll)?.period.effectiveFrom == "2025-01-01")
+    }
 }

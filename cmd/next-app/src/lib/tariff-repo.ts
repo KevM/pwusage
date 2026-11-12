@@ -2,6 +2,7 @@ import { pool, Tariff, TariffSchedule } from './db';
 import { ParsedTariff, tariffContentHash } from './importer/tariff-parser';
 import { logEvent } from './observability';
 import { SiteRepo } from './site-repo';
+import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import { addCalendarDays, computeSpanMutations, siteLocalDateString } from './tariff-timeline';
 import {
   applySpanMutationPlan,
@@ -56,6 +57,8 @@ export class TariffRepo {
     const newHash = tariffContentHash(parsed);
     const client = await pool.connect();
     let changed = false;
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
     try {
       await client.query('BEGIN');
 
@@ -99,6 +102,10 @@ export class TariffRepo {
           updatedByUserId: null,
         }));
         await recomputeIsCurrentTariff(client, siteId, today);
+        // Today's samples may already be priced under the previous plan, and when the new span is
+        // now the earliest it also reprices the days before it. The cron runner picks the job up.
+        reattribution = { siteId, fromDate: today, toDate: effectiveTo, requestedByUserId: null, trigger: 'tesla_sync' };
+        queued = await enqueueReattributionOnClient(client, reattribution);
       }
 
       await client.query('COMMIT');
@@ -112,6 +119,7 @@ export class TariffRepo {
 
     if (changed) {
       new SiteRepo().invalidateCache(siteId);
+      if (reattribution && queued) logReattributionEnqueued(reattribution, queued);
     }
   }
 }
