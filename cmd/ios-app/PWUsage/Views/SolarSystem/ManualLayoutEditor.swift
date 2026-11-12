@@ -125,16 +125,20 @@ private struct ManualSystemSection: View {
                     "Installed", selection: installDate, in: ...Date.now, displayedComponents: .date)
             }
             ForEach($system.faces) { $face in
-                ManualFaceFields(face: $face, detected: detected, focus: focus)
+                ManualFaceFields(face: $face, detected: detected, focus: focus,
+                                 onRemove: system.faces.count > 1 ? { removeFace(face) } : nil)
             }
-            .onDelete { system.faces.remove(atOffsets: $0) }
             Button("Add Face") { system.addFace(detected: detected) }
             if canRemove { Button("Remove System", role: .destructive, action: onRemove) }
         } header: {
             Text(system.label ?? "System \(number)")
         } footer: {
-            Text("A face is one roof plane. Swipe a face to delete it.")
+            Text("A face is one roof plane.")
         }
+    }
+
+    private func removeFace(_ face: ManualSolarFace) {
+        system.faces.removeAll { $0.id == face.id }
     }
 
     private var hasInstallDate: Binding<Bool> {
@@ -154,6 +158,8 @@ private struct ManualFaceFields: View {
     @Binding var face: ManualSolarFace
     let detected: DetectedSolarLayout?
     let focus: FocusState<ManualLayoutField?>.Binding
+    /// Nil for the system's only face, which cannot be removed.
+    let onRemove: (() -> Void)?
 
     /// Each field is its own list row: several fields in one row compete for the tap and the caret
     /// lands in the wrong one, or nowhere.
@@ -171,6 +177,9 @@ private struct ManualFaceFields: View {
         }
         numberRow("Tilt (°)", field: .tilt(face.id)) {
             TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
+        }
+        if let onRemove {
+            Button("Remove Face", role: .destructive, action: onRemove)
         }
     }
 
