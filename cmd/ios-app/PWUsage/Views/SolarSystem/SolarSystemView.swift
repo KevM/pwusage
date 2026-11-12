@@ -21,6 +21,8 @@ struct SolarSystemView: View {
     @State private var isConfirmingLocation = false
     @State private var outcome: SolarLocationShareResult?
     @State private var didStartAtLocation = false
+    @State private var record: SolarLayoutRecord?
+    @State private var isEditingLayout = false
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -40,6 +42,14 @@ struct SolarSystemView: View {
                 onLocationSaved()
             }
         }
+        .sheet(isPresented: $isEditingLayout) {
+            ManualLayoutEditor(initial: record?.manualLayout, detected: record?.result) { layout in
+                guard await coordinator.saveManualLayout(layout) else { return false }
+                record = await coordinator.manualLayoutRecord()
+                return true
+            }
+        }
+        .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
@@ -71,7 +81,8 @@ struct SolarSystemView: View {
                 Section {
                     SolarSystemVisual(
                         input: SolarSystemSceneInput(
-                            status: status, layout: layout, isWaiting: presentation.phase == .waiting),
+                            status: status, layout: layout, isWaiting: presentation.phase == .waiting,
+                            manualLayout: record?.manualLayout),
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
@@ -79,10 +90,12 @@ struct SolarSystemView: View {
                         .id(Self.visualID)
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
-                        SolarSystemDetailsRows(layout: layout, isImproving: presentation.phase == .foundImproving)
+                        SolarSystemDetailsRows(
+                            layout: layout, manual: record?.manualLayout,
+                            isImproving: presentation.phase == .foundImproving)
                     }
                 } header: {
-                    Text(layout == nil ? "Find Your Solar System" : "System")
+                    systemHeader(hasLayout: layout != nil)
                 }
             } else if coordinator.solarLayoutStatus == nil {
                 Section { Text("Checking solar forecast availability…") }
@@ -93,6 +106,19 @@ struct SolarSystemView: View {
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    /// The card's title, with Edit at the top right once a system is found, as Smart Shift's cards do.
+    private func systemHeader(hasLayout: Bool) -> some View {
+        HStack {
+            Text(hasLayout ? "System" : "Find Your Solar System")
+            Spacer()
+            if hasLayout {
+                Button("Edit") { isEditingLayout = true }
+                    .textCase(nil)
+                    .font(.subheadline.weight(.medium))
+            }
         }
     }
 

@@ -36,6 +36,15 @@ struct SolarSystemHouse: Equatable {
         let azimuth: Double
         let tilt: Double
         let kilowatts: Double
+        /// Known when the owner entered the face; a found group derives it from its size.
+        let panelCount: Int?
+
+        init(azimuth: Double, tilt: Double, kilowatts: Double, panelCount: Int? = nil) {
+            self.azimuth = azimuth
+            self.tilt = tilt
+            self.kilowatts = kilowatts
+            self.panelCount = panelCount
+        }
     }
 
     struct Face: Equatable {
@@ -76,7 +85,7 @@ struct SolarSystemHouse: Equatable {
             length: length, depth: depth, wallHeight: wallHeight, pitch: pitchDegrees, azimuth: frontAzimuth)
         var roof = frame.roofFaces()
         for (side, sideGroups) in Self.assign(groups, frontAzimuth: frontAzimuth) {
-            let count = sideGroups.reduce(0) { $0 + Self.panelCount(kilowatts: $1.kilowatts) }
+            let count = sideGroups.reduce(0) { $0 + ($1.panelCount ?? Self.panelCount(kilowatts: $1.kilowatts)) }
             roof[side.rawValue].panels = frame.panels(on: side, count: count)
         }
         self.roof = roof
