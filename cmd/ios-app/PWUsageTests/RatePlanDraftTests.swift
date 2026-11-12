@@ -114,6 +114,31 @@ struct RatePlanDraftTests {
         #expect(season.validateWeekdaySlots() == nil)
     }
 
+    @Test("Seasons get intuitive names as they are split, moved and merged, but typed names are kept")
+    func seasonNamesFollowTheirMonths() {
+        var draft = RatePlanDraft.makeBlank(timeZone: TimeZone(identifier: "America/Chicago") ?? .gmt)
+        #expect(draft.seasons.map(\.name) == ["All year"])
+
+        draft.addSeason()
+        #expect(draft.seasons.map(\.name) == ["Winter", "Summer"])
+
+        // Utility-style split: Summer Jun-Sep, Winter wraps Oct-May.
+        draft.seasons[0].fromMonth = 10
+        draft.seasons[0].toMonth = 5
+        draft.seasons[1].fromMonth = 6
+        draft.seasons[1].toMonth = 9
+        draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 6)
+        #expect(draft.seasons.map(\.name) == ["Winter", "Summer"])
+
+        draft.removeSeason(at: 1)
+        #expect(draft.seasons.map(\.name) == ["All year"])
+
+        draft.addSeason()
+        draft.seasons[0].name = "Peak Demand"
+        draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 7)
+        #expect(draft.seasons[0].name == "Peak Demand")
+    }
+
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")
     func copyPreservesExactPlanName() throws {
         let timeline = try MobileContractDecoder.make().decode(
