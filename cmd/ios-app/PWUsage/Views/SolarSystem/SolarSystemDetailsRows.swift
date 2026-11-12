@@ -19,7 +19,7 @@ struct SolarSystemDetailsRows: View {
             detectedRows
         }
         if let onEditLayout {
-            Button("Edit Panels", action: onEditLayout)
+            Button("Edit", action: onEditLayout)
         }
         confidenceRow
     }

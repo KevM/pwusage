@@ -44,7 +44,7 @@ struct ManualLayoutEditor: View {
                     Section { Text("Couldn’t save your panels. Try again.").foregroundStyle(.red) }
                 }
             }
-            .navigationTitle("Your Panels")
+            .navigationTitle("Edit Solar System")
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

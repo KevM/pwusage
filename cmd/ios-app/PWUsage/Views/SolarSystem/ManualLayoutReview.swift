@@ -33,7 +33,7 @@ struct ManualLayoutReview: View {
             }
             differencesSection
             Section {
-                Button("Save Panels") { Task { await onSave() } }
+                Button("Save") { Task { await onSave() } }
                     .emphasisProminentButton()
                     .disabled(isSaving)
             }
