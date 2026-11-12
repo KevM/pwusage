@@ -230,7 +230,7 @@ private struct SchedulePeriodListColumn: View {
             Text(window.formattedTimeRange)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-            if isEditable && windows.count > 1 {
+            if isEditable {
                 HStack(spacing: 8) {
                     Text("End time").font(.caption2).foregroundStyle(.secondary)
                     Spacer()
@@ -240,6 +240,7 @@ private struct SchedulePeriodListColumn: View {
                     Button("+30m") { onStepBoundary(index, window.endSlot + 1) }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
+                        .disabled(windows.count == 1)
                 }
             }
         }
@@ -276,7 +277,7 @@ private struct TimelineTrackSlider: View {
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.85))
                     .offset(y: Self.trackHeight / 2 - 6)
-                if isInteractive && windows.count > 1 {
+                if isInteractive {
                     ForEach(Array(windows.indices), id: \.self) { index in
                         trackHandle(afterIndex: index)
                     }

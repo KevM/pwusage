@@ -88,9 +88,7 @@ struct RatePlanDraft: Equatable, Sendable {
             fromMonth: splitStart,
             toMonth: originalEnd
         )
-        newSeason.weekdayWindows = seasons[longestIndex].weekdayWindows
-        newSeason.weekendWindows = seasons[longestIndex].weekendWindows
-        newSeason.sameScheduleAsWeekdays = seasons[longestIndex].sameScheduleAsWeekdays
+        newSeason.copySchedule(from: seasons[longestIndex])
         seasons.insert(newSeason, at: longestIndex + 1)
     }
 

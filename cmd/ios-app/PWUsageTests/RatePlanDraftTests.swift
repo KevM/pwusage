@@ -93,6 +93,27 @@ struct RatePlanDraftTests {
         #expect(season.validateWeekdaySlots() == nil)
     }
 
+    @Test("Ending the lone all-day period early hands the rest of the day to a new period")
+    func loneAllDayPeriodCanBeShortened() {
+        var season = SeasonDraft.makeDefault(name: "Summer", fromMonth: 6, toMonth: 9)
+        #expect(season.weekdayWindows.count == 1)
+
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 12, isWeekday: true)
+        #expect(season.weekdayWindows.count == 2)
+        #expect(season.weekdayWindows[0].startSlot == 0)
+        #expect(season.weekdayWindows[0].endSlot == 12)
+        #expect(season.weekdayWindows[1].startSlot == 12)
+        #expect(season.weekdayWindows[1].endSlot == 48)
+        #expect(season.validateWeekdaySlots() == nil)
+
+        // Continue one period at a time: add, then edit the new period's end.
+        season.addTimePeriod(isWeekday: true)
+        #expect(season.weekdayWindows.count == 3)
+        season.movePeriodBoundary(afterIndex: 1, toSlot: 36, isWeekday: true)
+        #expect(season.weekdayWindows[1].endSlot == 36)
+        #expect(season.validateWeekdaySlots() == nil)
+    }
+
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")
     func copyPreservesExactPlanName() throws {
         let timeline = try MobileContractDecoder.make().decode(

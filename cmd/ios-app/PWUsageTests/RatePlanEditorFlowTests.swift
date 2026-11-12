@@ -97,6 +97,26 @@ struct RatePlanEditorFlowTests {
     }
 
     @MainActor
+    @Test("Wizard starts the next season from the previous season's schedule when it is still blank")
+    func nextSeasonStartsFromPreviousSchedule() {
+        let state = RatePlanEditorState(
+            mode: .add,
+            timeZone: TimeZone(identifier: "America/Chicago") ?? .gmt,
+            currency: "USD"
+        )
+        state.draft.addSeason()
+        state.draft.seasons[0].movePeriodBoundary(afterIndex: 0, toSlot: 12, isWeekday: true)
+        state.draft.seasons[0].weekdayWindows[1].buyRateText = "0.30"
+
+        state.finishStep(from: .pricing(seasonIndex: 0, isWizard: true))
+
+        let copied = state.draft.seasons[1].weekdayWindows
+        #expect(copied.count == 2)
+        #expect(copied[1].buyRateText == "0.30")
+        #expect(copied.map(\.id) != state.draft.seasons[0].weekdayWindows.map(\.id))
+    }
+
+    @MainActor
     @Test("Copy starts on Summary with exact source name and supports direct Summary -> Edit -> Summary jumps")
     func copyStartsOnSummaryWithDirectJumps() {
         let state = RatePlanEditorState(

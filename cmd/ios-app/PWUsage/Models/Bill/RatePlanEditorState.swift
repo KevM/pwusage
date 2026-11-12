@@ -82,6 +82,11 @@ final class RatePlanEditorState {
             }
         case .pricing(let seasonIndex, let isWizard):
             if isWizard, seasonIndex + 1 < draft.seasons.count {
+                // Seasons usually share a schedule, so start the next one from the season just finished.
+                if draft.seasons[seasonIndex + 1].hasDefaultSchedule {
+                    let template = draft.seasons[seasonIndex]
+                    draft.seasons[seasonIndex + 1].copySchedule(from: template)
+                }
                 path.append(.schedule(seasonIndex: seasonIndex + 1, initialDayGroup: .weekdays, isWizard: true))
             } else {
                 path = []

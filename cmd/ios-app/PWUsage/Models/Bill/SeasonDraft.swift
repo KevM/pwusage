@@ -186,7 +186,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         let splitOffset = target.slotDuration / 2
         let splitSlot = (target.startSlot + splitOffset) % 48
         let originalEnd = target.endSlot == 48 && target.startSlot != 0 ? 48 : target.endSlot
-        let nextType: TariffPeriodName = list.contains(where: { $0.touName == .onPeak }) ? .partialPeak : .onPeak
+        let nextType = Self.nextPeriodType(in: list)
         list[longestIndex].endSlot = splitSlot
         let newWindow = DayPeriodDraft(
             touName: nextType,
@@ -217,6 +217,23 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
 
     mutating func movePeriodBoundary(afterIndex index: Int, toSlot candidateSlot: Int, isWeekday: Bool) {
         var list = isWeekday ? weekdayWindows : weekendWindows
+        // A lone all-day period can be given its own timespan: ending it early hands the rest of
+        // the day to a new period, so a schedule can be built one period at a time.
+        if list.count == 1, index == 0, list[0].isAllDay {
+            let endSlot = max(1, min(47, candidateSlot))
+            let remainder = DayPeriodDraft(
+                touName: Self.nextPeriodType(in: list),
+                startSlot: endSlot,
+                endSlot: 48,
+                buyRateText: list[0].buyRateText,
+                sellRateText: list[0].sellRateText
+            )
+            list[0].startSlot = 0
+            list[0].endSlot = endSlot
+            list.append(remainder)
+            assignWindows(list, isWeekday: isWeekday)
+            return
+        }
         guard list.count >= 2, list.indices.contains(index) else { return }
         let nextIndex = (index + 1) % list.count
         // Keep the boundary inside the two adjacent windows' combined span so it can never
@@ -257,6 +274,39 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
             weekdayPeriods: weekdays,
             weekendPeriods: weekends
         )
+    }
+
+    /// True while the schedule is still the blank all-day default nobody has touched.
+    var hasDefaultSchedule: Bool {
+        let blank = Self.makeDefault(name: name, fromMonth: fromMonth, toMonth: toMonth)
+        func shape(_ windows: [DayPeriodDraft]) -> [[String]] {
+            windows.map { [$0.touName.rawValue, "\($0.startSlot)", "\($0.endSlot)", $0.buyRateText, $0.sellRateText] }
+        }
+        return sameScheduleAsWeekdays == blank.sameScheduleAsWeekdays
+            && shape(weekdayWindows) == shape(blank.weekdayWindows)
+            && shape(weekendWindows) == shape(blank.weekendWindows)
+    }
+
+    /// Uses another season's time periods and rates as a starting point (new identities, same values).
+    mutating func copySchedule(from other: SeasonDraft) {
+        func fresh(_ windows: [DayPeriodDraft]) -> [DayPeriodDraft] {
+            windows.map {
+                DayPeriodDraft(
+                    touName: $0.touName,
+                    startSlot: $0.startSlot,
+                    endSlot: $0.endSlot,
+                    buyRateText: $0.buyRateText,
+                    sellRateText: $0.sellRateText
+                )
+            }
+        }
+        weekdayWindows = fresh(other.weekdayWindows)
+        weekendWindows = fresh(other.weekendWindows)
+        sameScheduleAsWeekdays = other.sameScheduleAsWeekdays
+    }
+
+    private static func nextPeriodType(in list: [DayPeriodDraft]) -> TariffPeriodName {
+        list.contains(where: { $0.touName == .onPeak }) ? .partialPeak : .onPeak
     }
 
     private mutating func assignWindows(_ list: [DayPeriodDraft], isWeekday: Bool) {
