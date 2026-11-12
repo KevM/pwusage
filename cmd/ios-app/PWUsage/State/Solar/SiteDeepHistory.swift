@@ -20,6 +20,7 @@ final class SiteDeepHistory {
     /// Where the walk starts, and the account's Tesla throttle.
     private let onboarding: SiteHistoryOnboardingStore
     private let now: () -> Date
+    private var running: [SolarForecastSiteScope: Task<Outcome, Never>] = [:]
     /// Called after the site's progress is saved.
     var onProgress: ((SolarForecastSiteScope) -> Void)?
 
@@ -36,12 +37,63 @@ final class SiteDeepHistory {
     }
 
     /// Work through slices until the walk stops, waits, or has asked for `maxSlices` slices.
+    /// A second call for a site already running joins that run (a foreground walk and a background
+    /// opportunity never overlap); a run that was cancelled is waited out and a wanted caller
+    /// starts a fresh one.
     func run(scope: SolarForecastSiteScope, maxSlices: Int = .max) async -> Outcome {
+        while let existing = running[scope] {
+            let outcome = await existing.value
+            if running[scope] == existing { running[scope] = nil }
+            guard existing.isCancelled, !Task.isCancelled else { return outcome }
+        }
+        if Task.isCancelled { return .stopped }
+        let task = Task { await self.perform(scope: scope, maxSlices: maxSlices) }
+        running[scope] = task
+        let outcome = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        if running[scope] == task { running[scope] = nil }
+        return outcome
+    }
+
+    /// The user started loading (or continues): saved progress exists, active and not stopped, so a
+    /// background opportunity may run it. Only the user's start creates it.
+    func begin(scope: SolarForecastSiteScope) async {
+        guard let zone = await environment.siteTimeZone(scope: scope),
+              var progress = try? await start(scope: scope, timeZone: zone) else { return }
+        if case .paused = progress.phase {
+            progress.phase = .active
+            progress.failures = 0
+            progress.nextAttemptAt = nil
+        }
+        try? await store.save(progress, scope: scope, userStopped: false)
+        onProgress?(scope)
+    }
+
+    func markStopped(scope: SolarForecastSiteScope) async {
+        try? await store.markStopped(scope: scope)
+        onProgress?(scope)
+    }
+
+    /// Whether the user asked for this walk and it has work left to try: saved, active, not stopped.
+    func isWanted(scope: SolarForecastSiteScope) async -> Bool {
+        guard let progress = try? await store.progress(scope: scope) else { return false }
+        return progress.phase == .active && !progress.userStopped
+    }
+
+    /// The earliest the walk could make progress: the later of now, its backoff and the account's
+    /// Tesla throttle; nil when it is not wanted (never started, stopped, paused or finished).
+    func nextOpportunity(scope: SolarForecastSiteScope) async -> Date? {
+        guard await isWanted(scope: scope), let progress = try? await store.progress(scope: scope) else { return nil }
+        let throttle = try? await onboarding.throttle(accountScopeID: scope.accountScopeID)
+        return [now(), throttle, progress.nextAttemptAt].compactMap(\.self).max()
+    }
+
+    private func perform(scope: SolarForecastSiteScope, maxSlices: Int) async -> Outcome {
         guard let zone = await environment.siteTimeZone(scope: scope) else { return .unavailable }
         var progress: SiteDeepHistoryProgress
         do { progress = try await start(scope: scope, timeZone: zone) } catch { return .unavailable }
         var slices = 0
         while true {
+            if (try? await store.progress(scope: scope))?.userStopped == true { return .stopped }
             if let blocked = await blockedOutcome(progress, scope: scope) { return blocked }
             guard let slice = nextSlice(progress, timeZone: zone) else {
                 progress.phase = .finished(.reachedHistoryStart)

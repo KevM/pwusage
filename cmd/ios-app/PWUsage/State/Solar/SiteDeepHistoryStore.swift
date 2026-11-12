@@ -19,6 +19,8 @@ struct SiteDeepHistoryProgress: Codable, Equatable, Sendable {
     var failures = 0
     var nextAttemptAt: Date?
     var waitReason: SiteHistoryOnboarding.WaitReason?
+    /// The user pressed Stop: no run, foreground or background, until they continue.
+    var userStopped = false
 
     init(oldestChecked: String, historyStart: String? = nil) {
         self.oldestChecked = oldestChecked
@@ -46,8 +48,21 @@ actor SiteDeepHistoryStore {
         try load()[Self.key(scope)]
     }
 
-    func save(_ progress: SiteDeepHistoryProgress, scope: SolarForecastSiteScope) throws {
-        try update { $0[Self.key(scope)] = progress }
+    /// Keeps the stored stop flag: a run's own copy must not undo a Stop pressed meanwhile.
+    /// `userStopped` sets it instead (Stop and Continue).
+    func save(
+        _ progress: SiteDeepHistoryProgress, scope: SolarForecastSiteScope, userStopped: Bool? = nil
+    ) throws {
+        try update { state in
+            var saved = progress
+            saved.userStopped = userStopped ?? state[Self.key(scope)]?.userStopped ?? false
+            state[Self.key(scope)] = saved
+        }
+    }
+
+    /// Records that the user stopped a started walk. Nothing to stop without saved progress.
+    func markStopped(scope: SolarForecastSiteScope) throws {
+        try update { state in state[Self.key(scope)]?.userStopped = true }
     }
 
     /// Make a paused walk active again, keeping its cursor (after a reconnect, say).

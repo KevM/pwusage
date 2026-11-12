@@ -50,6 +50,7 @@ struct SiteDeepHistoryModelTests {
 
     @Test func aReconnectPauseIsShownAndResumesAfterTheReconnect() async {
         let environment = FakeOnboardingEnvironment()
+        environment.historyStart = "2026-10-20"
         environment.answers = [.failure(MobileSolarHistoryFillError.teslaReconnectRequired)]
         let model = make(environment)
         await model.select(scope: scope)
@@ -57,7 +58,8 @@ struct SiteDeepHistoryModelTests {
         await model.runTask?.value
         #expect(model.status.phase == .paused(.reconnectTesla))
         await model.resumePaused(accountScopeID: scope.accountScopeID)
-        #expect(model.status.phase == .idle)
+        await model.runTask?.value
+        #expect(model.status.phase == .finished)
     }
 
     @Test func aDifferentSiteStopsTheRunAndSignOutClears() async {

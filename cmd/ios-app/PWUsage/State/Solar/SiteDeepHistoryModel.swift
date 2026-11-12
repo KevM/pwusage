@@ -8,8 +8,10 @@ enum SiteDeepHistoryPhase: Equatable {
 }
 
 /// What the Solar System screen and the tab accessory show of the deep-history walk, and the
-/// foreground run behind it. The walk runs only in the foreground (the app model stops it when the
-/// app leaves it, on sign-out and on a change of site); its saved progress resumes it later.
+/// run behind it. The walk runs here in the foreground and from the shared background task
+/// (`runInBackground`), but only once the user started it; the user's Stop ends both until they
+/// continue. Leaving the foreground, sign-out and a change of site stop this run only, and a walk
+/// the user did not stop picks itself up again on the next activation.
 @MainActor
 @Observable
 final class SiteDeepHistoryModel {
@@ -64,6 +66,14 @@ final class SiteDeepHistoryModel {
         await refresh()
     }
 
+    /// The app is in the foreground for `scope`: a walk the user started and did not stop (one that
+    /// was running when the app left, or that progressed in the background) carries on by itself.
+    func activate(scope next: SolarForecastSiteScope) async {
+        await select(scope: next)
+        guard run == nil, await deepHistory.isWanted(scope: next), scope == next, run == nil else { return }
+        start()
+    }
+
     /// Load the older history, or continue after a stop or a pause.
     func start() {
         guard let scope, run == nil else { return }
@@ -75,10 +85,31 @@ final class SiteDeepHistoryModel {
         })
     }
 
-    /// Stop loading; what is loaded stays, and the saved cursor resumes later.
+    /// The user's Stop: no run, here or in the background, until they continue.
     func stop() async {
         stopRun()
+        if let scope { await deepHistory.markStopped(scope: scope) }
         await refresh(finishing: true)
+    }
+
+    /// Leaving the foreground: this run ends, but the walk stays wanted for the background and for
+    /// the next activation.
+    func suspend() async {
+        stopRun()
+        await refresh(finishing: true)
+    }
+
+    /// A background opportunity: nil unless the user started this site's walk and it is not stopped
+    /// or finished. Joins a walk already running.
+    func runInBackground(scope: SolarForecastSiteScope, maxSlices: Int) async -> SiteDeepHistory.Outcome? {
+        guard await deepHistory.isWanted(scope: scope) else { return nil }
+        let outcome = await deepHistory.run(scope: scope, maxSlices: maxSlices)
+        if self.scope == scope, run == nil { await refresh(finishing: true) }
+        return outcome
+    }
+
+    func nextOpportunity(scope: SolarForecastSiteScope) async -> Date? {
+        await deepHistory.nextOpportunity(scope: scope)
     }
 
     /// Sign-out or a lost session: no work and nothing to show.
@@ -93,6 +124,7 @@ final class SiteDeepHistoryModel {
         guard let scope, scope.accountScopeID == accountScopeID, run == nil else { return }
         try? await store.resume(scope: scope)
         await refresh()
+        if await deepHistory.isWanted(scope: scope), run == nil, self.scope == scope { start() }
     }
 
     func forget(scope forgotten: SolarForecastSiteScope) async {
@@ -107,7 +139,7 @@ final class SiteDeepHistoryModel {
     }
 
     private func walk(_ scope: SolarForecastSiteScope) async {
-        try? await store.resume(scope: scope)
+        await deepHistory.begin(scope: scope)
         while !Task.isCancelled {
             status.phase = .running
             switch await deepHistory.run(scope: scope) {
