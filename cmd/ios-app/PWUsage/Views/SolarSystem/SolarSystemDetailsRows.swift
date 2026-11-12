@@ -12,11 +12,12 @@ struct SolarSystemDetailsRows: View {
 
     var body: some View {
         if let manual {
+            // Detection confidence says nothing about values the owner entered, so it is not shown.
             ManualLayoutRows(layout: manual, detected: layout)
         } else {
             detectedRows
+            confidenceRow
         }
-        confidenceRow
     }
 
     @ViewBuilder private var detectedRows: some View {
@@ -35,7 +36,7 @@ struct SolarSystemDetailsRows: View {
     }
 
     private var confidenceRow: some View {
-        LabeledContent(manual == nil ? "Confidence" : "Found with confidence") {
+        LabeledContent("Confidence") {
             HStack(spacing: 6) {
                 Text(layout.confidence == .high ? "High" : "Medium")
                 if isImproving {
