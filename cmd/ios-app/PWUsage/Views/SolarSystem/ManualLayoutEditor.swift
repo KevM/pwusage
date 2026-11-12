@@ -15,6 +15,7 @@ struct ManualLayoutEditor: View {
     @State private var isSaving = false
     @State private var didFailToSave = false
     @State private var isReviewing = false
+    @FocusState private var focus: ManualLayoutField?
 
     init(
         initial: ManualSolarLayout?, detected: DetectedSolarLayout?,
@@ -32,7 +33,7 @@ struct ManualLayoutEditor: View {
                 ForEach($draft.systems) { $system in
                     ManualSystemSection(
                         system: $system, number: number(of: system), detected: detected,
-                        canRemove: draft.systems.count > 1) { remove(system) }
+                        canRemove: draft.systems.count > 1, focus: $focus) { remove(system) }
                 }
                 Section {
                     Button("Add Another System") { draft.systems.append(newSystem()) }
@@ -49,6 +50,11 @@ struct ManualLayoutEditor: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { primaryButton }
+                // The decimal pad has no Return key.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focus = nil }
+                }
             }
             .navigationDestination(isPresented: $isReviewing) {
                 ManualLayoutReview(layout: draft, detected: detected, isSaving: isSaving) { await save(draft) }
@@ -105,6 +111,7 @@ private struct ManualSystemSection: View {
     let number: Int
     let detected: DetectedSolarLayout?
     let canRemove: Bool
+    let focus: FocusState<ManualLayoutField?>.Binding
     let onRemove: () -> Void
 
     var body: some View {
@@ -115,13 +122,11 @@ private struct ManualSystemSection: View {
                 DatePicker(
                     "Installed", selection: installDate, in: ...Date.now, displayedComponents: .date)
             }
-            LabeledContent("Inverter (kW)") {
+            ManualNumberRow(title: "Inverter (kW)", field: .inverter(system.id), focus: focus) {
                 TextField("Optional", value: $system.inverterAcKw, format: .number)
-                    .multilineTextAlignment(.trailing)
-                    .decimalKeyboard()
             }
             ForEach($system.faces) { $face in
-                ManualFaceFields(face: $face, detected: detected)
+                ManualFaceFields(face: $face, detected: detected, focus: focus)
             }
             .onDelete { system.faces.remove(atOffsets: $0) }
             Button("Add Face") { system.addFace(detected: detected) }
@@ -149,32 +154,65 @@ private struct ManualSystemSection: View {
 private struct ManualFaceFields: View {
     @Binding var face: ManualSolarFace
     let detected: DetectedSolarLayout?
+    let focus: FocusState<ManualLayoutField?>.Binding
 
+    /// Each field is its own list row: several fields in one row compete for the tap and the caret
+    /// lands in the wrong one, or nowhere.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField("Face name (optional)", text: $face.label.textFieldValue).font(.subheadline.weight(.semibold))
-            numberRow("Panels") { TextField("Count", value: $face.panelCount, format: .number) }
-            numberRow("Panel watts") { TextField("Watts", value: $face.panelWatts, format: .number) }
-            numberRow("Direction (°)") {
-                TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
-            }
-            numberRow("Tilt (°)") {
-                TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
-            }
+        TextField("Face name (optional)", text: $face.label.textFieldValue)
+            .font(.subheadline.weight(.semibold))
+        numberRow("Panels", field: .panels(face.id)) {
+            TextField("Count", value: $face.panelCount, format: .number)
         }
-        .padding(.vertical, 2)
+        numberRow("Panel watts", field: .watts(face.id)) {
+            TextField("Watts", value: $face.panelWatts, format: .number)
+        }
+        numberRow("Direction (°)", field: .azimuth(face.id)) {
+            TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
+        }
+        numberRow("Tilt (°)", field: .tilt(face.id)) {
+            TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
+        }
     }
 
-    private func numberRow(_ title: String, @ViewBuilder field: () -> some View) -> some View {
-        LabeledContent(title) {
-            field().multilineTextAlignment(.trailing).decimalKeyboard()
-        }
+    private func numberRow(
+        _ title: String, field: ManualLayoutField, @ViewBuilder content: () -> some View
+    ) -> some View {
+        ManualNumberRow(title: title, field: field, focus: focus, content: content)
     }
 
     /// The detected value for a face, shown where the field is empty.
     private func hint(_ value: KeyPath<DetectedSolarLayout.Plane, Double>) -> String {
         guard let plane = detected?.planes.max(by: { $0.dcKwp < $1.dcKwp }) else { return "Optional" }
         return "Found: \(Int(plane[keyPath: value].rounded()))"
+    }
+}
+
+/// Which number field has the keyboard.
+enum ManualLayoutField: Hashable {
+    case inverter(UUID), panels(UUID), watts(UUID), azimuth(UUID), tilt(UUID)
+}
+
+/// A title and a right-aligned number field. The whole row focuses the field, so a tap on the title
+/// or the empty space places the caret, not only a tap on the text itself.
+private struct ManualNumberRow<Content: View>: View {
+    let title: String
+    let field: ManualLayoutField
+    let focus: FocusState<ManualLayoutField?>.Binding
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack {
+            Text(title)
+            content
+                .multilineTextAlignment(.trailing)
+                .decimalKeyboard()
+                .focused(focus, equals: field)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { focus.wrappedValue = field }
     }
 }
 
