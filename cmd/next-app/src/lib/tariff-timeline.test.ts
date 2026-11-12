@@ -139,6 +139,24 @@ describe('compileSeasonsToParsedTariff & decompileTariffToSeasons', () => {
     expect(roundTripped[0].weekdayPeriods[0].buyRate).toBe(0.10279);
   });
 
+  it('keeps exact schedule boundaries and recognises Tesla period labels like "Peak" and "Off-Peak"', () => {
+    const sch = (id: number, name: string, buy: number, from: [number, number], to: [number, number]) => ({
+      id, season_id: 1, name, buy_rate: buy, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6,
+      from_hour: from[0], from_minute: from[1], to_hour: to[0], to_minute: to[1],
+    });
+    const seasons = decompileTariffToSeasons({
+      id: 4, site_id: 's1', updated: new Date(), name: 'Labels',
+      seasons: [{
+        id: 1, tariff_id: 4, name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.1, sell_rate: 0.03,
+        schedules: [sch(1, 'Off-Peak', 0.1, [6, 7], [24, 0]), sch(2, 'Peak', 0.4, [0, 0], [6, 7])],
+      }],
+    });
+    expect(seasons[0].weekdayPeriods).toEqual([
+      { touName: 'ON_PEAK', fromHour: 0, fromMinute: 0, toHour: 6, toMinute: 7, buyRate: 0.4, sellRate: 0.03 },
+      { touName: 'OFF_PEAK', fromHour: 6, fromMinute: 7, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 },
+    ]);
+  });
+
   it('exposes day-of-month season bounds so a mid-month Tesla season is not reduced to whole months', () => {
     const seasons = decompileTariffToSeasons({
       id: 3, site_id: 's1', updated: new Date(), name: 'Mid-month',

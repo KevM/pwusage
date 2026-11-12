@@ -241,47 +241,65 @@ export function compileSeasonsToParsedTariff(name: string, seasons: TariffSeason
   return { name, seasons: parsedSeasons };
 }
 
+/** Tesla period labels vary ("Peak", "Off-Peak", "Mid-Peak"…); map recognised ones to the four known names. */
 function normalizeTouName(raw: string | null | undefined): TariffPeriodName {
   if (raw && VALID_TOU_NAMES.has(raw as TariffPeriodName)) return raw as TariffPeriodName;
-  return 'OFF_PEAK';
+  switch (raw?.toUpperCase().replace(/[^A-Z]/g, '')) {
+    case 'PEAK':
+    case 'ONPEAK':
+      return 'ON_PEAK';
+    case 'PARTIALPEAK':
+    case 'MIDPEAK':
+    case 'SHOULDER':
+      return 'PARTIAL_PEAK';
+    case 'SUPEROFFPEAK':
+      return 'SUPER_OFF_PEAK';
+    default:
+      return 'OFF_PEAK';
+  }
 }
 
+/**
+ * Windows for one representative day. Boundaries are kept exact (a Tesla schedule can switch at
+ * 06:07), so the result agrees with `Schedule` to the minute; the day is evaluated only at the
+ * minutes where some schedule starts or ends.
+ */
 function resolveDayWindows(
   sortedSchedules: TariffSchedule[],
   jsWeekday: number,
   fallbackBuy: number,
   fallbackSell: number
 ): TimePeriodWindowInput[] {
-  const slots = Array.from({ length: 48 }, (_, slot) => {
-    const hour = Math.floor(slot / 2);
-    const minute = (slot % 2) * 30;
-    const match = sortedSchedules.find(sch => matchesScheduleForDay(jsWeekday, hour, minute, sch));
-    return {
+  const points = new Set<number>([0]);
+  for (const sch of sortedSchedules) {
+    if (sch.from_hour !== null && sch.from_hour !== undefined) points.add((sch.from_hour * 60 + (sch.from_minute ?? 0)) % 1440);
+    if (sch.to_hour !== null && sch.to_hour !== undefined) points.add((sch.to_hour * 60 + (sch.to_minute ?? 0)) % 1440);
+  }
+  const starts = [...points].sort((x, y) => x - y);
+
+  const windows: TimePeriodWindowInput[] = [];
+  starts.forEach((start, i) => {
+    const end = i + 1 < starts.length ? starts[i + 1] : 1440;
+    const match = sortedSchedules.find(sch => matchesScheduleForDay(jsWeekday, Math.floor(start / 60), start % 60, sch));
+    const cur = {
       touName: normalizeTouName(match?.name),
       buyRate: match?.buy_rate ?? fallbackBuy,
       sellRate: match?.sell_rate ?? fallbackSell,
     };
-  });
-
-  const windows: TimePeriodWindowInput[] = [];
-  for (let slot = 0; slot < 48; slot++) {
-    const cur = slots[slot];
     const prev = windows[windows.length - 1];
     if (prev && prev.touName === cur.touName && prev.buyRate === cur.buyRate && prev.sellRate === cur.sellRate) {
-      prev.toHour = Math.floor((slot + 1) / 2);
-      prev.toMinute = ((slot + 1) % 2) * 30;
+      prev.toHour = Math.floor(end / 60);
+      prev.toMinute = end % 60;
     } else {
       windows.push({
-        touName: cur.touName,
-        fromHour: Math.floor(slot / 2),
-        fromMinute: (slot % 2) * 30,
-        toHour: Math.floor((slot + 1) / 2),
-        toMinute: ((slot + 1) % 2) * 30,
-        buyRate: cur.buyRate,
-        sellRate: cur.sellRate,
+        ...cur,
+        fromHour: Math.floor(start / 60),
+        fromMinute: start % 60,
+        toHour: Math.floor(end / 60),
+        toMinute: end % 60,
       });
     }
-  }
+  });
   return windows;
 }
 
