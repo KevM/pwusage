@@ -427,13 +427,13 @@ Users can either step forward (`Seasons -> Schedule -> Pricing -> Summary`) when
 
 4. **Schedule Screen (24h vertical timeline slider + Weekday/Weekend toggle):**
    - Header chips show `Season X` (`Oct – May`) and segmented toggle **`Weekdays (Mon – Fri)` | `Weekends (Sat – Sun)`** (plus a quick `"Same schedule as weekdays"` checkbox on Weekends, matching the Tesla screenshot).
-   - Left column lists active periods for the selected day group (`Peak`, `Partial-Peak`, `Off-Peak`, `Super Off-Peak`), each with color indicator strip, formatted time range (`8:00 AM – 8:00 PM` or `8:00 PM – 8:00 AM` wraparound), and overflow/tap menu to **Change Rate Period Type** or **Remove** (when > 1 period remains), plus **`+ Add Time Period`**.
+   - Left column lists active periods for the selected day group (`Super Off-Peak`, `Off-Peak`, `Mid-Peak`, `Peak`), each with color indicator strip, formatted time range (`8:00 AM – 8:00 PM` or `8:00 PM – 8:00 AM` wraparound), and overflow/tap menu to **Change Rate Period Type** or **Remove** (when > 1 period remains), plus **`+ Add Time Period`**.
    - Right side renders the vertical **24-hour color track** from `12:00 AM` (top moon icon) through `12:00 PM` (center sun icon) to `12:00 AM` (bottom moon icon), with 24/48 subtle tick marks and draggable pill handles between adjacent transitions.
    - **Dragging & quantization:** Dragging a handle snaps to **30-minute increments**, constrains handles from crossing past the neighbor handle (minimum 30-minute window width), and updates the adjacent periods' start/end labels live at 60fps with subtle selection haptics. Tap/stepper fallback (`-30m` / `+30m`) is available on the active period row for pinpoint adjustments and accessibility.
 
 5. **Pricing Screen (Buy / Sell per kWh up to 5 decimals):**
    - Displays current season pill and miniature Weekday / Weekend horizontal color bars at the top so the user always sees which hours each rate applies to.
-   - Displays one section per distinct `touName` present in that season (`Off-Peak`, `Partial-Peak`, `Peak`, `Super Off-Peak`), each with side-by-side **Buy** and **Sell** cards (`$0.30335`, `$0.04906`).
+   - Displays one section per distinct `touName` present in that season (`Super Off-Peak`, `Off-Peak`, `Mid-Peak`, `Peak`), each with side-by-side **Buy** and **Sell** cards (`$0.30335`, `$0.04906`).
    - Uses `.decimalPad` keyboard and custom decimal formatter/validator supporting **0 to 5 decimal places**, stripping non-numeric input safely, preventing >5 decimal digits or negative values, and displaying clear inline validation errors.
    - Note on shared period types within a season: Buy/Sell prices belong to `(season, touName)`, matching `TariffSchedule` semantics where all `ON_PEAK` windows in Summer share one Buy rate and one Sell rate.
 

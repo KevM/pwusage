@@ -6,15 +6,16 @@ enum TariffSource: String, Codable, Equatable, Sendable {
 }
 
 enum TariffPeriodName: String, Codable, Equatable, Sendable, CaseIterable, Hashable {
-    case onPeak = "ON_PEAK"
-    case partialPeak = "PARTIAL_PEAK"
-    case offPeak = "OFF_PEAK"
+    // Declared in Tesla's order (cheapest first), which is also the picker order.
     case superOffPeak = "SUPER_OFF_PEAK"
+    case offPeak = "OFF_PEAK"
+    case partialPeak = "PARTIAL_PEAK"
+    case onPeak = "ON_PEAK"
 
     var displayName: String {
         switch self {
         case .onPeak: "Peak"
-        case .partialPeak: "Partial-Peak"
+        case .partialPeak: "Mid-Peak"
         case .offPeak: "Off-Peak"
         case .superOffPeak: "Super Off-Peak"
         }

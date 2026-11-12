@@ -157,7 +157,7 @@ private struct RatePlanSummaryScreen: View {
                 Text("Seasons & Schedules")
                 Spacer()
                 Button("Edit Seasons") { state.openSeasons() }
-                    .font(.caption.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
             }
         }
     }
@@ -165,10 +165,10 @@ private struct RatePlanSummaryScreen: View {
     private var impactSection: some View {
         Section {
             Text("Historical energy days covered by these dates will update in the background after saving.")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
             if let message = state.saveError ?? state.validationError {
-                Text(message).font(.caption).foregroundStyle(.red)
+                Text(message).font(.footnote).foregroundStyle(.red)
             }
         }
     }
@@ -272,10 +272,10 @@ private struct SummarySeasonRow: View {
             .padding(.vertical, 4)
         } label: {
             HStack {
-                Text(season.name).font(.subheadline.weight(.semibold))
+                Text(season.name).font(.headline)
                 Spacer()
                 Text(RatePlanTimelineFormatting.seasonMonthLabel(fromMonth: season.fromMonth, toMonth: season.toMonth))
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
@@ -289,12 +289,12 @@ private struct SummarySeasonRow: View {
     private func editLinkRow(title: String, detail: String, action: @escaping () -> Void) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption.weight(.medium))
-                Text(detail).font(.caption2).foregroundStyle(.secondary)
+                Text(title).font(.subheadline.weight(.medium))
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Edit", action: action)
-                .font(.caption.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
                 .buttonStyle(.borderless)
         }
     }

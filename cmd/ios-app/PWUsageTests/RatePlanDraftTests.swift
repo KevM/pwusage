@@ -160,6 +160,38 @@ struct RatePlanDraftTests {
         #expect(season.weekdayWindows.allSatisfy { $0.startSlot < $0.endSlot })
     }
 
+    @Test("A period that wraps midnight is split in two when the editor opens")
+    func wrappingPeriodsSplitAtMidnight() {
+        func input(_ name: TariffPeriodName, _ fromHour: Int, _ toHour: Int) -> TimePeriodWindowInput {
+            TimePeriodWindowInput(
+                touName: name, fromHour: fromHour, fromMinute: 0, toHour: toHour, toMinute: 0,
+                buyRate: 0.1, sellRate: 0.03
+            )
+        }
+        let loaded = SeasonDraft(from: TariffSeasonInput(
+            name: "Summer", fromMonth: 6, toMonth: 9,
+            weekdayPeriods: [input(.offPeak, 20, 4), input(.onPeak, 4, 20)],
+            weekendPeriods: [input(.offPeak, 0, 24)]
+        ))
+        #expect(loaded.weekdayWindows.map(\.startSlot) == [0, 8, 40])
+        #expect(loaded.weekdayWindows.map(\.endSlot) == [8, 40, 48])
+        #expect(loaded.weekdayWindows.map(\.touName) == [.offPeak, .onPeak, .offPeak])
+        #expect(loaded.validateWeekdaySlots() == nil)
+        #expect(loaded.toInput()?.weekdayPeriods.count == 3)
+    }
+
+    @Test("Adding a period after Peak defaults to Off-Peak, and Mid-Peak is Tesla's name")
+    func addedPeriodDefaultsFollowPeak() {
+        var season = SeasonDraft.makeDefault(name: "Summer", fromMonth: 6, toMonth: 9)
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 16, isWeekday: true)
+        #expect(season.weekdayWindows.map(\.touName) == [.offPeak, .onPeak])
+        season.addTimePeriod(isWeekday: true) // splits the longer Peak period
+        #expect(season.weekdayWindows.map(\.touName) == [.offPeak, .onPeak, .offPeak])
+        #expect(TariffPeriodName.partialPeak.displayName == "Mid-Peak")
+        let names = TariffPeriodName.allCases.map(\.displayName)
+        #expect(names == ["Super Off-Peak", "Off-Peak", "Mid-Peak", "Peak"])
+    }
+
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")
     func copyPreservesExactPlanName() throws {
         let timeline = try MobileContractDecoder.make().decode(

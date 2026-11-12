@@ -16,7 +16,7 @@ interface TariffListProps {
 
 const PERIOD_LABELS: Record<TariffPeriodName, string> = {
   ON_PEAK: 'Peak',
-  PARTIAL_PEAK: 'Partial-Peak',
+  PARTIAL_PEAK: 'Mid-Peak',
   OFF_PEAK: 'Off-Peak',
   SUPER_OFF_PEAK: 'Super Off-Peak',
 };

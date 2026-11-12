@@ -143,8 +143,8 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
     }
 
     init(from season: TariffSeasonInput) {
-        let weekdays = season.weekdayPeriods.map(DayPeriodDraft.init(from:))
-        let weekends = season.weekendPeriods.map(DayPeriodDraft.init(from:))
+        let weekdays = Self.splittingMidnightWraps(season.weekdayPeriods.map(DayPeriodDraft.init(from:)))
+        let weekends = Self.splittingMidnightWraps(season.weekendPeriods.map(DayPeriodDraft.init(from:)))
         self.init(
             name: season.name,
             fromMonth: season.fromMonth,
@@ -186,7 +186,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         let splitOffset = target.slotDuration / 2
         let splitSlot = (target.startSlot + splitOffset) % 48
         let originalEnd = target.endSlot == 48 && target.startSlot != 0 ? 48 : target.endSlot
-        let nextType = Self.nextPeriodType(in: list)
+        let nextType = Self.nextPeriodType(after: target.touName, in: list)
         list[longestIndex].endSlot = splitSlot
         let newWindow = DayPeriodDraft(
             touName: nextType,
@@ -222,7 +222,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         if list.count == 1, index == 0, list[0].isAllDay {
             let endSlot = max(1, min(47, candidateSlot))
             let remainder = DayPeriodDraft(
-                touName: Self.nextPeriodType(in: list),
+                touName: Self.nextPeriodType(after: list[0].touName, in: list),
                 startSlot: endSlot,
                 endSlot: 48,
                 buyRateText: list[0].buyRateText,
@@ -295,8 +295,42 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         sameScheduleAsWeekdays = other.sameScheduleAsWeekdays
     }
 
-    private static func nextPeriodType(in list: [DayPeriodDraft]) -> TariffPeriodName {
-        list.contains(where: { $0.touName == .onPeak }) ? .partialPeak : .onPeak
+    /// The type a freshly added period starts with: whatever usually follows the one it splits off.
+    /// After Peak that is Off-Peak; otherwise Peak first, then Mid-Peak.
+    private static func nextPeriodType(after current: TariffPeriodName, in list: [DayPeriodDraft]) -> TariffPeriodName {
+        let hasPeak = list.contains { $0.touName == .onPeak }
+        switch current {
+        case .onPeak, .superOffPeak: return .offPeak
+        case .offPeak: return hasPeak ? .partialPeak : .onPeak
+        case .partialPeak: return hasPeak ? .offPeak : .onPeak
+        }
+    }
+
+    /// Periods run forward from midnight in the editor, so one that crosses midnight
+    /// (say 8 PM – 4 AM) becomes two: 8 PM – 12 AM and 12 AM – 4 AM.
+    static func splittingMidnightWraps(_ windows: [DayPeriodDraft]) -> [DayPeriodDraft] {
+        var result: [DayPeriodDraft] = []
+        for window in windows {
+            var window = window
+            if window.endSlot == 0, window.startSlot > 0 { window.endSlot = 48 }
+            guard window.endSlot < window.startSlot else {
+                result.append(window)
+                continue
+            }
+            var tail = window
+            tail.endSlot = 48
+            var head = DayPeriodDraft(
+                touName: window.touName,
+                startSlot: 0,
+                endSlot: window.endSlot,
+                buyRateText: window.buyRateText,
+                sellRateText: window.sellRateText
+            )
+            head.startSlot = 0
+            result.append(head)
+            result.append(tail)
+        }
+        return result.sorted { $0.startSlot < $1.startSlot }
     }
 
     private mutating func assignWindows(_ list: [DayPeriodDraft], isWeekday: Bool) {
