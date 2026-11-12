@@ -345,7 +345,16 @@ export class SiteRepo {
             FROM "Tariff" t
             LEFT JOIN "TariffSeason"   ts  ON ts.tariff_id  = t.id
             LEFT JOIN "TariffSchedule" sch ON sch.season_id = ts.id
-            WHERE t.site_id = ANY($1::text[]) AND t.is_current
+            WHERE t.site_id = ANY($1::text[]) AND t.id = COALESCE(
+                -- Resolve the plan effective today in the site's timezone so a date rollover
+                -- takes effect without a mutation; fall back to the stored is_current flag.
+                (SELECT p.tariff_id FROM "TariffEffectivePeriod" p
+                    JOIN "Site" st ON st.id = p.site_id
+                    WHERE p.site_id = t.site_id
+                      AND p.effective_from <= (now() AT TIME ZONE st.timezone)::date
+                      AND (p.effective_to IS NULL OR p.effective_to >= (now() AT TIME ZONE st.timezone)::date)
+                    ORDER BY p.effective_from DESC LIMIT 1),
+                (SELECT t2.id FROM "Tariff" t2 WHERE t2.site_id = t.site_id AND t2.is_current LIMIT 1))
         `;
         const [siteRes, tariffRes] = await Promise.all([
             pool.query(siteSql, [siteIds]),

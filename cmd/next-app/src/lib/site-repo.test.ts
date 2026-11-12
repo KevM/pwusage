@@ -548,7 +548,8 @@ describe('SiteRepo current-version tariff filter', () => {
         await new SiteRepo().getSite('site-1');
         const sql = String(queryMock.mock.calls.at(-1)?.[0] ?? '');
         expect(sql).toContain('FROM "Tariff"');
-        expect(sql).toContain('t.is_current');
+        expect(sql).toContain('t2.is_current');
+        expect(sql).toContain('"TariffEffectivePeriod"');
     });
 });
 

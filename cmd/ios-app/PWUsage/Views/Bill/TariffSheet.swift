@@ -213,7 +213,7 @@ struct TariffSheet: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .emphasisProminentButton()
         .controlSize(.large)
         .padding(.top, 4)
     }

@@ -117,4 +117,44 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const manualTariffStillExists = await local.database.query(`SELECT id FROM "Tariff" WHERE site_id = 's1' AND name = 'Exact 2026'`);
     expect(manualTariffStillExists.rowCount).toBe(1);
   });
+  it('bounds Tesla healing to the dates a moved manual period actually vacated', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s2', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const tariffRepo = new TariffRepo();
+    await tariffRepo.addTariffVersion('s2', {
+      name: 'Utility Heal',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.1, sell_rate: 0.03,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.1, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+    const teslaTariffId = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = 's2'`)).rows[0]!.id;
+    await local.database.query(
+      `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+       VALUES ('s2', $1, '2025-12-01', '2025-12-31', 'tesla'), ('s2', $1, '2026-02-01', '2026-03-31', 'tesla')`,
+      [teslaTariffId]
+    );
+    const repo = new TariffTimelineRepo();
+    const created = await repo.createManualPeriod('s2', 'u1', {
+      name: 'January only',
+      effectiveFrom: '2026-01-01',
+      effectiveTo: '2026-01-31',
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.2, sellRate: 0.05 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.2, sellRate: 0.05 }],
+      }],
+    });
+    const periodId = created.periods.find(p => p.name === 'January only')!.periodId;
+
+    await repo.updatePeriod('s2', periodId, 'u1', { effectiveFrom: '2026-04-01', effectiveTo: '2026-04-30' });
+
+    const { rows } = await local.database.query<{ source: string; effective_from: string; effective_to: string | null }>(
+      `SELECT source, effective_from::text, effective_to::text FROM "TariffEffectivePeriod"
+       WHERE site_id = 's2' AND effective_to < '2026-06-01' ORDER BY effective_from`
+    );
+    expect(rows.map(r => [r.source, r.effective_from, r.effective_to])).toEqual([
+      ['tesla', '2025-12-01', '2026-03-31'],
+      ['manual', '2026-04-01', '2026-04-30'],
+    ]);
+  });
 });

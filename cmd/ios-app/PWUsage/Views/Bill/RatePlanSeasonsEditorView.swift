@@ -113,7 +113,7 @@ struct RatePlanSeasonsEditorView: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .emphasisProminentButton()
         .controlSize(.large)
         .padding(16)
         .background(SectionTheme.secondaryGroupedBackground)
@@ -146,7 +146,7 @@ struct RatePlanSeasonsEditorView: View {
     }
 
     static func seasonColor(at index: Int) -> Color {
-        let palette: [Color] = [.blue, .orange, .teal, .purple, .pink, .green]
+        let palette: [Color] = [.blue, .orange, .teal, .mint, .pink, .green]
         return palette[index % palette.count]
     }
 }
@@ -171,7 +171,10 @@ private struct MonthPartitionSlider: View {
             }
         }
         .frame(height: rowHeight * 12)
+        .coordinateSpace(name: Self.trackSpace)
     }
+
+    private static let trackSpace = "seasonMonthTrack"
 
     private func monthRow(month: Int) -> some View {
         let ownerIndex = ownerSeasonIndex(forMonth: month)
@@ -199,7 +202,7 @@ private struct MonthPartitionSlider: View {
             }
             .offset(y: max(-4, min(rowHeight * 12 - 14, yOffset)))
             .gesture(
-                DragGesture(minimumDistance: 2)
+                DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.trackSpace))
                     .onChanged { value in
                         let monthIndex = Int((value.location.y / rowHeight).rounded()) + 1
                         let clamped = max(1, min(12, monthIndex))

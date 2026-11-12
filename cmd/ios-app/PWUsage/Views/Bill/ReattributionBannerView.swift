@@ -49,7 +49,7 @@ struct ReattributionBannerView: View {
             }
             Spacer(minLength: 8)
             Button("Retry", action: onRetry)
-                .buttonStyle(.borderedProminent)
+                .emphasisProminentButton()
                 .controlSize(.small)
                 .disabled(isRetrying)
         }

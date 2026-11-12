@@ -555,11 +555,17 @@ export class TariffTimelineRepo {
       await applySpanMutationPlan(client, siteId, plan);
 
       // If shrinking vacated dates adjacent to a 'tesla' span, heal/extend that tesla span cleanly.
+      // Bound each vacated interval to the original period so dates it never covered
+      // (already preserved as Tesla fragments) are not re-extended into an overlap.
       if (oldFrom < nextFrom) {
-        await healVacatedIntervalWithTesla(client, siteId, oldFrom, addCalendarDays(nextFrom, -1));
+        const dayBeforeNext = addCalendarDays(nextFrom, -1);
+        const vacatedTo = oldTo !== null ? minDate(oldTo, dayBeforeNext) : dayBeforeNext;
+        await healVacatedIntervalWithTesla(client, siteId, oldFrom, vacatedTo);
       }
       if (nextTo !== null && (oldTo === null || oldTo > nextTo)) {
-        await healVacatedIntervalWithTesla(client, siteId, addCalendarDays(nextTo, 1), oldTo);
+        const dayAfterNext = addCalendarDays(nextTo, 1);
+        const vacatedFrom = dayAfterNext > oldFrom ? dayAfterNext : oldFrom;
+        await healVacatedIntervalWithTesla(client, siteId, vacatedFrom, oldTo);
       }
 
       await recomputeIsCurrentTariff(client, siteId, today);

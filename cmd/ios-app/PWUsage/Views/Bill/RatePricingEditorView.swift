@@ -86,7 +86,7 @@ struct RatePricingEditorView: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .emphasisProminentButton()
         .controlSize(.large)
         .disabled(currentSeason?.validateRates() != nil)
         .padding(16)

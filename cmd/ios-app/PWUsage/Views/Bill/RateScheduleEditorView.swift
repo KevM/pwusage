@@ -121,7 +121,7 @@ struct RateScheduleEditorView: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .emphasisProminentButton()
         .controlSize(.large)
         .padding(16)
         .background(SectionTheme.secondaryGroupedBackground)
@@ -259,6 +259,7 @@ private struct TimelineTrackSlider: View {
     let onMoveBoundary: (Int, Int) -> Void
 
     private static let trackHeight: CGFloat = 336
+    private static let trackSpace = "rateScheduleTrack"
 
     var body: some View {
         VStack(spacing: 4) {
@@ -282,6 +283,7 @@ private struct TimelineTrackSlider: View {
                 }
             }
             .frame(height: Self.trackHeight)
+            .coordinateSpace(name: Self.trackSpace)
             markerRow(symbol: "moon.fill", label: "12 AM")
         }
     }
@@ -305,7 +307,7 @@ private struct TimelineTrackSlider: View {
             }
             .offset(y: max(-4, min(Self.trackHeight - 14, yPosition)))
             .gesture(
-                DragGesture(minimumDistance: 2)
+                DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.trackSpace))
                     .onChanged { value in
                         let ratio = max(0, min(1, value.location.y / Self.trackHeight))
                         let slot = Int((ratio * 48.0).rounded())
