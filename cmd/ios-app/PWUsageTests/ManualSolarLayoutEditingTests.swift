@@ -61,6 +61,46 @@ struct ManualSolarLayoutEditingTests {
         #expect(second.tiltDegrees == nil)
     }
 
+    private func face(
+        panels: Int = 10, watts: Double = 400, azimuth: Double? = 180, tilt: Double? = 20
+    ) -> ManualSolarFace {
+        ManualSolarFace(label: nil, panelCount: panels, panelWatts: watts, azimuthDegrees: azimuth, tiltDegrees: tilt)
+    }
+
+    @Test("Out-of-range direction and tilt are reported on their own fields")
+    func invalidAngles() {
+        #expect(face(azimuth: 999).invalidFields == [.azimuth])
+        #expect(face(azimuth: -1).invalidFields == [.azimuth])
+        #expect(face(tilt: 1183).invalidFields == [.tilt])
+        #expect(face(tilt: -5).invalidFields == [.tilt])
+        #expect(face(azimuth: 999, tilt: 1183).invalidFields == [.azimuth, .tilt])
+    }
+
+    @Test("The ends of the angle ranges are valid, and empty angles are valid")
+    func angleBoundaries() {
+        #expect(face(azimuth: 0, tilt: 0).invalidFields.isEmpty)
+        #expect(face(azimuth: 360, tilt: 90).invalidFields.isEmpty)
+        #expect(face(azimuth: nil, tilt: nil).invalidFields.isEmpty)
+        #expect(face(azimuth: .nan, tilt: .infinity).invalidFields == [.azimuth, .tilt])
+    }
+
+    @Test("Panel count and wattage have sensible limits")
+    func countAndWattageLimits() {
+        #expect(face(panels: 0).invalidFields == [.panelCount])
+        #expect(face(panels: 1001).invalidFields == [.panelCount])
+        #expect(face(panels: 1).invalidFields.isEmpty)
+        #expect(face(watts: 49).invalidFields == [.panelWatts])
+        #expect(face(watts: 1001).invalidFields == [.panelWatts])
+        #expect(face(watts: 50).invalidFields.isEmpty)
+        #expect(face(watts: 1000).invalidFields.isEmpty)
+    }
+
+    @Test("A face is valid exactly when it has no invalid fields")
+    func validityFollowsInvalidFields() {
+        #expect(face().isValid)
+        #expect(!face(tilt: 1183).isValid)
+    }
+
     @Test("Normalizing keeps install dates to the start of their month and drops blank labels")
     func normalizing() throws {
         var calendar = Calendar(identifier: .gregorian)

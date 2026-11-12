@@ -3,11 +3,25 @@ import Foundation
 extension ManualSolarFace {
     var nameplateKw: Double { Double(panelCount) * panelWatts / 1000 }
 
-    var isValid: Bool {
-        panelCount > 0 && panelWatts.isFinite && panelWatts > 0
-            && azimuthDegrees.map { $0.isFinite && (0 ... 360).contains($0) } ?? true
-            && tiltDegrees.map { $0.isFinite && (0 ... 90).contains($0) } ?? true
+    enum Field: Hashable, Sendable { case panelCount, panelWatts, azimuth, tilt }
+
+    static let panelCountRange = 1 ... 1000
+    static let panelWattsRange = 50.0 ... 1000
+    static let azimuthRange = 0.0 ... 360
+    static let tiltRange = 0.0 ... 90
+
+    /// The fields whose value is out of range. Direction and tilt may be empty: they fall back to
+    /// what was detected.
+    var invalidFields: Set<Field> {
+        var invalid: Set<Field> = []
+        if !Self.panelCountRange.contains(panelCount) { invalid.insert(.panelCount) }
+        if !Self.panelWattsRange.contains(panelWatts) { invalid.insert(.panelWatts) }
+        if let azimuthDegrees, !Self.azimuthRange.contains(azimuthDegrees) { invalid.insert(.azimuth) }
+        if let tiltDegrees, !Self.tiltRange.contains(tiltDegrees) { invalid.insert(.tilt) }
+        return invalid
     }
+
+    var isValid: Bool { invalidFields.isEmpty }
 }
 
 extension ManualSolarSystem {
