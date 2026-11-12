@@ -22,6 +22,7 @@ struct TariffSheet: View {
     @State private var actionError: String?
     @State private var isLoading = false
     @State private var isSyncing = false
+    @State private var syncNotice: String?
     @State private var isRetryingReattribution = false
     @State private var activeModal: TariffSheetModal?
     @State private var pendingDeletion: TariffPeriodDTO?
@@ -111,6 +112,13 @@ struct TariffSheet: View {
                 onRetry: retryReattribution
             )
         }
+        if let syncNotice {
+            Label(syncNotice, systemImage: "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+        }
         if data.teslaSync.differsFromActiveManual {
             teslaDivergenceBanner(data.teslaSync)
         }
@@ -176,13 +184,12 @@ struct TariffSheet: View {
             Image(systemName: "bolt.badge.clock")
                 .foregroundStyle(.blue)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Tesla has an updated rate plan")
+                let copy = TeslaDivergenceCopy(sync: sync)
+                Text(copy.title)
                     .font(.subheadline.weight(.medium))
-                if let name = sync.latestTariffName, !name.isEmpty {
-                    Text("\"\(name)\" is saved in your Tesla account.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(copy.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             Button("Sync") { syncFromTesla() }
@@ -332,10 +339,14 @@ struct TariffSheet: View {
 
     private func syncFromTesla() {
         actionError = nil
+        syncNotice = nil
         isSyncing = true
+        let previousTeslaPlan = timeline?.teslaSync.latestTariffId
         Task {
             do {
-                timeline = try await actions.refreshFromTesla()
+                let refreshed = try await actions.refreshFromTesla()
+                timeline = refreshed
+                syncNotice = TeslaDivergenceCopy.syncNotice(previousTeslaPlan: previousTeslaPlan, refreshed: refreshed)
                 isSyncing = false
             } catch {
                 isSyncing = false

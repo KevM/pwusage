@@ -175,6 +175,11 @@ export async function recomputeIsCurrentTariff(
   return Number(fallback);
 }
 
+function toIsoOrNull(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return (value instanceof Date ? value : new Date(value)).toISOString();
+}
+
 function maxEnd(a: string | null, b: string | null): string | null {
   if (a === null || b === null) return null;
   return a >= b ? a : b;
@@ -406,9 +411,8 @@ export class TariffTimelineRepo {
       teslaSync: {
         latestTariffId: latestTesla ? Number(latestTesla.id) : null,
         latestTariffName: latestTesla?.name ?? null,
-        latestUpdatedAt: latestTesla?.updated
-          ? (latestTesla.updated instanceof Date ? latestTesla.updated.toISOString() : new Date(latestTesla.updated).toISOString())
-          : null,
+        latestUpdatedAt: toIsoOrNull(latestTesla?.updated),
+        activeManualUpdatedAt: toIsoOrNull(activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id))?.updated : null),
         differsFromActiveManual,
       },
     };

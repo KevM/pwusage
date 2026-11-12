@@ -60,6 +60,8 @@ export interface SiteTariffsTimelineResponse {
     latestTariffId: number | null;
     latestTariffName: string | null;
     latestUpdatedAt: string | null;
+    /** When the active custom plan was saved, so clients can say which of the two is newer. */
+    activeManualUpdatedAt?: string | null;
     differsFromActiveManual: boolean;
   };
 }

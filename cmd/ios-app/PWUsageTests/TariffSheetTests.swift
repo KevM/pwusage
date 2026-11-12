@@ -176,4 +176,43 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
+
+    @Test("Divergence banner says which plan is newer")
+    func divergenceCopyNamesTheNewerPlan() {
+        func copy(ours: String?, theirs: String?) -> TeslaDivergenceCopy {
+            TeslaDivergenceCopy(
+                sync: TeslaSyncDTO(
+                    latestTariffId: 1,
+                    latestTariffName: "We energies",
+                    latestUpdatedAt: theirs,
+                    activeManualUpdatedAt: ours,
+                    differsFromActiveManual: true
+                )
+            )
+        }
+        let newer = copy(ours: "2026-11-12T15:00:00Z", theirs: "2026-10-29T12:00:00Z")
+        #expect(newer.title == "Your custom plan is newer than Tesla's")
+        #expect(newer.detail.contains("hasn't changed since"))
+        #expect(newer.detail.contains("2026"))
+
+        let older = copy(ours: "2026-10-01T15:00:00Z", theirs: "2026-11-02T12:00:00Z")
+        #expect(older.title == "Tesla changed its plan after your custom plan")
+
+        #expect(copy(ours: nil, theirs: nil).title == "Tesla's plan differs from your custom plan")
+    }
+
+    @Test("Sync reports what it found even when nothing changes on screen")
+    func syncNoticeDescribesTheOutcome() throws {
+        let timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        let same = TeslaDivergenceCopy.syncNotice(
+            previousTeslaPlan: timeline.teslaSync.latestTariffId,
+            refreshed: timeline
+        )
+        #expect(same.hasPrefix("Checked Tesla"))
+        let changed = TeslaDivergenceCopy.syncNotice(previousTeslaPlan: -1, refreshed: timeline)
+        #expect(changed.contains("saved to your history") || changed.contains("Saved Tesla's updated plan"))
+    }
 }

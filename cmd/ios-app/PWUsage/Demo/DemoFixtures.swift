@@ -273,6 +273,7 @@ enum DemoFixtures {
                 latestTariffId: 10,
                 latestTariffName: tariffName,
                 latestUpdatedAt: "2025-01-01T00:00:00Z",
+                activeManualUpdatedAt: nil,
                 differsFromActiveManual: false
             )
         )
