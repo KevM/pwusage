@@ -81,7 +81,8 @@ struct SolarSystemView: View {
                 Section {
                     SolarSystemVisual(
                         input: SolarSystemSceneInput(
-                            status: status, layout: layout, isWaiting: presentation.phase == .waiting),
+                            status: status, layout: layout, isWaiting: presentation.phase == .waiting,
+                            manualLayout: record?.manualLayout),
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
