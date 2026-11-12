@@ -117,6 +117,26 @@ struct RatePlanEditorFlowTests {
     }
 
     @MainActor
+    @Test("Toolbar Save is available for new plans, and for existing plans only once edited")
+    func toolbarSaveAvailability() throws {
+        let timeZone = TimeZone(identifier: "America/Chicago") ?? .gmt
+        let blank = RatePlanEditorState(mode: .add, timeZone: timeZone, currency: "USD")
+        #expect(blank.canSubmit)
+
+        let timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        let period = try #require(timeline.periods.first)
+        let editing = RatePlanEditorState(mode: .edit(period), timeZone: timeZone, currency: "USD")
+        #expect(!editing.canSubmit)
+        // The fixture only covers Oct-Apr; completing the year is the edit that makes it valid.
+        editing.draft.seasons[0].fromMonth = 1
+        editing.draft.seasons[0].toMonth = 12
+        #expect(editing.canSubmit)
+    }
+
+    @MainActor
     @Test("Copy starts on Summary with exact source name and supports direct Summary -> Edit -> Summary jumps")
     func copyStartsOnSummaryWithDirectJumps() {
         let state = RatePlanEditorState(

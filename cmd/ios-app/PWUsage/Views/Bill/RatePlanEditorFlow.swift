@@ -95,7 +95,6 @@ private struct RatePlanSummaryScreen: View {
             datesSection
             seasonsSection
             impactSection
-            saveButtonSection
         }
         .navigationTitle(screenTitle)
         #if os(iOS)
@@ -104,6 +103,15 @@ private struct RatePlanSummaryScreen: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onCancel).disabled(state.isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if state.isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save", action: saveAction)
+                            .fontWeight(.semibold)
+                            .disabled(!state.canSubmit)
+                    }
                 }
             }
             .onAppear {
@@ -170,25 +178,6 @@ private struct RatePlanSummaryScreen: View {
             if let message = state.saveError ?? state.validationError {
                 Text(message).font(.footnote).foregroundStyle(.red)
             }
-        }
-    }
-
-    private var saveButtonSection: some View {
-        Section {
-            Button {
-                saveAction()
-            } label: {
-                HStack {
-                    Spacer()
-                    if state.isSaving {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Save Rate Plan").font(.headline)
-                    }
-                    Spacer()
-                }
-            }
-            .disabled(!state.canSave)
         }
     }
 

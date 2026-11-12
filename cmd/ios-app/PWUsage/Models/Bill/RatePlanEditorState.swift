@@ -66,6 +66,14 @@ final class RatePlanEditorState {
     var validationError: String? { draft.validate() }
     var canSave: Bool { validationError == nil && !isSaving }
 
+    /// Save in the toolbar: a new or customized plan can always be saved once valid, but an
+    /// existing plan only once something has changed.
+    var canSubmit: Bool {
+        guard canSave else { return false }
+        if case .edit = mode { return hasUnsavedChanges }
+        return true
+    }
+
     func finishStep(from route: RatePlanEditorRoute) {
         switch route {
         case .seasons(let isWizard):
