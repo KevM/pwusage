@@ -119,10 +119,11 @@ final class SiteDeepHistoryModel {
         status = Status()
     }
 
-    /// After the action a pause asked for succeeds: the walk can continue.
-    func resumePaused(accountScopeID: String) async {
+    /// After the action a pause asked for succeeds: the account's paused walks can continue, even
+    /// before a site is selected, and the selected one carries on now.
+    func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) async {
+        try? await store.resumePaused(accountScopeID: accountScopeID, reason: reason)
         guard let scope, scope.accountScopeID == accountScopeID, run == nil else { return }
-        try? await store.resume(scope: scope)
         await refresh()
         if await deepHistory.isWanted(scope: scope), run == nil, self.scope == scope { start() }
     }

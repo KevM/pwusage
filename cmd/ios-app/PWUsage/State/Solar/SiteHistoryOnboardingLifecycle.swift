@@ -152,7 +152,7 @@ final class SiteHistoryOnboardingLifecycle {
     /// After the action a pause asked for (reconnecting Tesla, signing in) succeeds.
     func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) async {
         try? await store.resumePaused(accountScopeID: accountScopeID, reason: reason)
-        await deepHistory?.resumePaused(accountScopeID: accountScopeID)
+        await deepHistory?.resumePaused(accountScopeID: accountScopeID, reason: reason)
         await refreshStatus()
     }
 

@@ -57,7 +57,7 @@ struct SiteDeepHistoryModelTests {
         model.start()
         await model.runTask?.value
         #expect(model.status.phase == .paused(.reconnectTesla))
-        await model.resumePaused(accountScopeID: scope.accountScopeID)
+        await model.resumePaused(accountScopeID: scope.accountScopeID, reason: .reconnectTesla)
         await model.runTask?.value
         #expect(model.status.phase == .finished)
     }
@@ -90,5 +90,25 @@ struct SiteDeepHistoryModelTests {
         let all = [SiteDeepHistoryPhase.idle, .running, .finished, .unavailable, .paused(.signIn)]
             .map { line(.init(phase: $0, loadedBack: "2024-02-02", daysLoaded: 5)) }
         #expect(all.allSatisfy { !$0.statusLine.contains("!") })
+    }
+
+    @Test func aPauseIsResumedForTheAccountBeforeAnySiteIsSelected() async throws {
+        let store = SiteDeepHistoryStore(directory: directory)
+        var signIn = SiteDeepHistoryProgress(oldestChecked: "2026-10-30")
+        signIn.phase = .paused(.signIn)
+        var reconnect = signIn
+        reconnect.phase = .paused(.reconnectTesla)
+        let other = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-2")
+        let elsewhere = SolarForecastSiteScope(accountScopeID: "account-b", siteID: "site-1")
+        try await store.save(signIn, scope: scope)
+        try await store.save(reconnect, scope: other)
+        try await store.save(signIn, scope: elsewhere)
+        let model = make(FakeOnboardingEnvironment())
+        await model.resumePaused(accountScopeID: "account-a", reason: .signIn)
+        // A fresh store reads what the model's wrote to the file.
+        let saved = SiteDeepHistoryStore(directory: directory)
+        #expect(try await saved.progress(scope: scope)?.phase == .active)
+        #expect(try await saved.progress(scope: other)?.phase == .paused(.reconnectTesla))
+        #expect(try await saved.progress(scope: elsewhere)?.phase == .paused(.signIn))
     }
 }

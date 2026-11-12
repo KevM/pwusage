@@ -90,6 +90,20 @@ actor SiteDeepHistoryStore {
         }
     }
 
+    /// Make the account's walks paused for `reason` active again, keeping their cursors, whichever
+    /// site is selected. Other pauses and finished walks are left alone.
+    func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) throws {
+        let prefix = "\(accountScopeID)|"
+        try update { state in
+            for (key, var progress) in state where key.hasPrefix(prefix) && progress.phase == .paused(reason) {
+                progress.phase = .active
+                progress.failures = 0
+                progress.nextAttemptAt = nil
+                state[key] = progress
+            }
+        }
+    }
+
     func remove(scope: SolarForecastSiteScope) throws {
         try update { $0.removeValue(forKey: Self.key(scope)) }
     }
