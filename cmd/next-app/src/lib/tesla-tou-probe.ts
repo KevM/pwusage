@@ -36,15 +36,18 @@ export interface PrecisionProbe {
 }
 
 /**
- * Copy of `tariff` with ONE buy rate raised by 0.00001 ($/kWh). Raising a buy rate cannot
+ * Copy of `tariff` with ONE in-use buy rate (skipping the unpriced `ALL` placeholder) raised by 0.00001 ($/kWh). Raising a buy rate cannot
  * trip Tesla's "buy below sell" adjustment, and a 1e-5 step is invisible to billing but
  * shows whether Tesla keeps five decimal places or rounds them away.
  */
 export function buildPrecisionProbe(tariff: TariffV2): PrecisionProbe | null {
   const candidate = JSON.parse(JSON.stringify(tariff)) as TariffV2;
   for (const [group, charge] of Object.entries(candidate.energy_charges ?? {})) {
+    // 'ALL' is Tesla's catch-all placeholder (usually 0); nothing is billed on it, so a
+    // change there could be ignored and read as Tesla refusing precision.
+    if (group === 'ALL') continue;
     for (const [period, value] of Object.entries(charge.rates ?? {})) {
-      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || period === 'ALL') continue;
       const after = Math.round((value + 0.00001) * 1e5) / 1e5;
       if (after === value) continue;
       charge.rates[period] = after;

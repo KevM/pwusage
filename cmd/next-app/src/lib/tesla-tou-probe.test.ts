@@ -10,6 +10,14 @@ const tariff = (): TariffV2 => ({
 });
 
 describe('tesla TOU precision probe', () => {
+  it('skips the unpriced ALL placeholder and zero rates', () => {
+    const t = tariff();
+    t.energy_charges = { ALL: { rates: { ALL: 0 } }, Summer: { rates: { OFF_PEAK: 0, ON_PEAK: 0.31 } } };
+    const probe = buildPrecisionProbe(t);
+    expect(probe?.target).toEqual({ group: 'Summer', period: 'ON_PEAK', before: 0.31, after: 0.31001 });
+    expect(buildPrecisionProbe({ ...tariff(), energy_charges: { ALL: { rates: { ALL: 0 } } } })).toBeNull();
+  });
+
   it('nudges exactly one buy rate by 0.00001 and leaves the original untouched', () => {
     const original = tariff();
     const probe = buildPrecisionProbe(original);
