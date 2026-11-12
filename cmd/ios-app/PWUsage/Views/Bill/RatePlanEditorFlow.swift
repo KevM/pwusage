@@ -91,6 +91,7 @@ private struct RatePlanSummaryScreen: View {
 
     var body: some View {
         Form {
+            problemSection
             nameSection
             datesSection
             seasonsSection
@@ -126,6 +127,20 @@ private struct RatePlanSummaryScreen: View {
         case .add: "New Rate Plan"
         case .copy: "Customize Rate Plan"
         case .edit: "Edit Rate Plan"
+        }
+    }
+
+    /// At the top so a reason Save is unavailable (or a failed save) is never scrolled out of sight.
+    @ViewBuilder
+    private var problemSection: some View {
+        if let message = state.saveError ?? state.validationError {
+            Section {
+                Label(message, systemImage: "exclamationmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.red)
+            } header: {
+                Text(state.saveError != nil ? "Couldn't Save" : "Needs Attention")
+            }
         }
     }
 
@@ -175,9 +190,6 @@ private struct RatePlanSummaryScreen: View {
             Text("Historical energy days covered by these dates will update in the background after saving.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            if let message = state.saveError ?? state.validationError {
-                Text(message).font(.footnote).foregroundStyle(.red)
-            }
         }
     }
 
