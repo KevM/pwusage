@@ -1,13 +1,19 @@
 import Foundation
 
-/// What the onboarding job needs from the app: the server fill, the on-device history and layout.
+/// What loading a site's history needs from the app: the server fill, the on-device history and
+/// the site's time zone. The onboarding job and the deep-history walk share it.
 @MainActor
-protocol SiteHistoryOnboardingEnvironment: AnyObject {
+protocol SiteDeepHistoryEnvironment: AnyObject {
     func fill(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse
     /// Keep a fill's returned days in the on-device solar history.
     func storeDays(_ fill: MobileSolarHistoryFill, scope: SolarForecastSiteScope) async throws
     /// The site's time zone, nil while history is unavailable.
     func siteTimeZone(scope: SolarForecastSiteScope) async -> TimeZone?
+}
+
+/// What the onboarding job needs from the app: the history fill plus the on-device layout.
+@MainActor
+protocol SiteHistoryOnboardingEnvironment: SiteDeepHistoryEnvironment {
     func hasLocation(scope: SolarForecastSiteScope) async -> Bool
     /// The confidence of the stored layout when the forecast can use it.
     func layoutConfidence(scope: SolarForecastSiteScope) async -> SolarLayoutConfidence?

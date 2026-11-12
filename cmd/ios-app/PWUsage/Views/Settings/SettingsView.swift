@@ -18,6 +18,8 @@ struct SettingsView: View {
     /// Saves the site's billing day; the row is hidden in the demo, which cannot save.
     var onSaveBillingDay: (Int) async throws -> Void = { _ in }
     var onRevealSeen: () -> Void = {}
+    /// The user-started load of older solar history; nil in the demo and without the history beta.
+    var deepHistory: SiteDeepHistoryModel?
     /// Where the Trmnl screen reads from; nil hides the row, as in the demo, which has no devices.
     var trmnl: TrmnlSettingsAccess?
 
@@ -122,7 +124,7 @@ struct SettingsView: View {
                 SolarSystemView(
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
                     startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved,
-                    onRevealSeen: onRevealSeen)
+                    onRevealSeen: onRevealSeen, deepHistory: deepHistory)
             case .billingDay:
                 BillingDaySettingsView(site: site, save: onSaveBillingDay)
                     .id(site.id)

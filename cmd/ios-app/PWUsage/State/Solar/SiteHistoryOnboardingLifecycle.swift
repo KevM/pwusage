@@ -22,6 +22,8 @@ final class SiteHistoryOnboardingLifecycle {
     private let scheduleBackground: @MainActor (Date?) -> Void
     private let sleep: Sleep
     private let now: () -> Date
+    /// The user-started load of older history; foreground only, and it follows the selected site.
+    let deepHistory: SiteDeepHistoryModel?
     private struct ForegroundRun {
         let scope: SolarForecastSiteScope
         let id: UUID
@@ -42,12 +44,14 @@ final class SiteHistoryOnboardingLifecycle {
         onboarding: SiteHistoryOnboarding,
         store: SiteHistoryOnboardingStore = .shared,
         ledgers: SiteHistoryDayLedgerStore = .shared,
+        deepHistory: SiteDeepHistoryModel? = nil,
         isHistoryEnabled: @escaping @MainActor (SolarForecastSiteScope) async -> Bool,
         scheduleBackground: @escaping @MainActor (Date?) -> Void,
         sleep: @escaping Sleep = { try await Task.sleep(for: .seconds($0)) },
         now: @escaping () -> Date = Date.init
     ) {
         self.onboarding = onboarding
+        self.deepHistory = deepHistory
         self.store = store
         self.ledgers = ledgers
         self.isHistoryEnabled = isHistoryEnabled
@@ -86,6 +90,7 @@ final class SiteHistoryOnboardingLifecycle {
     func activate(scope: SolarForecastSiteScope) {
         if lastScope != scope { lastScope = scope }
         Task { await refreshStatus() }
+        Task { await deepHistory?.select(scope: scope) }
         if foreground?.scope == scope { return }
         foreground?.task.cancel()
         // The task clears the slot only while it still owns it, so a newer run is never dropped.
@@ -101,6 +106,7 @@ final class SiteHistoryOnboardingLifecycle {
     func deactivate() async {
         foreground?.task.cancel()
         foreground = nil
+        await deepHistory?.stop()
         guard let lastScope else { return }
         let next = await nextOpportunity(scope: lastScope)
         // Activated again while the saved state was read: the foreground owns the job.
@@ -115,6 +121,7 @@ final class SiteHistoryOnboardingLifecycle {
         background?.cancel()
         background = nil
         session += 1
+        deepHistory?.end()
         lastScope = nil
         status = nil
         statusGeneration += 1
@@ -130,6 +137,7 @@ final class SiteHistoryOnboardingLifecycle {
         }
         try? await store.remove(scope: scope)
         try? await ledgers.remove(scope: scope)
+        await deepHistory?.forget(scope: scope)
         await onboarding.acknowledgeReveal(scope: scope)
         await refreshStatus()
     }
@@ -143,6 +151,7 @@ final class SiteHistoryOnboardingLifecycle {
     /// After the action a pause asked for (reconnecting Tesla, signing in) succeeds.
     func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) async {
         try? await store.resumePaused(accountScopeID: accountScopeID, reason: reason)
+        await deepHistory?.resumePaused(accountScopeID: accountScopeID)
         await refreshStatus()
     }
 
@@ -234,6 +243,7 @@ final class SiteHistoryOnboardingLifecycle {
             api: api, history: history, records: records, runner: runner)
         return SiteHistoryOnboardingLifecycle(
             onboarding: SiteHistoryOnboarding(environment: environment),
+            deepHistory: SiteDeepHistoryModel(deepHistory: SiteDeepHistory(environment: environment)),
             isHistoryEnabled: { await environment.isHistoryEnabled(scope: $0) },
             scheduleBackground: { BackgroundSiteHistoryOnboarding.schedule(earliest: $0) }
         )

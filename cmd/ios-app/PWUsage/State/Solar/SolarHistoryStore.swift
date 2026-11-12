@@ -173,7 +173,7 @@ actor SolarHistoryStore {
     /// The recent window layout detection and the day strip read: the days the store held before
     /// it kept the whole history. `allSamples` reads everything.
     func samples(scope: SolarForecastSiteScope, now: Date = .now) throws -> [(timestamp: Date, solarWh: Double)] {
-        try Self.samples(of: windowedDays(try load(scope), now: now))
+        try Self.samples(of: windowedDays(load(scope), now: now))
     }
 
     /// Every stored day, for work that looks across years.
