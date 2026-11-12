@@ -230,6 +230,57 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
         timeline.holidayDates = ["2026-11-26"]
         #expect(timeline.activePeriodNow(at: noon)?.window.touName == .offPeak)
     }
+    @Test("Editing one date range of a plan may keep the name its other ranges share")
+    func editedPlanKeepsItsOwnName() throws {
+        let timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        let residential = try #require(timeline.periods.first { $0.name == "Residential" })
+        let fragment = TariffPeriodDTO(
+            periodId: 9, tariffId: 99, name: " residential ", version: 3, source: .manual,
+            effectiveFrom: "2024-01-01", effectiveTo: "2024-12-31", isCurrentToday: false,
+            updatedBy: nil, seasons: residential.seasons
+        )
+        let periods = timeline.periods + [fragment]
+        #expect(RatePlanEditorMode.edit(residential).takenNames(among: periods) == ["Tesla Plan"])
+        #expect(RatePlanEditorMode.add.takenNames(among: periods).contains("Residential"))
+    }
+
+    @Test("A season that starts mid-month is matched by day, not just month")
+    func midMonthSeasonsMatchByDay() throws {
+        let timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        let window = { (rate: Double) in
+            [TimePeriodWindowInput(
+                touName: .offPeak, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: rate, sellRate: 0
+            )]
+        }
+        func season(_ name: String, _ from: (Int, Int), _ end: (Int, Int), rate: Double) -> TariffSeasonInput {
+            TariffSeasonInput(
+                name: name, fromMonth: from.0, toMonth: end.0,
+                weekdayPeriods: window(rate), weekendPeriods: window(rate), fromDay: from.1, toDay: end.1
+            )
+        }
+        let plan = TariffPeriodDTO(
+            periodId: 1, tariffId: 1, name: "Tesla", version: 1, source: .tesla,
+            effectiveFrom: "2020-01-01", effectiveTo: nil, isCurrentToday: true, updatedBy: nil,
+            seasons: [season("Early June", (6, 1), (6, 15), rate: 0.10), season("Rest", (6, 16), (5, 31), rate: 0.40)]
+        )
+        let mid = SiteTariffsTimelineResponse(
+            version: 2, siteId: timeline.siteId, timezone: timeline.timezone, currency: "USD", periods: [plan],
+            reattribution: nil, holidayDates: nil, teslaSync: timeline.teslaSync
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: mid.timezone) ?? .gmt
+        let june20 = try #require(calendar.date(from: DateComponents(year: 2026, month: 6, day: 20, hour: 12)))
+        #expect(mid.activePeriodNow(at: june20)?.window.buyRate == 0.40)
+        let june10 = try #require(calendar.date(from: DateComponents(year: 2026, month: 6, day: 10, hour: 12)))
+        #expect(mid.activePeriodNow(at: june10)?.window.buyRate == 0.10)
+    }
+
     @Test("In a gap the active rate comes from the nearest earlier plan, and before every plan from the earliest")
     func gapFallsBackLikeTheServer() throws {
         var timeline = try MobileContractDecoder.make().decode(

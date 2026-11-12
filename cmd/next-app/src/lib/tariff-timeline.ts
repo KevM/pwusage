@@ -292,6 +292,8 @@ export function decompileTariffToSeasons(tariff: Tariff): TariffSeasonInput[] {
       name: season.name || 'Season',
       fromMonth: season.from_month,
       toMonth: season.to_month,
+      fromDay: season.from_day,
+      toDay: season.to_day,
       // Canonical Monday (JS 1 -> Tesla 0) and Saturday (JS 6 -> Tesla 5) resolve layered Tesla rules into clean windows.
       weekdayPeriods: resolveDayWindows(sorted, 1, season.buy_rate, season.sell_rate),
       weekendPeriods: resolveDayWindows(sorted, 6, season.buy_rate, season.sell_rate),

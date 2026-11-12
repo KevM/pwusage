@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Temporal } from '@js-temporal/polyfill';
+import { effectiveTariffIdSql } from './effective-tariff-sql';
 import { pool, type SiteWithTariffs } from './db';
 import { readMobileHistoryRevision } from './mobile-history-revision';
 import { getRequestContext } from './request-context';
@@ -23,7 +24,7 @@ export interface MobileBillConfiguration {
 export async function readMobileBillConfiguration(siteId: string): Promise<MobileBillConfiguration | undefined> {
     const result = await pool.query<MobileBillConfiguration>(`
         SELECT name, timezone, billing_start_day, json -> 'tariff_content_v2' ->> 'currency' AS currency,
-            ARRAY(SELECT id FROM "Tariff" WHERE site_id = s.id AND is_current ORDER BY id) AS tariff_ids
+            ARRAY(SELECT t.id FROM "Tariff" t WHERE t.site_id = s.id AND t.id = ${effectiveTariffIdSql('s.id')} ORDER BY t.id) AS tariff_ids
         FROM "Site" s WHERE id = $1
     `, [siteId]);
     return result.rows[0];

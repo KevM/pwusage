@@ -38,6 +38,10 @@ struct TariffSeasonInput: Codable, Equatable, Sendable, Hashable {
     let toMonth: Int
     let weekdayPeriods: [TimePeriodWindowInput]
     let weekendPeriods: [TimePeriodWindowInput]
+    /// Day-of-month bounds, sent for plans synced from Tesla whose seasons can start mid-month.
+    /// Nil means a whole-month season (and older servers), as the plan editor writes them.
+    var fromDay: Int?
+    var toDay: Int?
 }
 
 struct TariffUpdatedByDTO: Codable, Equatable, Sendable {
@@ -155,7 +159,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         let today = String(format: "%04d-%02d-%02d", year, month, day)
         guard let period = period(on: today) else { return nil }
         guard let season = period.seasons.first(where: {
-            Self.monthMatches(month, startMonth: $0.fromMonth, endMonth: $0.toMonth)
+            Self.seasonMatches(month: month, day: day, season: $0)
         }) else {
             return nil
         }
@@ -183,9 +187,11 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         return periods.min(by: { $0.effectiveFrom < $1.effectiveFrom })
     }
 
-    private static func monthMatches(_ month: Int, startMonth: Int, endMonth: Int) -> Bool {
-        if startMonth <= endMonth { return month >= startMonth && month <= endMonth }
-        return month >= startMonth || month <= endMonth
+    private static func seasonMatches(month: Int, day: Int, season: TariffSeasonInput) -> Bool {
+        let start = season.fromMonth * 100 + (season.fromDay ?? 1)
+        let end = season.toMonth * 100 + (season.toDay ?? 31)
+        let today = month * 100 + day
+        return start <= end ? today >= start && today <= end : today >= start || today <= end
     }
 
     private static func windowMatches(minuteOfDay: Int, window: TimePeriodWindowInput) -> Bool {

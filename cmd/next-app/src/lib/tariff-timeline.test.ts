@@ -139,6 +139,18 @@ describe('compileSeasonsToParsedTariff & decompileTariffToSeasons', () => {
     expect(roundTripped[0].weekdayPeriods[0].buyRate).toBe(0.10279);
   });
 
+  it('exposes day-of-month season bounds so a mid-month Tesla season is not reduced to whole months', () => {
+    const seasons = decompileTariffToSeasons({
+      id: 3, site_id: 's1', updated: new Date(), name: 'Mid-month',
+      seasons: [{
+        id: 1, tariff_id: 3, name: 'Late summer', from_month: 9, from_day: 11, to_month: 9, to_day: 7,
+        buy_rate: 0.1, sell_rate: 0.03,
+        schedules: [{ id: 1, season_id: 1, name: 'OFF_PEAK', buy_rate: 0.1, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+    expect(seasons[0]).toMatchObject({ fromMonth: 9, toMonth: 9, fromDay: 11, toDay: 7 });
+  });
+
   it('resolves layered Tesla schedules into non-overlapping 24h windows using Schedule specificity', () => {
     const decompiled = decompileTariffToSeasons({
       id: 2,

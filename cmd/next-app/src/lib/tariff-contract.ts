@@ -16,6 +16,10 @@ export interface TariffSeasonInput {
   name: string;
   fromMonth: number;
   toMonth: number;
+  /** Day of `fromMonth` the season starts. Read-only: Tesla seasons may start mid-month; writes ignore it. */
+  fromDay?: number;
+  /** Day of `toMonth` the season ends (inclusive). Read-only, like `fromDay`. */
+  toDay?: number;
   weekdayPeriods: TimePeriodWindowInput[];
   weekendPeriods: TimePeriodWindowInput[];
 }

@@ -1,3 +1,4 @@
+import { effectiveTariffIdSql } from './effective-tariff-sql';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import { readdir, readFile } from 'node:fs/promises';
@@ -133,6 +134,23 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     await repo.createManualPeriod('s-gap', 'u1', input('Ended long ago'));
     const timeline = await repo.getTimeline('s-gap', 'u1');
     expect(timeline.periods.filter(p => p.isCurrentToday).map(p => p.name)).toEqual(['Ended long ago']);
+  });
+
+  it('resolves the tariff in effect today from dates, even when is_current is stale', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-roll', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    const period = [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }];
+    await repo.createManualPeriod('s-roll', 'u1', {
+      name: 'Covers today', effectiveFrom: '2020-01-01', effectiveTo: null,
+      seasons: [{ name: 'All Year', fromMonth: 1, toMonth: 12, weekdayPeriods: period, weekendPeriods: period }],
+    });
+    // A date rollover changes the plan in effect without any mutation, leaving the flag behind.
+    await local.database.query(`UPDATE "Tariff" SET is_current = FALSE WHERE site_id = 's-roll'`);
+    const covering = await local.database.query(`SELECT tariff_id FROM "TariffEffectivePeriod" WHERE site_id = 's-roll'`);
+    const resolved = await local.database.query(
+      `SELECT ${effectiveTariffIdSql('s.id')} AS id FROM "Site" s WHERE s.id = 's-roll'`
+    );
+    expect(Number(resolved.rows[0].id)).toBe(Number(covering.rows[0].tariff_id));
   });
 
   it('bounds Tesla healing to the dates a moved manual period actually vacated', async () => {

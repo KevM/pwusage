@@ -21,6 +21,17 @@ enum RatePlanEditorMode: Identifiable, Equatable {
         case .edit(let period): "edit-\(period.periodId)"
         }
     }
+
+    /// Names a plan saved in this mode must not reuse. An edited plan keeps its own name, which its
+    /// other date ranges (separate tariff versions) share, as the server allows.
+    func takenNames(among periods: [TariffPeriodDTO]) -> [String] {
+        func normalized(_ name: String) -> String {
+            name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        var ownName: String?
+        if case .edit(let period) = self { ownName = normalized(period.name) }
+        return periods.map(\.name).filter { normalized($0) != ownName }
+    }
 }
 
 struct ActiveRatePlanCardView: View {
