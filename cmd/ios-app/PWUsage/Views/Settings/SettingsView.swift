@@ -24,6 +24,8 @@ struct SettingsView: View {
     @State private var isConfirmingSignOut = false
     /// Loaded when Settings opens, for the row's device count, and handed to the Trmnl screen.
     @State private var trmnlModel: TrmnlSettingsModel?
+    /// Whether the owner edited the solar system; read again on return from the Solar System screen.
+    @State private var hasManualLayout = false
 
     var body: some View {
         List {
@@ -62,8 +64,9 @@ struct SettingsView: View {
                 }
                 NavigationLink(value: SettingsDestination.solarSystem()) {
                     LabeledContent {
-                        if siteHistory != nil {
-                            Text(SiteHistoryPresentation(status: siteHistory, now: .now).rowValue)
+                        if siteHistory != nil || hasManualLayout {
+                            Text(SiteHistoryPresentation(
+                                status: siteHistory, now: .now, hasManualLayout: hasManualLayout).rowValue)
                         }
                     } label: {
                         Label("Solar System", systemImage: "sun.max")
@@ -97,6 +100,7 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .inlineNavigationTitle()
         .task(id: site.id) { await loadTrmnlDevices() }
+        .onAppear { Task { hasManualLayout = await coordinator.manualLayoutRecord()?.manualLayout != nil } }
         .navigationDestination(for: SettingsDestination.self) { destination in
             switch destination {
             case .ratePlans:
