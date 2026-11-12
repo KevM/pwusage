@@ -64,7 +64,8 @@ struct RatePlanEditorFlowTests {
         )
         #expect(state.path == [.seasons(isWizard: true)])
         #expect(state.draft.name.isEmpty)
-        #expect(state.draft.effectiveName == "Utility Rate Plan")
+        #expect(state.draft.nameProblem == "Name this rate plan.")
+        #expect(!state.canSubmit)
 
         state.finishStep(from: .seasons(isWizard: true))
         let expectedScheduleRoute: RatePlanEditorRoute = .schedule(
@@ -120,7 +121,12 @@ struct RatePlanEditorFlowTests {
     @Test("Toolbar Save is available for new plans, and for existing plans only once edited")
     func toolbarSaveAvailability() throws {
         let timeZone = TimeZone(identifier: "America/Chicago") ?? .gmt
-        let blank = RatePlanEditorState(mode: .add, timeZone: timeZone, currency: "USD")
+        let blank = RatePlanEditorState(mode: .add, timeZone: timeZone, currency: "USD", takenNames: ["Taken"])
+        #expect(!blank.canSubmit) // needs a name
+        blank.draft.name = "taken "
+        #expect(blank.draft.nameProblem?.contains("already named") == true)
+        #expect(!blank.canSubmit)
+        blank.draft.name = "Fresh Plan"
         #expect(blank.canSubmit)
 
         let timeline = try MobileContractDecoder.make().decode(

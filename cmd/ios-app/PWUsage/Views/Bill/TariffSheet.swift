@@ -238,6 +238,7 @@ struct TariffSheet: View {
                 mode: mode,
                 timeZone: timeline.flatMap { TimeZone(identifier: $0.timezone) } ?? .current,
                 currency: timeline?.currency ?? "USD",
+                takenNames: takenPlanNames(for: mode),
                 onCreate: { writeRequest in
                     timeline = try await actions.createPeriod(writeRequest)
                 },
@@ -246,6 +247,16 @@ struct TariffSheet: View {
                 }
             )
         }
+    }
+
+    /// Names of the plans a new or edited plan must not reuse. An edited plan keeps its own name,
+    /// including the other date ranges of the same plan.
+    private func takenPlanNames(for mode: RatePlanEditorMode) -> [String] {
+        var editedTariffID: Int?
+        if case .edit(let period) = mode { editedTariffID = period.tariffId }
+        return (timeline?.periods ?? [])
+            .filter { $0.tariffId != editedTariffID }
+            .map(\.name)
     }
 
     private var isDeletingBinding: Binding<Bool> {

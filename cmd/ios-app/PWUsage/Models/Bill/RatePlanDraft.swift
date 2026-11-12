@@ -7,6 +7,8 @@ struct RatePlanDraft: Equatable, Sendable {
     var effectiveTo: Date
     var timeZone: TimeZone
     var seasons: [SeasonDraft]
+    /// Names of the site's other rate plans; a plan's name must be new.
+    var takenNames: [String] = []
 
     static func makeBlank(timeZone: TimeZone) -> RatePlanDraft {
         let today = startOfToday(in: timeZone)
@@ -182,6 +184,7 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     func validate(today: Date = .now) -> String? {
+        if let nameError = nameProblem { return nameError }
         if let dateError = validateDates(today: today) { return dateError }
         if let monthError = validateMonthCoverage() { return monthError }
         for season in seasons {
@@ -211,8 +214,19 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     var effectiveName: String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Utility Rate Plan" : trimmed
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Why the name can't be used yet, or nil when it can.
+    var nameProblem: String? {
+        if effectiveName.isEmpty { return "Name this rate plan." }
+        let wanted = effectiveName.lowercased()
+        if takenNames.contains(where: {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wanted
+        }) {
+            return "Another rate plan is already named \"\(effectiveName)\". Choose a different name."
+        }
+        return nil
     }
 
     private func validateDates(today: Date) -> String? {

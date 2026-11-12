@@ -10,6 +10,7 @@ struct RatePlanEditorFlow: View {
         mode: RatePlanEditorMode,
         timeZone: TimeZone,
         currency: String,
+        takenNames: [String],
         onCreate: @escaping @MainActor (TariffPlanWriteRequest) async throws -> Void,
         onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void
     ) {
@@ -18,6 +19,7 @@ struct RatePlanEditorFlow: View {
                 mode: mode,
                 timeZone: timeZone,
                 currency: currency,
+                takenNames: takenNames,
                 onCreate: onCreate,
                 onUpdate: onUpdate
             )
@@ -146,12 +148,16 @@ private struct RatePlanSummaryScreen: View {
 
     private var nameSection: some View {
         Section {
-            TextField("Utility Rate Plan", text: $state.draft.name)
+            TextField("Rate plan name", text: $state.draft.name)
                 .font(.headline)
         } header: {
             Text("Rate Plan Name")
         } footer: {
-            Text("If left blank, this plan saves as \"Utility Rate Plan\".")
+            if let problem = state.draft.nameProblem {
+                Text(problem).foregroundStyle(.red)
+            } else {
+                Text("Each rate plan needs its own name.")
+            }
         }
     }
 

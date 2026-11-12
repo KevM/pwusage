@@ -37,6 +37,7 @@ final class RatePlanEditorState {
         mode: RatePlanEditorMode,
         timeZone: TimeZone,
         currency: String,
+        takenNames: [String] = [],
         onCreate: @escaping @MainActor (TariffPlanWriteRequest) async throws -> Void = { _ in },
         onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void = { _, _ in }
     ) {
@@ -56,8 +57,10 @@ final class RatePlanEditorState {
             initial = RatePlanDraft(editing: period, timeZone: timeZone)
             path = []
         }
-        draft = initial
-        initialDraft = initial
+        var named = initial
+        named.takenNames = takenNames
+        draft = named
+        initialDraft = named
     }
 
     /// True once the user has changed anything, so a stray swipe cannot throw the work away.

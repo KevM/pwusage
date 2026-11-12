@@ -16,7 +16,7 @@ vi.mock('./db', () => ({
 }));
 
 import { TariffRepo } from './tariff-repo';
-import { TariffTimelineRepo } from './tariff-timeline-repo';
+import { recomputeIsCurrentTariff, TariffTimelineRepo } from './tariff-timeline-repo';
 
 describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync precedence (postgres)', () => {
   afterAll(async () => {
@@ -174,5 +174,53 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       `SELECT effective_to::text FROM "TariffEffectivePeriod" WHERE site_id = 's3'`
     );
     expect(rows).toEqual([{ effective_to: to }]);
+  });
+  it('does not mark a plan that has not started as current while today is in a gap', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s4', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const day = (offset: number): string => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const a = (await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current) VALUES ('s4', 'Plan A', 1, false) RETURNING id`
+    )).rows[0]!.id;
+    const b = (await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current) VALUES ('s4', 'Plan B', 2, false) RETURNING id`
+    )).rows[0]!.id;
+    await local.database.query(
+      `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+       VALUES ('s4', $1, $3::date, $4::date, 'manual'), ('s4', $2, $5::date, NULL, 'manual')`,
+      [a, b, day(-60), day(-2), day(30)]
+    );
+    const client = await local.database.connect();
+    try {
+      const chosen = await recomputeIsCurrentTariff(client, 's4', day(0));
+      expect(chosen).toBe(a);
+    } finally {
+      client.release();
+    }
+  });
+  it('requires rate plan names to be unique per site', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s5', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    const input = (name: string, from: string, to: string | null) => ({
+      name,
+      effectiveFrom: from,
+      effectiveTo: to,
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+      }],
+    });
+    const first = await repo.createManualPeriod('s5', 'u1', input('Home Plan', '2024-01-01', '2024-12-31'));
+    await expect(repo.createManualPeriod('s5', 'u1', input('  home plan ', '2025-01-01', null)))
+      .rejects.toThrow(/already exists/);
+
+    // Editing a plan's own dates or rates keeps its name without tripping the check.
+    const id = first.periods.find(p => p.name === 'Home Plan')!.periodId;
+    const { timeline } = await repo.updatePeriod('s5', id, 'u1', { effectiveTo: '2024-11-30' });
+    const currentId = timeline.periods.find(p => p.name === 'Home Plan')!.periodId;
+
+    // Renaming onto another plan's name is refused.
+    await repo.createManualPeriod('s5', 'u1', input('Other Plan', '2025-01-01', null));
+    await expect(repo.updatePeriod('s5', currentId, 'u1', { name: 'OTHER PLAN' })).rejects.toThrow(/already exists/);
   });
 });

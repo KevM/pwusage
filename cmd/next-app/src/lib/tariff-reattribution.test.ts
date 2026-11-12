@@ -356,7 +356,7 @@ describe('tariff-reattribution engine', () => {
       clientHandler = async (sql: string, params?: unknown[]) => {
         if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
         if (sql.includes('SELECT * FROM "SiteTariffReattribution"')) return { rows: [] };
-        if (sql.includes('MIN(effective_from)')) return { rows: nextFrom === 'none' ? [] : [{ next_from: nextFrom }] };
+        if (sql.includes('AS next_from')) return { rows: nextFrom === 'none' ? [] : [{ next_from: nextFrom }] };
         if (sql.includes('SELECT COUNT(*)')) { countParams = params ?? []; return { rows: [{ count: '3' }] }; }
         if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
           return { rows: [{
@@ -378,6 +378,34 @@ describe('tariff-reattribution engine', () => {
     expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', '2026-02-28']);
     await run(null); // nothing follows: the plan is the fallback from here on
     expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', null]);
+  });
+
+  it('reaches back before the earliest plan, which prices the days that precede it', async () => {
+    let countParams: unknown[] = [];
+    const run = async (earliest: string) => {
+      clientHandler = async (sql: string, params?: unknown[]) => {
+        if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
+        if (sql.includes('SELECT * FROM "SiteTariffReattribution"')) return { rows: [] };
+        if (sql.includes('AS earliest_from')) return { rows: [{ earliest_from: earliest }] };
+        if (sql.includes('SELECT COUNT(*)')) { countParams = params ?? []; return { rows: [{ count: '3' }] }; }
+        if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+          return { rows: [{
+            site_id: 's1', status: 'pending', generation: 1, from_date: '2015-01-01', to_date: null,
+            cursor_day_start: null, total_days: 3, processed_days: 0, updated_days: 0, attempt_count: 0,
+            last_error: null, requested_by_user_id: 'u1', updated_at: new Date(),
+          }] };
+        }
+        return { rows: [] };
+      };
+      await enqueueTariffReattribution({
+        siteId: 's1', fromDate: '2026-02-01', toDate: null, requestedByUserId: 'u1', trigger: 'update',
+      });
+    };
+
+    await run('2026-02-01'); // the edited plan is the earliest: January falls back to it
+    expect(countParams).toEqual(['s1', 'America/Chicago', '2015-01-01', null]);
+    await run('2025-06-01'); // an earlier plan exists: nothing before February changes
+    expect(countParams).toEqual(['s1', 'America/Chicago', '2026-02-01', null]);
   });
 
   it('marks job failed with sanitized error token once attempt_count reaches REATTRIBUTION_MAX_ATTEMPTS', async () => {

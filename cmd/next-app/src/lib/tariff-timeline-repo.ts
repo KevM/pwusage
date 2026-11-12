@@ -158,10 +158,20 @@ export async function recomputeIsCurrentTariff(
      ORDER BY effective_from DESC LIMIT 1`,
     [siteId, todaySiteLocal]
   );
-  const fallback = active.rows[0]?.tariff_id ?? (await client.query<{ tariff_id: number }>(
-    'SELECT tariff_id FROM "TariffEffectivePeriod" WHERE site_id = $1 ORDER BY effective_from DESC LIMIT 1',
-    [siteId]
-  )).rows[0]?.tariff_id ?? null;
+  // In a gap, price from the nearest earlier plan, and before the first plan from the earliest:
+  // the same policy as resolveTariffForDate. Never a plan that has not started.
+  const fallback = active.rows[0]?.tariff_id
+    ?? (await client.query<{ tariff_id: number }>(
+      `SELECT tariff_id FROM "TariffEffectivePeriod"
+       WHERE site_id = $1 AND effective_to IS NOT NULL AND effective_to < $2::date
+       ORDER BY effective_to DESC LIMIT 1`,
+      [siteId, todaySiteLocal]
+    )).rows[0]?.tariff_id
+    ?? (await client.query<{ tariff_id: number }>(
+      'SELECT tariff_id FROM "TariffEffectivePeriod" WHERE site_id = $1 ORDER BY effective_from ASC LIMIT 1',
+      [siteId]
+    )).rows[0]?.tariff_id
+    ?? null;
   if (fallback === null) return null;
   // Demote before promoting so non-deferrable partial unique index tariff_current_uidx never trips on scan order.
   await client.query(
@@ -236,6 +246,25 @@ async function healVacatedIntervalWithTesla(
         updatedByUserId: right.updatedByUserId,
       }],
     });
+  }
+}
+
+/** Rate plan names are unique per site (ignoring case and edge spaces) so they never get confused. */
+async function assertPlanNameAvailable(
+  client: PoolClient,
+  siteId: string,
+  name: string,
+  exceptTariffId: number | null
+): Promise<void> {
+  const clash = await client.query(
+    `SELECT 1 FROM "TariffEffectivePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id
+     WHERE p.site_id = $1 AND lower(btrim(t.name)) = lower(btrim($2))
+       AND ($3::int IS NULL OR t.id <> $3)
+     LIMIT 1`,
+    [siteId, name, exceptTariffId]
+  );
+  if ((clash.rowCount ?? 0) > 0) {
+    throw new TariffValidationError(`A rate plan named "${name.trim()}" already exists. Choose a different name.`);
   }
 }
 
@@ -436,6 +465,7 @@ export class TariffTimelineRepo {
       if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
       const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
       validated = validateTariffPlanInput(input, today);
+      await assertPlanNameAvailable(client, siteId, validated.name, null);
 
       const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
       newTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false);
@@ -531,6 +561,9 @@ export class TariffTimelineRepo {
           seasons: patch.seasons ?? currentSeasons,
         }, today);
         seasonCount = validated.seasons.length;
+        if (validated.name.trim().toLowerCase() !== (currentTariff.name ?? '').trim().toLowerCase()) {
+          await assertPlanNameAvailable(client, siteId, validated.name, target.tariffId);
+        }
         const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
         const newHash = tariffContentHash(parsed);
         if (newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {

@@ -18,6 +18,8 @@ export const REATTRIBUTION_CHUNK_DAYS = 15;
 export const REATTRIBUTION_MAX_TIME_MS = 35_000;
 export const REATTRIBUTION_AFTER_MAX_TIME_MS = 6_000;
 export const REATTRIBUTION_MAX_ATTEMPTS = 5;
+/** Start of history for a re-attribution that must reach back before the earliest plan. */
+const REATTRIBUTION_HISTORY_START = '2015-01-01';
 
 interface ArchiveMetadataScanRow {
   day_start: Date;
@@ -128,6 +130,16 @@ export async function enqueueTariffReattribution(params: {
       }
     }
 
+    // Days before the earliest plan are priced from it, so editing it changes them too.
+    const earliestRes = await client.query<{ earliest_from: string | null }>(
+      'SELECT MIN(effective_from)::text AS earliest_from FROM "TariffEffectivePeriod" WHERE site_id = $1',
+      [params.siteId]
+    );
+    const earliestFrom = earliestRes.rows[0]?.earliest_from?.slice(0, 10);
+    if (earliestFrom && effectiveFrom <= earliestFrom) {
+      effectiveFrom = REATTRIBUTION_HISTORY_START;
+    }
+
     const countRes = await client.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count
        FROM "EnergyDayArchive"
@@ -207,7 +219,7 @@ export async function runSiteReattribution(params: {
   }
 
   const expectedGeneration = Number(job.generation);
-  const fromDate = formatDateCol(job.from_date) ?? '2015-01-01';
+  const fromDate = formatDateCol(job.from_date) ?? REATTRIBUTION_HISTORY_START;
   const toDate = formatDateCol(job.to_date);
   let cursorDayStart: Date | null = job.cursor_day_start ? new Date(job.cursor_day_start) : null;
   let processedDays = Number(job.processed_days);

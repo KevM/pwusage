@@ -195,6 +195,7 @@ struct RatePlanDraftTests {
     @Test("Dragging a season boundary stops at the adjacent seasons' combined span")
     func seasonBoundaryClampsToNeighbours() {
         var draft = RatePlanDraft.makeBlank(timeZone: TimeZone(identifier: "America/Chicago") ?? .gmt)
+        draft.name = "Plan"
         draft.seasons = [
             SeasonDraft.makeDefault(name: "A", fromMonth: 1, toMonth: 4),
             SeasonDraft.makeDefault(name: "B", fromMonth: 5, toMonth: 8),
