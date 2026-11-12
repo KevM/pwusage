@@ -143,4 +143,18 @@ struct SiteDeepHistoryTests {
         #expect(try await deepStore.progress(scope: scope) == nil)
         #expect(environment.stored.isEmpty)
     }
+
+    @Test func progressSavedBeforeStopWasRecordedStillLoads() async throws {
+        let json = """
+        {"account-a|site-1":{"oldestChecked":"2026-10-24","phase":{"active":{}},"daysLoaded":9,"failures":0}}
+        """
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: directory.appendingPathComponent("deep-history.json"))
+        let progress = try #require(try await deepStore.progress(scope: scope))
+        #expect(progress.oldestChecked == "2026-10-24")
+        #expect(!progress.userStopped)
+        let environment = FakeOnboardingEnvironment()
+        _ = await make(environment).run(scope: scope, maxSlices: 1)
+        #expect(environment.requests.map(\.from) == ["2026-10-21"])
+    }
 }

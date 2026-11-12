@@ -22,6 +22,19 @@ struct SiteDeepHistoryProgress: Codable, Equatable, Sendable {
     /// The user pressed Stop: no run, foreground or background, until they continue.
     var userStopped = false
 
+    /// Progress saved before a field existed still loads, with that field at its default.
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        oldestChecked = try values.decode(String.self, forKey: .oldestChecked)
+        historyStart = try values.decodeIfPresent(String.self, forKey: .historyStart)
+        phase = try values.decodeIfPresent(Phase.self, forKey: .phase) ?? .active
+        daysLoaded = try values.decodeIfPresent(Int.self, forKey: .daysLoaded) ?? 0
+        failures = try values.decodeIfPresent(Int.self, forKey: .failures) ?? 0
+        nextAttemptAt = try values.decodeIfPresent(Date.self, forKey: .nextAttemptAt)
+        waitReason = try values.decodeIfPresent(SiteHistoryOnboarding.WaitReason.self, forKey: .waitReason)
+        userStopped = try values.decodeIfPresent(Bool.self, forKey: .userStopped) ?? false
+    }
+
     init(oldestChecked: String, historyStart: String? = nil) {
         self.oldestChecked = oldestChecked
         self.historyStart = historyStart
