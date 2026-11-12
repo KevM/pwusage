@@ -126,6 +126,7 @@ private struct ManualSystemSection: View {
             }
             ForEach($system.faces) { $face in
                 ManualFaceFields(face: $face, detected: detected, focus: focus,
+                                 number: faceNumber(face),
                                  onRemove: system.faces.count > 1 ? { removeFace(face) } : nil)
             }
             Button("Add Face") { system.addFace(detected: detected) }
@@ -133,8 +134,12 @@ private struct ManualSystemSection: View {
         } header: {
             Text(system.label ?? "System \(number)")
         } footer: {
-            Text("A face is one roof plane.")
+            Text("A face is one roof plane. Swipe a face’s title to remove it.")
         }
+    }
+
+    private func faceNumber(_ face: ManualSolarFace) -> Int {
+        (system.faces.firstIndex { $0.id == face.id } ?? 0) + 1
     }
 
     private func removeFace(_ face: ManualSolarFace) {
@@ -158,28 +163,43 @@ private struct ManualFaceFields: View {
     @Binding var face: ManualSolarFace
     let detected: DetectedSolarLayout?
     let focus: FocusState<ManualLayoutField?>.Binding
+    let number: Int
     /// Nil for the system's only face, which cannot be removed.
     let onRemove: (() -> Void)?
 
-    /// Each field is its own list row: several fields in one row compete for the tap and the caret
-    /// lands in the wrong one, or nowhere.
+    @State private var isExpanded = true
+
+    /// The face is a group: its title row swipes away the whole face, and its fields sit inset
+    /// beneath it. Each field is still its own list row, since several fields in one row compete
+    /// for the tap and the caret lands in the wrong one, or nowhere.
     var body: some View {
-        TextField("Face name (optional)", text: $face.label.textFieldValue)
-            .font(.subheadline.weight(.semibold))
-        numberRow("Panels", field: .panels(face.id)) {
-            TextField("Count", value: $face.panelCount, format: .number)
+        DisclosureGroup(isExpanded: $isExpanded) {
+            TextField("Face name (optional)", text: $face.label.textFieldValue)
+            numberRow("Panels", field: .panels(face.id)) {
+                TextField("Count", value: $face.panelCount, format: .number)
+            }
+            numberRow("Panel watts", field: .watts(face.id)) {
+                TextField("Watts", value: $face.panelWatts, format: .number)
+            }
+            numberRow("Direction (°)", field: .azimuth(face.id)) {
+                TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
+            }
+            numberRow("Tilt (°)", field: .tilt(face.id)) {
+                TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
+            }
+        } label: {
+            HStack {
+                Text(face.label ?? "Face \(number)").font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(face.panelCount) × \(Int(face.panelWatts.rounded())) W")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
-        numberRow("Panel watts", field: .watts(face.id)) {
-            TextField("Watts", value: $face.panelWatts, format: .number)
-        }
-        numberRow("Direction (°)", field: .azimuth(face.id)) {
-            TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
-        }
-        numberRow("Tilt (°)", field: .tilt(face.id)) {
-            TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
-        }
-        if let onRemove {
-            Button("Remove Face", role: .destructive, action: onRemove)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if let onRemove {
+                Button("Remove", role: .destructive, action: onRemove)
+            }
         }
     }
 
