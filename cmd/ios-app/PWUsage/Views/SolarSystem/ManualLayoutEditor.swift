@@ -105,7 +105,9 @@ struct ManualLayoutEditor: View {
     }
 }
 
-/// One system: its label, install month, inverter rating and faces.
+/// One system: its label, install month and faces. The inverter rating is not asked for: the
+/// detector measures clipping from production, which beats a typed number (and microinverters have
+/// no single system-wide limit).
 private struct ManualSystemSection: View {
     @Binding var system: ManualSolarSystem
     let number: Int
@@ -121,9 +123,6 @@ private struct ManualSystemSection: View {
             if system.installDate != nil {
                 DatePicker(
                     "Installed", selection: installDate, in: ...Date.now, displayedComponents: .date)
-            }
-            ManualNumberRow(title: "Inverter (kW)", field: .inverter(system.id), focus: focus) {
-                TextField("Optional", value: $system.inverterAcKw, format: .number)
             }
             ForEach($system.faces) { $face in
                 ManualFaceFields(face: $face, detected: detected, focus: focus)
@@ -190,7 +189,7 @@ private struct ManualFaceFields: View {
 
 /// Which number field has the keyboard.
 enum ManualLayoutField: Hashable {
-    case inverter(UUID), panels(UUID), watts(UUID), azimuth(UUID), tilt(UUID)
+    case panels(UUID), watts(UUID), azimuth(UUID), tilt(UUID)
 }
 
 /// A title and a right-aligned number field. The whole row focuses the field, so a tap on the title
