@@ -53,9 +53,13 @@ struct ManualLayoutEditor: View {
                 // The decimal pad has no Return key.
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("Done") { focus = nil }
+                    Button("Done") {
+                        focus = nil
+                        ManualLayoutKeyboard.dismiss()
+                    }
                 }
             }
+            .selectsNumbersOnFocus()
             .navigationDestination(isPresented: $isReviewing) {
                 ManualLayoutReview(layout: draft, detected: detected, isSaving: isSaving) { await save(draft) }
             }
@@ -212,9 +216,10 @@ private struct ManualFaceFields: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 Text(face.label ?? "Face \(number)").font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(face.panelCount) × \(Int(face.panelWatts.rounded())) W")
+                // Red when a value is out of range, so it shows even with the face collapsed.
+                Text(face.isValid ? "\(face.panelCount) × \(Int(face.panelWatts.rounded())) W" : "Needs a fix")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(face.isValid ? Color.secondary : Color.red)
             }
             .frame(minHeight: 44)
             .contentShape(Rectangle())
@@ -226,17 +231,27 @@ private struct ManualFaceFields: View {
     @ViewBuilder private var fields: some View {
         TextField("Face name (optional)", text: $face.label.textFieldValue)
             .listRowInsets(Self.fieldInsets)
-        numberRow("Panels", field: .panels(face.id)) {
-            TextField("Count", value: $face.panelCount, format: .number)
+        numberRow("Panels", field: .panels(face.id), invalid: .panelCount) {
+            TextField("Count", value: $face.panelCount, format: .number.grouping(.never))
         }
-        numberRow("Panel watts", field: .watts(face.id)) {
-            TextField("Watts", value: $face.panelWatts, format: .number)
+        numberRow("Panel watts", field: .watts(face.id), invalid: .panelWatts) {
+            TextField("Watts", value: $face.panelWatts, format: .number.grouping(.never))
         }
-        numberRow("Direction (°)", field: .azimuth(face.id)) {
-            TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
+        numberRow("Direction (°)", field: .azimuth(face.id), invalid: .azimuth) {
+            TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number.grouping(.never))
         }
-        numberRow("Tilt (°)", field: .tilt(face.id)) {
-            TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
+        numberRow("Tilt (°)", field: .tilt(face.id), invalid: .tilt) {
+            TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number.grouping(.never))
+        }
+    }
+
+    /// What an invalid value of each field should say.
+    private static func message(for field: ManualSolarFace.Field) -> String {
+        switch field {
+        case .panelCount: "Enter 1 to 1,000 panels."
+        case .panelWatts: "Panel watts are between 50 and 1,000."
+        case .azimuth: "Direction is 0 to 360°. South is 180°."
+        case .tilt: "Tilt is 0 to 90°. Flat is 0°."
         }
     }
 
@@ -244,9 +259,12 @@ private struct ManualFaceFields: View {
     private static let fieldInsets = EdgeInsets(top: 0, leading: 40, bottom: 0, trailing: 20)
 
     private func numberRow(
-        _ title: String, field: ManualLayoutField, @ViewBuilder content: () -> some View
+        _ title: String, field: ManualLayoutField, invalid: ManualSolarFace.Field,
+        @ViewBuilder content: () -> some View
     ) -> some View {
-        ManualNumberRow(title: title, field: field, focus: focus, content: content)
+        ManualNumberRow(
+            title: title, field: field, focus: focus,
+            error: face.invalidFields.contains(invalid) ? Self.message(for: invalid) : nil, content: content)
             .listRowInsets(Self.fieldInsets)
     }
 
@@ -268,16 +286,24 @@ private struct ManualNumberRow<Content: View>: View {
     let title: String
     let field: ManualLayoutField
     let focus: FocusState<ManualLayoutField?>.Binding
+    /// Why the value is not accepted; the value turns red and the reason shows under the row.
+    var error: String?
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack {
-            Text(title)
-            content
-                .multilineTextAlignment(.trailing)
-                .decimalKeyboard()
-                .focused(focus, equals: field)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                content
+                    .multilineTextAlignment(.trailing)
+                    .decimalKeyboard()
+                    .foregroundStyle(error == nil ? Color.primary : Color.red)
+                    .focused(focus, equals: field)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
         }
         .frame(minHeight: 44)
         .contentShape(Rectangle())
