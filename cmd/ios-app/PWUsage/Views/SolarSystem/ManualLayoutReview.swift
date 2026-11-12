@@ -32,14 +32,25 @@ struct ManualLayoutReview: View {
                 }
             }
             differencesSection
-            Section {
-                Button("Save") { Task { await onSave() } }
-                    .emphasisProminentButton()
-                    .disabled(isSaving)
-            }
         }
         .navigationTitle("Review")
         .inlineNavigationTitle()
+        .safeAreaInset(edge: .bottom) { saveBar }
+    }
+
+    /// Save is a full-width button pinned to the bottom, so it is always in reach and easy to hit.
+    private var saveBar: some View {
+        Button {
+            Task { await onSave() }
+        } label: {
+            Text("Save").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .emphasisProminentButton()
+        .controlSize(.large)
+        .disabled(isSaving)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 
     private func entered(_ face: ManualSolarFace) -> some View {
