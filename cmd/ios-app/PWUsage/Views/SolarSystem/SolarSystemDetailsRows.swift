@@ -2,26 +2,22 @@ import SwiftUI
 
 /// The found system, as rows under its render: total size, then each panel group's size, direction,
 /// tilt and confidence. While loading continues it says "Improving" in one word. Panels the owner
-/// entered replace the found groups, marked as entered.
+/// entered replace the found groups.
 struct SolarSystemDetailsRows: View {
     let layout: SolarLayout
     var manual: ManualSolarLayout?
     var isImproving = false
-    /// Opens the layout editor; nil hides the button.
-    var onEditLayout: (() -> Void)?
 
     private var groups: [SolarLayoutPlane] { layout.planes.sorted { $0.dcKwp > $1.dcKwp } }
 
     var body: some View {
         if let manual {
+            // Detection confidence says nothing about values the owner entered, so it is not shown.
             ManualLayoutRows(layout: manual, detected: layout)
         } else {
             detectedRows
+            confidenceRow
         }
-        if let onEditLayout {
-            Button(manual == nil ? "Enter Your Panels" : "Edit Your Panels", action: onEditLayout)
-        }
-        confidenceRow
     }
 
     @ViewBuilder private var detectedRows: some View {
@@ -40,7 +36,7 @@ struct SolarSystemDetailsRows: View {
     }
 
     private var confidenceRow: some View {
-        LabeledContent(manual == nil ? "Confidence" : "Found with confidence") {
+        LabeledContent("Confidence") {
             HStack(spacing: 6) {
                 Text(layout.confidence == .high ? "High" : "Medium")
                 if isImproving {
@@ -65,18 +61,13 @@ struct SolarSystemDetailsRows: View {
     }
 }
 
-/// Entered systems and faces, marked as entered rather than found.
+/// The owner's systems and faces, in place of the found groups. The Settings row says Configured.
 private struct ManualLayoutRows: View {
     let layout: ManualSolarLayout
     let detected: SolarLayout
 
     var body: some View {
-        LabeledContent("Total size") {
-            HStack(spacing: 6) {
-                Text(SolarSystemDetailsRows.kilowatts(layout.nameplateKw(on: .now)))
-                Text("Entered").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }
-        }
+        LabeledContent("Total size", value: SolarSystemDetailsRows.kilowatts(layout.nameplateKw(on: .now)))
         ForEach(Array(layout.systems.enumerated()), id: \.element.id) { index, system in
             VStack(alignment: .leading, spacing: 4) {
                 Text(system.label ?? "System \(index + 1)").font(.subheadline.weight(.semibold))

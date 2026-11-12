@@ -15,6 +15,7 @@ struct ManualLayoutEditor: View {
     @State private var isSaving = false
     @State private var didFailToSave = false
     @State private var isReviewing = false
+    @FocusState private var focus: ManualLayoutField?
 
     init(
         initial: ManualSolarLayout?, detected: DetectedSolarLayout?,
@@ -32,7 +33,7 @@ struct ManualLayoutEditor: View {
                 ForEach($draft.systems) { $system in
                     ManualSystemSection(
                         system: $system, number: number(of: system), detected: detected,
-                        canRemove: draft.systems.count > 1) { remove(system) }
+                        canRemove: draft.systems.count > 1, focus: $focus) { remove(system) }
                 }
                 Section {
                     Button("Add Another System") { draft.systems.append(newSystem()) }
@@ -44,12 +45,21 @@ struct ManualLayoutEditor: View {
                     Section { Text("Couldn’t save your panels. Try again.").foregroundStyle(.red) }
                 }
             }
-            .navigationTitle("Your Panels")
+            .navigationTitle("Edit Solar System")
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { primaryButton }
+                // The decimal pad has no Return key.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focus = nil
+                        ManualLayoutKeyboard.dismiss()
+                    }
+                }
             }
+            .selectsNumbersOnFocus()
             .navigationDestination(isPresented: $isReviewing) {
                 ManualLayoutReview(layout: draft, detected: detected, isSaving: isSaving) { await save(draft) }
             }
@@ -99,12 +109,15 @@ struct ManualLayoutEditor: View {
     }
 }
 
-/// One system: its label, install month, inverter rating and faces.
+/// One system: its label, install month and faces. The inverter rating is not asked for: the
+/// detector measures clipping from production, which beats a typed number (and microinverters have
+/// no single system-wide limit).
 private struct ManualSystemSection: View {
     @Binding var system: ManualSolarSystem
     let number: Int
     let detected: DetectedSolarLayout?
     let canRemove: Bool
+    let focus: FocusState<ManualLayoutField?>.Binding
     let onRemove: () -> Void
 
     var body: some View {
@@ -115,22 +128,41 @@ private struct ManualSystemSection: View {
                 DatePicker(
                     "Installed", selection: installDate, in: ...Date.now, displayedComponents: .date)
             }
-            LabeledContent("Inverter (kW)") {
-                TextField("Optional", value: $system.inverterAcKw, format: .number)
-                    .multilineTextAlignment(.trailing)
-                    .decimalKeyboard()
-            }
-            ForEach($system.faces) { $face in
-                ManualFaceFields(face: $face, detected: detected)
-            }
-            .onDelete { system.faces.remove(atOffsets: $0) }
-            Button("Add Face") { system.addFace(detected: detected) }
             if canRemove { Button("Remove System", role: .destructive, action: onRemove) }
         } header: {
             Text(system.label ?? "System \(number)")
-        } footer: {
-            Text("A face is one roof plane. Swipe a face to delete it.")
         }
+        Section {
+            ForEach($system.faces) { $face in
+                ManualFaceFields(face: $face, detected: detected, focus: focus,
+                                 number: faceNumber(face),
+                                 onRemove: system.faces.count > 1 ? { removeFace(face) } : nil)
+            }
+        } header: {
+            facesHeader
+        } footer: {
+            Text("A face is one roof plane. Swipe a face’s title to remove it.")
+        }
+    }
+
+    /// "Faces" with a + at the right, so the faces read as one group under the system.
+    private var facesHeader: some View {
+        HStack {
+            Text("Faces")
+            Spacer()
+            Button("Add Face", systemImage: "plus") { system.addFace(detected: detected) }
+                .labelStyle(.iconOnly)
+                .textCase(nil)
+                .font(.subheadline.weight(.semibold))
+        }
+    }
+
+    private func faceNumber(_ face: ManualSolarFace) -> Int {
+        (system.faces.firstIndex { $0.id == face.id } ?? 0) + 1
+    }
+
+    private func removeFace(_ face: ManualSolarFace) {
+        system.faces.removeAll { $0.id == face.id }
     }
 
     private var hasInstallDate: Binding<Bool> {
@@ -149,32 +181,133 @@ private struct ManualSystemSection: View {
 private struct ManualFaceFields: View {
     @Binding var face: ManualSolarFace
     let detected: DetectedSolarLayout?
+    let focus: FocusState<ManualLayoutField?>.Binding
+    let number: Int
+    /// Nil for the system's only face, which cannot be removed.
+    let onRemove: (() -> Void)?
 
+    @State private var isExpanded = true
+
+    /// The face is a group: a title row that collapses it and swipes it away, and its fields inset
+    /// beneath. The title is its own row and the fields are separate rows (not a DisclosureGroup,
+    /// whose swipe action spreads to every row inside it), so only the title swipes. Each field is
+    /// also its own row: several fields in one row compete for the tap and the caret lands in the
+    /// wrong one, or nowhere.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField("Face name (optional)", text: $face.label.textFieldValue).font(.subheadline.weight(.semibold))
-            numberRow("Panels") { TextField("Count", value: $face.panelCount, format: .number) }
-            numberRow("Panel watts") { TextField("Watts", value: $face.panelWatts, format: .number) }
-            numberRow("Direction (°)") {
-                TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number)
+        header
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if let onRemove {
+                    Button("Remove", role: .destructive, action: onRemove)
+                }
             }
-            numberRow("Tilt (°)") {
-                TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number)
-            }
+        if isExpanded {
+            fields
         }
-        .padding(.vertical, 2)
     }
 
-    private func numberRow(_ title: String, @ViewBuilder field: () -> some View) -> some View {
-        LabeledContent(title) {
-            field().multilineTextAlignment(.trailing).decimalKeyboard()
+    private var header: some View {
+        Button {
+            withAnimation { isExpanded.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                Text(face.label ?? "Face \(number)").font(.subheadline.weight(.semibold))
+                Spacer()
+                // Red when a value is out of range, so it shows even with the face collapsed.
+                Text(face.isValid ? "\(face.panelCount) × \(Int(face.panelWatts.rounded())) W" : "Needs a fix")
+                    .font(.subheadline)
+                    .foregroundStyle(face.isValid ? Color.secondary : Color.red)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+
+    @ViewBuilder private var fields: some View {
+        TextField("Face name (optional)", text: $face.label.textFieldValue)
+            .listRowInsets(Self.fieldInsets)
+        numberRow("Panels", field: .panels(face.id), invalid: .panelCount) {
+            TextField("Count", value: $face.panelCount, format: .number.grouping(.never))
+        }
+        numberRow("Panel watts", field: .watts(face.id), invalid: .panelWatts) {
+            TextField("Watts", value: $face.panelWatts, format: .number.grouping(.never))
+        }
+        numberRow("Direction (°)", field: .azimuth(face.id), invalid: .azimuth) {
+            TextField(hint(\.azimuth), value: $face.azimuthDegrees, format: .number.grouping(.never))
+        }
+        numberRow("Tilt (°)", field: .tilt(face.id), invalid: .tilt) {
+            TextField(hint(\.tilt), value: $face.tiltDegrees, format: .number.grouping(.never))
+        }
+    }
+
+    /// What an invalid value of each field should say.
+    private static func message(for field: ManualSolarFace.Field) -> String {
+        switch field {
+        case .panelCount: "Enter 1 to 1,000 panels."
+        case .panelWatts: "Panel watts are between 50 and 1,000."
+        case .azimuth: "Direction is 0 to 360°. South is 180°."
+        case .tilt: "Tilt is 0 to 90°. Flat is 0°."
+        }
+    }
+
+    /// The fields sit inset under the title.
+    private static let fieldInsets = EdgeInsets(top: 0, leading: 40, bottom: 0, trailing: 20)
+
+    private func numberRow(
+        _ title: String, field: ManualLayoutField, invalid: ManualSolarFace.Field,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        ManualNumberRow(
+            title: title, field: field, focus: focus,
+            error: face.invalidFields.contains(invalid) ? Self.message(for: invalid) : nil, content: content)
+            .listRowInsets(Self.fieldInsets)
     }
 
     /// The detected value for a face, shown where the field is empty.
     private func hint(_ value: KeyPath<DetectedSolarLayout.Plane, Double>) -> String {
         guard let plane = detected?.planes.max(by: { $0.dcKwp < $1.dcKwp }) else { return "Optional" }
         return "Found: \(Int(plane[keyPath: value].rounded()))"
+    }
+}
+
+/// Which number field has the keyboard.
+enum ManualLayoutField: Hashable {
+    case panels(UUID), watts(UUID), azimuth(UUID), tilt(UUID)
+}
+
+/// A title and a right-aligned number field. The whole row focuses the field, so a tap on the title
+/// or the empty space places the caret, not only a tap on the text itself.
+private struct ManualNumberRow<Content: View>: View {
+    let title: String
+    let field: ManualLayoutField
+    let focus: FocusState<ManualLayoutField?>.Binding
+    /// Why the value is not accepted; the value turns red and the reason shows under the row.
+    var error: String?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                content
+                    .multilineTextAlignment(.trailing)
+                    .decimalKeyboard()
+                    .foregroundStyle(error == nil ? Color.primary : Color.red)
+                    .focused(focus, equals: field)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { focus.wrappedValue = field }
     }
 }
 

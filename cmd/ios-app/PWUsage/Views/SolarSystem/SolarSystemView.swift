@@ -81,7 +81,8 @@ struct SolarSystemView: View {
                 Section {
                     SolarSystemVisual(
                         input: SolarSystemSceneInput(
-                            status: status, layout: layout, isWaiting: presentation.phase == .waiting),
+                            status: status, layout: layout, isWaiting: presentation.phase == .waiting,
+                            manualLayout: record?.manualLayout),
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
@@ -91,11 +92,10 @@ struct SolarSystemView: View {
                     if let layout {
                         SolarSystemDetailsRows(
                             layout: layout, manual: record?.manualLayout,
-                            isImproving: presentation.phase == .foundImproving,
-                            onEditLayout: { isEditingLayout = true })
+                            isImproving: presentation.phase == .foundImproving)
                     }
                 } header: {
-                    Text(layout == nil ? "Find Your Solar System" : "System")
+                    systemHeader(hasLayout: layout != nil)
                 }
             } else if coordinator.solarLayoutStatus == nil {
                 Section { Text("Checking solar forecast availability…") }
@@ -106,6 +106,19 @@ struct SolarSystemView: View {
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    /// The card's title, with Edit at the top right once a system is found, as Smart Shift's cards do.
+    private func systemHeader(hasLayout: Bool) -> some View {
+        HStack {
+            Text(hasLayout ? "System" : "Find Your Solar System")
+            Spacer()
+            if hasLayout {
+                Button("Edit") { isEditingLayout = true }
+                    .textCase(nil)
+                    .font(.subheadline.weight(.medium))
+            }
         }
     }
 

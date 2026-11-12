@@ -1,5 +1,9 @@
 import { flushLogEvents, logEvent, observeRoute } from '@/lib/observability';
 export const dynamic = 'force-dynamic';
+// Without this the function gets the platform default (about 10 s) and is killed
+// mid-run every night, before user verification starts. Hobby caps it at 60 s;
+// the 50 s deadline below stops new work in time to finish.
+export const maxDuration = 60;
 
 import { NextRequest, NextResponse } from 'next/server';
 import { UserRepo } from '@/lib/user-repo';

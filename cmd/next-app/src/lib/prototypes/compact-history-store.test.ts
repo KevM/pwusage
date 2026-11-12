@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import {addDaysInSiteTimezone,parseSiteLocalDateToMidnight} from '../date-utils';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { CompactHistoryStore } from './compact-history-store';
 import { encodeDaySamples } from './compact-energy';
 import { buildDayMetadataV3 } from './compact-day-metadata';
@@ -49,6 +49,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             INSERT INTO "Tariff" VALUES (1,'site','Utility',now());
             INSERT INTO "TariffSeason" VALUES (1,1,'All',1,1,12,31,.3,.04);
             INSERT INTO "TariffSchedule" VALUES (2,1,'Standard',.3,.04,0,6,0,24,0,0);`);
+        await pool.query(readFileSync(new URL('../../../db-migrations/20260524_120000_tariff_versioning.sql', import.meta.url), 'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007093013_compact_energy_history.sql', import.meta.url), 'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007094607_compact_energy_day_metadata.sql', import.meta.url), 'utf8'));
         await pool.query(readFileSync(new URL('../../../db-migrations/20261007122207_compact_energy_scalar_reads.sql',import.meta.url),'utf8'));
@@ -66,6 +67,10 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261027180001_drop_legacy_day_record_state.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, auth_restored_at timestamptz); INSERT INTO "User" VALUES ('owner', NULL)`);
+        const tariffEffectiveMig = readdirSync(new URL('../../../db-migrations', import.meta.url)).find(f => f.endsWith('_historic_effective_tariffs.sql'));
+        if (tariffEffectiveMig) {
+            await pool.query(readFileSync(new URL(`../../../db-migrations/${tariffEffectiveMig}`, import.meta.url), 'utf8'));
+        }
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });
     beforeEach(async () => {
@@ -195,7 +200,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             expect(first).toMatchObject({status:'written',dayStatus:'open',attributionComplete:true});
             const row=(await pool.query('SELECT status,sample_count,expected_slots,attribution,fetched_at FROM "EnergyDayArchive"')).rows[0];
             expect(row).toEqual({status:'open',sample_count:72,expected_slots:288,fetched_at:morning,
-                attribution:{timelineRevision:'current-tariff:1',segments:[{offset:0,tariffId:1,scheduleId:2}]}});
+                attribution:{timelineRevision:'effective-tariff:1',segments:[{offset:0,tariffId:1,scheduleId:2}]}});
             expect(await reader.getRawEnergyData('site',start,morning)).toHaveLength(72);
             expect(await store.getLatestTimestamp('site',morning)).toEqual(new Date(+start+71*300000));
             expect((await store.getLatestEnergyData('site',morning))?.timestamp).toEqual(new Date(+start+71*300000));
@@ -281,7 +286,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             const samples=samplesAt(day,slots,3,'tou');
             expect(await store.writeDay('tou',day,samples,dayEnd,dayEnd)).toMatchObject({status:'written',dayStatus:'complete',attributionComplete:true});
             const row=(await pool.query('SELECT expected_slots,attribution FROM "EnergyDayArchive" WHERE site_id=$1',['tou'])).rows[0];
-            expect(row).toEqual({expected_slots:slots,attribution:{timelineRevision:'current-tariff:3',segments}});
+            expect(row).toEqual({expected_slots:slots,attribution:{timelineRevision:'effective-tariff:3',segments}});
             const reader=new CompactHistoryReader(store,'America/Chicago');
             const rows=await reader.getRawEnergyData('tou',day,dayEnd);
             expect(rows).toHaveLength(slots);
@@ -294,7 +299,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
             await pool.query(`INSERT INTO "Tariff" (id,site_id,name,updated,is_current) VALUES (9,'site','Old',now(),false) ON CONFLICT DO NOTHING`);
             try {
                 await store.writeDay('site',start,samplesAt(start,10),fetched,jobOptions.now);
-                expect((await pool.query('SELECT attribution FROM "EnergyDayArchive"')).rows[0].attribution.timelineRevision).toBe('current-tariff:1');
+                expect((await pool.query('SELECT attribution FROM "EnergyDayArchive"')).rows[0].attribution.timelineRevision).toBe('effective-tariff:1');
             } finally {await pool.query('DELETE FROM "Tariff" WHERE id=9');}
         });
         it('never replaces stored SOC when the SOE request fails',async()=>{

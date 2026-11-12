@@ -104,21 +104,15 @@ struct DemoFixturesTests {
         #expect((20 ... 80).contains(onPeak.first ?? 0))
     }
 
-    @Test("Rate plans show the demo's two periods")
+    @Test("Rate plans show the demo's two rate periods across effective history")
     func tariffsMatchTimeline() throws {
-        let tariffs = DemoFixtures.tariffs(asOf: .now)
-        let periods = tariffs.tariffs.flatMap(\.seasons).flatMap(\.periods)
-        #expect(periods.map(\.name) == ["On-peak", "Off-peak"])
+        let timeline = DemoFixtures.tariffs(asOf: .now)
+        let currentMatch = timeline.periods.first(where: \.isCurrentToday)
+        let current = try #require(currentMatch)
+        let periods = current.seasons.flatMap(\.weekdayPeriods)
+        #expect(periods.map(\.touName) == [.onPeak, .offPeak])
         #expect(periods.map(\.buyRate) == [0.31, 0.10])
         #expect(periods.map(\.sellRate) == [0.04, 0.03])
-        // On-peak is active at any real hour, Sunday night included, so the
-        // page can't promise weekdays or clock times.
-        for period in periods {
-            let text = "\(period.days) \(period.times)"
-            for claim in ["Mon", "Fri", "AM", "PM"] {
-                #expect(!text.contains(claim), "\(period.name) says \(text)")
-            }
-        }
     }
 
     @Test("No real home's identifiers ship in the demo")

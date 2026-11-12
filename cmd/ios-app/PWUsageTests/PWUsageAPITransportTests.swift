@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 extension PWUsageAPITests {
-    @Test("Tariff request is site-scoped and validates response identity")
+    @Test("Tariff timeline request is site-scoped and validates response identity")
     func tariffRequestIsSiteScoped() async throws {
         var recordedURL: URL?
         StubURLProtocol.requestHandler = { request in
@@ -12,25 +12,25 @@ extension PWUsageAPITests {
             let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
             return (response, Data(TariffSheetTests.fixture.utf8))
         }
-        let tariffs = try await api.fetchTariffs(siteID: "a")
-        #expect(recordedURL?.path == "/api/site/a/refresh-tariffs")
+        let timeline = try await api.fetchTariffTimeline(siteID: "a")
+        #expect(recordedURL?.path == "/api/site/a/tariffs")
         let url = try #require(recordedURL)
         #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems == nil)
-        #expect(tariffs.tariffs[0].seasons[0].periods[0].isActive)
+        #expect(timeline.periods[0].isCurrentToday)
         StubURLProtocol.requestHandler = { request in
             let url = try #require(request.url)
             let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
             return (response, Data(TariffSheetTests.fixture.replacingOccurrences(
-                of: "\"id\":\"a\"", with: "\"id\":\"other\"").utf8))
+                of: "\"siteId\":\"a\"", with: "\"siteId\":\"other\"").utf8))
         }
-        await #expect(throws: PWUsageAPIError.invalidResponse) { try await api.fetchTariffs(siteID: "a") }
+        await #expect(throws: PWUsageAPIError.invalidResponse) { try await api.fetchTariffTimeline(siteID: "a") }
     }
 
     @Test("Tariff site ID stays in one encoded path segment")
     func tariffSiteIDIsEncoded() async throws {
         let siteID = "a/b ?#%"
         let body = Data(TariffSheetTests.fixture.replacingOccurrences(
-            of: "\"id\":\"a\"", with: "\"id\":\"a/b ?#%\"").utf8)
+            of: "\"siteId\":\"a\"", with: "\"siteId\":\"a/b ?#%\"").utf8)
         var recordedURL: URL?
         StubURLProtocol.requestHandler = { request in
             recordedURL = request.url
@@ -40,12 +40,51 @@ extension PWUsageAPITests {
             }
             return (response, body)
         }
-        _ = try await api.fetchTariffs(siteID: siteID)
+        _ = try await api.fetchTariffTimeline(siteID: siteID)
         let url = try #require(recordedURL)
         let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
-        #expect(components.percentEncodedPath == "/api/site/a%2Fb%20%3F%23%25/refresh-tariffs")
+        #expect(components.percentEncodedPath == "/api/site/a%2Fb%20%3F%23%25/tariffs")
         #expect(components.query == nil)
         #expect(components.fragment == nil)
+    }
+
+    @Test("Tariff mutations and refresh target expected endpoints and methods")
+    func tariffMutationsTargetExpectedEndpoints() async throws {
+        var calls: [(String, String)] = []
+        StubURLProtocol.requestHandler = { request in
+            let url = try #require(request.url)
+            calls.append((request.httpMethod ?? "GET", url.path))
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+            if url.path.hasSuffix("/refresh-tariffs") {
+                let wrapped = #"{"success":true,"updatedFromTesla":true,"timeline":"# + TariffSheetTests.fixture + "}"
+                return (response, Data(wrapped.utf8))
+            }
+            return (response, Data(TariffSheetTests.fixture.utf8))
+        }
+        let samplePeriod = TimePeriodWindowInput(
+            touName: .offPeak, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03
+        )
+        let write = TariffPlanWriteRequest(
+            name: "Plan", effectiveFrom: "2026-01-01", effectiveTo: nil,
+            seasons: [TariffSeasonInput(
+                name: "All Year", fromMonth: 1, toMonth: 12,
+                weekdayPeriods: [samplePeriod], weekendPeriods: [samplePeriod]
+            )]
+        )
+        _ = try await api.refreshTariffsFromTesla(siteID: "a")
+        _ = try await api.createTariffPeriod(siteID: "a", body: write)
+        _ = try await api.updateTariffPeriod(
+            siteID: "a", periodID: 2, body: TariffPlanPatchRequest(effectiveTo: .set(nil))
+        )
+        _ = try await api.deleteTariffPeriod(siteID: "a", periodID: 2)
+        _ = try await api.retryTariffReattribution(siteID: "a")
+        #expect(calls.map { "\($0.0) \($0.1)" } == [
+            "POST /api/site/a/refresh-tariffs",
+            "POST /api/site/a/tariffs",
+            "PATCH /api/site/a/tariffs/2",
+            "DELETE /api/site/a/tariffs/2",
+            "POST /api/site/a/tariffs/reattribute"
+        ])
     }
 
     @Test("Exchange cookie is sent on later API request")

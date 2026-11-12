@@ -46,12 +46,48 @@ export interface Site {
   live_status_cache?: unknown | null;
 }
 
+export type TariffSource = 'tesla' | 'manual';
+
 export interface Tariff {
   id: number;
   site_id: string;
   updated: Date;
   name: string | null;
+  version?: number;
+  is_current?: boolean;
+  content_hash?: string | null;
+  source?: TariffSource;
+  created_by_user_id?: string | null;
   seasons?: TariffSeason[];
+}
+
+export interface TariffEffectivePeriodRow {
+  id: number;
+  site_id: string;
+  tariff_id: number;
+  effective_from: string;
+  effective_to: string | null;
+  source: TariffSource;
+  updated_by_user_id: string | null;
+  created_at: Date;
+}
+
+export type TariffReattributionStatus = 'pending' | 'running' | 'idle' | 'failed';
+
+export interface SiteTariffReattributionRow {
+  site_id: string;
+  status: TariffReattributionStatus;
+  generation: number;
+  from_date: string;
+  to_date: string | null;
+  cursor_day_start: Date | null;
+  total_days: number;
+  processed_days: number;
+  updated_days: number;
+  attempt_count: number;
+  last_error: string | null;
+  requested_by_user_id: string | null;
+  updated_at: Date;
 }
 
 export interface TariffSeason {
