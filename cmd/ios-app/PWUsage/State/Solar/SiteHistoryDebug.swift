@@ -11,6 +11,8 @@ struct SiteHistoryDebugActions {
     let refresh: @MainActor () async -> Void
     /// Owes the reveal again for the stored layout.
     let replayReveal: @MainActor () async -> Void
+    /// Runs one background opportunity's work now, in the foreground, and schedules the next.
+    let runBackgroundPass: @MainActor () async -> Void
 }
 
 #if DEBUG
@@ -73,6 +75,14 @@ struct SiteHistoryDebugActions {
                     try? await self?.solarRunner?.records.markRevealOwed(
                         scope: SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID))
                     await historyOnboarding.refreshStatus()
+                },
+                runBackgroundPass: { [weak self] in
+                    let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+                    // As iOS would: nothing runs in the foreground meanwhile.
+                    await historyOnboarding.deactivate()
+                    let next = await historyOnboarding.runInBackground(scope: scope)
+                    BackgroundSiteHistoryOnboarding.schedule(earliest: next)
+                    self?.updateHistoryOnboarding()
                 }
             )
         }
@@ -85,10 +95,28 @@ struct SiteHistoryDebugActions {
         @AppStorage private var ignoredSince: Double
         @State private var isConfirmingReset = false
         @State private var isResetting = false
+        @State private var pendingBackground: Date?
+        @State private var isRunningBackgroundPass = false
 
         init(actions: SiteHistoryDebugActions) {
             self.actions = actions
             _ignoredSince = AppStorage(wrappedValue: 0, SiteHistoryDebugSettings.ignoresLayoutKey(actions.scope))
+        }
+
+        @ViewBuilder private var backgroundRows: some View {
+            LabeledContent("Background request") {
+                Text(pendingBackground.map { $0.formatted(date: .omitted, time: .standard) } ?? "None pending")
+            }
+            .task { pendingBackground = await BackgroundSiteHistoryOnboarding.pendingEarliest() }
+            Button("Run Background Pass Now") {
+                isRunningBackgroundPass = true
+                Task {
+                    await actions.runBackgroundPass()
+                    pendingBackground = await BackgroundSiteHistoryOnboarding.pendingEarliest()
+                    isRunningBackgroundPass = false
+                }
+            }
+            .disabled(isRunningBackgroundPass)
         }
 
         var body: some View {
@@ -98,6 +126,7 @@ struct SiteHistoryDebugActions {
                     set: { ignoredSince = $0 ? Date.now.timeIntervalSince1970 : 0 }
                 ))
                 .onChange(of: ignoredSince) { Task { await actions.refresh() } }
+                backgroundRows
                 Button("Replay Reveal") { Task { await actions.replayReveal() } }
                 Button("Reset History on This Device", role: .destructive) { isConfirmingReset = true }
                     .disabled(isResetting)
