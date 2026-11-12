@@ -48,5 +48,9 @@ BEGIN
     IF to_regclass('public."BatteryHoldActivity"') IS NOT NULL THEN
         EXECUTE 'DELETE FROM public."BatteryHoldActivity"';
     END IF;
+    -- Reset mid-flight tariff re-attribution jobs so a restored copy never fires background workers on dev/beta.
+    IF to_regclass('public."SiteTariffReattribution"') IS NOT NULL THEN
+        EXECUTE 'UPDATE public."SiteTariffReattribution" SET status = ''idle'', cursor_day_start = NULL WHERE status IN (''pending'', ''running'')';
+    END IF;
 END
 $$;

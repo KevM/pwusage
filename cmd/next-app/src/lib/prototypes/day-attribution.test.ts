@@ -5,7 +5,7 @@ import { Schedule } from '../schedule';
 import { decodeDaySamples, encodeDaySamples, rollupDay, type EnergySample } from './compact-energy';
 import {
     DAY_GAP_HEAL_DAYS, attributeSamples, currentTariffTimelineRevision, dayStatus, deriveDayAttribution,
-    isAttributionComplete, rollupSamples, validateDayAttribution, type DayAttribution,
+    isAttributionComplete, rollupSamples, tariffTimelineRevision, validateDayAttribution, type DayAttribution,
 } from './day-attribution';
 
 const tz = 'America/Chicago';
@@ -30,13 +30,14 @@ describe('deriveDayAttribution', () => {
     it('run-length encodes a plain day priced at each sample label (interval start)', () => {
         const { start, end } = day('2026-10-14');
         expect(deriveDayAttribution(touSchedule, 82, start, end)).toEqual({
-            timelineRevision: 'current-tariff:82',
+            timelineRevision: 'effective-tariff:82',
             segments: [
                 { offset: 0, tariffId: 82, scheduleId: 301 },
                 { offset: 480, tariffId: 82, scheduleId: 302 },
                 { offset: 1260, tariffId: 82, scheduleId: 301 },
             ],
         });
+        expect(tariffTimelineRevision(82)).toBe('effective-tariff:82');
         expect(currentTariffTimelineRevision(82)).toBe('current-tariff:82');
     });
     it('does not shift labels: the 07:55 slot is off-peak and the 08:00 slot is on-peak', () => {

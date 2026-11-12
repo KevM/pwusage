@@ -9,6 +9,92 @@ export interface TariffPeriod {
     schedule: TariffSchedule;
 }
 
+export function toTeslaWeekday(wd: number): number {
+    // JS: 0=Sun, 1=Mon ... 6=Sat
+    // Tesla: 0=Mon ... 6=Sun
+    if (wd === 0) return 6;
+    return wd - 1;
+}
+
+export function sortSchedulesBySpecificity(schedules: TariffSchedule[]): TariffSchedule[] {
+    // Sort schedules: narrower day ranges first (Sat-Sun overrides Every Day),
+    // then time-specific windows before all-day within the same day range.
+    return [...schedules].sort((a, b) => {
+        const aDayRange = (a.from_day_of_week !== null && a.to_day_of_week !== null)
+            ? (a.to_day_of_week - a.from_day_of_week + 7) % 7
+            : 6;
+        const bDayRange = (b.from_day_of_week !== null && b.to_day_of_week !== null)
+            ? (b.to_day_of_week - b.from_day_of_week + 7) % 7
+            : 6;
+        if (aDayRange !== bDayRange) return aDayRange - bDayRange;
+
+        const aSpecific = a.from_hour !== null || a.to_hour !== null;
+        const bSpecific = b.from_hour !== null || b.to_hour !== null;
+        if (aSpecific && !bSpecific) return -1;
+        if (!aSpecific && bSpecific) return 1;
+        return 0;
+    });
+}
+
+function matchDayOfWeek(weekday: number, schedule: TariffSchedule): boolean {
+    const twd = toTeslaWeekday(weekday);
+
+    if (schedule.from_day_of_week !== null && schedule.to_day_of_week !== null) {
+        if (schedule.from_day_of_week <= schedule.to_day_of_week) {
+            // Normal range: e.g., Mon–Fri (0–4)
+            return twd >= schedule.from_day_of_week && twd <= schedule.to_day_of_week;
+        }
+        // Week-wrapping range: e.g., Sun–Thu (6→3), mirroring
+        // midnight-crossing hour windows.
+        return twd >= schedule.from_day_of_week || twd <= schedule.to_day_of_week;
+    }
+
+    if (schedule.to_day_of_week !== null) {
+        return twd <= schedule.to_day_of_week;
+    }
+
+    if (schedule.from_day_of_week !== null) {
+        return twd >= schedule.from_day_of_week;
+    }
+
+    return false;
+}
+
+function matchTimeOfDay(hour: number, minute: number, schedule: TariffSchedule): boolean {
+    const time = hour * 60 + minute;
+
+    if (schedule.from_hour === null && schedule.to_hour === null) {
+        return true;
+    }
+
+    if (schedule.from_hour !== null && schedule.to_hour !== null) {
+        const from = schedule.from_hour * 60 + (schedule.from_minute ?? 0);
+        const to = schedule.to_hour * 60 + (schedule.to_minute ?? 0);
+        if (from <= to) {
+            // Normal range: e.g., 08:00 - 20:00
+            return time >= from && time < to;
+        }
+        // Midnight-crossing range: e.g., 20:00 - 08:00
+        return time >= from || time < to;
+    }
+
+    if (schedule.to_hour !== null) {
+        const to = schedule.to_hour * 60 + (schedule.to_minute ?? 0);
+        return time < to;
+    }
+
+    if (schedule.from_hour !== null) {
+        const from = schedule.from_hour * 60 + (schedule.from_minute ?? 0);
+        return time >= from;
+    }
+
+    return false;
+}
+
+export function matchesScheduleForDay(weekday: number, hour: number, minute: number, schedule: TariffSchedule): boolean {
+    return matchDayOfWeek(weekday, schedule) && matchTimeOfDay(hour, minute, schedule);
+}
+
 export class Schedule {
     private tariffs: Tariff[];
     private timeZone: string;
@@ -119,26 +205,10 @@ export class Schedule {
 
                 if (!season.schedules) continue;
 
-                // Sort schedules: narrower day ranges first (Sat-Sun overrides Every Day),
-                // then time-specific windows before all-day within the same day range.
-                const sortedSchedules = [...season.schedules].sort((a, b) => {
-                    const aDayRange = (a.from_day_of_week !== null && a.to_day_of_week !== null)
-                        ? (a.to_day_of_week - a.from_day_of_week + 7) % 7
-                        : 6;
-                    const bDayRange = (b.from_day_of_week !== null && b.to_day_of_week !== null)
-                        ? (b.to_day_of_week - b.from_day_of_week + 7) % 7
-                        : 6;
-                    if (aDayRange !== bDayRange) return aDayRange - bDayRange;
-
-                    const aSpecific = a.from_hour !== null || a.to_hour !== null;
-                    const bSpecific = b.from_hour !== null || b.to_hour !== null;
-                    if (aSpecific && !bSpecific) return -1;
-                    if (!aSpecific && bSpecific) return 1;
-                    return 0;
-                });
+                const sortedSchedules = sortSchedulesBySpecificity(season.schedules);
 
                 for (const schedule of sortedSchedules) {
-                    if (!this.matchSchedule(effectiveWeekday, hour, minute, schedule)) {
+                    if (!matchesScheduleForDay(effectiveWeekday, hour, minute, schedule)) {
                         continue;
                     }
 
@@ -153,79 +223,6 @@ export class Schedule {
             }
         }
         return null;
-    }
-
-
-    private matchSchedule(weekday: number, hour: number, minute: number, schedule: TariffSchedule): boolean {
-        if (this.matchDayOfWeek(weekday, schedule)) {
-            if (this.matchTimeOfDay(hour, minute, schedule)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private toTeslaWeekday(wd: number): number {
-        // JS: 0=Sun, 1=Mon ... 6=Sat
-        // Tesla: 0=Mon ... 6=Sun
-        if (wd === 0) return 6;
-        return wd - 1;
-    }
-
-    private matchDayOfWeek(weekday: number, schedule: TariffSchedule): boolean {
-        const twd = this.toTeslaWeekday(weekday);
-
-        if (schedule.from_day_of_week !== null && schedule.to_day_of_week !== null) {
-            if (schedule.from_day_of_week <= schedule.to_day_of_week) {
-                // Normal range: e.g., Mon–Fri (0–4)
-                return twd >= schedule.from_day_of_week && twd <= schedule.to_day_of_week;
-            }
-            // Week-wrapping range: e.g., Sun–Thu (6→3), mirroring
-            // midnight-crossing hour windows.
-            return twd >= schedule.from_day_of_week || twd <= schedule.to_day_of_week;
-        }
-
-        if (schedule.to_day_of_week !== null) {
-            return twd <= schedule.to_day_of_week;
-        }
-
-        if (schedule.from_day_of_week !== null) {
-            return twd >= schedule.from_day_of_week;
-        }
-
-        return false;
-    }
-
-    private matchTimeOfDay(hour: number, minute: number, schedule: TariffSchedule): boolean {
-        const time = hour * 60 + minute;
-
-        if (schedule.from_hour === null && schedule.to_hour === null) {
-            return true;
-        }
-
-        if (schedule.from_hour !== null && schedule.to_hour !== null) {
-            const from = schedule.from_hour * 60 + (schedule.from_minute ?? 0);
-            const to = schedule.to_hour * 60 + (schedule.to_minute ?? 0);
-            if (from <= to) {
-                // Normal range: e.g., 08:00 - 20:00
-                return time >= from && time < to;
-            } else {
-                // Midnight-crossing range: e.g., 20:00 - 08:00
-                return time >= from || time < to;
-            }
-        }
-
-        if (schedule.to_hour !== null) {
-            const to = schedule.to_hour * 60 + (schedule.to_minute ?? 0);
-            return time < to;
-        }
-
-        if (schedule.from_hour !== null) {
-            const from = schedule.from_hour * 60 + (schedule.from_minute ?? 0);
-            return time >= from;
-        }
-
-        return false;
     }
 
     private matchSeason(month: number, day: number, season: TariffSeason): boolean {

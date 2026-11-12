@@ -27,7 +27,7 @@ struct DemoAPITests {
         #expect(try await api.fetchSites() == [DemoFixtures.site])
         #expect(try await api.fetchBill(siteID: DemoFixtures.site.id).site.name == "Cedar House")
         #expect(try await api.fetchLive(siteID: DemoFixtures.site.id).site.name == "Cedar House")
-        _ = try await api.fetchTariffs(siteID: DemoFixtures.site.id).validating(siteID: DemoFixtures.site.id)
+        _ = try await api.fetchTariffTimeline(siteID: DemoFixtures.site.id).validating(siteID: DemoFixtures.site.id)
         let context = try await api.fetchLoadPlanningContext(siteID: DemoFixtures.site.id)
         _ = try context.validating(siteID: DemoFixtures.site.id, now: clock.now)
         let history = try await api.fetchSolarHistory(siteID: DemoFixtures.site.id, from: "", changedSince: nil)

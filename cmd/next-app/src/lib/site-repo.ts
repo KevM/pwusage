@@ -1,3 +1,4 @@
+import { effectiveTariffIdSql } from './effective-tariff-sql';
 import { pool, Site, SiteWithTariffs, Tariff, TariffSeason } from './db';
 import { getRequestContext } from './request-context';
 import { latestStoredSampleSql } from './latest-stored-sample-sql';
@@ -345,7 +346,7 @@ export class SiteRepo {
             FROM "Tariff" t
             LEFT JOIN "TariffSeason"   ts  ON ts.tariff_id  = t.id
             LEFT JOIN "TariffSchedule" sch ON sch.season_id = ts.id
-            WHERE t.site_id = ANY($1::text[]) AND t.is_current
+            WHERE t.site_id = ANY($1::text[]) AND t.id = ${effectiveTariffIdSql('t.site_id')}
         `;
         const [siteRes, tariffRes] = await Promise.all([
             pool.query(siteSql, [siteIds]),

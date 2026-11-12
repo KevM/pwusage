@@ -18,12 +18,24 @@ extension MobileContractsTests {
             + #""isActive":true,"nextStartPhrase":null,"buyRate":-0.1,"sellRate":-0.04}],"pricingPeriods":[]}}"#
         let response = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(bill.utf8))
         #expect(try response.validating(siteID: "site-1") == response)
-        let tariffFixture = TariffSheetTests.fixture.replacingOccurrences(of: #""buyRate":0.3"#,
+        let tariffFixture = TariffSheetTests.fixture.replacingOccurrences(of: #""buyRate":0.30335"#,
                                                                           with: #""buyRate":-0.3"#)
         let tariffs = try MobileContractDecoder.make().decode(
-            MobileTariffsResponse.self, from: Data(tariffFixture.utf8)
+            SiteTariffsTimelineResponse.self, from: Data(tariffFixture.utf8)
         )
         #expect(try tariffs.validating(siteID: "a") == tariffs)
+    }
+
+    @Test("Bill decodes optional tariffReattribution status")
+    func decodesOptionalBillReattributionStatus() throws {
+        let bill = Self.billBase
+            + #""estimatedCost":10,"periods":[]},"loadTiming":null,"#
+            + #""tariffReattribution":{"status":"running","fromDate":"2026-01-01","toDate":null,"#
+            + #""totalDays":50,"processedDays":20,"updatedDays":12,"lastError":null,"#
+            + #""updatedAt":"2026-09-23T10:00:00Z"}}"#
+        let response = try MobileContractDecoder.make().decode(MobileBillResponse.self, from: Data(bill.utf8))
+        #expect(response.tariffReattribution?.status == .running)
+        #expect(response.tariffReattribution?.processedDays == 20)
     }
 
     @Test("A live response with a non-finite bill amount or rate is rejected", arguments: nonFiniteLiveFixtures)
@@ -38,8 +50,13 @@ extension MobileContractsTests {
 
     @Test("A tariff period with a non-finite rate is rejected")
     func rejectsNonFiniteTariffRate() throws {
-        let fixture = TariffSheetTests.fixture.replacingOccurrences(of: #""sellRate":0.1"#, with: #""sellRate":"nan""#)
-        let response = try Self.nonConformingDecoder().decode(MobileTariffsResponse.self, from: Data(fixture.utf8))
+        let fixture = TariffSheetTests.fixture.replacingOccurrences(
+            of: #""sellRate":0.04906"#,
+            with: #""sellRate":"nan""#
+        )
+        let response = try Self.nonConformingDecoder().decode(
+            SiteTariffsTimelineResponse.self, from: Data(fixture.utf8)
+        )
         #expect(throws: PWUsageAPIError.invalidResponse) { try response.validating(siteID: "a") }
     }
 }
