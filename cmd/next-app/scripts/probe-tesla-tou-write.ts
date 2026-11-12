@@ -73,13 +73,16 @@ async function run(): Promise<void> {
         if (!siteId) throw new Error('No sites found in DB. Provide --site <siteId>.');
         console.log(`No --site provided. Using first site: ${siteId}`);
     }
-    const site = await siteRepo.getSite(siteId);
-    if (!site) throw new Error(`Site not found: ${siteId}`);
+    // Name only: getSite() also joins tables this probe does not need (and that an older
+    // database may not have yet).
+    const { pool } = await import('../src/lib/db');
+    const siteName = (await pool.query<{ name: string | null }>('SELECT name FROM "Site" WHERE id = $1', [siteId])).rows[0];
+    if (!siteName) throw new Error(`Site not found: ${siteId}`);
     const client = await createTeslaClientForSite(siteId);
     if (!client) throw new Error(`Site ${siteId} is missing Tesla tokens (access/refresh).`);
 
     console.log(`\nTime-of-use precision probe`);
-    console.log(`- site: ${site.name} (${siteId})`);
+    console.log(`- site: ${siteName.name} (${siteId})`);
 
     const before = await client.getEnergySiteInfo(siteId);
     const original = before.tariff_content_v2;
