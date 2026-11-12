@@ -18,7 +18,6 @@ export const maxDuration = 60;
 const PRIVATE_NO_STORE = 'private, no-store, max-age=0';
 /** Days per response. The read asks for one more, which reveals whether a next page exists. */
 const PAGE_DAYS = 92;
-const MAX_DAYS_BACK = 400;
 /** A fill asks for at most this many complete site-local days; how far back is the caller's policy. */
 const MAX_FILL_DAYS = 3;
 const FILL_BUDGET = { maxWindows: MAX_FILL_DAYS, maxTimeMs: 15000 };
@@ -98,7 +97,6 @@ export async function GET(request: Request): Promise<NextResponse> {
             if (changedSinceParam !== null && !changedSince) return json({ error: 'Invalid changedSince' }, 400);
 
             const today = Temporal.PlainDate.from(formatSiteDate(new Date(), timeZone));
-            if (Temporal.PlainDate.compare(from, today.subtract({ days: MAX_DAYS_BACK })) < 0) return json({ error: 'from is more than 400 days back' }, 400);
             if (Temporal.PlainDate.compare(from, today) > 0) return json({ version: 1, enabled: true, timeZone, days: [], nextFrom: null });
 
             // The window runs through today's open day, which is archived as it fills.

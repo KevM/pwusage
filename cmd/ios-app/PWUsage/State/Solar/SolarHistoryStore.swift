@@ -7,18 +7,8 @@ actor SolarHistoryStore {
     static let shared = SolarHistoryStore()
     /// How many days back `hourlyActuals` reads.
     static let actualsDays = 14
-    private struct StoredDay: Codable, Equatable {
-        let dayStart: Date
-        var slots: [Float?]
-    }
-
-    private struct Persisted: Codable {
-        var timeZone: String?
-        var syncedThrough: Date?
-        var syncedAt: Date?
-        var isEnabled: Bool?
-        var days: [StoredDay] = []
-    }
+    private typealias StoredDay = SolarHistoryStoredDay
+    private typealias Persisted = SolarHistoryPersisted
 
     private enum PageResult { case disabled, completed(timeZone: TimeZone, maxFetchedAt: Date?) }
 
@@ -94,9 +84,7 @@ actor SolarHistoryStore {
         state.timeZone = timeZone.identifier
         if let maxFetchedAt { state.syncedThrough = maxFetchedAt.addingTimeInterval(-300) }
         state.syncedAt = now
-        let pruneBefore = Self.localDay(daysBefore: 400, now: now, timeZone: timeZone)
         _ = store(days: lateDays[scope] ?? [], in: &state, maximumFetchedAt: nil)
-        state.days.removeAll { $0.dayStart < pruneBefore }
         try validateGeneration(syncGeneration, scope: scope, scopeGeneration: scopeGeneration)
         try save(state, scope: scope)
         return .synced(timeZone: timeZone)
@@ -174,12 +162,27 @@ actor SolarHistoryStore {
             let storedDay = StoredDay(dayStart: day.dayStart, slots: day.solarWh.map { $0.map(Float.init) })
             state.days.removeAll { $0.dayStart == day.dayStart }
             state.days.append(storedDay)
+            state.dirtyYears.insert(SolarHistoryYearFiles.year(of: day.dayStart))
         }
         return latestFetchedAt
     }
 
-    func samples(scope: SolarForecastSiteScope) throws -> [(timestamp: Date, solarWh: Double)] {
-        try load(scope).days.flatMap { day in
+    /// Days older than this are kept but not read by detection or the day strip.
+    static let detectionWindowDays = 400
+
+    /// The recent window layout detection and the day strip read: the days the store held before
+    /// it kept the whole history. `allSamples` reads everything.
+    func samples(scope: SolarForecastSiteScope, now: Date = .now) throws -> [(timestamp: Date, solarWh: Double)] {
+        try Self.samples(of: windowedDays(try load(scope), now: now))
+    }
+
+    /// Every stored day, for work that looks across years.
+    func allSamples(scope: SolarForecastSiteScope) throws -> [(timestamp: Date, solarWh: Double)] {
+        try Self.samples(of: load(scope).days)
+    }
+
+    private static func samples(of days: [StoredDay]) -> [(timestamp: Date, solarWh: Double)] {
+        days.flatMap { day in
             day.slots.enumerated().compactMap { index, value in
                 guard let value, value.isFinite, value >= 0 else { return nil }
                 return (timestamp: day.dayStart.addingTimeInterval(Double(index * 300)), solarWh: Double(value))
@@ -187,13 +190,29 @@ actor SolarHistoryStore {
         }
     }
 
-    /// Site-local days holding any reading, oldest first.
-    func storedDays(scope: SolarForecastSiteScope) throws -> [String] {
+    private func windowedDays(_ state: Persisted, now: Date) -> [StoredDay] {
+        let zone = state.timeZone.flatMap(TimeZone.init(identifier:)) ?? .gmt
+        let start = Self.localDay(daysBefore: Self.detectionWindowDays, now: now, timeZone: zone)
+        return state.days.filter { $0.dayStart >= start }
+    }
+
+    /// Site-local days holding any reading in the recent window, oldest first.
+    func storedDays(scope: SolarForecastSiteScope, now: Date = .now) throws -> [String] {
         let state = try load(scope)
-        guard let zone = state.timeZone.flatMap(TimeZone.init(identifier:)) else { return [] }
-        return state.days
+        return Self.readingDays(windowedDays(state, now: now), timeZone: state.timeZone)
+    }
+
+    /// Site-local days holding any reading, across the whole history, oldest first.
+    func allStoredDays(scope: SolarForecastSiteScope) throws -> [String] {
+        let state = try load(scope)
+        return Self.readingDays(state.days, timeZone: state.timeZone)
+    }
+
+    private static func readingDays(_ days: [StoredDay], timeZone identifier: String?) -> [String] {
+        guard let zone = identifier.flatMap(TimeZone.init(identifier:)) else { return [] }
+        return days
             .filter { $0.slots.contains { $0.map { $0.isFinite && $0 >= 0 } ?? false } }
-            .map { Self.dayString($0.dayStart, timeZone: zone) }
+            .map { dayString($0.dayStart, timeZone: zone) }
             .sorted()
     }
 
@@ -227,7 +246,8 @@ actor SolarHistoryStore {
         let today = calendar.startOfDay(for: now)
         guard let start = calendar.date(byAdding: .day, value: -Self.actualsDays, to: today) else { return [] }
         var slotsByTime: [Date: [Float?]] = [:]
-        for day in state.days {
+        // Only the recent days can hold a slot in range; the rest of a long history is skipped.
+        for day in state.days where day.dayStart >= start.addingTimeInterval(-86_400) {
             for (index, value) in day.slots.enumerated() {
                 let timestamp = day.dayStart.addingTimeInterval(Double(index * 300))
                 slotsByTime[timestamp, default: []].append(value)
@@ -259,6 +279,8 @@ actor SolarHistoryStore {
         cache.removeValue(forKey: scope)
         let url = fileURL(scope)
         if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
+        let days = daysDirectory(scope)
+        if fileManager.fileExists(atPath: days.path) { try fileManager.removeItem(at: days) }
     }
 
     func removeAll() throws {
@@ -272,9 +294,23 @@ actor SolarHistoryStore {
         if let state = cache[scope] { return state }
         let url = fileURL(scope)
         guard fileManager.fileExists(atPath: url.path) else { return Persisted() }
-        let state = try JSONDecoder().decode(Persisted.self, from: Data(contentsOf: url))
+        var state = try JSONDecoder().decode(Persisted.self, from: Data(contentsOf: url))
+        if state.days.isEmpty {
+            state.days = try loadYears(scope)
+        } else {
+            // Written before per-year files: every year moves to its own file on the next save.
+            state.dirtyYears = Set(state.days.map { SolarHistoryYearFiles.year(of: $0.dayStart) })
+        }
         cache[scope] = state
         return state
+    }
+
+    private func loadYears(_ scope: SolarForecastSiteScope) throws -> [StoredDay] {
+        try yearFiles(scope).load()
+    }
+
+    private func yearFiles(_ scope: SolarForecastSiteScope) -> SolarHistoryYearFiles {
+        SolarHistoryYearFiles(fileManager: fileManager, folder: daysDirectory(scope))
     }
 
     private func save(_ state: Persisted, scope: SolarForecastSiteScope) throws {
@@ -287,11 +323,16 @@ actor SolarHistoryStore {
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: directory.path
         )
+        // Year files first: a store still in the older format keeps its days in the state file
+        // until that file is replaced, so an interrupted save only repeats the move.
+        try yearFiles(scope).save(state)
         try JSONEncoder().encode(state).write(
             to: fileURL(scope),
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
         )
-        cache[scope] = state
+        var saved = state
+        saved.dirtyYears = []
+        cache[scope] = saved
         try fileManager.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: fileURL(scope).path
@@ -313,9 +354,17 @@ actor SolarHistoryStore {
     }
 
     private func fileURL(_ scope: SolarForecastSiteScope) -> URL {
+        directory.appendingPathComponent("\(scopeHash(scope)).json")
+    }
+
+    /// A site's per-year day files, inside the store's directory so removing the directory removes them.
+    private func daysDirectory(_ scope: SolarForecastSiteScope) -> URL {
+        directory.appendingPathComponent("\(scopeHash(scope))-days", isDirectory: true)
+    }
+
+    private func scopeHash(_ scope: SolarForecastSiteScope) -> String {
         let key = "\(scope.accountScopeID)|\(scope.siteID)"
-        let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        return directory.appendingPathComponent("\(hash).json")
+        return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func date(daysBefore days: Int, now: Date, timeZone: TimeZone) -> Date {
