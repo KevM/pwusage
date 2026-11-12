@@ -11,7 +11,7 @@ import {
 } from './prototypes/day-attribution';
 import { Schedule } from './schedule';
 import type { ReattributionStatusDTO } from './tariff-contract';
-import { siteLocalDateString } from './tariff-timeline';
+import { addCalendarDays, siteLocalDateString } from './tariff-timeline';
 import { TariffTimelineRepo } from './tariff-timeline-repo';
 
 export const REATTRIBUTION_CHUNK_DAYS = 15;
@@ -107,6 +107,25 @@ export async function enqueueTariffReattribution(params: {
       const oldTo = formatDateCol(existing.to_date);
       effectiveFrom = minDate(oldFrom, params.fromDate);
       effectiveTo = maxNullableDate(oldTo, params.toDate);
+    }
+
+    // Dates in a gap after this range are priced from the nearest earlier plan (the fallback in
+    // resolveTariffForDate), so an edit to that plan changes them too: carry the range through
+    // the gap up to the next explicit period, or without end when none follows.
+    if (effectiveTo !== null) {
+      const nextRes = await client.query<{ next_from: string | null }>(
+        `SELECT MIN(effective_from)::text AS next_from FROM "TariffEffectivePeriod"
+         WHERE site_id = $1 AND effective_from > $2::date`,
+        [params.siteId, effectiveTo]
+      );
+      if (nextRes.rows.length > 0) {
+        const nextFrom = nextRes.rows[0].next_from?.slice(0, 10) ?? null;
+        if (nextFrom === null) {
+          effectiveTo = null;
+        } else if (nextFrom > addCalendarDays(effectiveTo, 1)) {
+          effectiveTo = addCalendarDays(nextFrom, -1);
+        }
+      }
     }
 
     const countRes = await client.query<{ count: string }>(

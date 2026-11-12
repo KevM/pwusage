@@ -192,6 +192,28 @@ struct RatePlanDraftTests {
         #expect(names == ["Super Off-Peak", "Off-Peak", "Mid-Peak", "Peak"])
     }
 
+    @Test("Dragging a season boundary stops at the adjacent seasons' combined span")
+    func seasonBoundaryClampsToNeighbours() {
+        var draft = RatePlanDraft.makeBlank(timeZone: TimeZone(identifier: "America/Chicago") ?? .gmt)
+        draft.seasons = [
+            SeasonDraft.makeDefault(name: "A", fromMonth: 1, toMonth: 4),
+            SeasonDraft.makeDefault(name: "B", fromMonth: 5, toMonth: 8),
+            SeasonDraft.makeDefault(name: "C", fromMonth: 9, toMonth: 12)
+        ]
+        #expect(draft.validate() == nil)
+
+        // October is inside season C: the boundary stops at the end of season B instead.
+        draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 10)
+        #expect(draft.seasons.map(\.fromMonth) == [1, 8, 9])
+        #expect(draft.seasons.map(\.toMonth) == [7, 8, 12])
+        #expect(draft.validate() == nil)
+
+        // Ordinary moves inside the span still work.
+        draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 4)
+        #expect(draft.seasons.map(\.fromMonth) == [1, 4, 9])
+        #expect(draft.validate() == nil)
+    }
+
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")
     func copyPreservesExactPlanName() throws {
         let timeline = try MobileContractDecoder.make().decode(

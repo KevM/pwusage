@@ -107,9 +107,20 @@ struct RatePlanDraft: Equatable, Sendable {
     mutating func moveSeasonBoundary(afterIndex index: Int, toStartMonth candidateMonth: Int) {
         guard seasons.count >= 2, seasons.indices.contains(index) else { return }
         let nextIndex = (index + 1) % seasons.count
-        let clampedStart = ((candidateMonth - 1) % 12 + 12) % 12 + 1
         var first = seasons[index]
         var second = seasons[nextIndex]
+        // Keep the new start inside the two adjacent seasons' combined span: inverted months
+        // count as a year-wrapping season, so an unchecked move can overlap a third season.
+        let combined = ((second.toMonth - first.fromMonth) % 12 + 12) % 12 + 1
+        guard combined >= 2 else { return }
+        let offset = ((candidateMonth - first.fromMonth) % 12 + 12) % 12
+        var clampedOffset = offset
+        if offset == 0 {
+            clampedOffset = 1
+        } else if offset > combined - 1 {
+            clampedOffset = offset - (combined - 1) <= 12 - offset ? combined - 1 : 1
+        }
+        let clampedStart = wrapMonth(first.fromMonth + clampedOffset)
         first.toMonth = wrapMonth(clampedStart - 1)
         second.fromMonth = clampedStart
         guard monthSpan(first) >= 1, monthSpan(second) >= 1 else { return }

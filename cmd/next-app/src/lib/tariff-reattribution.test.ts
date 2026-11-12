@@ -350,6 +350,36 @@ describe('tariff-reattribution engine', () => {
     expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', '2026-06-01']);
   });
 
+  it('carries the range through a fallback gap up to the next explicit period', async () => {
+    let countParams: unknown[] = [];
+    const run = async (nextFrom: string | null | 'none') => {
+      clientHandler = async (sql: string, params?: unknown[]) => {
+        if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
+        if (sql.includes('SELECT * FROM "SiteTariffReattribution"')) return { rows: [] };
+        if (sql.includes('MIN(effective_from)')) return { rows: nextFrom === 'none' ? [] : [{ next_from: nextFrom }] };
+        if (sql.includes('SELECT COUNT(*)')) { countParams = params ?? []; return { rows: [{ count: '3' }] }; }
+        if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+          return { rows: [{
+            site_id: 's1', status: 'pending', generation: 1, from_date: '2026-01-01', to_date: '2026-02-28',
+            cursor_day_start: null, total_days: 3, processed_days: 0, updated_days: 0, attempt_count: 0,
+            last_error: null, requested_by_user_id: 'u1', updated_at: new Date(),
+          }] };
+        }
+        return { rows: [] };
+      };
+      await enqueueTariffReattribution({
+        siteId: 's1', fromDate: '2026-01-01', toDate: '2026-02-28', requestedByUserId: 'u1', trigger: 'update',
+      });
+    };
+
+    await run('2026-04-01'); // Feb 28 plan, next plan starts Apr 1: March falls back to Feb's plan
+    expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', '2026-03-31']);
+    await run('2026-03-01'); // adjacent: nothing in between
+    expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', '2026-02-28']);
+    await run(null); // nothing follows: the plan is the fallback from here on
+    expect(countParams).toEqual(['s1', 'America/Chicago', '2026-01-01', null]);
+  });
+
   it('marks job failed with sanitized error token once attempt_count reaches REATTRIBUTION_MAX_ATTEMPTS', async () => {
     mocks.queryMock.mockImplementation(async (sql: string) => {
       if (sql.includes('UPDATE "SiteTariffReattribution"') && sql.includes("status = 'running'")) {
