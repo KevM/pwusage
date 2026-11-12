@@ -124,17 +124,32 @@ private struct ManualSystemSection: View {
                 DatePicker(
                     "Installed", selection: installDate, in: ...Date.now, displayedComponents: .date)
             }
+            if canRemove { Button("Remove System", role: .destructive, action: onRemove) }
+        } header: {
+            Text(system.label ?? "System \(number)")
+        }
+        Section {
             ForEach($system.faces) { $face in
                 ManualFaceFields(face: $face, detected: detected, focus: focus,
                                  number: faceNumber(face),
                                  onRemove: system.faces.count > 1 ? { removeFace(face) } : nil)
             }
-            Button("Add Face") { system.addFace(detected: detected) }
-            if canRemove { Button("Remove System", role: .destructive, action: onRemove) }
         } header: {
-            Text(system.label ?? "System \(number)")
+            facesHeader
         } footer: {
             Text("A face is one roof plane. Swipe a face’s title to remove it.")
+        }
+    }
+
+    /// "Faces" with a + at the right, so the faces read as one group under the system.
+    private var facesHeader: some View {
+        HStack {
+            Text("Faces")
+            Spacer()
+            Button("Add Face", systemImage: "plus") { system.addFace(detected: detected) }
+                .labelStyle(.iconOnly)
+                .textCase(nil)
+                .font(.subheadline.weight(.semibold))
         }
     }
 
