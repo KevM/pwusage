@@ -69,8 +69,9 @@ struct SolarHistoryStoreFullHistoryTests {
     func savesPerYear() async throws {
         let folder = temporaryFolder()
         let store = SolarHistoryStore(directory: folder)
-        try await store.merge(fill([day(2000), day(1900), day(10)]), scope: scope)
-        #expect(yearFiles(in: folder).count == 3) // 2021, 2021 or 2022 split by year, plus 2026
+        // 1000, 500 and 10 days before 2026-11-11 fall in 2023, 2025 and 2026.
+        try await store.merge(fill([day(1000), day(500), day(10)]), scope: scope)
+        #expect(yearFiles(in: folder).count == 3)
         let reloaded = SolarHistoryStore(directory: folder)
         let before = try await store.allSamples(scope: scope).map(\.solarWh)
         let after = try await reloaded.allSamples(scope: scope).map(\.solarWh)

@@ -97,7 +97,7 @@ struct SolarHistoryStoreTests {
                                  fetchedAt: now.addingTimeInterval(600), slots: Array(repeating: 2, count: 288))
         let incremental = HistoryAPI(responses: [.enabled(timeZone: zone("UTC"), days: [rewrite], nextFrom: nil)])
         _ = try await store.sync(scope: scope, api: incremental, now: now)
-        let samples = try await store.samples(scope: scope)
+        let samples = try await store.samples(scope: scope, now: now)
         let requests = await incremental.requests
         #expect(samples.count == 288)
         #expect(samples.allSatisfy { $0.solarWh == 2 })
