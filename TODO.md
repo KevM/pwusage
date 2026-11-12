@@ -286,3 +286,14 @@ first scope addition.
 
 **Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
 why a partial grant is acceptable.
+
+## Project rates across a plan change inside the forecast horizon (2026-11-12, PR #358)
+
+`SiteRepo` loads one tariff (the plan in effect today), and `Schedule` prices every projected
+timestamp with it. A future-dated plan that starts inside the billing cycle (up to a year ahead
+is allowed) is ignored by the bill outlook and Smart Shift timeline until the day it starts,
+while archive attribution switches on that date. The same limitation existed with `is_current`.
+
+**Change:** give `Schedule` effective-dated tariffs (period ranges on `SiteWithTariffs`) and
+pick the tariff per timestamp, including `boundaryMinutes()` and the timing-window key in
+`mobile-bill-revision.ts`. Keep today's plan for live rates.

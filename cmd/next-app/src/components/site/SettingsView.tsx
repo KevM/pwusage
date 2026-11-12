@@ -18,12 +18,14 @@ import { useToast } from '@/components/ui/Toast';
 
 
 import { SiteWithTariffs, TrmnlInstallation } from '@/lib/db';
+import type { SiteTariffsTimelineResponse } from '@/lib/tariff-contract';
 import { toTrmnlDevices } from '@/lib/trmnl-devices';
 
 interface SettingsViewProps {
     site: SiteWithTariffs;
     installations: TrmnlInstallation[];
     memberEmails: string[];
+    tariffTimeline?: SiteTariffsTimelineResponse | null;
 }
 
 function formatDeviceDate(value: string | null): string {
@@ -31,14 +33,17 @@ function formatDeviceDate(value: string | null): string {
     return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
-export function SettingsView({ site, installations, memberEmails }: SettingsViewProps) {
+export function SettingsView({ site, installations, memberEmails, tariffTimeline = null }: SettingsViewProps) {
     const router = useRouter();
     const { toast } = useToast();
+    const [timelineOverride, setTimelineOverride] = useState<SiteTariffsTimelineResponse | null>(null);
+    const timeline = timelineOverride ?? tariffTimeline;
     const [previewHtml, setPreviewHtml] = useState('');
     const [previewError, setPreviewError] = useState('');
     const [previewLoading, setPreviewLoading] = useState(true);
     const [previewScale, setPreviewScale] = useState<number>(0.5);
     const [refreshLoading, setRefreshLoading] = useState(false);
+    const [retryLoading, setRetryLoading] = useState(false);
     const [refreshStatus, setRefreshStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
     const devices = toTrmnlDevices(installations);
 
@@ -50,6 +55,23 @@ export function SettingsView({ site, installations, memberEmails }: SettingsView
                 .catch(err => console.error('Error generating Battery Saver QR code:', err));
         }
     }, [site.id]);
+
+    useEffect(() => {
+        const status = timeline?.reattribution?.status;
+        if (status !== 'pending' && status !== 'running') return;
+        const timer = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/site/${site.id}/tariffs`, { credentials: 'include' });
+                if (res.ok) {
+                    const next = (await res.json()) as SiteTariffsTimelineResponse;
+                    setTimelineOverride(next);
+                }
+            } catch {
+                // Keep polling silently while re-attribution is active
+            }
+        }, 3000);
+        return () => clearInterval(timer);
+    }, [site.id, timeline?.reattribution?.status]);
 
     const handleRefreshTariffs = async () => {
         setRefreshLoading(true);
@@ -69,9 +91,12 @@ export function SettingsView({ site, installations, memberEmails }: SettingsView
                 return;
             }
 
+            if (data.timeline) {
+                setTimelineOverride(data.timeline as SiteTariffsTimelineResponse);
+            }
             setRefreshStatus({
                 type: 'success',
-                message: 'Rate plan updated'
+                message: data.updatedFromTesla ? 'Rate plan updated' : 'Rate plan is up to date'
             });
 
             router.refresh();
@@ -82,6 +107,25 @@ export function SettingsView({ site, installations, memberEmails }: SettingsView
             });
         } finally {
             setRefreshLoading(false);
+        }
+    };
+
+    const handleRetryReattribution = async () => {
+        setRetryLoading(true);
+        try {
+            const response = await fetch(`/api/site/${site.id}/tariffs/reattribute`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            if (response.ok) {
+                const data = (await response.json()) as SiteTariffsTimelineResponse;
+                setTimelineOverride(data);
+                router.refresh();
+            }
+        } finally {
+            setRetryLoading(false);
         }
     };
 
@@ -293,10 +337,12 @@ export function SettingsView({ site, installations, memberEmails }: SettingsView
             </Card>
 
             <TariffList
-                tariffs={site.tariffs}
+                timeline={timeline}
                 onRefresh={handleRefreshTariffs}
                 refreshLoading={refreshLoading}
                 refreshStatus={refreshStatus}
+                onRetryReattribution={handleRetryReattribution}
+                retryLoading={retryLoading}
             />
         </div>
     );

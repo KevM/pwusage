@@ -11,6 +11,7 @@ import { Schedule } from '@/lib/schedule';
 import { computeLoadTiming } from '@/lib/load-timing';
 import { buildLoadTimingTimeline } from '@/lib/load-timing-timeline';
 import { matchesMobileBillConfiguration, readCurrentMobileSite, readMobileBillConfiguration, readMobileBillRevision } from '@/lib/mobile-bill-revision';
+import { getSiteReattributionStatus } from '@/lib/tariff-reattribution';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,27 +49,34 @@ export async function GET(request: Request) {
             const cycleStart = getCurrentCycleStart(billingDay, now, site.timezone);
             const cycleEnd = getNextCycleStart(billingDay, cycleStart, site.timezone);
             const schedule = new Schedule(site.tariffs, site.timezone);
+            const beforeReattribution = currentConfig ? await getSiteReattributionStatus(siteId) : undefined;
             const before = currentConfig
-                ? await readMobileBillRevision(site, currentConfig, schedule, cycleStart, cycleEnd, now, includeOutlook)
+                ? await readMobileBillRevision(site, currentConfig, schedule, cycleStart, cycleEnd, now, includeOutlook, beforeReattribution)
                 : null;
             if (before && before === knownRevision) {
                 return new NextResponse(null, { status: 304, headers: PRIVATE_RESPONSE });
             }
             const energyRepo = createEnergyRepo(site.timezone);
-            const [billing, currencyCode, energyDataThrough] = await Promise.all([
+            const [billing, currencyCode, energyDataThrough, fetchedReattribution] = await Promise.all([
                 readBillingAvailability(async () => includeOutlook
                     ? energyRepo.getBillOutlook(siteId, cycleStart, cycleEnd)
                     : { usage: await energyRepo.getUsageByTOU(siteId, cycleStart, cycleEnd), outlook: null },
                     { usage: [], outlook: null }),
                 currentConfig ? Promise.resolve(currentConfig.currency) : siteRepo.getSiteCurrencyCode(siteId),
                 energyRepo.getLatestTimestamp(siteId),
+                beforeReattribution === undefined ? getSiteReattributionStatus(siteId) : Promise.resolve(beforeReattribution),
             ]);
+            let tariffReattribution = fetchedReattribution;
             let revision: string | undefined;
             if (before && billing.status === 'complete') {
                 try {
-                    const afterConfig = await readMobileBillConfiguration(siteId);
+                    const [afterConfig, afterReattribution] = await Promise.all([
+                        readMobileBillConfiguration(siteId),
+                        getSiteReattributionStatus(siteId),
+                    ]);
+                    tariffReattribution = afterReattribution;
                     const after = afterConfig && matchesMobileBillConfiguration(site, afterConfig)
-                        ? await readMobileBillRevision(site, afterConfig, schedule, cycleStart, cycleEnd, now, includeOutlook)
+                        ? await readMobileBillRevision(site, afterConfig, schedule, cycleStart, cycleEnd, now, includeOutlook, afterReattribution)
                         : null;
                     // A writer may commit between the validator read and billing.
                     // In that case the response must not authorize later reuse.
@@ -152,6 +160,7 @@ export async function GET(request: Request) {
                     periods,
                 },
                 loadTiming: loadTimingWithTimeline,
+                ...(tariffReattribution ? { tariffReattribution } : {}),
                 ...(includeOutlook ? { outlook: billing.status === 'complete' && billing.value.outlook ? {
                     ...billing.value.outlook,
                     tariffTimeline: buildLoadTimingTimeline(schedule, new Date(billing.value.outlook.observedThrough),

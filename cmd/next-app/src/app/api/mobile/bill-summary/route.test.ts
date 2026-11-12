@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { verifyAccessMock, siteMock, currencyMock, usageMock, latestMock, outlookMock } = vi.hoisted(() => ({
     verifyAccessMock: vi.fn(), siteMock: vi.fn(), currencyMock: vi.fn(), usageMock: vi.fn(), latestMock: vi.fn(), outlookMock: vi.fn(),
 }));
-const { configQuery, historyRevision, invalidateSite } = vi.hoisted(() => ({
-    configQuery: vi.fn(), historyRevision: vi.fn(), invalidateSite: vi.fn(),
+const { configQuery, historyRevision, invalidateSite, reattributionMock } = vi.hoisted(() => ({
+    configQuery: vi.fn(), historyRevision: vi.fn(), invalidateSite: vi.fn(), reattributionMock: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
@@ -18,6 +18,7 @@ vi.mock('@/lib/db', async importOriginal => ({
     pool: { query: configQuery },
 }));
 vi.mock('@/lib/mobile-history-revision', () => ({ readMobileHistoryRevision: historyRevision }));
+vi.mock('@/lib/tariff-reattribution', () => ({ getSiteReattributionStatus: reattributionMock }));
 vi.mock('@/lib/energy-repo', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/lib/energy-repo')>();
     return { ...actual, EnergyRepo: class extends actual.EnergyRepo {
@@ -580,4 +581,48 @@ it('returns missing pricing without a numeric bill or load timing when attributi
     expect(body.outlook.complete).toBe(true);
     expect(body.outlook.tariffTimeline[0].tariffName).toBe('Seasonal utility');
     expect(usageMock).not.toHaveBeenCalled();
+ });
+
+ it('attaches tariffReattribution when active and invalidates knownRevision across transitions', async () => {
+    vi.useFakeTimers();
+    try {
+        verifyAccessMock.mockResolvedValue(true);
+        const currentSite = { id: 'site-a', name: 'Home', timezone: 'UTC', billing_start_day: 1, tariffs: [tariff()] };
+        siteMock.mockResolvedValue(currentSite);
+        currencyMock.mockResolvedValue('USD');
+        latestMock.mockResolvedValue(new Date('2026-06-15T10:00:00Z'));
+        vi.setSystemTime(new Date('2026-06-15T12:00:00Z'));
+        outlookMock.mockResolvedValue({ usage: calculate([-10]).usage, outlook: null });
+        historyRevision.mockResolvedValue({ latest: new Date('2026-06-15T10:00:00Z'), hasFutureSamples: false, revision: 'h1' });
+        configQuery.mockResolvedValue({ rows: [{ name: 'Home', timezone: 'UTC', billing_start_day: 1, currency: 'USD', tariff_ids: [1] }] });
+
+        const job = {
+            status: 'running' as const,
+            fromDate: '2026-01-01',
+            toDate: null,
+            totalDays: 100,
+            processedDays: 25,
+            updatedDays: 10,
+            lastError: null,
+            updatedAt: '2026-06-15T11:59:00Z',
+        };
+        reattributionMock.mockResolvedValue(job);
+        const first = await GET(new Request('https://example.test/api/mobile/bill-summary?siteId=site-a&outlook=1&knownRevision=stale'));
+        expect(first.status).toBe(200);
+        const firstBody = await first.json();
+        expect(firstBody.tariffReattribution).toEqual(job);
+        expect(firstBody.revision).toBeTruthy();
+
+        reattributionMock.mockResolvedValue({ ...job, processedDays: 50 });
+        const afterProgress = await GET(new Request(`https://example.test/api/mobile/bill-summary?siteId=site-a&outlook=1&knownRevision=${firstBody.revision}`));
+        expect(afterProgress.status).toBe(200);
+        expect((await afterProgress.json()).tariffReattribution.processedDays).toBe(50);
+
+        reattributionMock.mockResolvedValue(null);
+        const afterDone = await GET(new Request(`https://example.test/api/mobile/bill-summary?siteId=site-a&outlook=1&knownRevision=${firstBody.revision}`));
+        expect(afterDone.status).toBe(200);
+        expect((await afterDone.json()).tariffReattribution).toBeUndefined();
+    } finally {
+        vi.useRealTimers();
+    }
  });

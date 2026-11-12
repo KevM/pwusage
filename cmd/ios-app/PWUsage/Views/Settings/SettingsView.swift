@@ -100,8 +100,20 @@ struct SettingsView: View {
         .navigationDestination(for: SettingsDestination.self) { destination in
             switch destination {
             case .ratePlans:
-                TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
-                    .id(site.id)
+                TariffSheet(
+                    site: site,
+                    actions: TariffTimelineActions(
+                        load: { try await coordinator.fetchTariffTimeline() },
+                        refreshFromTesla: { try await coordinator.refreshTariffsFromTesla() },
+                        createPeriod: { body in try await coordinator.createTariffPeriod(body) },
+                        updatePeriod: { periodID, body in
+                            try await coordinator.updateTariffPeriod(periodID: periodID, body: body)
+                        },
+                        deletePeriod: { periodID in try await coordinator.deleteTariffPeriod(periodID: periodID) },
+                        retryReattribution: { try await coordinator.retryTariffReattribution() }
+                    )
+                )
+                .id(site.id)
             case .solarSystem(let startsAtLocation):
                 SolarSystemView(
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,

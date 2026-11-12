@@ -252,3 +252,18 @@ struct MobileLivePowerResponse: Codable, Equatable {
         return self
     }
 }
+
+struct ReattributionStatusDTO: Codable, Equatable, Sendable {
+    let status: Status
+    let fromDate: String
+    let toDate: String?
+    let totalDays: Int
+    let processedDays: Int
+    let updatedDays: Int
+    let lastError: String?
+    let updatedAt: String
+
+    enum Status: String, Codable, Equatable, Sendable {
+        case pending, running, idle, failed
+    }
+}

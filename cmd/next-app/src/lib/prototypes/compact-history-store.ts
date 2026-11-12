@@ -3,7 +3,7 @@ import { deepStrictEqual } from 'node:assert';
 import { createHash,randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow,DailyCoverageStat } from '../energy-repo';
-import type { Tariff, TariffSchedule, TariffSeason } from '../db-types';
+import type { Tariff } from '../db-types';
 import { addDaysInSiteTimezone, getSiteMidnight } from '../date-utils';
 import type {EnergyDayRecord} from './compact-day-record';
 import { decodeDaySamples, decodeDaySolar, encodeDaySamples, toSample, type DayArchive, type DayRollup, type EnergySample } from './compact-energy';
@@ -14,6 +14,8 @@ import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
 import type { ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
 import { siteAuthRestoredSql, siteConnectionUserSql } from '../site-outage-sql';
+import { siteLocalDateString } from '../tariff-timeline';
+import { TariffTimelineRepo } from '../tariff-timeline-repo';
 
 type ArchiveRecord=EnergyDayRecord;
 /**
@@ -68,6 +70,17 @@ function detailDay(a:DetailArchiveRecord,summaries:SummaryRecord[]):FinalizedHis
  * `empty`: Tesla answered with no samples for a day that has a record, which were kept.
  */
 export interface DayWriteResult { status:'busy'|'empty'|'checked-empty'|'written'|'unchanged'|'superseded'; revision?:string; attributionComplete?:boolean; dayStatus?:DayStatus }
+export interface ReattributeArchiveChunkParams {
+    siteId: string;
+    timezone: string;
+    candidates: Array<{ dayStart: Date; dayEnd: Date; tariffs: Tariff[] }>;
+    now?: Date;
+    checkpoint: (client: PoolClient) => Promise<boolean>;
+}
+export interface ReattributeArchiveChunkResult {
+    status: 'committed' | 'busy' | 'superseded';
+    rewrittenDays: number;
+}
 type PreparedDay={archive:DayArchive;summaries:DayRollup[];attributionComplete:boolean;metadata:SummarizedHistoryDay;payloadChecksum:string;
     latest:{data:LatestMetadata;checksum:string};record:{attribution:DayAttribution;status:DayStatus;fetchedAt:Date}};
 
@@ -325,7 +338,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             // Samples always replace an empty record: an empty answer after they were published was a Tesla failure.
             if(stored?.fetched_at&&stored.status!=='empty'&&+fetchedAt<=+stored.fetched_at) {await client.query('COMMIT');return {status:'superseded',revision:stored.revision};}
             const sorted=samples.map(toSample).sort((a,b)=>+a.timestamp-+b.timestamp);
-            const {tariffs}=await this.tariffs(client,siteId,true);
+            const siteLocalDate = siteLocalDateString(start, timezone);
+            const {tariffs}=await new TariffTimelineRepo().resolveTariffForDate(client,siteId,siteLocalDate);
             const prepared=this.prepareSamples(siteId,timezone,start,end,sorted,tariffs,fetchedAt,now,site.auth_restored_at);
             if (stored && await this.updateUnchangedDay(client, siteId, start, prepared)) {
                 await client.query('COMMIT');
@@ -337,6 +351,71 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             return {status:'written',revision,attributionComplete:prepared.attributionComplete,dayStatus:prepared.record.status};
         } catch(error) {await client.query('ROLLBACK');throw error;}
         finally {client.release(this.transactionTimeoutMs!==undefined);}
+    }
+
+    /** Re-attribute changed archive days and commit the fenced re-attribution checkpoint atomically. */
+    async reattributeArchiveChunk(params: ReattributeArchiveChunkParams): Promise<ReattributeArchiveChunkResult> {
+        const { siteId, timezone, candidates, checkpoint } = params;
+        const now = params.now ?? new Date();
+        const client = await this.pool.connect();
+        let rewrittenDays = 0;
+        try {
+            await beginTransaction(client, 'ISOLATION LEVEL READ COMMITTED');
+            await this.boundTransaction(client);
+            await client.query("SET LOCAL statement_timeout = '15s'");
+            await client.query("SET LOCAL lock_timeout = '3s'");
+            await this.mutationGuard?.(client);
+            if (candidates.length > 0) {
+                if (!await this.claimMutation(client, siteId)) {
+                    await client.query('ROLLBACK');
+                    return { status: 'busy', rewrittenDays: 0 };
+                }
+                const site = (await client.query<{ auth_restored_at: Date | null }>(
+                    `SELECT ${siteAuthRestoredSql()} AS auth_restored_at FROM "Site" s LEFT JOIN "User" u ON u.id=${siteConnectionUserSql()} WHERE s.id=$1`,
+                    [siteId]
+                )).rows[0];
+                const dayStarts = candidates.map(c => c.dayStart);
+                const rows = (await client.query<DetailArchiveRecord & { fetched_at: Date | null; status: DayRecordStatus | null }>(
+                    `SELECT ${detailColumns}, fetched_at, status FROM "EnergyDayArchive"
+                     WHERE site_id=$1 AND day_start = ANY($2::timestamptz[]) FOR UPDATE`,
+                    [siteId, dayStarts]
+                )).rows;
+                const rowByStart = new Map<number, (typeof rows)[number]>(
+                    rows.map(r => [new Date(r.day_start).getTime(), r])
+                );
+                for (const candidate of candidates) {
+                    const row = rowByStart.get(candidate.dayStart.getTime());
+                    if (!row || row.status === 'empty' || !row.payload) continue;
+                    const samples = this.decodeSamples(row);
+                    const fetchedAt = row.fetched_at ? new Date(row.fetched_at) : now;
+                    const prepared = this.prepareSamples(
+                        siteId,
+                        timezone,
+                        candidate.dayStart,
+                        candidate.dayEnd,
+                        samples,
+                        candidate.tariffs,
+                        fetchedAt,
+                        now,
+                        site?.auth_restored_at ?? null
+                    );
+                    await this.replaceDay(client, siteId, candidate.dayStart, candidate.dayEnd, samples.length, prepared);
+                    rewrittenDays++;
+                }
+            }
+            const keep = await checkpoint(client);
+            if (!keep) {
+                await client.query('ROLLBACK');
+                return { status: 'superseded', rewrittenDays: 0 };
+            }
+            await client.query('COMMIT');
+            return { status: 'committed', rewrittenDays };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release(this.transactionTimeoutMs !== undefined);
+        }
     }
 
     /**
@@ -439,18 +518,5 @@ export class CompactHistoryStore implements HistorySnapshotStore {
             [siteId,start,revision,...summaries.flatMap(s=>[s.tariff_id,s.tariff_schedule_id,
                 s.load_power,s.solar_power,s.grid_power,s.battery_power,s.sample_import_wh,s.sample_export_wh,s.sample_charge_wh,s.sample_discharge_wh,s.sample_count])]);
         return revision;
-    }
-
-    /** Every tariff version (for auditing recorded IDs), or only the current ones (for new attribution), ordered by ID. */
-    private async tariffs(client: PoolClient,siteId: string,currentOnly=false): Promise<{ tariffs:Tariff[]; schedules:TariffSchedule[] }> {
-        const current = currentOnly ? ' AND t.is_current' : '';
-        const tariffs = (await client.query<Tariff>(`SELECT t.* FROM "Tariff" t WHERE t.site_id=$1${current} ORDER BY t.id`,[siteId])).rows;
-        const seasons = (await client.query<TariffSeason>(`SELECT s.* FROM "TariffSeason" s JOIN "Tariff" t ON t.id=s.tariff_id WHERE t.site_id=$1${current}`,[siteId])).rows;
-        const schedules = (await client.query<TariffSchedule>(`SELECT p.* FROM "TariffSchedule" p JOIN "TariffSeason" s ON s.id=p.season_id
-            JOIN "Tariff" t ON t.id=s.tariff_id WHERE t.site_id=$1${current}`,[siteId])).rows;
-        for (const tariff of tariffs) tariff.seasons = seasons.filter(s=>s.tariff_id===tariff.id).map(s=>({ ...s,
-            buy_rate:Number(s.buy_rate), sell_rate:Number(s.sell_rate), schedules:schedules.filter(p=>p.season_id===s.id).map(p=>({ ...p,
-                buy_rate:p.buy_rate===null ? null : Number(p.buy_rate), sell_rate:p.sell_rate===null ? null : Number(p.sell_rate) })) }));
-        return { tariffs, schedules:tariffs.flatMap(t=>t.seasons?.flatMap(s=>s.schedules??[])??[]) };
     }
 }

@@ -5,6 +5,7 @@ import { sumTodayRows, type TodayTotals } from './energy-repo';
 import type { EnergyData } from './db-types';
 import type { MobileActiveLoadTiming } from './mobile-load-timing';
 import type { LoadTimingView } from './load-timing';
+import type { ReattributionStatusDTO } from './tariff-contract';
 
 export const MOBILE_DASHBOARD_CONTRACT_VERSION = 1;
 export const MOBILE_SOC_STALE_AFTER_MS = 20 * 60 * 1000;
@@ -68,6 +69,7 @@ export interface MobileBillSummary {
     currentBill: MobileCurrentBill;
     outlook?: MobileBillOutlook | null;
     loadTiming?: LoadTimingView | null;
+    tariffReattribution?: ReattributionStatusDTO | null;
     sources: { calculatedAt: string; energyDataThrough: string | null };
 }
 
