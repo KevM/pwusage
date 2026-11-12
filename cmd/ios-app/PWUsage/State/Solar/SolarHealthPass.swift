@@ -22,12 +22,19 @@ enum SolarHealthPass {
         let samples = try await history.allSamples(scope: scope)
         let place = SolarHealthYearFit.Place(
             reference: reference, latitude: location.latitude, longitude: location.longitude, timeZone: timeZone)
+        let context = Context(scope: scope, cache: cache, now: now)
         let task = Task.detached(priority: .utility) {
             try compute(
-                samples: samples, place: place, scope: scope, cache: cache, now: now,
+                samples: samples, place: place, context: context,
                 checkCancellation: { try Task.checkCancellation() })
         }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    struct Context: Sendable {
+        let scope: SolarForecastSiteScope
+        let cache: SolarHealthCache
+        let now: Date
     }
 
     /// The pass over `samples` (ascending). A completed year is read from `cache` when its key
@@ -35,26 +42,29 @@ enum SolarHealthPass {
     /// the current year always, it is computed.
     static func compute(
         samples: [(timestamp: Date, solarWh: Double)], place: SolarHealthYearFit.Place,
-        scope: SolarForecastSiteScope, cache: SolarHealthCache, now: Date, checkCancellation: () throws -> Void
+        context: Context, checkCancellation: () throws -> Void
     ) throws -> SolarHealthResult {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = place.timeZone
-        let currentYear = calendar.component(.year, from: now)
+        let currentYear = calendar.component(.year, from: context.now)
         var years: [SolarHealthYear] = []
         var recomputed: [Int] = []
         for slice in yearSlices(samples, calendar: calendar) {
             try checkCancellation()
             let key = cacheKey(place: place, slice: slice.samples)
-            if slice.year < currentYear, let cached = cache.year(slice.year, scope: scope), cached.key == key {
+            if slice.year < currentYear,
+               let cached = context.cache.year(slice.year, scope: context.scope),
+               cached.key == key {
                 years.append(cached)
                 continue
             }
-            var year = try SolarHealthYearFit(samples: slice.samples, place: place, checkCancellation: checkCancellation)?
-                .result(year: slice.year, checkCancellation: checkCancellation)
+            let yearFit = try SolarHealthYearFit(
+                samples: slice.samples, place: place, checkCancellation: checkCancellation)
+            var year = try yearFit?.result(year: slice.year, checkCancellation: checkCancellation)
                 ?? SolarHealthYear(
                     year: slice.year, key: key, clearDays: 0, capacity: nil, months: [], shade: [], dailyRatios: [])
             year.key = key
-            if slice.year < currentYear { try cache.store(year, scope: scope) }
+            if slice.year < currentYear { try context.cache.store(year, scope: context.scope) }
             years.append(year)
             recomputed.append(slice.year)
         }
@@ -71,7 +81,9 @@ enum SolarHealthPass {
         }.max() ?? 1
     }
 
-    private static func cacheKey(place: SolarHealthYearFit.Place, slice: [(timestamp: Date, solarWh: Double)]) -> String {
+    private static func cacheKey(
+        place: SolarHealthYearFit.Place, slice: [(timestamp: Date, solarWh: Double)]
+    ) -> String {
         let stamp = [
             Double(slice.count), slice.first?.timestamp.timeIntervalSince1970 ?? 0,
             slice.last?.timestamp.timeIntervalSince1970 ?? 0
@@ -88,7 +100,7 @@ enum SolarHealthPass {
         _ samples: [(timestamp: Date, solarWh: Double)], calendar: Calendar
     ) -> [(year: Int, samples: [(timestamp: Date, solarWh: Double)])] {
         guard !samples.isEmpty else { return [] }
-        let ordered = samples.isSorted ? samples : samples.sorted { $0.timestamp < $1.timestamp }
+        let ordered = isSorted(samples) ? samples : samples.sorted { $0.timestamp < $1.timestamp }
         let first = calendar.component(.year, from: ordered[0].timestamp)
         let last = calendar.component(.year, from: ordered[ordered.count - 1].timestamp)
         var slices: [(year: Int, samples: [(timestamp: Date, solarWh: Double)])] = []
@@ -102,10 +114,7 @@ enum SolarHealthPass {
         }
         return slices
     }
-}
-
-private extension Array where Element == (timestamp: Date, solarWh: Double) {
-    var isSorted: Bool {
-        zip(self, dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp }
+    private static func isSorted(_ samples: [(timestamp: Date, solarWh: Double)]) -> Bool {
+        zip(samples, samples.dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp }
     }
 }

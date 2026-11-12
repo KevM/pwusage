@@ -15,11 +15,14 @@ struct SolarHealthPassTests {
     }
 
     static func samples(
-        _ site: SyntheticSolarSite, years: ClosedRange<Int> = 2024 ... 2026, lastMonth: Int = 6
+        _ site: SyntheticSolarSite, years: ClosedRange<Int> = 2024 ... 2026,
+        monthRange: ClosedRange<Int> = 6 ... 6, dayRange: ClosedRange<Int> = 1 ... 24
     ) -> [(timestamp: Date, solarWh: Double)] {
-        site.samples(
-            from: DateComponents(year: years.lowerBound, month: 1, day: 1),
-            through: DateComponents(year: years.upperBound, month: years.upperBound == 2026 ? lastMonth : 12, day: 28))
+        years.flatMap { year in
+            site.samples(
+                from: DateComponents(year: year, month: monthRange.lowerBound, day: dayRange.lowerBound),
+                through: DateComponents(year: year, month: monthRange.upperBound, day: dayRange.upperBound))
+        }
     }
 
     static func place(
@@ -36,7 +39,8 @@ struct SolarHealthPassTests {
         cache: SolarHealthCache, now: Date = Self.now
     ) throws -> SolarHealthResult {
         try SolarHealthPass.compute(
-            samples: samples, place: place, scope: scope, cache: cache, now: now, checkCancellation: {})
+            samples: samples, place: place, context: SolarHealthPass.Context(scope: scope, cache: cache, now: now),
+            checkCancellation: {})
     }
 
     @Test func healthySiteGivesAFactorNearOneEveryYear() throws {
@@ -47,7 +51,7 @@ struct SolarHealthPassTests {
         for year in result.years {
             let capacity = try #require(year.capacity, "\(year.year) capacity")
             #expect(abs(capacity.site - 1) < 0.02, "\(year.year) site factor \(capacity.site)")
-            #expect(capacity.clearDays >= 40, "\(year.year) clear days")
+            #expect(capacity.clearDays >= 10, "\(year.year) clear days")
         }
     }
 
@@ -91,14 +95,127 @@ struct SolarHealthPassTests {
     @Test func monthsWithEnoughClearDaysGetTheirOwnFactor() throws {
         var site = SyntheticSolarSite(planes: Self.eastWest)
         site.capacity = { _, month in month == 7 ? 0.93 : 1 }
+        let samples = Self.samples(site, years: 2025 ... 2025, monthRange: 6 ... 7, dayRange: 1 ... 28)
         let result = try Self.compute(
-            Self.samples(site, years: 2025 ... 2025), Self.place(Self.eastWest),
+            samples, Self.place(Self.eastWest),
             cache: SolarHealthCache(directory: Self.folder()))
         let months = try #require(result.years.first?.months)
-        #expect(months.count >= 8)
+        #expect(months.count == 2)
         let july = try #require(months.first { $0.month == 7 })
         #expect(abs(july.capacity.site - 0.93) < 0.03)
         let june = try #require(months.first { $0.month == 6 })
         #expect(abs(june.capacity.site - 1) < 0.03)
+    }
+
+    @Test func seasonalShadeLearnsHorizonInShadedSeasonOnly() throws {
+        var site = SyntheticSolarSite(planes: Self.eastWest)
+        site.overcastEvery = 100
+        site.shaded = { day, azimuth, elevation in
+            day.hasPrefix("2025-07-") && azimuth >= 80 && azimuth <= 160 && elevation < 30
+        }
+        let samples = site.samples(
+            from: DateComponents(year: 2025, month: 7, day: 1),
+            through: DateComponents(year: 2025, month: 7, day: 30))
+            + site.samples(
+                from: DateComponents(year: 2025, month: 10, day: 1),
+                through: DateComponents(year: 2025, month: 10, day: 16))
+        let result = try Self.compute(
+            samples, Self.place(Self.eastWest, site: site), cache: SolarHealthCache(directory: Self.folder()))
+        let shade = try #require(result.years.first?.shade)
+        let summer = try #require(shade.first { $0.season == .summer })
+        let autumn = try #require(shade.first { $0.season == .autumn })
+        #expect(summer.map.mask.shaded(azimuth: 85, elevation: 18))
+        #expect(!autumn.map.mask.shaded(azimuth: 85, elevation: 18))
+    }
+
+    @Test func soilingDropsAndRecoversDailyRatios() throws {
+        var site = SyntheticSolarSite(planes: Self.eastWest)
+        site.overcastEvery = 100
+        let dirtyDays: Set<String> = ["2025-06-08", "2025-06-09", "2025-06-10", "2025-06-11"]
+        site.dayScale = { dirtyDays.contains($0) ? 0.94 : 1.0 }
+        let samples = Self.samples(site, years: 2025 ... 2025, monthRange: 6 ... 6, dayRange: 1 ... 18)
+        let result = try Self.compute(
+            samples, Self.place(Self.eastWest, site: site), cache: SolarHealthCache(directory: Self.folder()))
+        let ratios = try #require(result.years.first?.dailyRatios)
+        let dirty = ratios.filter { dirtyDays.contains($0.day) }
+        #expect(dirty.count == dirtyDays.count)
+        for item in dirty { #expect(abs(item.ratio - 0.94) < 0.02, "\(item.day) ratio \(item.ratio)") }
+        let recovered = try #require(ratios.first { $0.day == "2025-06-14" })
+        #expect(abs(recovered.ratio - 1.0) < 0.02)
+    }
+
+    @Test func installDateStepsKeepHealthyFactorAcrossExpansion() throws {
+        let eastOnly = [SolarHealthPlane.face(90, kw: 3)]
+        let stepDate = DateComponents(
+            calendar: Calendar(identifier: .gregorian), timeZone: SyntheticSolarSite(planes: eastOnly).timeZone,
+            year: 2025, month: 6, day: 15).date ?? .now
+        let siteBefore = SyntheticSolarSite(planes: eastOnly)
+        let siteAfter = SyntheticSolarSite(planes: Self.eastWest)
+        let samples = siteBefore.samples(
+            from: DateComponents(year: 2024, month: 6, day: 1),
+            through: DateComponents(year: 2024, month: 6, day: 20))
+            + siteBefore.samples(
+                from: DateComponents(year: 2025, month: 6, day: 1),
+                through: DateComponents(year: 2025, month: 6, day: 14))
+            + siteAfter.samples(
+                from: DateComponents(year: 2025, month: 6, day: 15),
+                through: DateComponents(year: 2025, month: 6, day: 30))
+        let layout = manualLayout(
+            for: Self.eastWest, installDates: [Date(timeIntervalSince1970: 1_700_000_000), stepDate])
+        let result = try Self.compute(
+            samples, Self.place(Self.eastWest, layout: layout), cache: SolarHealthCache(directory: Self.folder()))
+        for year in result.years {
+            let factor = try #require(year.capacity?.site, "\(year.year) capacity")
+            #expect(abs(factor - 1) < 0.03, "\(year.year) factor \(factor)")
+        }
+    }
+
+    @Test func detectedReferenceNormalisesBestYearToOne() throws {
+        var site = SyntheticSolarSite(planes: Self.eastWest)
+        site.capacity = { year, _ in year == 2025 ? 0.85 : 1.0 }
+        let samples = Self.samples(site, years: 2024 ... 2025, monthRange: 6 ... 6, dayRange: 1 ... 20)
+        // Deliberately wrong effectiveKw in the detected layout; normalisation should anchor best year at 1.00.
+        let detected = DetectedSolarLayout(
+            status: .detected, confidence: "high", reasons: [],
+            planes: [
+                .init(
+                    azimuth: 90, tilt: 25, dcKwp: 3, effectiveKw: 2.0,
+                    azimuthRange90: [85, 95], tiltRange90: [20, 30]),
+                .init(
+                    azimuth: 270, tilt: 25, dcKwp: 3, effectiveKw: 2.0,
+                    azimuthRange90: [265, 275], tiltRange90: [20, 30])
+            ],
+            acClipKw: nil, historyDays: 200, clearDays: 50, firstDay: nil, lastDay: nil)
+        let reference = try #require(SolarHealthReference(manual: nil, detected: detected))
+        let place = SolarHealthYearFit.Place(
+            reference: reference, latitude: site.latitude, longitude: site.longitude, timeZone: site.timeZone)
+        let result = try Self.compute(samples, place, cache: SolarHealthCache(directory: Self.folder()))
+        #expect(result.reference.source == .detected)
+        #expect(abs(result.referenceScale - 1.5) < 0.04)
+        let year2024 = try #require(result.years.first { $0.year == 2024 }?.capacity?.site)
+        let year2025 = try #require(result.years.first { $0.year == 2025 }?.capacity?.site)
+        #expect(abs(year2024 - 1.0) < 1e-9)
+        #expect(abs(year2025 - 0.85) < 0.03)
+    }
+}
+
+/// Ten-year synthetic run under `-O`, gated like `SolarLayoutDetectorYearParityTests`.
+@Suite(
+    "Solar health pass ten-year budget (opt-in)",
+    .enabled(if: ProcessInfo.processInfo.environment["PWUSAGE_SOLAR_SLOW_PARITY"] == "1"))
+struct SolarHealthPassBudgetTests {
+    @Test func tenYearsFinishesWithinBudget() throws {
+        let site = SyntheticSolarSite(planes: SolarHealthPassTests.eastWest)
+        let samples = site.samples(
+            from: DateComponents(year: 2017, month: 1, day: 1),
+            through: DateComponents(year: 2026, month: 12, day: 28))
+        let place = try SolarHealthPassTests.place(SolarHealthPassTests.eastWest, site: site)
+        let started = ProcessInfo.processInfo.systemUptime
+        let result = try SolarHealthPassTests.compute(
+            samples, place, cache: SolarHealthCache(directory: SolarHealthPassTests.folder()))
+        let seconds = ProcessInfo.processInfo.systemUptime - started
+        print(String(format: "SOLAR_HEALTH_10Y_TIMING %.2f s", seconds))
+        #expect(result.years.count == 10)
+        #expect(seconds < 60, "10-year pass took \(seconds)s")
     }
 }

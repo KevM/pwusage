@@ -21,6 +21,7 @@ struct SyntheticSolarSite {
     var overcastEvery = 4
 
     /// Samples from `from` to `through` (site-local dates, inclusive), daylight hours only.
+    @_optimize(speed)
     func samples(from: DateComponents, through: DateComponents) -> [(timestamp: Date, solarWh: Double)] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -34,8 +35,10 @@ struct SyntheticSolarSite {
             let overcast = ordinal % overcastEvery == overcastEvery - 1
             for slot in 48 ..< 264 {
                 let time = day.addingTimeInterval(Double(slot) * 300)
-                let kw = production(at: time, day: name, scale: scale, overcast: overcast, slot: slot, ordinal: ordinal)
-                out.append((time, kw * 1000 / 12))
+                let slotContext = SlotContext(
+                    time: time, day: name, scale: scale, overcast: overcast, slot: slot, ordinal: ordinal)
+                let powerKw = production(at: slotContext)
+                out.append((time, powerKw * 1000 / 12))
             }
             ordinal += 1
             day = calendar.date(byAdding: .day, value: 1, to: day) ?? last.addingTimeInterval(1)
@@ -43,23 +46,34 @@ struct SyntheticSolarSite {
         return out
     }
 
-    private func production(at time: Date, day: String, scale: Double, overcast: Bool, slot: Int, ordinal: Int) -> Double {
-        let sun = layoutSun(at: time.addingTimeInterval(150), latitude: latitude, longitude: longitude)
+    private struct SlotContext {
+        let time: Date
+        let day: String
+        let scale: Double
+        let overcast: Bool
+        let slot: Int
+        let ordinal: Int
+    }
+
+    private func production(at context: SlotContext) -> Double {
+        let sun = layoutSun(at: context.time.addingTimeInterval(150), latitude: latitude, longitude: longitude)
         guard sun.ghi > 0 else { return 0 }
-        var kw = scale * LayoutPOA.modelKw(sun: sun, planes: planes.map {
+        var powerKw = context.scale * LayoutPOA.modelKw(sun: sun, planes: planes.map {
             LayoutPlane(azimuth: $0.azimuth, tilt: $0.tilt, effectiveKw: $0.effectiveKw)
         })
-        if shaded(day, sun.azimuth, sun.elevation) { kw *= 0.3 }
-        if overcast { kw *= 0.15 + 0.25 * abs(sin(Double(slot * 7 + ordinal * 13))) }
-        if let clipKw { kw = min(kw, clipKw) }
-        return kw
+        if shaded(context.day, sun.azimuth, sun.elevation) { powerKw *= 0.3 }
+        if context.overcast {
+            powerKw *= 0.15 + 0.25 * abs(sin(Double(context.slot * 7 + context.ordinal * 13)))
+        }
+        if let clipKw { powerKw = min(powerKw, clipKw) }
+        return powerKw
     }
 }
 
 extension SolarHealthPlane {
-    /// A face of `kw` effective size.
-    static func face(_ azimuth: Double, tilt: Double = 25, kw: Double = 3) -> SolarHealthPlane {
-        SolarHealthPlane(azimuth: azimuth, tilt: tilt, effectiveKw: kw)
+    /// A face of `powerKw` effective size.
+    static func face(_ azimuth: Double, tilt: Double = 25, kw powerKw: Double = 3) -> SolarHealthPlane {
+        SolarHealthPlane(azimuth: azimuth, tilt: tilt, effectiveKw: powerKw)
     }
 }
 

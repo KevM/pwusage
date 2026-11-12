@@ -9,6 +9,7 @@ struct SolarPosition: Sendable {
 
     private static let radians = Double.pi / 180
 
+    @_optimize(speed)
     static func at(_ date: Date, latitude: Double, longitude: Double) -> SolarPosition {
         let time = date.timeIntervalSince1970
         let century = (time / 86_400 + 2_440_587.5 - 2_451_545) / 36_525

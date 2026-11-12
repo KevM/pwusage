@@ -50,7 +50,8 @@ enum SolarHealthFit {
         var correlation = normal
         for first in 0 ..< count {
             for second in 0 ..< count {
-                correlation[first][second] = normal[first][second] / (normal[first][first] * normal[second][second]).squareRoot()
+                let denom = (normal[first][first] * normal[second][second]).squareRoot()
+                correlation[first][second] = normal[first][second] / denom
             }
         }
         guard let independence = solve(correlation, [Double](repeating: 0, count: count))?.determinant,

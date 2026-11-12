@@ -131,7 +131,8 @@ struct SolarHealthYearFit {
         return rows.days.indices.compactMap { day in
             guard selection.days.clear.contains(rows.days[day]), count[day, default: 0] >= Self.minRatioRows,
                   let reference = expected[day], reference > 0 else { return nil }
-            return SolarDailyRatio(day: rows.days[day], ratio: ((measured[day] ?? 0) / reference * 10_000).rounded() / 10_000)
+            return SolarDailyRatio(
+                day: rows.days[day], ratio: ((measured[day] ?? 0) / reference * 10_000).rounded() / 10_000)
         }.sorted { $0.day < $1.day }
     }
 }

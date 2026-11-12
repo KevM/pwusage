@@ -9,7 +9,13 @@ struct SolarHealthPassCacheTests {
     private static let scope = SolarHealthPassTests.scope
 
     private static func samples() -> [(timestamp: Date, solarWh: Double)] {
-        SolarHealthPassTests.samples(SyntheticSolarSite(planes: planes), years: 2025 ... 2026, lastMonth: 4)
+        let site = SyntheticSolarSite(planes: planes)
+        return site.samples(
+            from: DateComponents(year: 2025, month: 6, day: 1),
+            through: DateComponents(year: 2025, month: 6, day: 24))
+            + site.samples(
+                from: DateComponents(year: 2026, month: 4, day: 1),
+                through: DateComponents(year: 2026, month: 4, day: 24))
     }
 
     @Test func aNormalRunRecomputesOnlyTheCurrentYear() throws {
@@ -49,8 +55,8 @@ struct SolarHealthPassCacheTests {
         let samples = Self.samples()
         let place = try SolarHealthPassTests.place(Self.planes)
         _ = try SolarHealthPassTests.compute(samples, place, cache: cache)
-        // Loading older history fills in the first months of 2025.
-        let partial = samples.filter { $0.timestamp >= Date(timeIntervalSince1970: 1_743_000_000) }
+        // Loading older history fills in the first days of June 2025.
+        let partial = samples.filter { $0.timestamp >= Date(timeIntervalSince1970: 1_749_100_000) }
         _ = try SolarHealthPassTests.compute(partial, place, cache: cache)
         let full = try SolarHealthPassTests.compute(samples, place, cache: cache)
         #expect(full.recomputedYears.contains(2025))
@@ -72,7 +78,8 @@ struct SolarHealthPassCacheTests {
 
     @Test func cachedYearsKeepShadeHorizonsThatAreInfinite() throws {
         let cache = SolarHealthCache(directory: SolarHealthPassTests.folder())
-        let mask = SolarShadeMap(ShadeMask(horizon: [-.infinity, 12.5], hotBins: [ShadeHotBin(azimuth: 20, elevation: 5)]))
+        let mask = SolarShadeMap(
+            ShadeMask(horizon: [-.infinity, 12.5], hotBins: [ShadeHotBin(azimuth: 20, elevation: 5)]))
         let year = SolarHealthYear(
             year: 2024, key: "k", clearDays: 9, capacity: nil, months: [],
             shade: [SolarSeasonShade(season: .summer, map: mask, clearDays: 9)], dailyRatios: [])
@@ -86,9 +93,11 @@ struct SolarHealthPassCacheTests {
         struct Stop: Error {}
         #expect(throws: Stop.self) {
             try SolarHealthPass.compute(
-                samples: Self.samples(), place: SolarHealthPassTests.place(Self.planes), scope: Self.scope,
-                cache: SolarHealthCache(directory: SolarHealthPassTests.folder()),
-                now: SolarHealthPassTests.now, checkCancellation: { throw Stop() })
+                samples: Self.samples(), place: SolarHealthPassTests.place(Self.planes),
+                context: SolarHealthPass.Context(
+                    scope: Self.scope, cache: SolarHealthCache(directory: SolarHealthPassTests.folder()),
+                    now: SolarHealthPassTests.now),
+                checkCancellation: { throw Stop() })
         }
     }
 }

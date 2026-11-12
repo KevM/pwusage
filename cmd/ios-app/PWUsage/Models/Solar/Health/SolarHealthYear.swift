@@ -102,7 +102,8 @@ struct SolarHealthYear: Codable, Equatable, Sendable {
 /// The health pass's output, oldest year first, ready for classification.
 struct SolarHealthResult: Equatable, Sendable {
     let reference: SolarHealthReference
-    /// With a detected reference, years are scaled so the best year is 1.00; with a manual one, 1.00 is the nameplate model.
+    /// With a detected reference, years are scaled so the best year is 1.00;
+    /// with a manual one, 1.00 is the nameplate model.
     let years: [SolarHealthYear]
     let referenceScale: Double
     /// The years this run computed; the rest came from the cache.

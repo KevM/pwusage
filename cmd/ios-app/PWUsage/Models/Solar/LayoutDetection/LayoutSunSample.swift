@@ -23,6 +23,7 @@ private let ambientGamma = -0.0037
 private let radians = Double.pi / 180
 
 /// Sun geometry and clear-sky irradiance at `time`, for the detector's 5-minute sample grid.
+@_optimize(speed)
 func layoutSun(at time: Date, latitude: Double, longitude: Double) -> LayoutSunSample {
     let position = SolarPosition.at(time, latitude: latitude, longitude: longitude)
     let apparentZenith = position.apparentZenith

@@ -95,9 +95,9 @@ struct SolarHealthReference: Equatable, Sendable {
 
     /// The direction carrying the most capacity, where a shared factor is reported.
     var dominantDirection: SolarHealthDirection {
-        var kw: [Int: Double] = [:]
-        for plane in allPlanes { kw[directionIndex(of: plane), default: 0] += plane.effectiveKw }
-        let best = kw.max { $0.value < $1.value }?.key ?? 0
+        var powerByDirection: [Int: Double] = [:]
+        for plane in allPlanes { powerByDirection[directionIndex(of: plane), default: 0] += plane.effectiveKw }
+        let best = powerByDirection.max { $0.value < $1.value }?.key ?? 0
         return directions.indices.contains(best) ? directions[best] : SolarHealthDirection(azimuth: 180)
     }
 

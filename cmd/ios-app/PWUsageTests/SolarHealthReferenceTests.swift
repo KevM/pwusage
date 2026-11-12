@@ -34,7 +34,9 @@ struct SolarHealthReferenceTests {
     @Test func detectedGeometryIsTheReferenceWithoutAManualLayout() {
         let detected = DetectedSolarLayout(
             status: .detected, confidence: "high", reasons: [],
-            planes: [.init(azimuth: 170, tilt: 22, dcKwp: 6, effectiveKw: 5.1, azimuthRange90: [160, 180], tiltRange90: [20, 24])],
+            planes: [.init(
+                azimuth: 170, tilt: 22, dcKwp: 6, effectiveKw: 5.1,
+                azimuthRange90: [160, 180], tiltRange90: [20, 24])],
             acClipKw: nil, historyDays: 300, clearDays: 60, firstDay: nil, lastDay: nil)
         let reference = SolarHealthReference(manual: nil, detected: detected)
         #expect(reference?.source == .detected)

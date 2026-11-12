@@ -24,6 +24,7 @@ extension SolarLayoutDetector {
 
     /// Clear-day selection without the producing-day gate: peak, AC clip, clear rows and the
     /// shade mask learned from a two-plane fit.
+    @_optimize(speed)
     static func selectClearDays(
         _ series: LayoutSeries, checkCancellation: () throws -> Void
     ) throws -> ClearDayStage {
