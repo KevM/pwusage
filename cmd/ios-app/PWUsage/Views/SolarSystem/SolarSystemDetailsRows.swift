@@ -7,8 +7,6 @@ struct SolarSystemDetailsRows: View {
     let layout: SolarLayout
     var manual: ManualSolarLayout?
     var isImproving = false
-    /// Opens the layout editor; nil hides the button.
-    var onEditLayout: (() -> Void)?
 
     private var groups: [SolarLayoutPlane] { layout.planes.sorted { $0.dcKwp > $1.dcKwp } }
 
@@ -17,9 +15,6 @@ struct SolarSystemDetailsRows: View {
             ManualLayoutRows(layout: manual, detected: layout)
         } else {
             detectedRows
-        }
-        if let onEditLayout {
-            Button("Edit", action: onEditLayout)
         }
         confidenceRow
     }
