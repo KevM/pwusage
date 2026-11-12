@@ -215,4 +215,19 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
         let changed = TeslaDivergenceCopy.syncNotice(previousTeslaPlan: -1, refreshed: timeline)
         #expect(changed.contains("saved to your history") || changed.contains("Saved Tesla's updated plan"))
     }
+
+    @Test("A weekday holiday uses the weekend schedule for the active rate")
+    func holidayUsesWeekendSchedule() throws {
+        var timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timeline.timezone) ?? .gmt
+        // Thursday 26 Nov 2026, noon: the fixture's weekday schedule is Peak 8 AM - 8 PM.
+        let noon = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 26, hour: 12)))
+        #expect(timeline.activePeriodNow(at: noon)?.window.touName == .onPeak)
+        timeline.holidayDates = ["2026-11-26"]
+        #expect(timeline.activePeriodNow(at: noon)?.window.touName == .offPeak)
+    }
 }

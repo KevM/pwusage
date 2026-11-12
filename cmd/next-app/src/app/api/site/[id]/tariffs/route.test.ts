@@ -230,14 +230,9 @@ describe('tariff timeline API routes', () => {
     );
     expect(okRes.status).toBe(201);
     const body = await okRes.json();
-    expect(body).toMatchObject({ version: 2, reattribution: reattributionStub });
-    expect(enqueueMock).toHaveBeenCalledWith({
-      siteId: 'site-1',
-      fromDate: '2026-01-01',
-      toDate: '2026-06-30',
-      requestedByUserId: 'user-1',
-      trigger: 'create',
-    });
+    expect(body).toMatchObject({ version: 2 });
+    // The job is queued by the repo inside the mutation's transaction, not by the route.
+    expect(enqueueMock).not.toHaveBeenCalled();
     expect(afterCallbacks).toHaveLength(1);
     await afterCallbacks[0]();
     expect(runSiteMock).toHaveBeenCalledWith({ siteId: 'site-1', trigger: 'after', maxTimeMs: 6000 });
@@ -273,13 +268,7 @@ describe('tariff timeline API routes', () => {
       { params: Promise.resolve({ id: 'site-1', periodId: '5' }) }
     );
     expect(okDel.status).toBe(200);
-    expect(enqueueMock).toHaveBeenCalledWith({
-      siteId: 'site-1',
-      fromDate: '2026-01-01',
-      toDate: '2026-06-30',
-      requestedByUserId: 'user-1',
-      trigger: 'delete',
-    });
+    expect(enqueueMock).not.toHaveBeenCalled();
     expect(afterCallbacks).toHaveLength(1);
   });
 

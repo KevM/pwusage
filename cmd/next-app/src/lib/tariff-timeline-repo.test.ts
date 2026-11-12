@@ -89,6 +89,15 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
       if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('effective_from <= $2::date')) {
         return { rows: [{ tariff_id: 101 }] };
       }
+      if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+        return {
+          rows: [{
+            site_id: 's1', status: 'pending', generation: 1, from_date: '2026-01-01', to_date: null,
+            cursor_day_start: null, total_days: 0, processed_days: 0, updated_days: 0, attempt_count: 0,
+            last_error: null, requested_by_user_id: 'user-9', updated_at: new Date(),
+          }],
+        };
+      }
       return { rows: [] };
     };
 
@@ -141,6 +150,12 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
 
     expect(timeline.version).toBe(2);
     expect(timeline.periods[0].updatedBy).toEqual({ email: 'owner@example.com', isCurrentUser: true });
+    // The re-attribution job is written inside the same transaction, before COMMIT.
+    const statements = clientQueries.map(q => q.sql);
+    const enqueueAt = statements.findIndex((q: string) => q.includes('INSERT INTO "SiteTariffReattribution"'));
+    const commitAt = statements.lastIndexOf('COMMIT');
+    expect(enqueueAt).toBeGreaterThan(-1);
+    expect(enqueueAt).toBeLessThan(commitAt);
     expect(mocks.invalidateCacheMock).toHaveBeenCalledWith('s1');
     expect(mocks.logEventMock).toHaveBeenCalledWith('info', 'tariff.period.created', expect.objectContaining({
       accountId: 'fp_user-9',

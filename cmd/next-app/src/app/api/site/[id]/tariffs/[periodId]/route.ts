@@ -4,7 +4,6 @@ import { withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, flushLogEvents, observeRoute, setLogContext } from '@/lib/observability';
 import { isCrossOriginRequest } from '@/lib/request-security';
 import {
-  enqueueTariffReattribution,
   REATTRIBUTION_AFTER_MAX_TIME_MS,
   runSiteReattribution,
 } from '@/lib/tariff-reattribution';
@@ -39,14 +38,8 @@ export function PATCH(req: NextRequest, context: { params: Promise<{ id: string;
     try {
       const body = await req.json();
       const repo = new TariffTimelineRepo();
-      const { timeline, affectedRange } = await repo.updatePeriod(siteId, periodId, user.id, body);
-      const reattribution = await enqueueTariffReattribution({
-        siteId,
-        fromDate: affectedRange.fromDate,
-        toDate: affectedRange.toDate,
-        requestedByUserId: user.id,
-        trigger: 'update',
-      });
+      // The re-attribution job is queued in the same transaction as the edit.
+      const { timeline } = await repo.updatePeriod(siteId, periodId, user.id, body);
       after(async () => {
         try {
           await withIoDeadline(10_000, () =>
@@ -56,7 +49,7 @@ export function PATCH(req: NextRequest, context: { params: Promise<{ id: string;
           flushLogEvents();
         }
       });
-      return json({ ...timeline, reattribution });
+      return json(timeline);
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);
@@ -82,14 +75,7 @@ export function DELETE(req: NextRequest, context: { params: Promise<{ id: string
     }
     try {
       const repo = new TariffTimelineRepo();
-      const { timeline, removedRange } = await repo.deleteManualPeriod(siteId, periodId, user.id);
-      const reattribution = await enqueueTariffReattribution({
-        siteId,
-        fromDate: removedRange.fromDate,
-        toDate: removedRange.toDate,
-        requestedByUserId: user.id,
-        trigger: 'delete',
-      });
+      const { timeline } = await repo.deleteManualPeriod(siteId, periodId, user.id);
       after(async () => {
         try {
           await withIoDeadline(10_000, () =>
@@ -99,7 +85,7 @@ export function DELETE(req: NextRequest, context: { params: Promise<{ id: string
           flushLogEvents();
         }
       });
-      return json({ ...timeline, reattribution });
+      return json(timeline);
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);

@@ -9,7 +9,9 @@ import type {
 } from './db-types';
 import { tariffContentHash, type ParsedTariff } from './importer/tariff-parser';
 import { accountFingerprint, logEvent } from './observability';
+import { observedHolidayDates } from './holidays';
 import { SiteRepo } from './site-repo';
+import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import type {
   ReattributionStatusDTO,
   SiteTariffsTimelineResponse,
@@ -172,7 +174,12 @@ export async function recomputeIsCurrentTariff(
       [siteId]
     )).rows[0]?.tariff_id
     ?? null;
-  if (fallback === null) return null;
+  if (fallback === null) {
+    // No period left (the last plan was deleted): nothing may stay current, or reads and archive
+    // writes would keep pricing from a plan that is gone from the history. The tariff rows stay.
+    await client.query('UPDATE "Tariff" SET is_current = FALSE WHERE site_id = $1 AND is_current = TRUE', [siteId]);
+    return null;
+  }
   // Demote before promoting so non-deferrable partial unique index tariff_current_uidx never trips on scan order.
   await client.query(
     'UPDATE "Tariff" SET is_current = FALSE WHERE site_id = $1 AND is_current = TRUE AND id <> $2',
@@ -437,6 +444,7 @@ export class TariffTimelineRepo {
       currency,
       periods,
       reattribution: toReattributionDTO(reattrRes.rows[0]),
+      holidayDates: [Number(today.slice(0, 4)), Number(today.slice(0, 4)) + 1].flatMap(y => observedHolidayDates(y)),
       teslaSync: {
         latestTariffId: latestTesla ? Number(latestTesla.id) : null,
         latestTariffName: latestTesla?.name ?? null,
@@ -456,6 +464,8 @@ export class TariffTimelineRepo {
     let createdPeriodId = 0;
     let newTariffId = 0;
     let validated: TariffPlanWriteInput;
+    let reattribution: EnqueueReattributionParams;
+    let queued: EnqueuedReattribution;
     try {
       await client.query('BEGIN');
       const siteRes = await client.query<{ timezone: string }>(
@@ -486,6 +496,10 @@ export class TariffTimelineRepo {
       const inserted = await applySpanMutationPlan(client, siteId, plan);
       createdPeriodId = inserted.at(-1)?.id ?? 0;
       await recomputeIsCurrentTariff(client, siteId, today);
+      reattribution = {
+        siteId, fromDate: validated.effectiveFrom, toDate: validated.effectiveTo, requestedByUserId: userId, trigger: 'create',
+      };
+      queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -495,6 +509,7 @@ export class TariffTimelineRepo {
     }
 
     new SiteRepo().invalidateCache(siteId);
+    logReattributionEnqueued(reattribution, queued);
     logEvent('info', 'tariff.period.created', {
       periodId: createdPeriodId,
       tariffId: newTariffId,
@@ -521,6 +536,8 @@ export class TariffTimelineRepo {
     let oldTo: string | null = null;
     let nextFrom = '';
     let nextTo: string | null = null;
+    let reattribution: EnqueueReattributionParams;
+    let queued: EnqueuedReattribution;
     let targetTariffId = 0;
     let source: TariffSource = 'manual';
     let seasonCount = 0;
@@ -608,6 +625,14 @@ export class TariffTimelineRepo {
       }
 
       await recomputeIsCurrentTariff(client, siteId, today);
+      reattribution = {
+        siteId,
+        fromDate: minDate(oldFrom, nextFrom),
+        toDate: maxEnd(oldTo, nextTo),
+        requestedByUserId: userId,
+        trigger: 'update',
+      };
+      queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -617,6 +642,7 @@ export class TariffTimelineRepo {
     }
 
     new SiteRepo().invalidateCache(siteId);
+    logReattributionEnqueued(reattribution, queued);
     logEvent('info', 'tariff.period.updated', {
       periodId,
       tariffId: targetTariffId,
@@ -648,6 +674,8 @@ export class TariffTimelineRepo {
     let removedFrom = '';
     let removedTo: string | null = null;
     let tariffId = 0;
+    let reattribution: EnqueueReattributionParams;
+    let queued: EnqueuedReattribution;
     try {
       await client.query('BEGIN');
       const siteRes = await client.query<{ timezone: string }>(
@@ -695,6 +723,10 @@ export class TariffTimelineRepo {
       }
 
       await recomputeIsCurrentTariff(client, siteId, today);
+      reattribution = {
+        siteId, fromDate: removedFrom, toDate: removedTo, requestedByUserId: userId, trigger: 'delete',
+      };
+      queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -704,6 +736,7 @@ export class TariffTimelineRepo {
     }
 
     new SiteRepo().invalidateCache(siteId);
+    logReattributionEnqueued(reattribution, queued);
     logEvent('info', 'tariff.period.deleted', {
       periodId,
       tariffId,

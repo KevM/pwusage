@@ -100,6 +100,7 @@ const baseTimeline: SiteTariffsTimelineResponse = {
     },
   ],
   reattribution: null,
+  holidayDates: [],
   teslaSync: {
     latestTariffId: 10,
     latestTariffName: 'We Energies Prior',

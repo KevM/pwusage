@@ -4,7 +4,6 @@ import { withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, flushLogEvents, observeRoute, setLogContext } from '@/lib/observability';
 import { isCrossOriginRequest } from '@/lib/request-security';
 import {
-  enqueueTariffReattribution,
   REATTRIBUTION_AFTER_MAX_TIME_MS,
   runSiteReattribution,
 } from '@/lib/tariff-reattribution';
@@ -48,14 +47,8 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
     try {
       const body = await req.json();
       const repo = new TariffTimelineRepo();
+      // The re-attribution job is queued in the same transaction as the new plan.
       const timeline = await repo.createManualPeriod(siteId, user.id, body);
-      const reattribution = await enqueueTariffReattribution({
-        siteId,
-        fromDate: body.effectiveFrom,
-        toDate: body.effectiveTo ?? null,
-        requestedByUserId: user.id,
-        trigger: 'create',
-      });
       after(async () => {
         try {
           await withIoDeadline(10_000, () =>
@@ -65,7 +58,7 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
           flushLogEvents();
         }
       });
-      return json({ ...timeline, reattribution }, 201);
+      return json(timeline, 201);
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);

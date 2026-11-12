@@ -126,6 +126,8 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
     let currency: String
     let periods: [TariffPeriodDTO]
     let reattribution: ReattributionStatusDTO?
+    /// Observed holidays (site-local YYYY-MM-DD); they follow the weekend schedule. Nil from older servers.
+    var holidayDates: [String]?
     let teslaSync: TeslaSyncDTO
 
     func validating(siteID: String) throws -> Self {
@@ -161,7 +163,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         }) else {
             return nil
         }
-        let isWeekend = weekday == 1 || weekday == 7
+        let isWeekend = weekday == 1 || weekday == 7 || (holidayDates?.contains(today) ?? false)
         let windows = isWeekend ? season.weekendPeriods : season.weekdayPeriods
         let minuteOfDay = hour * 60 + minute
         guard let window = windows.first(where: { Self.windowMatches(minuteOfDay: minuteOfDay, window: $0) }) else {

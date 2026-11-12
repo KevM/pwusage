@@ -84,3 +84,17 @@ export function isObservedHoliday(
     }
     return false;
 }
+
+/** Every observed holiday date (YYYY-MM-DD) in `year`, for clients that choose a day's schedule. */
+export function observedHolidayDates(year: number, rules: HolidayRule[] = US_TOU_HOLIDAYS): string[] {
+    const dates: string[] = [];
+    for (let month = 1; month <= 12; month++) {
+        const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        for (let day = 1; day <= daysInMonth; day++) {
+            if (isObservedHoliday(year, month, day, rules)) {
+                dates.push(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+            }
+        }
+    }
+    return dates;
+}

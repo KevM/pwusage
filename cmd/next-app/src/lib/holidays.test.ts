@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isObservedHoliday, US_TOU_HOLIDAYS } from './holidays';
+import { isObservedHoliday, observedHolidayDates, US_TOU_HOLIDAYS } from './holidays';
 
 describe('isObservedHoliday', () => {
     it('marks fixed holidays on their actual date', () => {
@@ -71,3 +71,13 @@ describe('isObservedHoliday', () => {
     });
 });
 
+
+describe('observedHolidayDates', () => {
+    it('lists the observed holidays of a year', () => {
+        const dates = observedHolidayDates(2026);
+        expect(dates).toContain('2026-11-26'); // Thanksgiving
+        expect(dates).toContain('2026-12-25');
+        expect(dates).not.toContain('2026-11-25');
+        expect(dates.every(d => d.startsWith('2026-'))).toBe(true);
+    });
+});

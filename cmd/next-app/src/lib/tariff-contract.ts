@@ -56,6 +56,8 @@ export interface SiteTariffsTimelineResponse {
   currency: string;
   periods: TariffPeriodDTO[];
   reattribution: ReattributionStatusDTO | null;
+  /** Observed holidays this year and next (site-local YYYY-MM-DD): holidays use the weekend schedule. */
+  holidayDates: string[];
   teslaSync: {
     latestTariffId: number | null;
     latestTariffName: string | null;

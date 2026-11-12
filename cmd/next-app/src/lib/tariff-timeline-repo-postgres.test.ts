@@ -65,7 +65,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         name TEXT, buy_rate DOUBLE PRECISION, sell_rate DOUBLE PRECISION,
         from_day_of_week INTEGER, from_hour INTEGER, from_minute INTEGER, to_day_of_week INTEGER, to_hour INTEGER, to_minute INTEGER
       );
-      CREATE TABLE "EnergyDayArchive" (site_id TEXT NOT NULL, day_start TIMESTAMPTZ NOT NULL, revision UUID NOT NULL, PRIMARY KEY (site_id, day_start));
+      CREATE TABLE "EnergyDayArchive" (site_id TEXT NOT NULL, day_start TIMESTAMPTZ NOT NULL, revision UUID NOT NULL, status TEXT, PRIMARY KEY (site_id, day_start));
       INSERT INTO "User" VALUES ('u1', 'owner@example.com'), ('u2', 'member@example.com');
       INSERT INTO "Site" VALUES ('s1', 'u1', 'America/Chicago', '{"currency":"USD"}');
     `);
@@ -222,5 +222,27 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     // Renaming onto another plan's name is refused.
     await repo.createManualPeriod('s5', 'u1', input('Other Plan', '2025-01-01', null));
     await expect(repo.updatePeriod('s5', currentId, 'u1', { name: 'OTHER PLAN' })).rejects.toThrow(/already exists/);
+  });
+  it('clears the current flag when the last effective period is deleted', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s6', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    const created = await repo.createManualPeriod('s6', 'u1', {
+      name: 'Only Plan', effectiveFrom: '2024-01-01', effectiveTo: null,
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+      }],
+    });
+    const before = await local.database.query(`SELECT 1 FROM "Tariff" WHERE site_id = 's6' AND is_current`);
+    expect(before.rowCount).toBe(1);
+    await repo.deleteManualPeriod('s6', created.periods[0]!.periodId, 'u1');
+    const after = await local.database.query(`SELECT 1 FROM "Tariff" WHERE site_id = 's6' AND is_current`);
+    expect(after.rowCount).toBe(0);
+    // Each mutation queued its re-attribution job in the same transaction.
+    const job = await local.database.query(`SELECT generation FROM "SiteTariffReattribution" WHERE site_id = 's6'`);
+    expect(Number(job.rows[0]?.generation)).toBe(2);
+    const kept = await local.database.query(`SELECT 1 FROM "Tariff" WHERE site_id = 's6'`);
+    expect(kept.rowCount).toBe(1);
   });
 });
