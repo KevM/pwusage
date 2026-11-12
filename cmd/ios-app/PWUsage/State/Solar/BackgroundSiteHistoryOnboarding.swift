@@ -29,14 +29,26 @@ enum BackgroundSiteHistoryOnboarding {
         return request
     }
 
+    private static let logger = Logger(subsystem: "fm.rodeo.pwusage", category: "solar-background")
+
     /// Replaces any pending request; nil leaves none.
     static func schedule(earliest: Date?) {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
-        guard let earliest else { return }
-        do { try BGTaskScheduler.shared.submit(request(earliest: earliest)) } catch {
-            Logger(subsystem: "fm.rodeo.pwusage", category: "solar-background")
-                .debug("Background history onboarding could not be scheduled")
+        guard let earliest else {
+            logger.info("Background history: nothing to schedule")
+            return
         }
+        do {
+            try BGTaskScheduler.shared.submit(request(earliest: earliest))
+            logger.info("Background history: scheduled, not before \(earliest.formatted(), privacy: .public)")
+        } catch {
+            logger.error("Background history could not be scheduled: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// When iOS may first run the pending request; nil when none is pending.
+    static func pendingEarliest() async -> Date? {
+        await BGTaskScheduler.shared.pendingTaskRequests().first { $0.identifier == identifier }?.earliestBeginDate
     }
 
     static func register() {
@@ -71,7 +83,9 @@ enum BackgroundSiteHistoryOnboarding {
                 gate.complete(false)
                 return
             }
+            logger.info("Background history: opportunity granted")
             let next = await lifecycle.runInBackground(scope: scope)
+            logger.info("Background history: run ended, next \(next?.formatted() ?? "none", privacy: .public)")
             guard !Task.isCancelled else { return }
             reschedule(next)
             gate.complete(true)

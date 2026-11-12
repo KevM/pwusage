@@ -14,6 +14,8 @@ struct SolarSystemView: View {
     var onLocationSaved: () -> Void = {}
     /// The reveal owed for a system found while nobody was watching has been seen.
     var onRevealSeen: () -> Void = {}
+    /// Loads history older than the layout search reads, on request; nil hides the row.
+    var deepHistory: SiteDeepHistoryModel?
 
     private static let visualID = "solar-system-visual"
 
@@ -102,6 +104,7 @@ struct SolarSystemView: View {
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
             }
+            if layout != nil, status != nil, let deepHistory { SiteDeepHistorySection(model: deepHistory) }
             if stored != nil || status != nil { locationSection }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }

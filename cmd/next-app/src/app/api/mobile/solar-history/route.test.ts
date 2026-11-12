@@ -117,11 +117,13 @@ describe('mobile solar history route', () => {
         expect(readDaysMock).not.toHaveBeenCalled();
     });
 
-    it('accepts a from exactly 400 days back and refuses one more', async () => {
-        const exact = await get('siteId=site-a&from=2025-09-22');
-        expect(exact.status).toBe(200);
-        expect(readDaysMock.mock.calls[0][1]).toEqual(midnight('2025-09-22'));
-        expect((await get('siteId=site-a&from=2025-09-21')).status).toBe(400);
+    it('serves any date in the past, so a new phone can read the full history', async () => {
+        for (const from of ['2025-09-22', '2025-09-21', '2018-03-01']) {
+            readDaysMock.mockClear();
+            const res = await get(`siteId=site-a&from=${from}`);
+            expect(res.status).toBe(200);
+            expect(readDaysMock.mock.calls[0][1]).toEqual(midnight(from));
+        }
     });
 
     it('maps each day to its site-local date, slots and fetch state', async () => {

@@ -22,6 +22,9 @@ final class SiteHistoryOnboardingLifecycle {
     private let scheduleBackground: @MainActor (Date?) -> Void
     private let sleep: Sleep
     private let now: () -> Date
+    /// The user-started load of older history. It follows the selected site in the foreground and
+    /// shares the background task, after onboarding's own work.
+    let deepHistory: SiteDeepHistoryModel?
     private struct ForegroundRun {
         let scope: SolarForecastSiteScope
         let id: UUID
@@ -42,12 +45,14 @@ final class SiteHistoryOnboardingLifecycle {
         onboarding: SiteHistoryOnboarding,
         store: SiteHistoryOnboardingStore = .shared,
         ledgers: SiteHistoryDayLedgerStore = .shared,
+        deepHistory: SiteDeepHistoryModel? = nil,
         isHistoryEnabled: @escaping @MainActor (SolarForecastSiteScope) async -> Bool,
         scheduleBackground: @escaping @MainActor (Date?) -> Void,
         sleep: @escaping Sleep = { try await Task.sleep(for: .seconds($0)) },
         now: @escaping () -> Date = Date.init
     ) {
         self.onboarding = onboarding
+        self.deepHistory = deepHistory
         self.store = store
         self.ledgers = ledgers
         self.isHistoryEnabled = isHistoryEnabled
@@ -86,6 +91,7 @@ final class SiteHistoryOnboardingLifecycle {
     func activate(scope: SolarForecastSiteScope) {
         if lastScope != scope { lastScope = scope }
         Task { await refreshStatus() }
+        Task { await deepHistory?.activate(scope: scope) }
         if foreground?.scope == scope { return }
         foreground?.task.cancel()
         // The task clears the slot only while it still owns it, so a newer run is never dropped.
@@ -101,6 +107,7 @@ final class SiteHistoryOnboardingLifecycle {
     func deactivate() async {
         foreground?.task.cancel()
         foreground = nil
+        await deepHistory?.suspend()
         guard let lastScope else { return }
         let next = await nextOpportunity(scope: lastScope)
         // Activated again while the saved state was read: the foreground owns the job.
@@ -115,6 +122,7 @@ final class SiteHistoryOnboardingLifecycle {
         background?.cancel()
         background = nil
         session += 1
+        deepHistory?.end()
         lastScope = nil
         status = nil
         statusGeneration += 1
@@ -130,6 +138,7 @@ final class SiteHistoryOnboardingLifecycle {
         }
         try? await store.remove(scope: scope)
         try? await ledgers.remove(scope: scope)
+        await deepHistory?.forget(scope: scope)
         await onboarding.acknowledgeReveal(scope: scope)
         await refreshStatus()
     }
@@ -143,6 +152,7 @@ final class SiteHistoryOnboardingLifecycle {
     /// After the action a pause asked for (reconnecting Tesla, signing in) succeeds.
     func resumePaused(accountScopeID: String, reason: SiteHistoryOnboarding.PauseReason) async {
         try? await store.resumePaused(accountScopeID: accountScopeID, reason: reason)
+        await deepHistory?.resumePaused(accountScopeID: accountScopeID, reason: reason)
         await refreshStatus()
     }
 
@@ -177,7 +187,12 @@ final class SiteHistoryOnboardingLifecycle {
         lastScope = scope
         let session = session
         guard await prepare(scope), session == self.session else { return nil }
-        let run = Task { await onboarding.run(scope: scope, maxSlices: maxSlices) }
+        // One task: onboarding's slices, then the user's older-history walk, if they started it.
+        let run = Task {
+            let outcome = await onboarding.run(scope: scope, maxSlices: maxSlices)
+            if !Task.isCancelled { _ = await deepHistory?.runInBackground(scope: scope, maxSlices: maxSlices) }
+            return outcome
+        }
         background = run
         _ = await withTaskCancellationHandler { await run.value } onCancel: { run.cancel() }
         if background == run { background = nil }
@@ -185,13 +200,17 @@ final class SiteHistoryOnboardingLifecycle {
         return await nextOpportunity(scope: scope)
     }
 
-    /// The earliest the job could make progress, from the saved state alone: nil once it is
-    /// paused or finished, otherwise the later of now, its backoff and the account's throttle.
+    /// The earliest the job could make progress, from the saved state alone: nil once onboarding and
+    /// the older-history walk are each paused, finished or (for the walk) not started, otherwise the
+    /// earlier of their times, each the later of now, its backoff and the account's throttle.
     func nextOpportunity(scope: SolarForecastSiteScope) async -> Date? {
         let progress = try? await store.progress(scope: scope)
-        if let phase = progress?.phase, phase != .active { return nil }
         let throttle = try? await store.throttle(accountScopeID: scope.accountScopeID)
-        return [now(), throttle, progress?.nextAttemptAt].compactMap(\.self).max()
+        let deep = await deepHistory?.nextOpportunity(scope: scope)
+        let isOnboardingActive = progress.map { $0.phase == .active } ?? true
+        let onboardingNext = isOnboardingActive
+            ? [now(), throttle, progress?.nextAttemptAt].compactMap(\.self).max() : nil
+        return [onboardingNext, deep].compactMap(\.self).min()
     }
 
     private func runForeground(_ scope: SolarForecastSiteScope) async {
@@ -234,6 +253,7 @@ final class SiteHistoryOnboardingLifecycle {
             api: api, history: history, records: records, runner: runner)
         return SiteHistoryOnboardingLifecycle(
             onboarding: SiteHistoryOnboarding(environment: environment),
+            deepHistory: SiteDeepHistoryModel(deepHistory: SiteDeepHistory(environment: environment)),
             isHistoryEnabled: { await environment.isHistoryEnabled(scope: $0) },
             scheduleBackground: { BackgroundSiteHistoryOnboarding.schedule(earliest: $0) }
         )

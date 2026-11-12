@@ -277,7 +277,7 @@ final class SiteHistoryOnboarding {
     }
 
     /// `base` doubled per attempt after the first, capped at an hour.
-    private static func backoff(_ base: TimeInterval, attempt: Int) -> TimeInterval {
+    static func backoff(_ base: TimeInterval, attempt: Int) -> TimeInterval {
         min(base * pow(2, Double(max(attempt - 1, 0))), 3600)
     }
 
