@@ -49,6 +49,12 @@ enum SolarLayoutCloudRecordSerializer {
         record["detectorVersion"] = layoutRecord.detectorVersion as CKRecordValue?
         applyResultLocation(layoutRecord.resultLocation?.rounded, to: record)
 
+        // Entered by the owner, so encrypted end to end like the home location.
+        record.encryptedValues["manualLayout"] = layoutRecord.manualLayout.flatMap {
+            (try? JSONEncoder().encode($0)) as CKRecordValue?
+        }
+        record.encryptedValues["manualSetAt"] = layoutRecord.manualSetAt as CKRecordValue?
+
         return record
     }
 
@@ -67,6 +73,11 @@ enum SolarLayoutCloudRecordSerializer {
         let detectorVersion = record["detectorVersion"] as? Int
         let resultLocation = parseLocation("result", in: record) ?? (result != nil ? location : nil)
 
+        let manualLayout = (record.encryptedValues["manualLayout"] as? Data).flatMap {
+            try? JSONDecoder().decode(ManualSolarLayout.self, from: $0)
+        }
+        let manualSetAt = record.encryptedValues["manualSetAt"] as? Date
+
         let layoutRecord = SolarLayoutRecord(
             location: location,
             locationSetAt: locationSetAt,
@@ -74,7 +85,9 @@ enum SolarLayoutCloudRecordSerializer {
             detectedAt: detectedAt,
             attemptedAt: attemptedAt,
             detectorVersion: detectorVersion,
-            resultLocation: resultLocation
+            resultLocation: resultLocation,
+            manualLayout: manualLayout,
+            manualSetAt: manualSetAt
         )
         return (scope, layoutRecord)
     }
