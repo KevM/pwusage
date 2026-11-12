@@ -58,10 +58,10 @@ struct RatePlanDraftTests {
         #expect(input?.weekdayPeriods.first?.buyRate == 0.10279)
         #expect(input?.weekdayPeriods.last?.sellRate == 0.04906)
 
-        // Moving boundary maintains coverage and prevents crossing neighbor
+        // Periods that wrap midnight are not edited in place: the boundary does not move.
         season.movePeriodBoundary(afterIndex: 0, toSlot: 18, isWeekday: true)
-        #expect(season.weekdayWindows[0].endSlot == 18)
-        #expect(season.weekdayWindows[1].startSlot == 18)
+        #expect(season.weekdayWindows[0].endSlot == 16)
+        #expect(season.weekdayWindows[1].startSlot == 16)
         #expect(season.validateWeekdaySlots() == nil)
 
         // Adding and removing keeps valid 48-slot coverage
@@ -137,6 +137,27 @@ struct RatePlanDraftTests {
         draft.seasons[0].name = "Peak Demand"
         draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 7)
         #expect(draft.seasons[0].name == "Peak Demand")
+    }
+
+    @Test("Editing periods one at a time never wraps a period past midnight")
+    func periodsNeverWrapMidnight() {
+        var season = SeasonDraft.makeDefault(name: "Summer", fromMonth: 6, toMonth: 9)
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 16, isWeekday: true) // Off-peak until 8 AM
+
+        // The last period ends at midnight and has no movable end, so +30m cannot wrap it.
+        season.movePeriodBoundary(afterIndex: 1, toSlot: 49, isWeekday: true)
+        #expect(season.weekdayWindows.map(\.startSlot) == [0, 16])
+        #expect(season.weekdayWindows.map(\.endSlot) == [16, 48])
+
+        // Stepping the first boundary up and back down restores the original split exactly.
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 17, isWeekday: true)
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 16, isWeekday: true)
+        #expect(season.weekdayWindows.map(\.endSlot) == [16, 48])
+
+        // A boundary stops one slot short of the end of the next period.
+        season.movePeriodBoundary(afterIndex: 0, toSlot: 99, isWeekday: true)
+        #expect(season.weekdayWindows.map(\.endSlot) == [47, 48])
+        #expect(season.weekdayWindows.allSatisfy { $0.startSlot < $0.endSlot })
     }
 
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")

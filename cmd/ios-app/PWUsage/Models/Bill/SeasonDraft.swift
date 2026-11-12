@@ -234,29 +234,19 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
             assignWindows(list, isWeekday: isWeekday)
             return
         }
-        guard list.count >= 2, list.indices.contains(index) else { return }
-        let nextIndex = (index + 1) % list.count
-        // Keep the boundary inside the two adjacent windows' combined span so it can never
-        // cross a neighbouring boundary and wrap into an overlapping schedule.
-        let spanStart = list[index].startSlot % 48
-        var span = ((list[nextIndex].endSlot - spanStart) % 48 + 48) % 48
-        if span == 0 { span = 48 }
-        guard span >= 2 else { return }
-        let candidate = ((max(0, min(47, candidateSlot)) - spanStart) % 48 + 48) % 48
-        var offset = candidate
-        if candidate == 0 {
-            offset = 1
-        } else if candidate > span - 1 {
-            offset = candidate - span <= 48 - candidate ? span - 1 : 1
-        }
-        let snapped = (spanStart + offset) % 48
+        // Periods run forward from midnight and never wrap past it, so only the boundaries
+        // between neighbouring periods move; the last period always ends at midnight.
+        guard list.indices.contains(index), index + 1 < list.count else { return }
         var updatedFirst = list[index]
-        var updatedSecond = list[nextIndex]
+        var updatedSecond = list[index + 1]
+        let lower = updatedFirst.startSlot + 1
+        let upper = updatedSecond.endSlot - 1
+        guard lower <= upper else { return }
+        let snapped = max(lower, min(upper, candidateSlot))
         updatedFirst.endSlot = snapped
         updatedSecond.startSlot = snapped
-        guard updatedFirst.slotDuration >= 1, updatedSecond.slotDuration >= 1 else { return }
         list[index] = updatedFirst
-        list[nextIndex] = updatedSecond
+        list[index + 1] = updatedSecond
         assignWindows(list, isWeekday: isWeekday)
     }
 
