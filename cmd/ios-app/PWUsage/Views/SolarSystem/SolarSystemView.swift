@@ -139,7 +139,7 @@ struct SolarSystemView: View {
                 isLoading: solarHealth?.isRunning ?? false,
                 usedWeather: solarHealth?.result?.weather.hasPrecipitation ?? false,
                 onEditLayout: { isEditingLayout = true },
-                onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
+                deepHistory: deepHistory)
         } else if solarHealth?.isRunning == true {
             Section("Panel Health") {
                 HStack(spacing: 10) {
