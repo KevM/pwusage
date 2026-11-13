@@ -47,6 +47,11 @@ struct ShadeHotBin: Equatable, Sendable {
 struct ShadeMask: Sendable {
     let horizon: [Double]
     let hotBins: [ShadeHotBin]
+    let observedBins: [Bool]
+
+    init(horizon: [Double], hotBins: [ShadeHotBin], observedBins: [Bool] = []) {
+        self.horizon = horizon; self.hotBins = hotBins; self.observedBins = observedBins
+    }
 
     func shaded(azimuth: Double, elevation: Double) -> Bool {
         guard azimuth.isFinite else { return false }
@@ -327,11 +332,13 @@ func learnShade(
         azimuthBins[Int(floor(saz[sample] / 10))].append(sample)
     }
     var horizon = [Double](repeating: -.infinity, count: azimuthBinCount)
+    var observedBins = [Bool](repeating: false, count: azimuthBinCount)
     for bin in 0 ..< azimuthBinCount {
         let members = azimuthBins[bin]
         guard members.count >= 20 else { continue }
-        horizon[bin] = min(
-            shadeHeight(members, sel: sel, ratio: ratio, dayIds: dayIds, threshold: threshold), 45)
+        let learned = shadeHeight(members, sel: sel, ratio: ratio, dayIds: dayIds, threshold: threshold)
+        horizon[bin] = min(learned.height, 45)
+        observedBins[bin] = learned.observed
     }
     var hot: [ShadeHotBin] = []
     for bin in 0 ..< azimuthBinCount {
@@ -346,14 +353,14 @@ func learnShade(
             }
         }
     }
-    return ShadeMask(horizon: horizon, hotBins: hot)
+    return ShadeMask(horizon: horizon, hotBins: hot, observedBins: observedBins)
 }
 
 /// The lowest elevation above which a 10° azimuth bin's rows are unshaded: walks the populated
 /// 2.5° elevation bins upward while their 80th-percentile ratio stays under `threshold`.
 private func shadeHeight(
     _ members: [Int], sel: [Double], ratio: [Double], dayIds: [String], threshold: Double
-) -> Double {
+) -> (height: Double, observed: Bool) {
     var elevationBins = [[Int]](repeating: [], count: azimuthBinCount)
     for sample in members {
         let elevationBin = floor(sel[sample] / 2.5)
@@ -362,16 +369,14 @@ private func shadeHeight(
         }
     }
     var height = -Double.infinity
+    var observed = false
     for elevationBin in 0 ..< azimuthBinCount {
         let cell = elevationBins[elevationBin]
         if cell.count < 8 || Set(cell.map { dayIds[$0] }).count < 3 { continue }
-        if quantile(cell.map { ratio[$0] }, 0.8) < threshold {
-            height = Double(elevationBin + 1) * 2.5
-        } else {
-            break
-        }
+        observed = true
+        if quantile(cell.map { ratio[$0] }, 0.8) < threshold { height = Double(elevationBin + 1) * 2.5 } else { break }
     }
-    return height
+    return (height, observed)
 }
 
 /// JavaScript `Math.round`: halves round toward positive infinity.

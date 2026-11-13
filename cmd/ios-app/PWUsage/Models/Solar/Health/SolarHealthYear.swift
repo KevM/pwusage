@@ -47,14 +47,19 @@ struct SolarShadeMap: Codable, Equatable, Sendable {
     let horizon: [Double]
     /// `[azimuth, elevation]` of each hot bin.
     let hotBins: [[Double]]
+    let observedBins: [Bool]?
 
     init(_ mask: ShadeMask) {
         horizon = mask.horizon
         hotBins = mask.hotBins.map { [$0.azimuth, $0.elevation] }
+        observedBins = mask.observedBins
     }
 
     var mask: ShadeMask {
-        ShadeMask(horizon: horizon, hotBins: hotBins.map { ShadeHotBin(azimuth: $0[0], elevation: $0[1]) })
+        ShadeMask(
+            horizon: horizon,
+            hotBins: hotBins.map { ShadeHotBin(azimuth: $0[0], elevation: $0[1]) },
+            observedBins: observedBins ?? [])
     }
 }
 

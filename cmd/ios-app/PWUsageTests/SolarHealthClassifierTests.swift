@@ -165,6 +165,7 @@ struct SolarHealthClassifierTests {
 
         let fault = try #require(report.visibleFindings.first { $0.kind == .stepFault })
         #expect(fault.clearDays == 4)
+        #expect(!report.dirtLevel.isActive)
     }
 
     @Test("Isolated hot bins without horizon segments are reported as shading")
@@ -184,5 +185,38 @@ struct SolarHealthClassifierTests {
         let finding = try #require(report.visibleFindings.first { $0.kind == .shading && $0.season == .autumn })
         #expect(finding.azimuthFrom == 250)
         #expect(finding.azimuthTo == 260)
+    }
+
+    @Test("Unobserved historical bin does not trigger shading growth, observed open bin does")
+    func unobservedPreviousHorizonDoesNotReportShadingGrowth() throws {
+        let openHorizon = [Double](repeating: -.infinity, count: 36)
+        var shadedHorizon = openHorizon
+        shadedHorizon[10] = 18.0
+
+        let unobservedOld = SolarShadeMap(ShadeMask(
+            horizon: openHorizon, hotBins: [], observedBins: [Bool](repeating: false, count: 36)))
+        var observedFlags = [Bool](repeating: false, count: 36)
+        observedFlags[10] = true
+        let observedOld = SolarShadeMap(ShadeMask(horizon: openHorizon, hotBins: [], observedBins: observedFlags))
+        let latestMap = SolarShadeMap(ShadeMask(horizon: shadedHorizon, hotBins: [], observedBins: observedFlags))
+
+        let cap = SolarHealthCapacity(site: 1.0, directions: [.init(azimuth: 180, factor: 1.0)], clearDays: 20)
+        let y2025Unobs = SolarHealthYear(
+            year: 2025, key: "u-2025", clearDays: 20, capacity: cap, months: [],
+            shade: [SolarSeasonShade(season: .summer, map: unobservedOld, clearDays: 10)], dailyRatios: [])
+        let y2025Obs = SolarHealthYear(
+            year: 2025, key: "o-2025", clearDays: 20, capacity: cap, months: [],
+            shade: [SolarSeasonShade(season: .summer, map: observedOld, clearDays: 10)], dailyRatios: [])
+        let y2026 = SolarHealthYear(
+            year: 2026, key: "2026", clearDays: 20, capacity: cap, months: [],
+            shade: [SolarSeasonShade(season: .summer, map: latestMap, clearDays: 10)], dailyRatios: [])
+
+        let (unobsResult, manual) = try Self.makeResult(years: [y2025Unobs, y2026])
+        let unobsReport = SolarHealthClassifier.classify(unobsResult, manual: manual)
+        #expect(!unobsReport.allFindings.contains { $0.kind == .shadingGrowth })
+
+        let (obsResult, _) = try Self.makeResult(years: [y2025Obs, y2026])
+        let obsReport = SolarHealthClassifier.classify(obsResult, manual: manual)
+        #expect(obsReport.allFindings.contains { $0.kind == .shadingGrowth && $0.season == .summer })
     }
 }

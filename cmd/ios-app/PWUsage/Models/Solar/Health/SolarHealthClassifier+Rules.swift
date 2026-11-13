@@ -17,6 +17,7 @@ extension SolarHealthClassifier {
         let count: Int
         let drop: Double
         let slope: Double
+        let isGradual: Bool
     }
 
     private struct StepFaultMatch {
@@ -94,7 +95,14 @@ extension SolarHealthClassifier {
             let newEl = latest.map.horizon[bin]
             let oldEl = previous.map.horizon[bin]
             guard newEl.isFinite, newEl >= minShadeGrowthDegrees else { continue }
-            let delta = oldEl.isFinite ? newEl - oldEl : newEl
+            let delta: Double
+            if oldEl.isFinite {
+                delta = newEl - oldEl
+            } else {
+                let observed = previous.map.observedBins ?? []
+                guard observed.indices.contains(bin), observed[bin] else { continue }
+                delta = newEl
+            }
             if delta >= minShadeGrowthDegrees { grownBins.append(bin) }
         }
         var ranges: [AzimuthRange] = []
@@ -195,40 +203,54 @@ extension SolarHealthClassifier {
             }
         }
 
-        let tail = Array(ratios[lastRecoveryIndex...])
-        let baseline = quantile(ratios.map(\.ratio), 0.9)
+        let dirtLevel = activeDirtLevel(
+            in: ratios, lastRecoveryIndex: lastRecoveryIndex, lastRecoveredDay: lastRecoveredDay)
+        return SoilingAnalysis(dirtLevel: dirtLevel, findings: findings)
+    }
+
+    private static func activeDirtLevel(
+        in ratios: [SolarDailyRatio], lastRecoveryIndex: Int, lastRecoveredDay: String?
+    ) -> SolarHealthReport.DirtLevel {
+        let stepIndex = bestStepFault(in: ratios)?.index ?? 0
+        let tailStart = max(lastRecoveryIndex, stepIndex)
+        let tail = Array(ratios[tailStart...])
+        let baselineSource = tailStart > lastRecoveryIndex ? tail : ratios
+        let baseline = quantile(baselineSource.map(\.ratio), 0.9)
         let recent = median(tail.suffix(3).map(\.ratio))
         let tailRun = decliningRun(in: tail, from: 0, endingAt: tail.count - 1)
         let activeLoss = (baseline.isFinite && recent.isFinite && baseline > 0 && tailRun.count >= 3)
             ? max(0, (baseline - recent) / baseline * 100) : 0
-        let isActive = activeLoss >= 2.0 && tailRun.slope < 0
-        return SoilingAnalysis(
-            dirtLevel: .init(
-                currentLossPercent: isActive ? (activeLoss * 10).rounded() / 10 : nil,
-                lastRecoveredDay: lastRecoveredDay,
-                isActive: isActive),
-            findings: findings)
+        let isActive = activeLoss >= 2.0 && tailRun.slope < 0 && tailRun.isGradual
+        return .init(
+            currentLossPercent: isActive ? (activeLoss * 10).rounded() / 10 : nil,
+            lastRecoveredDay: lastRecoveredDay,
+            isActive: isActive)
     }
 
     private static func decliningRun(
         in ratios: [SolarDailyRatio], from start: Int, endingAt end: Int
     ) -> DecliningRun {
-        guard end > start else { return DecliningRun(count: end - start + 1, drop: 0, slope: 0) }
+        guard end > start else {
+            return DecliningRun(count: end - start + 1, drop: 0, slope: 0, isGradual: false)
+        }
         var peakIndex = start
         for idx in start ... end where ratios[idx].ratio >= ratios[peakIndex].ratio {
             peakIndex = idx
         }
         let slice = Array(ratios[peakIndex ... end])
-        guard slice.count >= 2 else { return DecliningRun(count: slice.count, drop: 0, slope: 0) }
+        guard slice.count >= 2 else {
+            return DecliningRun(count: slice.count, drop: 0, slope: 0, isGradual: false)
+        }
         let drop = ratios[peakIndex].ratio - ratios[end].ratio
         let slope = linearSlope(slice.map(\.ratio))
-        return DecliningRun(count: slice.count, drop: drop, slope: slope)
+        let declineSteps = zip(slice, slice.dropFirst()).count { $0.1.ratio < $0.0.ratio - 0.002 }
+        return DecliningRun(count: slice.count, drop: drop, slope: slope, isGradual: declineSteps >= 2)
     }
 
     // MARK: - Step Fault
 
-    static func analyzeStepFault(from years: [SolarHealthYear]) -> [SolarHealthFinding] {
-        guard let ratios = years.last?.dailyRatios, ratios.count >= 6 else { return [] }
+    private static func bestStepFault(in ratios: [SolarDailyRatio]) -> StepFaultMatch? {
+        guard ratios.count >= 6 else { return nil }
         var best: StepFaultMatch?
         for index in 3 ... (ratios.count - minStepFaultClearDays) {
             let beforeStart = max(0, index - 10)
@@ -242,7 +264,12 @@ extension SolarHealthClassifier {
                 best = StepFaultMatch(index: index, drop: drop, afterCount: ratios.count - index)
             }
         }
-        guard let match = best else { return [] }
+        return best
+    }
+
+    static func analyzeStepFault(from years: [SolarHealthYear]) -> [SolarHealthFinding] {
+        guard let ratios = years.last?.dailyRatios,
+              let match = bestStepFault(in: ratios) else { return [] }
         let day = ratios[match.index].day
         let percent = Int((match.drop * 100).rounded())
         return [SolarHealthFinding(
