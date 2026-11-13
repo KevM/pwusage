@@ -17,12 +17,12 @@ enum SolarHealthClassifier {
     static let lowOutputThreshold = 0.85
 
     static func classify(
-        _ result: SolarHealthResult, manual: ManualSolarLayout? = nil, now: Date = .now
+        _ result: SolarHealthResult, manual: ManualSolarLayout? = nil, now: Date = .now, rainDays: Set<String> = []
     ) -> SolarHealthReport {
         let potential = potentialVsActual(from: result.years)
         let score = healthScore(from: result, manual: manual, now: now)
         let shadeAnalysis = analyzeShading(from: result.years)
-        let soilingAnalysis = analyzeSoiling(from: result.years)
+        let soilingAnalysis = analyzeSoiling(from: result.years, rainDays: rainDays)
         let faultFindings = analyzeStepFault(from: result.years)
         let changeAnalysis = analyzeChangeOverTime(from: result, manual: manual, now: now)
 

@@ -151,4 +151,5 @@ struct SolarHealthResult: Equatable, Sendable {
     let referenceScale: Double
     /// The years this run computed; the rest came from the cache.
     let recomputedYears: [Int]
+    var weather = SolarHealthWeather()
 }

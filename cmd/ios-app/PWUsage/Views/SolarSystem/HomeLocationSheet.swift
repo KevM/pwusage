@@ -65,9 +65,9 @@ struct HomeLocationSheet: View {
                         Label("Choose on Map", systemImage: "map")
                     }
                 } footer: {
-                    Text("Searches are sent to Apple to find matching places. Your home location stays on "
-                        + "this device and in your iCloud, rounded to about 1 km. It only needs to be close: "
-                        + "it tells pwusage where the sun is.")
+                    Text("Searches go to Apple to find matching places. Latitude and longitude are rounded to "
+                        + "two decimals (about 1 km) and saved on this device and in your iCloud. "
+                        + "The app sends the rounded coordinates to Open-Meteo for forecasts and weather history.")
                 }
             }
             .navigationTitle("Home Location")

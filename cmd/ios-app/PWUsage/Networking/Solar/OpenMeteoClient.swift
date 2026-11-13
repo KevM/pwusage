@@ -36,6 +36,7 @@ enum OpenMeteoClientError: Error, Equatable {
 
 /// Downloads weather only. Panel geometry and production history stay on the phone.
 struct OpenMeteoClient: Sendable {
+    private static let archiveHost = "archive-api.open-meteo.com"
     static let host = "api.open-meteo.com"
     static let defaultDeferral: TimeInterval = 3600
     private let transport: any OpenMeteoTransport
@@ -56,6 +57,28 @@ struct OpenMeteoClient: Sendable {
         guard location.isValid, let url = Self.url(location: location) else {
             throw OpenMeteoClientError.invalidResponse
         }
+        return try await response(OpenMeteoWeather.self, from: url)
+    }
+
+    func weatherHistory(
+        location: SolarHomeLocation, timeZone: TimeZone, days: ClosedRange<String>
+    ) async throws -> SolarHealthWeather {
+        var url = URLComponents()
+        url.scheme = "https"
+        url.host = Self.archiveHost
+        url.path = "/v1/archive"
+        url.queryItems = Self.coordinateItems(location) + [
+            URLQueryItem(name: "daily", value: "rain_sum,snowfall_sum"),
+            URLQueryItem(name: "models", value: "era5"),
+            URLQueryItem(name: "timezone", value: timeZone.identifier),
+            URLQueryItem(name: "start_date", value: days.lowerBound),
+            URLQueryItem(name: "end_date", value: days.upperBound)]
+        guard location.isValid, let requestURL = url.url else { throw OpenMeteoClientError.invalidResponse }
+        let archive = try await response(OpenMeteoWeatherArchive.self, from: requestURL)
+        return try archive.weather(in: days, timeZone: timeZone)
+    }
+
+    private func response<Value: Decodable>(_ type: Value.Type, from url: URL) async throws -> Value {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpShouldHandleCookies = false
         request.allowsConstrainedNetworkAccess = false
@@ -69,7 +92,7 @@ struct OpenMeteoClient: Sendable {
             if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
             throw OpenMeteoClientError.transportFailure
         }
-        guard let http = response as? HTTPURLResponse, http.url?.scheme == "https", http.url?.host == Self.host else {
+        guard let http = response as? HTTPURLResponse, http.url?.scheme == "https", http.url?.host == url.host else {
             throw OpenMeteoClientError.invalidResponse
         }
         if http.statusCode == 429 {
@@ -77,7 +100,7 @@ struct OpenMeteoClient: Sendable {
         }
         guard (200 ..< 300).contains(http.statusCode) else { throw OpenMeteoClientError.httpStatus(http.statusCode) }
         guard data.count <= 1_000_000 else { throw OpenMeteoClientError.invalidResponse }
-        do { return try JSONDecoder().decode(OpenMeteoWeather.self, from: data) } catch {
+        do { return try JSONDecoder().decode(type, from: data) } catch {
             throw OpenMeteoClientError.decodingFailure
         }
     }
@@ -87,16 +110,20 @@ struct OpenMeteoClient: Sendable {
         url.scheme = "https"
         url.host = host
         url.path = "/v1/forecast"
-        let locale = Locale(identifier: "en_US_POSIX")
-        url.queryItems = [
-            URLQueryItem(name: "latitude", value: String(format: "%.2f", locale: locale, location.latitude)),
-            URLQueryItem(name: "longitude", value: String(format: "%.2f", locale: locale, location.longitude)),
+        url.queryItems = coordinateItems(location) + [
             URLQueryItem(name: "hourly", value: "shortwave_radiation,direct_normal_irradiance,diffuse_radiation"),
             URLQueryItem(name: "timezone", value: "GMT"),
             URLQueryItem(name: "timeformat", value: "unixtime"),
             URLQueryItem(name: "past_days", value: "1"),
             URLQueryItem(name: "forecast_days", value: "3")]
         return url.url
+    }
+
+    private static func coordinateItems(_ location: SolarHomeLocation) -> [URLQueryItem] {
+        let locale = Locale(identifier: "en_US_POSIX")
+        return [
+            URLQueryItem(name: "latitude", value: String(format: "%.2f", locale: locale, location.latitude)),
+            URLQueryItem(name: "longitude", value: String(format: "%.2f", locale: locale, location.longitude))]
     }
 
     private func retryAfter(_ response: HTTPURLResponse) -> Date {

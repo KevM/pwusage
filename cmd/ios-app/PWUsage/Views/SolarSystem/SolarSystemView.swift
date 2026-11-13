@@ -137,6 +137,7 @@ struct SolarSystemView: View {
             SolarHealthSection(
                 report: report,
                 isLoading: solarHealth?.isRunning ?? false,
+                usedWeather: solarHealth?.result?.weather.hasPrecipitation ?? false,
                 onEditLayout: { isEditingLayout = true },
                 onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
         } else if solarHealth?.isRunning == true {

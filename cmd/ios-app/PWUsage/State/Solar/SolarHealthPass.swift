@@ -22,11 +22,18 @@ enum SolarHealthPass {
         let samples = try await history.allSamples(scope: scope)
         let place = SolarHealthYearFit.Place(
             reference: reference, latitude: location.latitude, longitude: location.longitude, timeZone: timeZone)
-        let context = Context(scope: scope, cache: cache, now: now)
+        guard let first = samples.min(by: { $0.timestamp < $1.timestamp }),
+              let last = samples.max(by: { $0.timestamp < $1.timestamp }) else { return nil }
+        let weather = try await SolarHealthWeatherStore.shared.weather(
+            scope: scope, cache: cache, place: .init(location: location, timeZone: timeZone),
+            samples: first.timestamp ... last.timestamp, now: now)
+        let context = Context(scope: scope, cache: cache, now: now, snowDays: weather.snowDays)
         let task = Task.detached(priority: .utility) {
-            try compute(
+            var result = try compute(
                 samples: samples, place: place, context: context,
                 checkCancellation: { try Task.checkCancellation() })
+            result.weather = weather
+            return result
         }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
@@ -35,6 +42,7 @@ enum SolarHealthPass {
         let scope: SolarForecastSiteScope
         let cache: SolarHealthCache
         let now: Date
+        var snowDays: Set<String> = []
     }
 
     /// The pass over `samples` (ascending). A completed year is read from `cache` when its key
@@ -53,18 +61,20 @@ enum SolarHealthPass {
         var cachedClippedSlices: [Int: [(timestamp: Date, solarWh: Double)]] = [:]
         for slice in yearSlices(samples, calendar: calendar) {
             try checkCancellation()
-            let key = cacheKey(place: place, slice: slice.samples)
+            let samples = excludingSnow(
+                from: slice.samples, days: context.snowDays, year: slice.year, calendar: calendar)
+            let key = cacheKey(place: place, slice: samples)
             if slice.year < currentYear,
                let cached = context.cache.year(slice.year, scope: context.scope),
                cached.key == key {
                 if place.reference.source == .detected, cached.hasClipping {
-                    cachedClippedSlices[slice.year] = slice.samples
+                    cachedClippedSlices[slice.year] = samples
                 }
                 years.append(cached)
                 continue
             }
             let yearFit = try SolarHealthYearFit(
-                samples: slice.samples, place: place, checkCancellation: checkCancellation)
+                samples: samples, place: place, checkCancellation: checkCancellation)
             if place.reference.source == .detected, let inputs = yearFit?.scaledEnergyInputs {
                 energyInputs[slice.year] = inputs
             }
@@ -91,6 +101,21 @@ enum SolarHealthPass {
         }
         return SolarHealthResult(
             reference: place.reference, years: scaledYears, referenceScale: scale, recomputedYears: recomputed)
+    }
+
+    private static func excludingSnow(
+        from samples: [(timestamp: Date, solarWh: Double)], days: Set<String>, year: Int, calendar: Calendar
+    ) -> [(timestamp: Date, solarWh: Double)] {
+        let snowStarts = Set(days.compactMap { day -> Date? in
+            guard day.hasPrefix("\(year)-") else { return nil }
+            let parts = day.split(separator: "-")
+            guard parts.count == 3, let month = Int(parts[1]), let day = Int(parts[2]) else { return nil }
+            let noon = DateComponents(year: year, month: month, day: day, hour: 12)
+            guard noon.isValidDate(in: calendar), let date = calendar.date(from: noon) else { return nil }
+            return calendar.startOfDay(for: date)
+        })
+        guard !snowStarts.isEmpty else { return samples }
+        return samples.filter { !snowStarts.contains(calendar.startOfDay(for: $0.timestamp)) }
     }
 
     /// Without entered faces the reference is the detected geometry at the site's best year.

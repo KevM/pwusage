@@ -4,6 +4,7 @@ import SwiftUI
 struct SolarHealthSection: View {
     let report: SolarHealthReport
     let isLoading: Bool
+    var usedWeather = false
     var onEditLayout: () -> Void = {}
     var onLoadMoreHistory: (() -> Void)?
 
@@ -146,7 +147,7 @@ struct SolarHealthSection: View {
     }
 
     private var findingsSection: some View {
-        Section("Findings") {
+        Section {
             if report.visibleFindings.isEmpty {
                 Label("No issues found", systemImage: "checkmark.circle")
                     .foregroundStyle(.secondary)
@@ -154,6 +155,14 @@ struct SolarHealthSection: View {
                 ForEach(report.visibleFindings) { finding in
                     SolarHealthFindingRow(finding: finding)
                 }
+            }
+        } header: {
+            Text("Findings")
+        } footer: {
+            if usedWeather {
+                SolarForecastAttributionView(
+                    attribution: "Weather history by Open-Meteo.",
+                    url: OpenMeteoProvider.sourceDescriptor.attributionURL)
             }
         }
     }

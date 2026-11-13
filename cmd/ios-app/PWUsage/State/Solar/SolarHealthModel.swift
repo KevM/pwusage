@@ -107,7 +107,8 @@ final class SolarHealthModel {
               !Task.isCancelled, scope == target, runID == id else {
             return
         }
-        let classified = SolarHealthClassifier.classify(result, manual: record.manualLayout, now: now())
+        let classified = SolarHealthClassifier.classify(
+            result, manual: record.manualLayout, now: now(), rainDays: result.weather.rainDays)
         self.result = result
         report = classified
         let seen = Set(defaults.stringArray(forKey: Self.seenKeyPrefix + target.storageHash) ?? [])
