@@ -118,7 +118,8 @@ struct SolarHealthYearFit {
         return out
     }
 
-    /// Measured over reference energy on each clear day, from the rows both sides share.
+    /// Measured over reference energy on each clear day: `ratio` uses the unclipped, unrejected clear
+    /// rows for trend rules, while `expectedKwh` / `actualKwh` sum all covered finite rows of the day.
     private func dailyRatios() -> [SolarDailyRatio] {
         var measured: [Int: Double] = [:]
         var expected: [Int: Double] = [:]
@@ -128,15 +129,23 @@ struct SolarHealthYearFit {
             expected[rows.day[row], default: 0] += clipped(total[row])
             count[rows.day[row], default: 0] += 1
         }
+        var fullMeasured: [Int: Double] = [:]
+        var fullExpected: [Int: Double] = [:]
+        for row in rows.powerKw.indices where covered[row] && rows.powerKw[row].isFinite {
+            fullMeasured[rows.day[row], default: 0] += rows.powerKw[row]
+            fullExpected[rows.day[row], default: 0] += clipped(total[row])
+        }
         return rows.days.indices.compactMap { day in
             guard selection.days.clear.contains(rows.days[day]), count[day, default: 0] >= Self.minRatioRows,
                   let reference = expected[day], reference > 0 else { return nil }
             let actual = measured[day] ?? 0
+            let dayExpected = fullExpected[day] ?? reference
+            let dayActual = fullMeasured[day] ?? actual
             return SolarDailyRatio(
                 day: rows.days[day],
                 ratio: (actual / reference * 10_000).rounded() / 10_000,
-                expectedKwh: (reference / 12 * 100).rounded() / 100,
-                actualKwh: (actual / 12 * 100).rounded() / 100)
+                expectedKwh: (dayExpected / 12 * 100).rounded() / 100,
+                actualKwh: (dayActual / 12 * 100).rounded() / 100)
         }.sorted { $0.day < $1.day }
     }
 }

@@ -64,7 +64,14 @@ final class SiteHistoryOnboardingLifecycle {
         self.now = now
         onboarding.onProgress = { [weak self] scope in
             guard let self, scope == lastScope else { return }
-            Task { await self.refreshStatus() }
+            Task {
+                await self.refreshStatus()
+                self.solarHealth?.reload()
+            }
+        }
+        deepHistory?.onHistoryLoaded = { [weak self] scope in
+            guard let self, scope == lastScope else { return }
+            self.solarHealth?.reload()
         }
     }
 

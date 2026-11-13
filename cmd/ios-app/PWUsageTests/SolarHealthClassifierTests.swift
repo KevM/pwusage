@@ -166,4 +166,23 @@ struct SolarHealthClassifierTests {
         let fault = try #require(report.visibleFindings.first { $0.kind == .stepFault })
         #expect(fault.clearDays == 4)
     }
+
+    @Test("Isolated hot bins without horizon segments are reported as shading")
+    func isolatedHotBinsReportedAsShading() throws {
+        let horizon = [Double](repeating: -.infinity, count: 36)
+        let map = SolarShadeMap(ShadeMask(horizon: horizon, hotBins: [ShadeHotBin(azimuth: 250, elevation: 15)]))
+        let year = SolarHealthYear(
+            year: 2026, key: "k", clearDays: 20,
+            capacity: SolarHealthCapacity(site: 1.0, directions: [.init(azimuth: 180, factor: 1.0)], clearDays: 20),
+            months: [],
+            shade: [SolarSeasonShade(season: .autumn, map: map, clearDays: 8)],
+            dailyRatios: [])
+        let (result, manual) = try Self.makeResult(years: [year])
+        let report = SolarHealthClassifier.classify(result, manual: manual)
+
+        #expect(report.shading.isShaded)
+        let finding = try #require(report.visibleFindings.first { $0.kind == .shading && $0.season == .autumn })
+        #expect(finding.azimuthFrom == 250)
+        #expect(finding.azimuthTo == 260)
+    }
 }

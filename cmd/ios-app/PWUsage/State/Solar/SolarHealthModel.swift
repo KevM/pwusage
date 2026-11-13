@@ -45,7 +45,10 @@ final class SolarHealthModel {
     }
 
     func activate(scope next: SolarForecastSiteScope) {
-        if scope == next, report != nil || runTask != nil { return }
+        if scope == next {
+            if runTask == nil { reload() }
+            return
+        }
         runTask?.cancel()
         runTask = nil
         scope = next
