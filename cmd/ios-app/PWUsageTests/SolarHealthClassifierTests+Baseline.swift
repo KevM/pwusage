@@ -202,4 +202,54 @@ struct SolarHealthClassifierBaselineTests {
         #expect(pva.expectedKwh == 30)
         #expect(report.changeOverTime.years.map(\.factor) == years.compactMap { $0.capacity?.site })
     }
+
+    @Test("Low output on a frozen baseline is raised at its usual confidence")
+    func lowOutputOnFrozenBaseline() throws {
+        let months = (1 ... 12).map { Self.makeMonth($0, factor: 0.70 / 0.85, clearDays: 10) }
+        let (result, manual) = try Self.makeManualResult(years: [Self.makeYear(2024, months: months)])
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: Self.date(2025, 2, 1))
+
+        let finding = try #require(report.allFindings.first { $0.kind == .lowOutput })
+        #expect(finding.title == "Output below what panels of this size usually make")
+        #expect(
+            finding.detail == "When new, your system made about 70% of its rating on clear days. "
+                + "Healthy systems make 82–98%.")
+        #expect(finding.confidence == .confident)
+    }
+
+    @Test("While provisional, low output needs below 75% and 10 clear days and is a first estimate")
+    func lowOutputWhileProvisional() throws {
+        let now = Self.date(2025, 7, 1)
+
+        let (lowResult, lowManual) = try Self.makeManualResult(
+            years: [Self.makeYear(2025, months: [Self.makeMonth(6, factor: 0.70 / 0.85, clearDays: 12)])])
+        let lowReport = SolarHealthClassifier.classify(lowResult, manual: lowManual, now: now)
+        let finding = try #require(lowReport.allFindings.first { $0.kind == .lowOutput })
+        #expect(finding.confidence == .initial)
+
+        let (fewDaysResult, fewDaysManual) = try Self.makeManualResult(
+            years: [Self.makeYear(2025, months: [Self.makeMonth(6, factor: 0.70 / 0.85, clearDays: 8)])])
+        let fewDaysReport = SolarHealthClassifier.classify(fewDaysResult, manual: fewDaysManual, now: now)
+        #expect(!fewDaysReport.allFindings.contains { $0.kind == .lowOutput })
+
+        let (midEffResult, midEffManual) = try Self.makeManualResult(
+            years: [Self.makeYear(2025, months: [Self.makeMonth(6, factor: 0.78 / 0.85, clearDays: 30)])])
+        let midEffReport = SolarHealthClassifier.classify(midEffResult, manual: midEffManual, now: now)
+        #expect(!midEffReport.allFindings.contains { $0.kind == .lowOutput })
+    }
+
+    @Test("High rated efficiency raises the panel prompt only once frozen")
+    func highRatedEfficiencyPanelPrompt() throws {
+        let months = (1 ... 12).map { Self.makeMonth($0, factor: 1.20, clearDays: 10) }
+        let (result, manual) = try Self.makeManualResult(years: [Self.makeYear(2024, months: months)])
+
+        let frozenReport = SolarHealthClassifier.classify(result, manual: manual, now: Self.date(2025, 2, 1))
+        let frozenScore = try #require(frozenReport.healthScore)
+        #expect(frozenScore.isAboveHealthyRange)
+        #expect(frozenReport.allFindings.isEmpty)
+
+        let provisionalReport = SolarHealthClassifier.classify(result, manual: manual, now: Self.date(2024, 12, 15))
+        let provisionalScore = try #require(provisionalReport.healthScore)
+        #expect(!provisionalScore.isAboveHealthyRange)
+    }
 }

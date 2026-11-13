@@ -20,6 +20,8 @@ enum SolarHealthClassifier {
     static let capacityStepUpThreshold = 0.08
     static let healthyScoreBandPercent = 8.0
     static let healthyEfficiencyRange = 0.82 ... 0.98
+    static let provisionalLowEfficiency = 0.75
+    static let provisionalLowMinClearDays = 10
 
     static func classify(
         _ result: SolarHealthResult, manual: ManualSolarLayout? = nil, now: Date = .now, rainDays: Set<String> = []
@@ -37,10 +39,8 @@ enum SolarHealthClassifier {
         let changeAnalysis = analyzeChangeOverTime(from: result, manual: manual, now: now)
 
         var findings: [SolarHealthFinding] = []
-        if let score,
-           score.ratedEfficiency < healthyEfficiencyRange.lowerBound,
-           score.baseline.clearDays >= SolarHealthYearFit.minYearClearDays {
-            findings.append(lowOutputFinding(score: score))
+        if let score, let lowOutput = lowOutputFinding(score: score) {
+            findings.append(lowOutput)
         }
         findings.append(contentsOf: faultFindings)
         findings.append(contentsOf: shadeAnalysis.findings)
@@ -107,15 +107,32 @@ enum SolarHealthClassifier {
             isAboveHealthyRange: !baseline.isProvisional && ratedEfficiency > healthyEfficiencyRange.upperBound)
     }
 
-    private static func lowOutputFinding(score: SolarHealthReport.HealthScore) -> SolarHealthFinding {
-        let percent = Int((score.ratedEfficiency * 100).rounded())
+    private static func lowOutputFinding(score: SolarHealthReport.HealthScore) -> SolarHealthFinding? {
+        let clearDays = score.baseline.clearDays
+        let confidence: SolarHealthConfidence
+        if score.isProvisional {
+            guard score.ratedEfficiency < provisionalLowEfficiency,
+                  clearDays >= provisionalLowMinClearDays
+            else { return nil }
+            confidence = .initial
+        } else {
+            guard score.ratedEfficiency < healthyEfficiencyRange.lowerBound,
+                  clearDays >= SolarHealthYearFit.minYearClearDays
+            else { return nil }
+            confidence = clearDays >= 20 ? .confident : .initial
+        }
+        let percentStyle = FloatingPointFormatStyle<Double>.Percent.percent.precision(.fractionLength(0))
+        let rating = score.ratedEfficiency.formatted(percentStyle)
+        let low = Int((healthyEfficiencyRange.lowerBound * 100).rounded())
+        let high = Int((healthyEfficiencyRange.upperBound * 100).rounded())
         return SolarHealthFinding(
             id: "low-output",
             kind: .lowOutput,
-            title: "Output below expected for panel size",
-            detail: "Clear-day output is about \(percent)% of what your entered panels should produce.",
-            clearDays: score.baseline.clearDays,
-            confidence: score.baseline.clearDays >= 20 ? .confident : .initial,
+            title: "Output below what panels of this size usually make",
+            detail: "When new, your system made about \(rating) of its rating on clear days. "
+                + "Healthy systems make \(low)–\(high)%.",
+            clearDays: clearDays,
+            confidence: confidence,
             meetsMinimumEvidence: true,
             season: nil,
             azimuthFrom: nil,
