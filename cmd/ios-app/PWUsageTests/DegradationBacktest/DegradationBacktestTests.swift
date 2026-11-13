@@ -22,6 +22,7 @@ struct DegradationBacktestTests {
         lines += calibration.lines
         lines += DegradationBacktestIrradiance.section(inputs, clearSky: shipped)
         lines += Self.trendSection(inputs, result: shipped, withSnow: withSnow)
+        lines += Self.baselineSection(inputs, result: shipped)
         try inputs.write(lines, to: "report.md")
     }
 
