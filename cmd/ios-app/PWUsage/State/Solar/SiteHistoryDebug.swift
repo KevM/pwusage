@@ -13,6 +13,8 @@ struct SiteHistoryDebugActions {
     let replayReveal: @MainActor () async -> Void
     /// Runs one background opportunity's work now, in the foreground, and schedules the next.
     let runBackgroundPass: @MainActor () async -> Void
+    /// Runs the solar health pass on the site's stored history and returns a summary.
+    let runHealthPass: @MainActor () async -> String
 }
 
 #if DEBUG
@@ -83,8 +85,34 @@ struct SiteHistoryDebugActions {
                     let next = await historyOnboarding.runInBackground(scope: scope)
                     BackgroundSiteHistoryOnboarding.schedule(earliest: next)
                     self?.updateHistoryOnboarding()
+                },
+                runHealthPass: { [weak self] in
+                    guard let self else { return "Unavailable" }
+                    let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: selectedSiteID)
+                    return await runSolarHealthPassDebug(scope: scope)
                 }
             )
+        }
+
+        private func runSolarHealthPassDebug(scope: SolarForecastSiteScope) async -> String {
+            let started = ProcessInfo.processInfo.systemUptime
+            do {
+                guard let record = try await solarRunner?.records.record(scope: scope) else {
+                    return "No layout record"
+                }
+                guard let result = try await SolarHealthPass.run(
+                    scope: scope, history: solarHistory, record: record) else {
+                    return "Missing location, time zone, or layout"
+                }
+                let elapsed = String(format: "%.1fs", ProcessInfo.processInfo.systemUptime - started)
+                let summary = result.years.map { year in
+                    let factor = year.capacity.map { String(format: "%.2f", $0.site) } ?? "—"
+                    return "\(year.year): \(factor) (\(year.clearDays)d, \(year.shade.count)s)"
+                }.joined(separator: ", ")
+                return "\(result.reference.source.rawValue) in \(elapsed): \(summary)"
+            } catch {
+                return "Failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -97,6 +125,8 @@ struct SiteHistoryDebugActions {
         @State private var isResetting = false
         @State private var pendingBackground: Date?
         @State private var isRunningBackgroundPass = false
+        @State private var isRunningHealthPass = false
+        @State private var healthPassSummary: String?
 
         init(actions: SiteHistoryDebugActions) {
             self.actions = actions
@@ -127,6 +157,19 @@ struct SiteHistoryDebugActions {
                 ))
                 .onChange(of: ignoredSince) { Task { await actions.refresh() } }
                 backgroundRows
+                Button(isRunningHealthPass ? "Running Health Pass…" : "Run Health Pass") {
+                    isRunningHealthPass = true
+                    Task {
+                        healthPassSummary = await actions.runHealthPass()
+                        isRunningHealthPass = false
+                    }
+                }
+                .disabled(isRunningHealthPass)
+                if let healthPassSummary {
+                    Text(healthPassSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Button("Replay Reveal") { Task { await actions.replayReveal() } }
                 Button("Reset History on This Device", role: .destructive) { isConfirmingReset = true }
                     .disabled(isResetting)
