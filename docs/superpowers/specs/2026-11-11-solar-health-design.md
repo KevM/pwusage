@@ -255,8 +255,9 @@ Build in seven phases, each shippable on its own. Tests use Swift Testing and ru
    - Shaded faces darken for the selected season and time.
    - Entered faces are drawn in place of the stand-in groups.
 7. **Weather history.**
-   - A soiling finding followed by rain is marked confirmed.
-   - Days with snowfall are excluded.
+   - If rain falls between the last low clear-day reading and the recovery, the existing soiling finding notes that output recovered after rain.
+   - Exclude site-local days with recorded snowfall from the health fit. Where weather is missing, use the existing production-based rules.
+   - Keep temperature correction for the degradation accuracy follow-up.
 
 Phases 4 and 5 are tested with made-up production data that has a known problem built in, such as exactly 5% dirt loss or a tree at 100° azimuth. Real data cannot do this, because nobody knows the true answer for a real roof. The generator is a Swift test helper, since the TypeScript one was removed with `src/lib/solar-layout`.
 
@@ -277,7 +278,13 @@ Decided on 2026-11-11:
 - Weather history uses Open-Meteo's free API, which the owner has confirmed fits because the app is free: no key, up to 10,000 calls a day for non-commercial use, attribution required under CC BY 4.0. The app's existing `SolarForecastAttributionView` covers attribution.
 - No sites with export limits or off-grid setups are known. Curtailment handling is deferred until one shows up as a false finding.
 
-Still open:
+## Degradation accuracy follow-up
 
-- [ ] How long should the new-finding marker stay: until the screen is opened, or until the finding clears?
-- [ ] Confirm the historical endpoint's variables for rain, snowfall and temperature before phase 7.
+- Use the owner's manually entered site as the first backtest. Verify the entered geometry, nameplate, install dates and any configuration changes against the production history.
+- Fit one site-wide effective output factor from the earliest well-covered period with a stable layout. Compare expected kWh error against the current 85% reference on held-out clear days across seasons. Use the same factor for later periods so calibration preserves the measured decline.
+- Report the annual decline from matching calendar months alongside the clear-day counts. Check sensitivity to seasonal coverage, roof direction, snowfall and changes in shading. Verify candidate estimators against synthetic histories with known decline rates before changing the shipped estimator.
+- Evaluate temperature correction if the held-out errors still show seasonal bias. Check that any correction preserves known decline rates.
+
+The Settings marker is cleared when Solar System opens. Findings that arrive while the screen is visible are also marked seen.
+
+Before Phase 7 implementation, verify the historical endpoint's rain and snowfall fields.

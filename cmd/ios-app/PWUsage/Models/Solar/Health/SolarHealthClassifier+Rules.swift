@@ -163,7 +163,7 @@ extension SolarHealthClassifier {
         let findings: [SolarHealthFinding]
     }
 
-    static func analyzeSoiling(from years: [SolarHealthYear]) -> SoilingAnalysis {
+    static func analyzeSoiling(from years: [SolarHealthYear], rainDays: Set<String> = []) -> SoilingAnalysis {
         guard let currentYear = years.last else {
             return SoilingAnalysis(
                 dirtLevel: .init(currentLossPercent: nil, lastRecoveredDay: nil, isActive: false),
@@ -188,12 +188,16 @@ extension SolarHealthClassifier {
             if run.drop >= minSoilingStep, run.slope < 0 {
                 lastRecoveredDay = curr.day
                 lastRecoveryIndex = index
+                // Daily totals cannot establish whether it rained before a reading on the same day.
+                let recovery = rainDays.contains { prev.day < $0 && $0 < curr.day }
+                    ? "and recovered on \(curr.day) after rain."
+                    : "and recovered on \(curr.day)."
                 findings.append(SolarHealthFinding(
                     id: "soiling-\(curr.day)",
                     kind: .soiling,
                     title: "Dirt or pollen reduced output before recovering",
                     detail: "Clear-day output trended down by about \(Int((run.drop * 100).rounded()))% "
-                        + "and recovered on \(curr.day).",
+                        + recovery,
                     clearDays: run.count,
                     confidence: run.count >= 7 ? .confident : .initial,
                     meetsMinimumEvidence: run.count >= minSoilingClearDays,

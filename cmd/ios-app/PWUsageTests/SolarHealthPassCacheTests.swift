@@ -29,6 +29,30 @@ struct SolarHealthPassCacheTests {
         #expect(second.years == first.years)
     }
 
+    @Test func snowfallInvalidatesTheCompletedYearAndExcludesTheLocalDay() throws {
+        let cache = SolarHealthCache(directory: SolarHealthPassTests.folder())
+        let samples = Self.samples()
+        let place = try SolarHealthPassTests.place(Self.planes)
+        let baseline = try SolarHealthPassTests.compute(samples, place, cache: cache)
+        let snowDay = "2025-06-07"
+        let firstYear = try #require(baseline.years.first)
+        #expect(firstYear.dailyRatios.contains { $0.day == snowDay })
+
+        let context = SolarHealthPass.Context(
+            scope: Self.scope, cache: cache, now: SolarHealthPassTests.now, snowDays: [snowDay])
+        let result = try SolarHealthPass.compute(
+            samples: samples, place: place, context: context, checkCancellation: {})
+        let fitted = try #require(result.years.first)
+        #expect(result.recomputedYears.contains(2025))
+        #expect(fitted.clearDays < firstYear.clearDays)
+        #expect(!fitted.dailyRatios.contains { $0.day == snowDay })
+
+        let cached = try SolarHealthPass.compute(
+            samples: samples, place: place, context: context, checkCancellation: {})
+        #expect(cached.recomputedYears == [2026])
+        #expect(cached.years == result.years)
+    }
+
     @Test func changingTheManualLayoutRecomputesEveryYear() throws {
         let cache = SolarHealthCache(directory: SolarHealthPassTests.folder())
         let samples = Self.samples()

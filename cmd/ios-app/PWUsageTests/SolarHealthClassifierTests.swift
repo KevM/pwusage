@@ -46,8 +46,10 @@ struct SolarHealthClassifierTests {
         #expect(!report.changeOverTime.hasEnoughHistoryForTrend)
     }
 
-    @Test("A 5% uniform loss that recovers is classified as soiling")
-    func fivePercentLossAndRecoveryIsSoiling() throws {
+    @Test("Soiling recovery only credits rain between clear-day readings", arguments: [
+        [], ["2026-04-07"], ["2026-04-08"], ["2026-04-09"], ["2026-04-10"]
+    ] as [[String]])
+    func fivePercentLossAndRecoveryIsSoiling(_ rainDays: [String]) throws {
         let ratios = [
             SolarDailyRatio(day: "2026-04-01", ratio: 1.00, expectedKwh: 30, actualKwh: 30.0),
             SolarDailyRatio(day: "2026-04-02", ratio: 0.99, expectedKwh: 30, actualKwh: 29.7),
@@ -62,10 +64,11 @@ struct SolarHealthClassifierTests {
             capacity: SolarHealthCapacity(site: 0.98, directions: [.init(azimuth: 180, factor: 0.98)], clearDays: 10),
             months: [], shade: [], dailyRatios: ratios)
         let (result, manual) = try Self.makeResult(years: [year])
-        let report = SolarHealthClassifier.classify(result, manual: manual)
+        let report = SolarHealthClassifier.classify(result, manual: manual, rainDays: Set(rainDays))
 
         let soiling = try #require(report.visibleFindings.first { $0.kind == .soiling })
         #expect(soiling.clearDays >= 5)
+        #expect(soiling.detail.contains("after rain") == (rainDays == ["2026-04-08"]))
         #expect(report.dirtLevel.lastRecoveredDay == "2026-04-09")
     }
 
