@@ -84,15 +84,20 @@ enum SolarHealthPass {
     private static func cacheKey(
         place: SolarHealthYearFit.Place, slice: [(timestamp: Date, solarWh: Double)]
     ) -> String {
-        let stamp = [
-            Double(slice.count), slice.first?.timestamp.timeIntervalSince1970 ?? 0,
-            slice.last?.timestamp.timeIntervalSince1970 ?? 0
-        ].map { String(Int($0)) }
-        let text = ([
+        var hasher = SHA256()
+        let header = [
             place.reference.key, "detector\(SolarLayoutDetector.version)", "pass\(version)",
-            String(format: "%.3f,%.3f", place.latitude, place.longitude), place.timeZone.identifier
-        ] + stamp).joined(separator: "|")
-        return SHA256.hash(data: Data(text.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
+            String(format: "%.3f,%.3f", place.latitude, place.longitude), place.timeZone.identifier,
+            String(slice.count)
+        ].joined(separator: "|")
+        hasher.update(data: Data(header.utf8))
+        for sample in slice {
+            var timeBits = sample.timestamp.timeIntervalSince1970.bitPattern.littleEndian
+            var energyBits = sample.solarWh.bitPattern.littleEndian
+            withUnsafeBytes(of: &timeBits) { hasher.update(bufferPointer: $0) }
+            withUnsafeBytes(of: &energyBits) { hasher.update(bufferPointer: $0) }
+        }
+        return hasher.finalize().prefix(10).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The samples of each site-local calendar year, in order.

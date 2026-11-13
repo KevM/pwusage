@@ -62,6 +62,18 @@ struct SolarHealthPassCacheTests {
         #expect(full.recomputedYears.contains(2025))
     }
 
+    @Test func editingASampleValueInACompletedYearRecomputesIt() throws {
+        let cache = SolarHealthCache(directory: SolarHealthPassTests.folder())
+        let samples = Self.samples()
+        let place = try SolarHealthPassTests.place(Self.planes)
+        _ = try SolarHealthPassTests.compute(samples, place, cache: cache)
+        var corrected = samples
+        let mid = corrected.count / 4
+        corrected[mid] = (corrected[mid].timestamp, corrected[mid].solarWh + 25)
+        let result = try SolarHealthPassTests.compute(corrected, place, cache: cache)
+        #expect(result.recomputedYears == [2025, 2026])
+    }
+
     @Test func aDamagedCacheFileIsRecomputedNotTrusted() throws {
         let folder = SolarHealthPassTests.folder()
         let cache = SolarHealthCache(directory: folder)
