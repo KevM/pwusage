@@ -220,4 +220,26 @@ struct SolarSystemHouseHealthTests {
         #expect(report.changeOverTime.years.count == 3)
         #expect(report.shading.isShaded)
     }
+
+    @Test("Default year matches last fitted report year when newest year has no capacity fit")
+    func defaultYearMatchesFittedReportWhenNewestYearUnfitted() throws {
+        let reference = try Self.makeReference()
+        let baseResult = Self.makeMultiYearResult(reference: reference)
+        let unfitted2026 = SolarHealthYear(
+            year: 2026, key: "k26", clearDays: 2,
+            capacity: nil, months: [], shade: [], dailyRatios: [])
+        let result = SolarHealthResult(
+            reference: reference,
+            years: baseResult.years + [unfitted2026],
+            referenceScale: 1.0,
+            recomputedYears: [2026])
+        let report = Self.makeReport(isDirty: true)
+
+        let overlay = SolarHouseHealthOverlay(
+            report: report, result: result,
+            state: SolarHouseHealthState(season: .summer, hourOfDay: 12.0, selectedYear: nil),
+            latitude: Self.latitude, longitude: Self.longitude)
+        #expect(overlay.yearFactor == 0.85)
+        #expect(overlay.dirtAmount > 0)
+    }
 }

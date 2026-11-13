@@ -42,6 +42,9 @@ struct SolarSystemHealthControls: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Jumps to a shaded time on the house")
+        } else if report.shading.isShaded {
+            Label("Shading detected", systemImage: "cloud.sun")
+                .foregroundStyle(Color.emphasis)
         } else {
             Label("No shading", systemImage: "sun.max")
                 .foregroundStyle(.secondary)

@@ -45,7 +45,7 @@ struct SolarHouseHealthOverlay: Equatable, Sendable {
         now: Date = .now
     ) {
         let currentYear = Calendar(identifier: .gregorian).component(.year, from: now)
-        let latestYear = result?.years.last?.year ?? report?.changeOverTime.years.last?.year
+        let latestYear = report?.changeOverTime.years.last?.year ?? result?.years.last?.year
         let effectiveYear = state.selectedYear ?? latestYear ?? currentYear
 
         let sun = Self.sunSample(
