@@ -6,6 +6,10 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Send a custom rate plan to Tesla (2026-11-12)
+
+- [ ] **Plan a "Send to Tesla" feature:** the probe showed Tesla accepts and keeps 5-decimal rates through `time_of_use_settings` (findings and open questions in [docs/tesla-tou-write-probe.md](docs/tesla-tou-write-probe.md)). Nothing in the app writes a plan to Tesla yet; `TeslaClient.setTimeOfUseSettings` is unused. Needs a confirmation step, an undo, a decision on how Tesla sync treats our upload, and the `energy_cmds` scope for every user. Still unknown: whether the Tesla app shows more than two decimals and whether the Powerwall uses the extra digits.
+
 ## iOS: Solar Health follow-ups from the degradation backtest (2026-11-13)
 
 See the [results](docs/plans/2026-11-13-solar-degradation-backtest-results.md).
