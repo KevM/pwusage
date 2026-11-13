@@ -142,20 +142,29 @@ fi
 
 # The default run skips detector parity unless the branch touches the detector or its fixtures.
 parity_skip='-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests'
-# The layout fit parity suite takes minutes in a Debug build, so it is gated with the detector suites.
+# The layout fit and health pass suites take minutes in a Debug build, so they are gated with the detector suites.
 fit_skip='-skip-testing:PWUsageTests/SolarLayoutFitTests'
+health_skip='-skip-testing:PWUsageTests/SolarHealthPassTests'
+health_cache_skip='-skip-testing:PWUsageTests/SolarHealthPassCacheTests'
 expect_parity() {
   local expected="$1" label="$2"
   if grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS"; then local ran=0; else local ran=1; fi
   [[ "$ran" == "$expected" ]] || { echo "Detector parity: $label (ran=$ran, want $expected)" >&2; exit 1; }
   if grep -qxF -- "$fit_skip" "$PWUSAGE_TEST_ARGS"; then local fit_ran=0; else local fit_ran=1; fi
   [[ "$fit_ran" == "$expected" ]] || { echo "Fit parity: $label (ran=$fit_ran, want $expected)" >&2; exit 1; }
+  if grep -qxF -- "$health_skip" "$PWUSAGE_TEST_ARGS"; then local health_ran=0; else local health_ran=1; fi
+  [[ "$health_ran" == "$expected" ]] || { echo "Health pass: $label (ran=$health_ran, want $expected)" >&2; exit 1; }
+  if grep -qxF -- "$health_cache_skip" "$PWUSAGE_TEST_ARGS"; then local cache_ran=0; else local cache_ran=1; fi
+  [[ "$cache_ran" == "$expected" ]] || { echo "Health cache: $label (ran=$cache_ran, want $expected)" >&2; exit 1; }
 }
 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh"
 expect_parity 0 'ran without detector changes'
 for changed in PWUsage/Models/Solar/SolarPosition.swift PWUsage/Models/Solar/MobileSolarLayout.swift \
+  PWUsage/Models/Solar/Health/SolarHealthFit.swift PWUsage/State/Solar/SolarHealthPass.swift \
   PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/SolarLayoutFixtureLoader.swift \
+  PWUsageTests/Fixtures/SyntheticSolarSite.swift \
   PWUsageTests/SolarLayoutDetectorTests.swift PWUsageTests/SolarLayoutSunPOATests.swift \
+  PWUsageTests/SolarHealthPassTests.swift \
   project.yml run-tests.sh; do
   PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
   expect_parity 1 "skipped after changing $changed"
@@ -193,8 +202,9 @@ if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
   exit 1
 fi
 
-# --auto promotes to --full on detector changes and stays default without them.
+# --auto promotes to --full on detector or solar health changes and stays default without them.
 for changed in cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift \
+  cmd/ios-app/PWUsage/State/Solar/SolarHealthPass.swift \
   cmd/ios-app/project.yml cmd/ios-app/run-tests.sh .github/workflows/ios.yml; do
   PWUSAGE_TEST_CHANGED="$changed" "$script_dir/run-tests.sh" --auto
   grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"

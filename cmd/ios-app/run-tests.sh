@@ -121,7 +121,7 @@ detector_changed() {
     echo 1
     return
   }
-  if printf '%s\n' "$diff_files" | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|[^/]*(Layout|Position)[^/]*\.swift)|PWUsageTests/(Fixtures/SolarLayout(/|[^/]*\.swift)|SolarLayout(Detector|ClearDays|SunPOA|Fit|Selection|Readiness|Research)[^/]*Tests\.swift)|project\.yml|run-tests\.sh|\.github/workflows/ios\.yml)'; then
+  if printf '%s\n' "$diff_files" | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|Health/|[^/]*(Layout|Position)[^/]*\.swift)|PWUsage/State/Solar/SolarHealth[^/]*\.swift|PWUsageTests/(Fixtures/(SolarLayout(/|[^/]*\.swift)|SyntheticSolarSite\.swift)|SolarLayout(Detector|ClearDays|SunPOA|Fit|Selection|Readiness|Research)[^/]*Tests\.swift|SolarHealth[^/]*Tests\.swift)|project\.yml|run-tests\.sh|\.github/workflows/ios\.yml)'; then
     echo 1
   else
     echo 0
@@ -155,6 +155,8 @@ if [[ "$mode" == default && "$#" -eq 0 ]]; then
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutClearDaysParityTests")
     # Minutes in a Debug build (about 4.5 of CI's 6); seconds under --full's optimized build.
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutFitTests")
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassTests")
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassCacheTests")
   fi
 fi
 
