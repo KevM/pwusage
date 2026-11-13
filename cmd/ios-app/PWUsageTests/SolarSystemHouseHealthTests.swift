@@ -322,4 +322,53 @@ struct SolarSystemHouseHealthTests {
 
         #expect(overlay2021.panelOpacity(forAzimuth: 90) == 1.0)
     }
+
+    @Test("Non-positive face baseline falls back to site factor without NaN or Inf")
+    func nonPositiveFaceBaselineFallsBackToSiteFactor() throws {
+        let manual = ManualSolarLayout(systems: [
+            ManualSolarSystem(label: "Main", installDate: nil, inverterAcKw: nil, faces: [
+                ManualSolarFace(
+                    label: "East", panelCount: 10, panelWatts: 400, azimuthDegrees: 90, tiltDegrees: 25),
+                ManualSolarFace(
+                    label: "West", panelCount: 10, panelWatts: 400, azimuthDegrees: 270, tiltDegrees: 25)
+            ])
+        ])
+        let reference = try #require(SolarHealthReference(manual: manual, detected: nil))
+        let windowMonths = [1, 4, 7, 10].map { month in
+            SolarHealthMonth(
+                month: month,
+                capacity: SolarHealthCapacity(
+                    site: 1.00,
+                    directions: [.init(azimuth: 90, factor: 0.0), .init(azimuth: 270, factor: 1.00)],
+                    clearDays: 10))
+        }
+        let year2023 = SolarHealthYear(
+            year: 2023, key: "k23", clearDays: 40,
+            capacity: SolarHealthCapacity(
+                site: 1.00,
+                directions: [.init(azimuth: 90, factor: 0.0), .init(azimuth: 270, factor: 1.00)],
+                clearDays: 40),
+            months: windowMonths, shade: [], dailyRatios: [])
+        let year2025 = SolarHealthYear(
+            year: 2025, key: "k25", clearDays: 40,
+            capacity: SolarHealthCapacity(
+                site: 0.90,
+                directions: [.init(azimuth: 90, factor: 0.80), .init(azimuth: 270, factor: 0.90)],
+                clearDays: 40),
+            months: [], shade: [], dailyRatios: [])
+        let result = SolarHealthResult(
+            reference: reference, years: [year2023, year2025], referenceScale: 1.0, recomputedYears: [2025])
+        let now = Calendar(identifier: .gregorian)
+            .date(from: DateComponents(year: 2026, month: 1, day: 15)) ?? .now
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: now)
+        let overlay = SolarHouseHealthOverlay(
+            report: report, result: result,
+            state: SolarHouseHealthState(season: .summer, hourOfDay: 12.0, selectedYear: 2025),
+            latitude: Self.latitude, longitude: Self.longitude)
+
+        let allFinite = overlay.directionFactors.allSatisfy(\.factor.isFinite)
+        #expect(allFinite)
+        #expect(overlay.directionFactors.count == 1)
+        #expect(abs(overlay.panelOpacity(forAzimuth: 270) - 0.90) < 0.001)
+    }
 }

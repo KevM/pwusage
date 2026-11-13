@@ -98,10 +98,12 @@ struct SolarHouseHealthOverlay: Equatable, Sendable {
         guard let baseline = report?.baseline else {
             return YearFactors(site: rawSite, directions: rawDirections)
         }
-        let relativeDirections = rawDirections.map { direction in
-            SolarHealthCapacity.Direction(
+        let relativeDirections = rawDirections.compactMap { direction -> SolarHealthCapacity.Direction? in
+            let base = baseline.directionFactor(azimuth: direction.azimuth)
+            guard base > 0 else { return nil }
+            return SolarHealthCapacity.Direction(
                 azimuth: direction.azimuth,
-                factor: direction.factor / baseline.directionFactor(azimuth: direction.azimuth))
+                factor: direction.factor / base)
         }
         return YearFactors(
             site: rawSite.map { baseline.relative($0) },
