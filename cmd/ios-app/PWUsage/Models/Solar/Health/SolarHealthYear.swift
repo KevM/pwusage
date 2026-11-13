@@ -91,9 +91,31 @@ struct SolarHealthYear: Codable, Equatable, Sendable {
     let months: [SolarHealthMonth]
     let shade: [SolarSeasonShade]
     let dailyRatios: [SolarDailyRatio]
+    let hasClipping: Bool
+
+    init(
+        year: Int,
+        key: String,
+        clearDays: Int,
+        capacity: SolarHealthCapacity?,
+        months: [SolarHealthMonth],
+        shade: [SolarSeasonShade],
+        dailyRatios: [SolarDailyRatio],
+        hasClipping: Bool = false
+    ) {
+        self.year = year
+        self.key = key
+        self.clearDays = clearDays
+        self.capacity = capacity
+        self.months = months
+        self.shade = shade
+        self.dailyRatios = dailyRatios
+        self.hasClipping = hasClipping
+    }
 
     /// The same year with every factor and ratio divided by `scale`.
-    func scaled(by scale: Double) -> SolarHealthYear {
+    /// When `expectedDailyKwh` is provided (for clipped sites), it supplies pre-clipping scaled energy.
+    func scaled(by scale: Double, expectedDailyKwh: [String: Double]? = nil) -> SolarHealthYear {
         guard scale > 0, scale != 1 else { return self }
         func divide(_ capacity: SolarHealthCapacity) -> SolarHealthCapacity {
             SolarHealthCapacity(
@@ -108,8 +130,10 @@ struct SolarHealthYear: Codable, Equatable, Sendable {
             dailyRatios: dailyRatios.map {
                 SolarDailyRatio(
                     day: $0.day, ratio: $0.ratio / scale,
-                    expectedKwh: $0.expectedKwh.map { $0 * scale }, actualKwh: $0.actualKwh)
-            })
+                    expectedKwh: expectedDailyKwh?[$0.day] ?? $0.expectedKwh.map { $0 * scale },
+                    actualKwh: $0.actualKwh)
+            },
+            hasClipping: hasClipping)
     }
 }
 

@@ -68,7 +68,7 @@ struct SolarHealthYearFit {
         let shade = try capacity.map { try seasonShade(factor: $0.site, checkCancellation: checkCancellation) } ?? []
         return SolarHealthYear(
             year: year, key: "", clearDays: selection.days.clear.count, capacity: capacity, months: months,
-            shade: shade, dailyRatios: dailyRatios())
+            shade: shade, dailyRatios: dailyRatios(), hasClipping: LayoutFit.clip(selection.clipKw) != nil)
     }
 
     private func clearDayCount(of indices: [Int]) -> Int {
@@ -118,6 +118,28 @@ struct SolarHealthYearFit {
         return out
     }
 
+    /// Expected clear-day energy (kWh) keyed by day string, scaling reference power before clipping.
+    func expectedDailyKwh(referenceScale: Double) -> [String: Double] {
+        let totals = dayEnergyTotals(referenceScale: referenceScale).expected
+        var out: [String: Double] = [:]
+        for day in rows.days.indices where selection.days.clear.contains(rows.days[day]) {
+            if let sum = totals[day] {
+                out[rows.days[day]] = (sum / 12 * 100).rounded() / 100
+            }
+        }
+        return out
+    }
+
+    private func dayEnergyTotals(referenceScale: Double) -> (measured: [Int: Double], expected: [Int: Double]) {
+        var measured: [Int: Double] = [:]
+        var expected: [Int: Double] = [:]
+        for row in rows.powerKw.indices where covered[row] && rows.powerKw[row].isFinite {
+            measured[rows.day[row], default: 0] += rows.powerKw[row]
+            expected[rows.day[row], default: 0] += clipped(referenceScale * total[row])
+        }
+        return (measured, expected)
+    }
+
     /// Measured over reference energy on each clear day: `ratio` uses the unclipped, unrejected clear
     /// rows for trend rules, while `expectedKwh` / `actualKwh` sum all covered finite rows of the day.
     private func dailyRatios() -> [SolarDailyRatio] {
@@ -129,18 +151,13 @@ struct SolarHealthYearFit {
             expected[rows.day[row], default: 0] += clipped(total[row])
             count[rows.day[row], default: 0] += 1
         }
-        var fullMeasured: [Int: Double] = [:]
-        var fullExpected: [Int: Double] = [:]
-        for row in rows.powerKw.indices where covered[row] && rows.powerKw[row].isFinite {
-            fullMeasured[rows.day[row], default: 0] += rows.powerKw[row]
-            fullExpected[rows.day[row], default: 0] += clipped(total[row])
-        }
+        let full = dayEnergyTotals(referenceScale: 1)
         return rows.days.indices.compactMap { day in
             guard selection.days.clear.contains(rows.days[day]), count[day, default: 0] >= Self.minRatioRows,
                   let reference = expected[day], reference > 0 else { return nil }
             let actual = measured[day] ?? 0
-            let dayExpected = fullExpected[day] ?? reference
-            let dayActual = fullMeasured[day] ?? actual
+            let dayExpected = full.expected[day] ?? reference
+            let dayActual = full.measured[day] ?? actual
             return SolarDailyRatio(
                 day: rows.days[day],
                 ratio: (actual / reference * 10_000).rounded() / 10_000,
