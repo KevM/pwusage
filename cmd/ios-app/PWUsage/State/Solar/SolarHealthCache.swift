@@ -41,7 +41,7 @@ struct SolarHealthCache: Sendable {
         if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
     }
 
-    private func siteDirectory(_ scope: SolarForecastSiteScope) -> URL {
+    func siteDirectory(_ scope: SolarForecastSiteScope) -> URL {
         directory.appendingPathComponent(scope.storageHash, isDirectory: true)
     }
 

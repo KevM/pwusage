@@ -22,11 +22,18 @@ enum SolarHealthPass {
         let samples = try await history.allSamples(scope: scope)
         let place = SolarHealthYearFit.Place(
             reference: reference, latitude: location.latitude, longitude: location.longitude, timeZone: timeZone)
-        let context = Context(scope: scope, cache: cache, now: now)
+        guard let first = samples.min(by: { $0.timestamp < $1.timestamp }),
+              let last = samples.max(by: { $0.timestamp < $1.timestamp }) else { return nil }
+        let weather = try await SolarHealthWeatherStore.shared.weather(
+            scope: scope, cache: cache, place: .init(location: location, timeZone: timeZone),
+            samples: first.timestamp ... last.timestamp, now: now)
+        let context = Context(scope: scope, cache: cache, now: now, snowDays: weather.snowDays)
         let task = Task.detached(priority: .utility) {
-            try compute(
+            var result = try compute(
                 samples: samples, place: place, context: context,
                 checkCancellation: { try Task.checkCancellation() })
+            result.weather = weather
+            return result
         }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }

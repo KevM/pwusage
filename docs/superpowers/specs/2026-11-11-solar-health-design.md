@@ -287,4 +287,4 @@ Decided on 2026-11-11:
 
 The Settings marker is cleared when Solar System opens. Findings that arrive while the screen is visible are also marked seen.
 
-Before Phase 7 implementation, verify the historical endpoint's rain and snowfall fields.
+Phase 7 uses daily `rain_sum` (mm) and `snowfall_sum` (cm) from the [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api), requested in the site time zone using latitude and longitude rounded to two decimals. ERA5 data is requested through seven days before the current site-local day.
