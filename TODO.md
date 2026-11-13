@@ -10,8 +10,6 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 See the [results](docs/plans/2026-11-13-solar-degradation-backtest-results.md).
 
-- [ ] **Minimum matched pairs before a confident aging trend:** two matched pairs over a 24-month span currently give a confident finding, so one off winter reads as −1.5%/yr. Evaluate a rule such as ≥ 6 pairs covering ≥ 3 calendar months. Keep the steady synthetic cases and add the sparse case as a regression test.
-- [ ] **Calibrated expected kWh (design first):** a factor frozen on the first well-covered year cut held-out clear-day error from 11% to 5% on the owner's site. Keep the nameplate reference for the health score and low-output finding. Decide where a calibrated figure would show.
 - [ ] **Undated added system:** with no install date entered, a manual reference reads an added array as +33%/yr growth. Consider step detection or a prompt for the date.
 
 ## iOS: dark-mode contrast of the tall rate bar (2026-11-09)

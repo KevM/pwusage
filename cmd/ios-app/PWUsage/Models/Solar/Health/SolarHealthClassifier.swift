@@ -10,6 +10,11 @@ enum SolarHealthClassifier {
     static let minShadeGrowthDegrees = 5.0
     static let minAgingMonthsInitial = 13
     static let minAgingMonthsConfident = 24
+    /// Matched-month pairs, and distinct calendar months among them, each confidence level needs.
+    static let minAgingPairsInitial = 3
+    static let minAgingPairMonthsInitial = 2
+    static let minAgingPairsConfident = 6
+    static let minAgingPairMonthsConfident = 3
     static let expectedAnnualAgingPercent = -0.5
     static let agingFindingThresholdPercent = -0.8
     static let capacityStepUpThreshold = 0.08

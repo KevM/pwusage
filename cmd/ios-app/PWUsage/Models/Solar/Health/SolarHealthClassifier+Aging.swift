@@ -24,9 +24,10 @@ extension SolarHealthClassifier {
         let trendStartYear = trendStart(years: yearEntries, source: result.reference.source)
         let trendMonths = monthEntries.filter { $0.year >= trendStartYear }
         let span = monthSpan(trendMonths)
-        let rate = medianAnnualChange(from: trendMonths)
-        let confidence: SolarHealthConfidence? = span >= minAgingMonthsConfident
-            ? .confident : (span >= minAgingMonthsInitial ? .initial : nil)
+        let changes = annualChanges(from: trendMonths)
+        let middle = median(changes.map(\.percent))
+        let rate = middle.isFinite ? (middle * 100).rounded() / 100 : nil
+        let confidence = agingConfidence(span: span, changes: changes)
         let expected = expectedAgingRate(manual: manual, now: now)
         let change = SolarHealthReport.ChangeOverTime(
             years: yearEntries,
@@ -71,24 +72,43 @@ extension SolarHealthClassifier {
         return (last.year - first.year) * 12 + (last.month - first.month) + 1
     }
 
-    private static func medianAnnualChange(
-        from months: [SolarHealthMonthEntry]
-    ) -> Double? {
+    /// One annualized change between successive observations of the same calendar month.
+    struct MatchedChange: Equatable {
+        let month: Int
+        let percent: Double
+    }
+
+    /// Every matched-month change: successive observations of one calendar month, in %/yr.
+    static func annualChanges(from months: [SolarHealthMonthEntry]) -> [MatchedChange] {
         var byMonth: [Int: [SolarHealthMonthEntry]] = [:]
         for entry in months { byMonth[entry.month, default: []].append(entry) }
-        var changes: [Double] = []
-        for (_, entries) in byMonth {
+        var changes: [MatchedChange] = []
+        for (month, entries) in byMonth {
             let sorted = entries.sorted { $0.year < $1.year }
             for idx in 1 ..< sorted.count {
                 let prev = sorted[idx - 1]
                 let curr = sorted[idx]
                 let yearsApart = Double(curr.year - prev.year)
                 guard prev.factor > 0, yearsApart > 0 else { continue }
-                changes.append(((curr.factor - prev.factor) / prev.factor) / yearsApart * 100.0)
+                changes.append(MatchedChange(
+                    month: month, percent: ((curr.factor - prev.factor) / prev.factor) / yearsApart * 100.0))
             }
         }
-        let med = median(changes)
-        return med.isFinite ? (med * 100).rounded() / 100 : nil
+        return changes
+    }
+
+    /// A long span is not enough on its own: a median of one or two pairs follows a single odd
+    /// season, so each level also needs enough pairs spread over enough calendar months.
+    private static func agingConfidence(span: Int, changes: [MatchedChange]) -> SolarHealthConfidence? {
+        let months = Set(changes.map(\.month)).count
+        if span >= minAgingMonthsConfident, changes.count >= minAgingPairsConfident,
+           months >= minAgingPairMonthsConfident {
+            return .confident
+        }
+        if span >= minAgingMonthsInitial, changes.count >= minAgingPairsInitial, months >= minAgingPairMonthsInitial {
+            return .initial
+        }
+        return nil
     }
 
     private static func expectedAgingRate(manual: ManualSolarLayout?, now: Date) -> Double? {
