@@ -78,6 +78,12 @@ struct SolarSystemHouseHealthTests {
         ).resolve(in: env)
         #expect(dark.blue < lit.blue)
         #expect(dark.green < lit.green)
+
+        let moment = try #require(
+            SolarHouseHealthOverlay.firstShadedMoment(
+                in: result, latitude: Self.latitude, longitude: Self.longitude))
+        #expect(moment.season == .summer)
+        #expect(moment.hourOfDay < 12.0)
     }
 
     @Test("Entered faces replace stand-in detected groups and respect year install dates")
@@ -197,5 +203,21 @@ struct SolarSystemHouseHealthTests {
             latitude: Self.latitude, longitude: Self.longitude)
         #expect(cleanOverlay.dirtAmount == 0)
         #expect(SolarSystemColors.panel(dirtAmount: 0) == SolarSystemColors.panel)
+    }
+
+    @MainActor
+    @Test("Demo session provides active soiling, summer shading and multi-year aging")
+    func demoSessionProvidesSolarHealth() async throws {
+        let suiteName = "demo-solar-health-\(UUID().uuidString)"
+        defer { DemoSession.tearDown(suiteName: suiteName) }
+        let model = DemoSession.makeModel(suiteName: suiteName, timerInterval: nil, isDemo: true)
+        let health = try #require(model.demoSolarHealth)
+        try await eventually(timeout: .seconds(5)) {
+            health.report != nil && !health.isRunning
+        }
+        let report = try #require(health.report)
+        #expect(report.dirtLevel.isActive)
+        #expect(report.changeOverTime.years.count == 3)
+        #expect(report.shading.isShaded)
     }
 }

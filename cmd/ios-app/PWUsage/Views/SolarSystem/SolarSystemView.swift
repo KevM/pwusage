@@ -58,6 +58,9 @@ struct SolarSystemView: View {
         .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
             solarHealth?.markFindingsSeen()
+            if solarHealth?.report == nil, solarHealth?.isRunning == false {
+                solarHealth?.reload()
+            }
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
             isConfirmingLocation = true
@@ -99,7 +102,11 @@ struct SolarSystemView: View {
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
                         .id(Self.visualID)
                     if layout != nil, let report = solarHealth?.report, let overlay {
-                        SolarSystemHealthControls(state: $healthState, report: report, overlay: overlay)
+                        SolarSystemHealthControls(
+                            state: $healthState,
+                            report: report,
+                            overlay: overlay,
+                            shadedMoment: firstShadedMoment)
                     }
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
@@ -115,18 +122,31 @@ struct SolarSystemView: View {
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
             }
-            if let report = solarHealth?.report {
-                SolarHealthSection(
-                    report: report,
-                    isLoading: solarHealth?.isRunning ?? false,
-                    onEditLayout: { isEditingLayout = true },
-                    onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
-            }
+            panelHealthSection
             if layout != nil, status != nil, let deepHistory { SiteDeepHistorySection(model: deepHistory) }
             if stored != nil || status != nil { locationSection }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    @ViewBuilder
+    private var panelHealthSection: some View {
+        if let report = solarHealth?.report {
+            SolarHealthSection(
+                report: report,
+                isLoading: solarHealth?.isRunning ?? false,
+                onEditLayout: { isEditingLayout = true },
+                onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
+        } else if solarHealth?.isRunning == true {
+            Section("Panel Health") {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Checking panel health…")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -178,6 +198,13 @@ struct SolarSystemView: View {
             report: solarHealth?.report,
             result: solarHealth?.result,
             state: healthState,
+            latitude: location?.latitude ?? status?.latitude ?? 40.0,
+            longitude: location?.longitude ?? 0.0)
+    }
+
+    private var firstShadedMoment: (season: SolarSeason, hourOfDay: Double)? {
+        SolarHouseHealthOverlay.firstShadedMoment(
+            in: solarHealth?.result,
             latitude: location?.latitude ?? status?.latitude ?? 40.0,
             longitude: location?.longitude ?? 0.0)
     }

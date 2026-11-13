@@ -5,22 +5,61 @@ struct SolarSystemHealthControls: View {
     @Binding var state: SolarHouseHealthState
     let report: SolarHealthReport
     let overlay: SolarHouseHealthOverlay
+    var shadedMoment: (season: SolarSeason, hourOfDay: Double)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            statusSummaryRow
             seasonPicker
             sunTimeSlider
             if report.changeOverTime.years.count > 1 {
                 yearSlider(years: report.changeOverTime.years)
             }
-            if overlay.dirtAmount > 0, let loss = report.dirtLevel.currentLossPercent {
-                let formatted = loss.formatted(.number.precision(.fractionLength(1)))
-                Text("Soiling active · about \(formatted)% loss")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(.vertical, 4)
+    }
+
+    private var statusSummaryRow: some View {
+        HStack(spacing: 8) {
+            shadingIndicator
+            Spacer(minLength: 8)
+            soilingIndicator
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private var shadingIndicator: some View {
+        if let moment = shadedMoment {
+            Button {
+                state.season = moment.season
+                state.hourOfDay = moment.hourOfDay
+            } label: {
+                Label(
+                    "Shaded · \(moment.season.capitalizedName) \(SolarHouseHealthOverlay.formatHour(moment.hourOfDay))",
+                    systemImage: "cloud.sun.fill")
+                    .foregroundStyle(Color.emphasis)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Jumps to a shaded time on the house")
+        } else {
+            Label("No shading", systemImage: "sun.max")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var soilingIndicator: some View {
+        if report.dirtLevel.isActive {
+            let detail = report.dirtLevel.currentLossPercent.map {
+                "Soiling · about \($0.formatted(.number.precision(.fractionLength(1))))%"
+            } ?? "Soiling active"
+            Label(detail, systemImage: "aqi.medium")
+                .foregroundStyle(Color.emphasis)
+        } else {
+            Label("Clean", systemImage: "sparkles")
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var seasonPicker: some View {

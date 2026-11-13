@@ -34,7 +34,7 @@ enum SolarSystemColors {
         sun: SIMD3<Double> = sun, isShaded: Bool = false
     ) -> Color {
         let direct = isShaded ? 0.0 : max(0, (normal * sun).sum())
-        let ambient = isShaded ? 0.36 : 0.58
+        let ambient = isShaded ? 0.42 : 0.58
         let light = ambient + 0.42 * direct
         let lit = rgb * light / 255
         return Color(red: lit.x, green: lit.y, blue: lit.z)

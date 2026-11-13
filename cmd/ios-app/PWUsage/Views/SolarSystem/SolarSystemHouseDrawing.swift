@@ -34,7 +34,7 @@ struct SolarSystemHouseDrawing {
         var order = 0.0
         let panelBase = SolarSystemColors.panel(dirtAmount: health?.dirtAmount ?? 0)
         for face in house.roof where ground.camera.sees(face.normal) {
-            let faceShaded = health?.isFaceShaded(normal: face.normal) ?? false
+            let faceShaded = (health?.isSunShaded ?? false) && (health?.sunElevation ?? 0) > 0
             context.fill(
                 polygon(face.corners.map { place($0) }),
                 with: .color(SolarSystemColors.shaded(

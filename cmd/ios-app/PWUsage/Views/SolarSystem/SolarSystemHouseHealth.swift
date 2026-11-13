@@ -136,6 +136,25 @@ struct SolarHouseHealthOverlay: Equatable, Sendable {
         return date.formatted(date: .omitted, time: .shortened)
     }
 
+    /// Finds the first season and solar hour (`6.0 ... 20.0`) where the learned shade mask blocks the sun.
+    static func firstShadedMoment(
+        in result: SolarHealthResult?, latitude: Double, longitude: Double
+    ) -> (season: SolarSeason, hourOfDay: Double)? {
+        guard let result, let year = result.years.last?.year else { return nil }
+        for season in SolarSeason.allCases {
+            guard let mask = shadeMask(for: season, year: year, in: result) else { continue }
+            for hour in stride(from: 6.0, through: 20.0, by: 0.5) {
+                let sun = sunSample(
+                    season: season, year: year, hourOfDay: hour,
+                    latitude: latitude, longitude: longitude)
+                if sun.elevation > 0, mask.shaded(azimuth: sun.azimuth, elevation: sun.elevation) {
+                    return (season, hour)
+                }
+            }
+        }
+        return nil
+    }
+
     private static func shadeMask(for season: SolarSeason, year: Int, in result: SolarHealthResult?) -> ShadeMask? {
         guard let result else { return nil }
         if let exact = result.years.first(where: { $0.year == year })?
