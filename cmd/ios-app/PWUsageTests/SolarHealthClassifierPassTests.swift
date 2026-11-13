@@ -12,9 +12,13 @@ struct SolarHealthClassifierPassTests {
     }
 
     private static func runPass(
-        site: SyntheticSolarSite, from: DateComponents, through: DateComponents, now: Date
+        site: SyntheticSolarSite,
+        from: DateComponents,
+        through: DateComponents,
+        now: Date,
+        manual: ManualSolarLayout? = nil
     ) throws -> (result: SolarHealthResult, manual: ManualSolarLayout) {
-        let manual = manualLayout(for: site.planes)
+        let manual = manual ?? manualLayout(for: site.planes)
         let reference = try #require(SolarHealthReference(manual: manual, detected: nil))
         let timeZone = try #require(TimeZone(identifier: "America/Chicago"))
         let place = SolarHealthYearFit.Place(reference: reference, latitude: 43.4, longitude: -87.9, timeZone: timeZone)
@@ -73,5 +77,101 @@ struct SolarHealthClassifierPassTests {
         let soiling = try #require(report.visibleFindings.first { $0.kind == .soiling })
         #expect(soiling.clearDays >= 5)
         #expect(report.dirtLevel.lastRecoveredDay != nil)
+    }
+
+    @Test("A healthy new site reads 100% and is provisional in its first clear weeks")
+    func healthyNewSiteProvisional() throws {
+        let site = SyntheticSolarSite(planes: Self.south)
+        let now = try #require(Calendar.current.date(from: DateComponents(year: 2026, month: 6, day: 15)))
+        let (result, manual) = try Self.runPass(
+            site: site,
+            from: DateComponents(year: 2026, month: 4, day: 1),
+            through: DateComponents(year: 2026, month: 5, day: 15),
+            now: now)
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: now)
+
+        let score = try #require(report.healthScore)
+        #expect(score.scoreVsNew == 1.0)
+        #expect(score.isProvisional)
+        #expect(abs(score.ratedEfficiency - 0.85) < 0.03)
+        #expect(report.visibleFindings.isEmpty)
+    }
+
+    @Test("A stable site stays within 1% of new and a declining one reads about 97% after two years")
+    func stableAndDecliningSites() throws {
+        let stableSite = SyntheticSolarSite(planes: Self.south, capacity: { _, _ in 1 })
+        let stableNow = try #require(Calendar.current.date(from: DateComponents(year: 2026, month: 1, day: 15)))
+        let (stableResult, stableManual) = try Self.runPass(
+            site: stableSite,
+            from: DateComponents(year: 2024, month: 1, day: 1),
+            through: DateComponents(year: 2025, month: 12, day: 31),
+            now: stableNow)
+        let stableReport = SolarHealthClassifier.classify(stableResult, manual: stableManual, now: stableNow)
+        let stableScore = try #require(stableReport.healthScore)
+        #expect(abs(stableScore.scoreVsNew - 1) < 0.01)
+        #expect(!stableScore.isProvisional)
+
+        let decliningSite = SyntheticSolarSite(planes: Self.south, capacity: { year, month in
+            pow(0.985, Double(year - 2024) + Double(month - 1) / 12)
+        })
+        let decliningNow = try #require(Calendar.current.date(from: DateComponents(year: 2027, month: 1, day: 15)))
+        let (decliningResult, decliningManual) = try Self.runPass(
+            site: decliningSite,
+            from: DateComponents(year: 2024, month: 1, day: 1),
+            through: DateComponents(year: 2026, month: 12, day: 31),
+            now: decliningNow)
+        let decliningReport = SolarHealthClassifier.classify(
+            decliningResult, manual: decliningManual, now: decliningNow)
+        let decliningScore = try #require(decliningReport.healthScore)
+        #expect(abs(decliningScore.scoreVsNew - 0.970) < 0.01)
+    }
+
+    @Test("A site at 70% of its rating raises low output once frozen")
+    func lowOutputSiteOnceFrozen() throws {
+        let site = SyntheticSolarSite(planes: Self.south, capacity: { _, _ in 0.70 / 0.85 })
+        let now = try #require(Calendar.current.date(from: DateComponents(year: 2025, month: 2, day: 15)))
+        let (result, manual) = try Self.runPass(
+            site: site,
+            from: DateComponents(year: 2024, month: 1, day: 1),
+            through: DateComponents(year: 2024, month: 12, day: 31),
+            now: now)
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: now)
+
+        #expect(report.allFindings.contains { $0.kind == .lowOutput })
+    }
+
+    @Test("Too few panels entered raises the check-your-panels prompt")
+    func tooFewPanelsEntered() throws {
+        let site = SyntheticSolarSite(planes: Self.south, capacity: { _, _ in 1.10 / 0.9 })
+        let now = try #require(Calendar.current.date(from: DateComponents(year: 2025, month: 2, day: 15)))
+        let (result, manual) = try Self.runPass(
+            site: site,
+            from: DateComponents(year: 2024, month: 1, day: 1),
+            through: DateComponents(year: 2024, month: 12, day: 31),
+            now: now)
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: now)
+
+        let score = try #require(report.healthScore)
+        #expect(score.isAboveHealthyRange)
+        #expect(!report.allFindings.contains { $0.kind == .lowOutput })
+    }
+
+    @Test("A summer-only site is provisional with its seasons and clear days, and no warnings")
+    func summerOnlySite() throws {
+        let site = SyntheticSolarSite(planes: Self.south)
+        let now = try #require(Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 15)))
+        let (result, manual) = try Self.runPass(
+            site: site,
+            from: DateComponents(year: 2026, month: 6, day: 1),
+            through: DateComponents(year: 2026, month: 8, day: 31),
+            now: now)
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: now)
+
+        let score = try #require(report.healthScore)
+        #expect(score.isProvisional)
+        #expect(score.baseline.seasonsCovered == 1)
+        #expect(score.baseline.clearDays > 0)
+        #expect(!score.isBelowBand)
+        #expect(!report.allFindings.contains { $0.kind == .lowOutput })
     }
 }

@@ -50,7 +50,7 @@ struct SolarSystemDetailsRows: View {
         }
     }
 
-    static func kilowatts(_ value: Double) -> String {
+    nonisolated static func kilowatts(_ value: Double) -> String {
         "\(value.formatted(.number.precision(.fractionLength(1)))) kW"
     }
 

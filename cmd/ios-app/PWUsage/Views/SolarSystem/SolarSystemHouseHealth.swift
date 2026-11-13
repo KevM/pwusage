@@ -68,13 +68,46 @@ struct SolarHouseHealthOverlay: Equatable, Sendable {
             dirtAmount = 0
         }
 
-        if let yearData = result?.years.first(where: { $0.year == effectiveYear }) {
-            yearFactor = yearData.capacity?.site
-            directionFactors = yearData.capacity?.directions ?? []
-        } else {
-            yearFactor = report?.changeOverTime.years.first(where: { $0.year == effectiveYear })?.factor
-            directionFactors = []
+        let factors = Self.yearFactors(for: effectiveYear, report: report, result: result)
+        yearFactor = factors.site
+        directionFactors = factors.directions
+    }
+
+    private struct YearFactors {
+        let site: Double?
+        let directions: [SolarHealthCapacity.Direction]
+    }
+
+    private static func yearFactors(
+        for year: Int,
+        report: SolarHealthReport?,
+        result: SolarHealthResult?
+    ) -> YearFactors {
+        if let baseline = report?.baseline, baseline.isBeforeWindow(year: year) {
+            return YearFactors(site: nil, directions: [])
         }
+        let rawSite: Double?
+        let rawDirections: [SolarHealthCapacity.Direction]
+        if let yearData = result?.years.first(where: { $0.year == year }) {
+            rawSite = yearData.capacity?.site
+            rawDirections = yearData.capacity?.directions ?? []
+        } else {
+            rawSite = report?.changeOverTime.years.first(where: { $0.year == year })?.factor
+            rawDirections = []
+        }
+        guard let baseline = report?.baseline else {
+            return YearFactors(site: rawSite, directions: rawDirections)
+        }
+        let relativeDirections = rawDirections.compactMap { direction -> SolarHealthCapacity.Direction? in
+            let base = baseline.directionFactor(azimuth: direction.azimuth)
+            guard base > 0 else { return nil }
+            return SolarHealthCapacity.Direction(
+                azimuth: direction.azimuth,
+                factor: direction.factor / base)
+        }
+        return YearFactors(
+            site: rawSite.map { baseline.relative($0) },
+            directions: relativeDirections)
     }
 
     /// True when the site's learned shade mask blocks the sun and this face is oriented toward the sun.

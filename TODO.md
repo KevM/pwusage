@@ -6,6 +6,12 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## iOS: Solar Health follow-ups from the degradation backtest (2026-11-13)
+
+See the [results](docs/plans/2026-11-13-solar-degradation-backtest-results.md).
+
+- [ ] **Undated added system:** with no install date entered, a manual reference reads an added array as +33%/yr growth. Consider step detection or a prompt for the date.
+
 ## iOS: dark-mode contrast of the tall rate bar (2026-11-09)
 
 - [ ] **Make the unhighlighted part of the tall bar readable in dark mode:** the region without the highlight is dark grey and hard to see. Which bar and which screen is still unconfirmed (likely the Smart Shift rate chart); ask for a screenshot first. Use the theming vars (see `Color.emphasis`), not a hardcoded grey.

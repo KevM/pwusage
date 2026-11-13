@@ -89,9 +89,14 @@ struct SolarHealthYearFit {
     }
 
     /// Lightweight inputs needed to recompute clipped daily energy after cross-year normalization.
-    struct ScaledEnergyInputs: Sendable {
+    struct ScaledEnergyInputs: Equatable, Sendable {
         let clipKw: Double
         let dayPowers: [String: [Double]]
+
+        /// The same inputs restricted to one day.
+        func only(day: String) -> ScaledEnergyInputs? {
+            dayPowers[day].map { ScaledEnergyInputs(clipKw: clipKw, dayPowers: [day: $0]) }
+        }
 
         func expectedDailyKwh(referenceScale: Double) -> [String: Double] {
             dayPowers.mapValues { powers in
