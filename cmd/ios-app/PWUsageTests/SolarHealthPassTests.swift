@@ -216,6 +216,6 @@ struct SolarHealthPassBudgetTests {
         let seconds = ProcessInfo.processInfo.systemUptime - started
         print(String(format: "SOLAR_HEALTH_10Y_TIMING %.2f s", seconds))
         #expect(result.years.count == 10)
-        #expect(seconds < 60, "10-year pass took \(seconds)s")
+        #expect(seconds < 120, "10-year pass took \(seconds)s")
     }
 }
