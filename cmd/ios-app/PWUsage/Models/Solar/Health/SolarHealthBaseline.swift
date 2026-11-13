@@ -132,7 +132,7 @@ struct SolarHealthBaseline: Equatable, Sendable {
         }
     }
 
-    private static func sortedFactorMonths(from years: [SolarHealthYear]) -> [Month] {
+    static func sortedFactorMonths(from years: [SolarHealthYear]) -> [Month] {
         years.flatMap { year in
             year.months.compactMap { month -> Month? in
                 guard month.capacity.site > 0 else { return nil }
@@ -193,7 +193,7 @@ struct SolarHealthBaseline: Equatable, Sendable {
         }
     }
 
-    private static func weightedMean(of samples: [(value: Double, weight: Double)]) -> Double? {
+    static func weightedMean(of samples: [(value: Double, weight: Double)]) -> Double? {
         guard !samples.isEmpty else { return nil }
         let totalWeight = samples.reduce(0.0) { $0 + $1.weight }
         guard totalWeight > 0 else {
@@ -230,7 +230,7 @@ struct SolarHealthBaseline: Equatable, Sendable {
         return latestInstall.year
     }
 
-    private static func azimuthMatches(_ lhs: Double, _ rhs: Double) -> Bool {
+    static func azimuthMatches(_ lhs: Double, _ rhs: Double) -> Bool {
         let delta = abs(LayoutFit.wrapDegrees(lhs - rhs + 180) - 180)
         return delta < 0.5
     }
