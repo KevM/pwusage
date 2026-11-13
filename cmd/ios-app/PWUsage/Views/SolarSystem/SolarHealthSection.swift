@@ -18,6 +18,10 @@ struct SolarHealthSection: View {
         Section {
             if let score = report.healthScore {
                 healthScoreRows(score)
+            } else if report.source == .manual {
+                Text(SolarHealthScorePresentation.waitingForClearDays)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             } else {
                 manualPromptRow
             }
@@ -40,22 +44,51 @@ struct SolarHealthSection: View {
 
     @ViewBuilder
     private func healthScoreRows(_ score: SolarHealthReport.HealthScore) -> some View {
-        let percent = Int((score.scoreVsNew * 100).rounded())
-        let band = Int(score.bandPercent.rounded())
-        LabeledContent("Health score") {
-            Text("\(percent)% (±\(band)%)")
-                .fontWeight(.semibold)
-                .foregroundStyle(score.isBelowBand ? Color.emphasis : Color.primary)
+        let presentation = SolarHealthScorePresentation(score: score)
+        healthHeadlineRow(presentation)
+        LabeledContent(presentation.efficiencyLabel, value: presentation.efficiencyValue)
+        if let note = presentation.olderPanelsNote {
+            captionNote(note)
         }
-        LabeledContent(
-            "Entered capacity",
-            value: SolarSystemDetailsRows.kilowatts(score.nameplateKw))
-        if score.perDirection.count > 1 {
-            ForEach(score.perDirection, id: \.azimuth) { direction in
-                LabeledContent(
-                    SolarSystemDetailsRows.direction(direction.azimuth),
-                    value: "\(Int((direction.factor * 100).rounded()))%")
+        if let note = presentation.restartNote {
+            captionNote(note)
+        }
+        ForEach(presentation.directionRows, id: \.azimuth) { direction in
+            LabeledContent(
+                SolarSystemDetailsRows.direction(direction.azimuth),
+                value: direction.value)
+        }
+        if let prompt = presentation.panelCheckPrompt {
+            panelCheckRow(prompt)
+        }
+    }
+
+    private func healthHeadlineRow(_ presentation: SolarHealthScorePresentation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Health") {
+                Text("\(presentation.headline) \(presentation.band)")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(presentation.isEmphasized ? Color.emphasis : Color.primary)
             }
+            if let detail = presentation.headlineDetail {
+                captionNote(detail)
+            }
+        }
+    }
+
+    private func captionNote(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func panelCheckRow(_ prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(prompt)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("Check Panel Details", action: onEditLayout)
+                .font(.subheadline.weight(.medium))
         }
     }
 
@@ -83,10 +116,9 @@ struct SolarHealthSection: View {
         if let pva = report.potentialVsActual {
             let expected = pva.expectedKwh.formatted(.number.precision(.fractionLength(1)))
             let actual = pva.actualKwh.formatted(.number.precision(.fractionLength(1)))
-            let prefix = report.source == .manual ? "A healthy system like yours should make" : "Expected"
             VStack(alignment: .leading, spacing: 4) {
                 LabeledContent("Potential vs actual", value: "\(actual) / \(expected) kWh")
-                Text("\(prefix) \(expected) kWh on a clear day like \(pva.day); yours made \(actual) kWh.")
+                Text(SolarHealthScorePresentation.potentialCaption(pva))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
