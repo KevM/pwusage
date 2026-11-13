@@ -34,6 +34,7 @@ struct SiteDeepHistoryModelTests {
     @Test func aTeslaWaitShowsAsWaitingAndStopLeavesTheCursor() async throws {
         let retryAt = now.addingTimeInterval(600)
         let environment = FakeOnboardingEnvironment()
+        environment.historyStart = "2026-08-20"
         environment.answers = [
             .fill(.complete),
             .failure(MobileSolarHistoryFillError.rateLimited(retryAt: retryAt, isFallback: false))
@@ -44,7 +45,7 @@ struct SiteDeepHistoryModelTests {
         try await eventually { model.status.phase == .waiting(until: retryAt) }
         await model.stop()
         #expect(model.status.phase == .idle)
-        #expect(model.status.loadedBack == "2026-10-30")
+        #expect(model.status.loadedBack == "2026-09-03")
         #expect(model.runTask == nil)
     }
 

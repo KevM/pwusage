@@ -9,10 +9,38 @@ import Foundation
 final class SiteDeepHistory {
     typealias Outcome = SiteHistoryOnboarding.Outcome
 
+    nonisolated static let maxSliceDays = 60
+    nonisolated static let minSliceDays = SiteHistoryOnboarding.sliceDays
+
     private enum Step {
         case advanced
         case retryNow
         case stop(Outcome)
+    }
+
+    private struct SliceSizing {
+        var days = SiteDeepHistory.maxSliceDays
+        private var consecutiveComplete = 0
+
+        mutating func recordComplete() {
+            guard days < SiteDeepHistory.maxSliceDays else { return }
+            consecutiveComplete += 1
+            guard consecutiveComplete >= 2 else { return }
+            days = min(days * 2, SiteDeepHistory.maxSliceDays)
+            consecutiveComplete = 0
+        }
+
+        mutating func shrinkOnPartial() -> Bool {
+            consecutiveComplete = 0
+            guard days > SiteDeepHistory.minSliceDays else { return false }
+            days = SiteDeepHistory.minSliceDays
+            return true
+        }
+
+        mutating func resetToMin() {
+            consecutiveComplete = 0
+            days = SiteDeepHistory.minSliceDays
+        }
     }
 
     private let environment: any SiteDeepHistoryEnvironment
@@ -92,16 +120,17 @@ final class SiteDeepHistory {
         var progress: SiteDeepHistoryProgress
         do { progress = try await start(scope: scope, timeZone: zone) } catch { return .unavailable }
         var slices = 0
+        var sizing = SliceSizing()
         while true {
             if (try? await store.progress(scope: scope))?.userStopped == true { return .stopped }
             if let blocked = await blockedOutcome(progress, scope: scope) { return blocked }
-            guard let slice = nextSlice(progress, timeZone: zone) else {
+            guard let slice = nextSlice(progress, sliceDays: sizing.days, timeZone: zone) else {
                 progress.phase = .finished(.reachedHistoryStart)
                 return await finish(progress, scope: scope)
             }
             guard slices < maxSlices else { return .yielded }
             slices += 1
-            let step = await attempt(slice, scope: scope, progress: &progress)
+            let step = await attempt(slice, scope: scope, progress: &progress, sizing: &sizing)
             if case .stop(.stopped) = step { return .stopped }
             try? await store.save(progress, scope: scope)
             onProgress?(scope)
@@ -135,10 +164,12 @@ final class SiteDeepHistory {
         return .waiting(until: next, reason: progress.waitReason ?? .retrying)
     }
 
-    private func nextSlice(_ progress: SiteDeepHistoryProgress, timeZone: TimeZone) -> (from: String, days: Int)? {
+    private func nextSlice(
+        _ progress: SiteDeepHistoryProgress, sliceDays: Int, timeZone: TimeZone
+    ) -> (from: String, days: Int)? {
         if let start = progress.historyStart, progress.oldestChecked <= start { return nil }
         guard let earliest = SiteLocalDays.adding(
-            -SiteHistoryOnboarding.sliceDays, to: progress.oldestChecked, timeZone: timeZone) else { return nil }
+            -sliceDays, to: progress.oldestChecked, timeZone: timeZone) else { return nil }
         let from = max(earliest, progress.historyStart ?? earliest)
         guard let days = SiteLocalDays.days(from: from, to: progress.oldestChecked, timeZone: timeZone), days > 0
         else { return nil }
@@ -146,7 +177,8 @@ final class SiteDeepHistory {
     }
 
     private func attempt(
-        _ slice: (from: String, days: Int), scope: SolarForecastSiteScope, progress: inout SiteDeepHistoryProgress
+        _ slice: (from: String, days: Int), scope: SolarForecastSiteScope,
+        progress: inout SiteDeepHistoryProgress, sizing: inout SliceSizing
     ) async -> Step {
         do {
             let response = try await environment.fill(siteID: scope.siteID, from: slice.from, days: slice.days)
@@ -158,7 +190,7 @@ final class SiteDeepHistory {
             try await environment.storeDays(fill, scope: scope)
             guard !Task.isCancelled else { return .stop(.stopped) }
             progress.historyStart = fill.historyStart
-            return record(fill.status, slice: slice, loaded: fill.days.count, progress: &progress)
+            return record(fill.status, slice: slice, loaded: fill.days.count, progress: &progress, sizing: &sizing)
         } catch {
             return await failed(error, scope: scope, progress: &progress)
         }
@@ -166,7 +198,7 @@ final class SiteDeepHistory {
 
     private func record(
         _ status: MobileSolarHistoryFill.Status, slice: (from: String, days: Int), loaded: Int,
-        progress: inout SiteDeepHistoryProgress
+        progress: inout SiteDeepHistoryProgress, sizing: inout SliceSizing
     ) -> Step {
         switch status {
         case .complete:
@@ -175,13 +207,16 @@ final class SiteDeepHistory {
             progress.failures = 0
             progress.nextAttemptAt = nil
             progress.waitReason = nil
+            sizing.recordComplete()
             return .advanced
         case .partial:
+            if sizing.shrinkOnPartial() { return .retryNow }
             progress.failures += 1
             guard progress.failures >= SiteHistoryOnboarding.partialRetries else { return .retryNow }
             let attempt = progress.failures - SiteHistoryOnboarding.partialRetries + 1
             return wait(.retrying, after: SiteHistoryOnboarding.backoff(60, attempt: attempt), progress: &progress)
         case .busy:
+            sizing.resetToMin()
             progress.failures += 1
             let delay = min(SiteHistoryOnboarding.backoff(30, attempt: progress.failures), 900)
             return wait(.busy, after: delay, progress: &progress)

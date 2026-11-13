@@ -32,8 +32,10 @@ struct SiteDeepHistoryTests {
         try await seedOnboarding(oldestChecked: "2025-11-02")
         let outcome = await make(environment).run(scope: scope)
         #expect(outcome == .finished(.reachedHistoryStart))
-        #expect(environment.requests.first?.from == "2025-10-30")
+        #expect(environment.requests.first?.from == "2025-09-03")
+        #expect(environment.requests.first?.days == 60)
         #expect(environment.requests.last?.from == "2025-06-01")
+        #expect(environment.requests.count == 3)
         let days = environment.stored.flatMap(\.self).sorted()
         #expect(days.first == "2025-06-01")
         #expect(days.last == "2025-11-01")
@@ -49,7 +51,7 @@ struct SiteDeepHistoryTests {
     @Test func startsFromTodayWithoutOnboardingProgress() async {
         let environment = FakeOnboardingEnvironment()
         _ = await make(environment).run(scope: scope, maxSlices: 1)
-        #expect(environment.requests.map(\.from) == ["2026-10-30"])
+        #expect(environment.requests.map(\.from) == ["2026-09-03"])
     }
 
     @Test func resumesFromTheSavedCursor() async {
@@ -57,21 +59,32 @@ struct SiteDeepHistoryTests {
         _ = await make(first).run(scope: scope, maxSlices: 2)
         let second = FakeOnboardingEnvironment()
         _ = await make(second).run(scope: scope, maxSlices: 1)
-        #expect(second.requests.map(\.from) == ["2026-10-24"])
+        #expect(second.requests.map(\.from) == ["2026-05-06"])
     }
 
-    @Test func aPartialSliceIsRetriedUntilComplete() async {
+    @Test func aPartialSliceShrinksToThreeDaysThenRampsUpOnConsecutiveCompletes() async {
         let environment = FakeOnboardingEnvironment()
-        environment.answers = [.fill(.partial), .fill(.partial), .fill(.complete)]
-        _ = await make(environment).run(scope: scope, maxSlices: 4)
-        #expect(environment.requests.map(\.from) == ["2026-10-30", "2026-10-30", "2026-10-30", "2026-10-27"])
+        environment.answers = [
+            .fill(.partial),
+            .fill(.complete),
+            .fill(.complete),
+            .fill(.complete),
+            .fill(.complete),
+            .fill(.complete)
+        ]
+        _ = await make(environment).run(scope: scope, maxSlices: 6)
+        #expect(environment.requests.map(\.days) == [60, 3, 3, 6, 6, 12])
+        #expect(environment.requests.map(\.from) == [
+            "2026-09-03", "2026-10-30", "2026-10-27", "2026-10-21", "2026-10-15", "2026-10-03"
+        ])
     }
 
-    @Test func thirdPartialBacksOffAndBusyWaits() async {
+    @Test func thirdPartialAfterShrinkingBacksOffAndBusyWaits() async {
         let environment = FakeOnboardingEnvironment()
-        environment.answers = [.fill(.partial), .fill(.partial), .fill(.partial)]
+        environment.answers = [.fill(.partial), .fill(.partial), .fill(.partial), .fill(.partial)]
         #expect(await make(environment).run(scope: scope)
             == .waiting(until: now.addingTimeInterval(60), reason: .retrying))
+        #expect(environment.requests.map(\.days) == [60, 3, 3, 3])
         let busy = FakeOnboardingEnvironment()
         busy.answers = [.fill(.busy)]
         let other = SolarForecastSiteScope(accountScopeID: "b", siteID: "s")
@@ -89,7 +102,7 @@ struct SiteDeepHistoryTests {
         #expect(early.requests.isEmpty)
         let later = FakeOnboardingEnvironment()
         _ = await make(later, clock: retryAt.addingTimeInterval(1)).run(scope: scope, maxSlices: 1)
-        #expect(later.requests.map(\.from) == ["2026-10-30"])
+        #expect(later.requests.map(\.from) == ["2026-09-03"])
     }
 
     @Test func yieldsAtMaxSlices() async {
@@ -129,7 +142,7 @@ struct SiteDeepHistoryTests {
         #expect(again.requests.isEmpty)
         try await deepStore.resume(scope: scope)
         _ = await make(again).run(scope: scope, maxSlices: 1)
-        #expect(again.requests.map(\.from) == ["2026-10-30"])
+        #expect(again.requests.map(\.from) == ["2026-09-03"])
     }
 
     @Test func cancellationSavesNothing() async throws {
@@ -155,6 +168,6 @@ struct SiteDeepHistoryTests {
         #expect(!progress.userStopped)
         let environment = FakeOnboardingEnvironment()
         _ = await make(environment).run(scope: scope, maxSlices: 1)
-        #expect(environment.requests.map(\.from) == ["2026-10-21"])
+        #expect(environment.requests.map(\.from) == ["2026-08-25"])
     }
 }
