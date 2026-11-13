@@ -5,7 +5,7 @@ import SwiftUI
 /// Site History and Solar Forecast.
 struct SolarSystemView: View {
     @ObservedObject var coordinator: DashboardCoordinator
-    /// Nil for a site without the history beta; the screen then shows only what is stored.
+    /// Nil when the site has no history available; the screen then shows only what is stored.
     let status: SiteHistoryStatus?
     var debugActions: SiteHistoryDebugActions?
     /// Opened from the banner's location prompt: go straight to the location step.
@@ -27,6 +27,7 @@ struct SolarSystemView: View {
     @State private var didStartAtLocation = false
     @State private var record: SolarLayoutRecord?
     @State private var isEditingLayout = false
+    @State private var healthState = SolarHouseHealthState()
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -83,18 +84,23 @@ struct SolarSystemView: View {
     }
 
     private func list(_ presentation: SiteHistoryPresentation, layout: SolarLayout?) -> some View {
-        List {
+        let overlay = houseHealthOverlay
+        let sceneDate = healthState.selectedYear.map(SolarHouseHealthOverlay.endOfYearDate) ?? .now
+        return List {
             if status != nil || layout != nil {
                 Section {
                     SolarSystemVisual(
                         input: SolarSystemSceneInput(
                             status: status, layout: layout, isWaiting: presentation.phase == .waiting,
-                            manualLayout: record?.manualLayout),
+                            manualLayout: record?.manualLayout, healthOverlay: overlay, now: sceneDate),
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
                         .id(Self.visualID)
+                    if layout != nil, let report = solarHealth?.report, let overlay {
+                        SolarSystemHealthControls(state: $healthState, report: report, overlay: overlay)
+                    }
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
                         SolarSystemDetailsRows(
@@ -165,6 +171,16 @@ struct SolarSystemView: View {
     // MARK: - Home location
 
     private var location: SolarHomeLocation? { stored?.location }
+
+    private var houseHealthOverlay: SolarHouseHealthOverlay? {
+        guard solarHealth?.report != nil || solarHealth?.result != nil else { return nil }
+        return SolarHouseHealthOverlay(
+            report: solarHealth?.report,
+            result: solarHealth?.result,
+            state: healthState,
+            latitude: location?.latitude ?? status?.latitude ?? 40.0,
+            longitude: location?.longitude ?? 0.0)
+    }
 
     private var locationSection: some View {
         Section {

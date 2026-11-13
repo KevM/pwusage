@@ -42,7 +42,7 @@ struct SolarForecastRequest: Sendable {
     let manual: Bool
     let layout: SolarLayout?
     let location: SolarHomeLocation?
-    /// Beta sites use only the automatic source; credentials cannot intercept or become fallback.
+    /// Automatic forecasting uses only this source; credentials cannot intercept or become fallback.
     var automaticOnly = false
 }
 

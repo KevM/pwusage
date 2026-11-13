@@ -1,13 +1,13 @@
 import Foundation
 
-/// The beta automatic forecast: layout status, measured actuals and the service's
+/// The automatic forecast: layout status, measured actuals and the service's
 /// publication. Every await is fenced by the forecast generation and selected site.
 extension DashboardCoordinator {
     var solarScope: SolarForecastSiteScope? {
         accountScopeID.map { SolarForecastSiteScope(accountScopeID: $0, siteID: selectedSiteID) }
     }
 
-    /// Unknown beta status stays on history until the server confirms a legacy site.
+    /// Unknown status stays on history until the server confirms the site's history availability.
     var usesAutomaticSolarForecast: Bool { runner != nil && historyEnabled && solarLayoutStatus != .disabled }
 
     /// What forecast consumers treat as the connection: a published automatic forecast is
@@ -62,7 +62,7 @@ extension DashboardCoordinator {
         return publication.descriptor
     }
 
-    /// The already-resolved beta status selects automatic forecasting even with saved credentials.
+    /// The already-resolved status selects automatic forecasting even with saved credentials.
     func loadAutomaticForecast(
         siteID: String, api: any MobileLoadPlanningDataAPI, operation: Int,
         status: MobileSolarLayoutResponse?, manual: Bool

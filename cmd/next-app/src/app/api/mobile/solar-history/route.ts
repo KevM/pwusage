@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { Temporal } from '@js-temporal/polyfill';
-import { getCurrentRoles, verifySiteAccess } from '@/lib/auth-checks';
+import { verifySiteAccess } from '@/lib/auth-checks';
 import { formatSiteDate, parseSiteLocalDateToMidnight } from '@/lib/date-utils';
 import { pool } from '@/lib/db';
 import { Importer } from '@/lib/importer';
 import { CompactHistoryStore, type SolarHistoryDay } from '@/lib/prototypes/compact-history-store';
 import { withRequestContext } from '@/lib/request-context';
 import { SiteRepo } from '@/lib/site-repo';
-import { hasSolarForecastBeta } from '@/lib/solar-forecast-beta';
 import { TeslaRateLimitError } from '@/lib/tesla-client';
 import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
 import { isTeslaConnectionRequired, TeslaRefreshBackoffError } from '@/lib/tesla-refresh-outcome';
@@ -85,7 +84,6 @@ export async function GET(request: Request): Promise<NextResponse> {
             const siteId = params.get('siteId');
             if (!siteId) return json({ error: 'Missing siteId' }, 400);
             if (!(await verifySiteAccess(siteId))) return json({ error: 'Unauthorized' }, 401);
-            if (!hasSolarForecastBeta(await getCurrentRoles())) return json({ version: 1, enabled: false });
             const site = await new SiteRepo().getSite(siteId);
             if (!site) return json({ error: 'Site not found' }, 404);
             const timeZone = site.timezone;
@@ -142,7 +140,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             if (!fill) return json({ error: 'Invalid request' }, 400);
             const { siteId, from, days } = fill;
             if (!(await verifySiteAccess(siteId))) return json({ error: 'Unauthorized' }, 401);
-            if (!hasSolarForecastBeta(await getCurrentRoles())) return json({ version: 1, enabled: false });
             const repo = new SiteRepo();
             const site = await repo.getSite(siteId);
             if (!site) return json({ error: 'Site not found' }, 404);

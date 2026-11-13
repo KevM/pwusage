@@ -11,11 +11,14 @@ struct SolarSystemSceneInput: Equatable {
     var isWaiting = false
     /// Found while nobody was watching: replay the find the first time it can be seen.
     var isRevealOwed = false
+    /// Health overlay for shading, dirt tint and aging on the house.
+    var healthOverlay: SolarHouseHealthOverlay?
 
     /// `manualLayout`: the faces the owner entered, which replace the found groups on the house.
     init(
         status: SiteHistoryStatus?, layout: SolarLayout?, isWaiting: Bool,
-        manualLayout: ManualSolarLayout? = nil, now: Date = .now
+        manualLayout: ManualSolarLayout? = nil, healthOverlay: SolarHouseHealthOverlay? = nil,
+        now: Date = .now
     ) {
         days = status?.days ?? []
         clearDays = status?.clearDays ?? 0
@@ -35,6 +38,7 @@ struct SolarSystemSceneInput: Equatable {
         }
         self.isWaiting = isWaiting
         isRevealOwed = status?.isRevealOwed ?? false
+        self.healthOverlay = healthOverlay
     }
 
     var isFound: Bool { !groups.isEmpty }
@@ -278,7 +282,8 @@ struct SolarSystemSceneCanvas: View {
             let ground = frame.projection(width: size.width)
             drawCompass(context, ground)
             if input.isFound, clocks.houseTime(at: now) >= 0 {
-                SolarSystemHouseDrawing(groups: input.groups, time: clocks.houseTime(at: now))
+                SolarSystemHouseDrawing(
+                    groups: input.groups, time: clocks.houseTime(at: now), health: input.healthOverlay)
                     .draw(context, ground)
             }
         }

@@ -1,12 +1,12 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyAccessMock, rolesMock, siteMock, readDaysMock, boundaryMock, clientMock, ensureMock } = vi.hoisted(() => ({
-    verifyAccessMock: vi.fn(), rolesMock: vi.fn(), siteMock: vi.fn(), readDaysMock: vi.fn(),
+const { verifyAccessMock, siteMock, readDaysMock, boundaryMock, clientMock, ensureMock } = vi.hoisted(() => ({
+    verifyAccessMock: vi.fn(), siteMock: vi.fn(), readDaysMock: vi.fn(),
     boundaryMock: vi.fn(), clientMock: vi.fn(), ensureMock: vi.fn(),
 }));
 
-vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock, getCurrentRoles: rolesMock }));
+vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
 vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getHistoryBackfillFrom = boundaryMock; } }));
 vi.mock('@/lib/db', () => ({ pool: {} }));
 vi.mock('@/lib/prototypes/compact-history-store', () => ({ CompactHistoryStore: class { readSolarDays = readDaysMock; } }));
@@ -36,7 +36,6 @@ describe('mobile solar history route', () => {
         // 2026-10-27 13:30 in Chicago.
         vi.setSystemTime(new Date('2026-10-27T18:30:00.000Z'));
         verifyAccessMock.mockResolvedValue(true);
-        rolesMock.mockResolvedValue(['solar-forecast-beta']);
         siteMock.mockResolvedValue({ id: 'site-a', timezone: TZ });
         readDaysMock.mockReset();
         readDaysMock.mockResolvedValue([]);
@@ -68,12 +67,11 @@ describe('mobile solar history route', () => {
         expect(readDaysMock).not.toHaveBeenCalled();
     });
 
-    it('answers enabled:false without the beta role, and reads nothing', async () => {
-        rolesMock.mockResolvedValueOnce([]);
+    it('reads history for every user with site access', async () => {
         const res = await get('siteId=site-a&from=2026-10-20');
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ version: 1, enabled: false });
-        expect(readDaysMock).not.toHaveBeenCalled();
+        expect(await res.json()).toEqual({ version: 1, enabled: true, timeZone: TZ, days: [], nextFrom: null });
+        expect(readDaysMock).toHaveBeenCalledOnce();
     });
 
     it('returns 404 for a missing site', async () => {
@@ -215,7 +213,6 @@ describe('mobile solar history fill', () => {
         vi.clearAllMocks();
         vi.setSystemTime(new Date('2026-10-27T18:30:00.000Z'));
         verifyAccessMock.mockResolvedValue(true);
-        rolesMock.mockResolvedValue(['solar-forecast-beta']);
         siteMock.mockResolvedValue({ id: 'site-a', timezone: TZ, installed: new Date('2024-03-10T17:00:00Z') });
         boundaryMock.mockResolvedValue(null);
         clientMock.mockResolvedValue({});
@@ -255,10 +252,11 @@ describe('mobile solar history fill', () => {
         expect(ensureMock).not.toHaveBeenCalled();
     });
 
-    it('answers enabled:false without the beta role, and imports nothing', async () => {
-        rolesMock.mockResolvedValueOnce([]);
-        expect(await (await fill(valid)).json()).toEqual({ version: 1, enabled: false });
-        expect(ensureMock).not.toHaveBeenCalled();
+    it('fills history for every user with site access', async () => {
+        const response = await fill(valid);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ version: 1, enabled: true, timeZone: TZ });
+        expect(ensureMock).toHaveBeenCalledOnce();
     });
 
     it('fills the site-local slice with a short budget, then returns its stored days', async () => {

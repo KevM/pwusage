@@ -34,12 +34,12 @@ extension PWUsageAppModel {
             let scope = SolarForecastSiteScope(accountScopeID: account, siteID: siteID)
             let isEnabled = try? await solarHistory.isEnabled(scope: scope)
             let isSynced = (try? await solarHistory.isSynced(scope: scope, within: 86_400, now: now)) == true
-            if isSynced, isEnabled == false { return false }
             guard let record = try await solarRecords.record(scope: scope), isCurrent(),
                   case .enabled(let location?, let layout?, _) = record.response(historyEnabled: true) else {
                 return false
             }
-            if !isSynced {
+            // Recheck a saved denial because it may predate removal of the beta gate.
+            if !isSynced || isEnabled == false {
                 let syncResult = try? await solarHistory.sync(scope: scope, api: backgroundAPI, now: now)
                 guard isCurrent(), case .synced = syncResult else { return false }
             }

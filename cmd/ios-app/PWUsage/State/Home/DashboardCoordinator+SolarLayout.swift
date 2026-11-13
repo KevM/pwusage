@@ -1,6 +1,6 @@
 import Foundation
 
-/// The beta layout status: cached per account and site, and updated when detection completes.
+/// The automatic layout status: cached per account and site, and updated when detection completes.
 enum SolarForecastSurface: Hashable { case smartShift, bill, settings }
 
 extension DashboardCoordinator {
@@ -64,7 +64,8 @@ extension DashboardCoordinator {
         let isConfirmedDisabled: Bool
 
         func needsSync(record: SolarLayoutRecord?) -> Bool {
-            !isSyncedWithinTTL && (record == nil || isEnabled == false)
+            // A saved denial may have come from the retired beta gate, so always recheck it.
+            isEnabled == false || (!isSyncedWithinTTL && record == nil)
         }
     }
 
@@ -79,7 +80,7 @@ extension DashboardCoordinator {
         let isEnabled = try? await history.isEnabled(scope: scope)
         let isSynced = (try? await history.isSynced(scope: scope, within: 86_400, now: now())) == true
         let withinTTL = !bypassTTL && isSynced
-        let isConfirmed = withinTTL && (isEnabled.map { !$0 } ?? !historyEnabled)
+        let isConfirmed = withinTTL && (isEnabled.map { !$0 } ?? !historyEnabled) && isEnabled != false
         return CachedEligibility(isSyncedWithinTTL: withinTTL, isEnabled: isEnabled, isConfirmedDisabled: isConfirmed)
     }
 

@@ -119,7 +119,8 @@ enum MobileSolarLayoutReason: String, Codable, Sendable {
 }
 
 /// The automatic forecast's layout state, built on the phone from the local layout record (it was
-/// once `GET /api/mobile/solar-layout`, version 1). Disabled means the account is not in the beta.
+/// once `GET /api/mobile/solar-layout`, version 1). Disabled is retained for compatibility with an
+/// older server that cannot provide solar history.
 enum MobileSolarLayoutResponse: Decodable, Equatable, Sendable {
     case disabled
     case enabled(location: SolarHomeLocation?, layout: SolarLayout?, reason: MobileSolarLayoutReason?)

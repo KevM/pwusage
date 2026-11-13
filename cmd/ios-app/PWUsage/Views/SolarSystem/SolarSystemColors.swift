@@ -19,11 +19,23 @@ enum SolarSystemColors {
     static let wall = SIMD3<Double>(214, 211, 199)
     static let roof = SIMD3<Double>(120, 118, 110)
     static let panel = SIMD3<Double>(28, 74, 140)
+    static let dustyPanel = SIMD3<Double>(145, 118, 78)
     static let sun = SIMD3<Double>(-0.35, -0.55, 0.76)
 
-    /// `rgb` lit by the low sun from the southwest: 58% ambient, 42% direct.
-    static func shaded(_ rgb: SIMD3<Double>, normal: SIMD3<Double>) -> Color {
-        let light = 0.58 + 0.42 * max(0, (normal * sun).sum())
+    /// Panel base RGB tinted toward dust by `dirtAmount` (`0` is clean, `1` is full tint).
+    static func panel(dirtAmount: Double) -> SIMD3<Double> {
+        let amount = min(max(dirtAmount, 0), 1)
+        return panel + (dustyPanel - panel) * amount
+    }
+
+    /// `rgb` lit by `sun` (defaulting to the low sun from the southwest), darkened when `isShaded`.
+    static func shaded(
+        _ rgb: SIMD3<Double>, normal: SIMD3<Double>,
+        sun: SIMD3<Double> = sun, isShaded: Bool = false
+    ) -> Color {
+        let direct = isShaded ? 0.0 : max(0, (normal * sun).sum())
+        let ambient = isShaded ? 0.36 : 0.58
+        let light = ambient + 0.42 * direct
         let lit = rgb * light / 255
         return Color(red: lit.x, green: lit.y, blue: lit.z)
     }

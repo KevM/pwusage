@@ -421,7 +421,7 @@ would hand them a permission Tesla withheld.
 | Battery Saver | **Shared** | One per site. Any member can see and stop it. |
 | Live Activity registrations | **Per person** | Already keyed `(user_id, registration_id)`. Only access checks change. |
 | TRMNL installations | **Device on a shared site** | See below. |
-| Account, grant, session, region, roles | **Per person** | Includes `fleet_api_base_url` and the solar beta role. |
+| Account, grant, session, region, roles | **Per person** | Includes `fleet_api_base_url`; roles do not gate solar forecasting. |
 | iOS selection, widgets, Smart Shift | **Per device** | Removed members' widgets already clear on 401/403. |
 | iOS solar layouts | **Per Apple Account and site** | Keyed by account and `siteID`, so a member whose row merges into another site has to set theirs up again. |
 
