@@ -10,7 +10,7 @@ final class SiteDeepHistory {
     typealias Outcome = SiteHistoryOnboarding.Outcome
 
     nonisolated static let maxSliceDays = 60
-    nonisolated static let minSliceDays = SiteHistoryOnboarding.sliceDays
+    nonisolated static let minSliceDays = 3
 
     private enum Step {
         case advanced
