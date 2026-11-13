@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 enum SolarHistorySyncResult: Equatable, Sendable { case disabled, synced(timeZone: TimeZone) }
@@ -363,8 +362,7 @@ actor SolarHistoryStore {
     }
 
     private func scopeHash(_ scope: SolarForecastSiteScope) -> String {
-        let key = "\(scope.accountScopeID)|\(scope.siteID)"
-        return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        scope.storageHash
     }
 
     private static func date(daysBefore days: Int, now: Date, timeZone: TimeZone) -> Date {
