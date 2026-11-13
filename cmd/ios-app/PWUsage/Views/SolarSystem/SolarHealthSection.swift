@@ -40,19 +40,16 @@ struct SolarHealthSection: View {
 
     @ViewBuilder
     private func healthScoreRows(_ score: SolarHealthReport.HealthScore) -> some View {
-        let percent = Int((score.factor * 100).rounded())
+        let percent = Int((score.scoreVsNew * 100).rounded())
         let band = Int(score.bandPercent.rounded())
         LabeledContent("Health score") {
             Text("\(percent)% (±\(band)%)")
                 .fontWeight(.semibold)
-                .foregroundStyle(score.factor >= 0.85 ? Color.primary : Color.emphasis)
+                .foregroundStyle(score.isBelowBand ? Color.emphasis : Color.primary)
         }
         LabeledContent(
             "Entered capacity",
             value: SolarSystemDetailsRows.kilowatts(score.nameplateKw))
-        LabeledContent(
-            "Implied capacity",
-            value: "\(SolarSystemDetailsRows.kilowatts(score.impliedKw)) (\(score.clearDays) clear days)")
         if score.perDirection.count > 1 {
             ForEach(score.perDirection, id: \.azimuth) { direction in
                 LabeledContent(

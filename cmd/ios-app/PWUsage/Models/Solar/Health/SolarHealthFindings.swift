@@ -66,18 +66,24 @@ struct SolarHealthReport: Equatable, Sendable {
         let day: String
         let expectedKwh: Double
         let actualKwh: Double
+        var isAsNew = false
         var differenceKwh: Double { actualKwh - expectedKwh }
         var ratio: Double { expectedKwh > 0 ? actualKwh / expectedKwh : 0 }
     }
 
     struct HealthScore: Equatable, Sendable {
-        /// Clear-day production divided by healthy nameplate model (1.00 = 85% of DC nameplate).
-        let factor: Double
+        let scoreVsNew: Double
+        let comparedMonths: Int
+        let ratedEfficiency: Double
         let nameplateKw: Double
-        let impliedKw: Double
         let bandPercent: Double
         let perDirection: [SolarHealthCapacity.Direction]
-        let clearDays: Int
+        let baseline: SolarHealthBaseline
+        var isProvisional: Bool { baseline.isProvisional }
+        /// Emphasis colour: frozen and below 100% − band.
+        var isBelowBand: Bool { !isProvisional && scoreVsNew < 1 - bandPercent / 100 }
+        /// The check-your-panels prompt: frozen and above the healthy range.
+        let isAboveHealthyRange: Bool
     }
 
     struct ShadingSummary: Equatable, Sendable {
@@ -112,6 +118,10 @@ struct SolarHealthReport: Equatable, Sendable {
 
     var visibleFindings: [SolarHealthFinding] {
         allFindings.filter(\.meetsMinimumEvidence)
+    }
+
+    var baseline: SolarHealthBaseline? {
+        healthScore?.baseline
     }
 }
 
