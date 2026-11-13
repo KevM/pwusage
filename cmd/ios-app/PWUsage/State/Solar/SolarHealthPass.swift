@@ -6,7 +6,7 @@ import Foundation
 /// per completed year and nothing is synced.
 enum SolarHealthPass {
     /// Bumped when the pass changes what it computes, so cached years recompute.
-    static let version = 1
+    static let version = 3
 
     /// Runs the pass for a site off the main actor. Nil when the site lacks a location, a time zone,
     /// stored history or any layout to compare with. Cancellable like detection.
@@ -49,17 +49,25 @@ enum SolarHealthPass {
         let currentYear = calendar.component(.year, from: context.now)
         var years: [SolarHealthYear] = []
         var recomputed: [Int] = []
+        var energyInputs: [Int: SolarHealthYearFit.ScaledEnergyInputs] = [:]
+        var cachedClippedSlices: [Int: [(timestamp: Date, solarWh: Double)]] = [:]
         for slice in yearSlices(samples, calendar: calendar) {
             try checkCancellation()
             let key = cacheKey(place: place, slice: slice.samples)
             if slice.year < currentYear,
                let cached = context.cache.year(slice.year, scope: context.scope),
                cached.key == key {
+                if place.reference.source == .detected, cached.hasClipping {
+                    cachedClippedSlices[slice.year] = slice.samples
+                }
                 years.append(cached)
                 continue
             }
             let yearFit = try SolarHealthYearFit(
                 samples: slice.samples, place: place, checkCancellation: checkCancellation)
+            if place.reference.source == .detected, let inputs = yearFit?.scaledEnergyInputs {
+                energyInputs[slice.year] = inputs
+            }
             var year = try yearFit?.result(year: slice.year, checkCancellation: checkCancellation)
                 ?? SolarHealthYear(
                     year: slice.year, key: key, clearDays: 0, capacity: nil, months: [], shade: [], dailyRatios: [])
@@ -69,9 +77,20 @@ enum SolarHealthPass {
             recomputed.append(slice.year)
         }
         let scale = place.reference.source == .detected ? bestSiteFactor(years) : 1
+        let scaledYears = try years.map { year -> SolarHealthYear in
+            guard scale > 0, scale != 1, year.hasClipping else { return year.scaled(by: scale) }
+            let inputs: SolarHealthYearFit.ScaledEnergyInputs?
+            if let existing = energyInputs[year.year] {
+                inputs = existing
+            } else {
+                inputs = try SolarHealthYearFit(
+                    samples: cachedClippedSlices[year.year] ?? [], place: place, checkCancellation: checkCancellation)?
+                    .scaledEnergyInputs
+            }
+            return year.scaled(by: scale, expectedDailyKwh: inputs?.expectedDailyKwh(referenceScale: scale))
+        }
         return SolarHealthResult(
-            reference: place.reference, years: years.map { $0.scaled(by: scale) }, referenceScale: scale,
-            recomputedYears: recomputed)
+            reference: place.reference, years: scaledYears, referenceScale: scale, recomputedYears: recomputed)
     }
 
     /// Without entered faces the reference is the detected geometry at the site's best year.

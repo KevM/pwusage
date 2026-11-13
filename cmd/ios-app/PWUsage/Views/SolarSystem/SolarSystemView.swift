@@ -16,6 +16,8 @@ struct SolarSystemView: View {
     var onRevealSeen: () -> Void = {}
     /// Loads history older than the layout search reads, on request; nil hides the row.
     var deepHistory: SiteDeepHistoryModel?
+    /// On-device health classification and stats; nil hides the health sections.
+    var solarHealth: SolarHealthModel?
 
     private static let visualID = "solar-system-visual"
 
@@ -48,15 +50,18 @@ struct SolarSystemView: View {
             ManualLayoutEditor(initial: record?.manualLayout, detected: record?.result) { layout in
                 guard await coordinator.saveManualLayout(layout) else { return false }
                 record = await coordinator.manualLayoutRecord()
+                solarHealth?.reload()
                 return true
             }
         }
         .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
+            solarHealth?.markFindingsSeen()
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
             isConfirmingLocation = true
         }
+        .onChange(of: solarHealth?.hasUnreadFinding) { solarHealth?.markFindingsSeen() }
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
     }
@@ -103,6 +108,13 @@ struct SolarSystemView: View {
                 Section { Text("Checking solar forecast availability…") }
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
+            }
+            if let report = solarHealth?.report {
+                SolarHealthSection(
+                    report: report,
+                    isLoading: solarHealth?.isRunning ?? false,
+                    onEditLayout: { isEditingLayout = true },
+                    onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
             }
             if layout != nil, status != nil, let deepHistory { SiteDeepHistorySection(model: deepHistory) }
             if stored != nil || status != nil { locationSection }

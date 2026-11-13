@@ -170,7 +170,7 @@ struct PWUsageAppModelHistoryOnboardingTests {
         #expect(model.selectedTab == .settings)
         #expect(model.settingsPath == [.solarSystem()])
         model.openSolarSystem(focusingLocation: true)
-        #expect(model.settingsPath == [.solarSystem(startsAtLocation: true)])
+        #expect(model.settingsPath == [.solarSystem(.root(startsAtLocation: true))])
         model.resetNavigation()
         #expect(model.settingsPath.isEmpty)
     }

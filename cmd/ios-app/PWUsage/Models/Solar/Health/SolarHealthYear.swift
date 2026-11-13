@@ -47,14 +47,19 @@ struct SolarShadeMap: Codable, Equatable, Sendable {
     let horizon: [Double]
     /// `[azimuth, elevation]` of each hot bin.
     let hotBins: [[Double]]
+    let observedBins: [Bool]?
 
     init(_ mask: ShadeMask) {
         horizon = mask.horizon
         hotBins = mask.hotBins.map { [$0.azimuth, $0.elevation] }
+        observedBins = mask.observedBins
     }
 
     var mask: ShadeMask {
-        ShadeMask(horizon: horizon, hotBins: hotBins.map { ShadeHotBin(azimuth: $0[0], elevation: $0[1]) })
+        ShadeMask(
+            horizon: horizon,
+            hotBins: hotBins.map { ShadeHotBin(azimuth: $0[0], elevation: $0[1]) },
+            observedBins: observedBins ?? [])
     }
 }
 
@@ -69,6 +74,16 @@ struct SolarDailyRatio: Codable, Equatable, Sendable {
     /// Site-local `yyyy-MM-dd`.
     let day: String
     let ratio: Double
+    /// Clear-day reference energy (kWh) and measured energy (kWh) on those shared rows.
+    let expectedKwh: Double?
+    let actualKwh: Double?
+
+    init(day: String, ratio: Double, expectedKwh: Double? = nil, actualKwh: Double? = nil) {
+        self.day = day
+        self.ratio = ratio
+        self.expectedKwh = expectedKwh
+        self.actualKwh = actualKwh
+    }
 }
 
 /// Everything the health pass derives from one calendar year. Derived data: cached per device, never synced.
@@ -81,9 +96,31 @@ struct SolarHealthYear: Codable, Equatable, Sendable {
     let months: [SolarHealthMonth]
     let shade: [SolarSeasonShade]
     let dailyRatios: [SolarDailyRatio]
+    let hasClipping: Bool
+
+    init(
+        year: Int,
+        key: String,
+        clearDays: Int,
+        capacity: SolarHealthCapacity?,
+        months: [SolarHealthMonth],
+        shade: [SolarSeasonShade],
+        dailyRatios: [SolarDailyRatio],
+        hasClipping: Bool = false
+    ) {
+        self.year = year
+        self.key = key
+        self.clearDays = clearDays
+        self.capacity = capacity
+        self.months = months
+        self.shade = shade
+        self.dailyRatios = dailyRatios
+        self.hasClipping = hasClipping
+    }
 
     /// The same year with every factor and ratio divided by `scale`.
-    func scaled(by scale: Double) -> SolarHealthYear {
+    /// When `expectedDailyKwh` is provided (for clipped sites), it supplies pre-clipping scaled energy.
+    func scaled(by scale: Double, expectedDailyKwh: [String: Double]? = nil) -> SolarHealthYear {
         guard scale > 0, scale != 1 else { return self }
         func divide(_ capacity: SolarHealthCapacity) -> SolarHealthCapacity {
             SolarHealthCapacity(
@@ -95,7 +132,13 @@ struct SolarHealthYear: Codable, Equatable, Sendable {
             year: year, key: key, clearDays: clearDays, capacity: capacity.map(divide),
             months: months.map { SolarHealthMonth(month: $0.month, capacity: divide($0.capacity)) },
             shade: shade,
-            dailyRatios: dailyRatios.map { SolarDailyRatio(day: $0.day, ratio: $0.ratio / scale) })
+            dailyRatios: dailyRatios.map {
+                SolarDailyRatio(
+                    day: $0.day, ratio: $0.ratio / scale,
+                    expectedKwh: expectedDailyKwh?[$0.day] ?? $0.expectedKwh.map { $0 * scale },
+                    actualKwh: $0.actualKwh)
+            },
+            hasClipping: hasClipping)
     }
 }
 

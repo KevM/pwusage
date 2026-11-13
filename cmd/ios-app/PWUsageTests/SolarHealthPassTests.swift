@@ -197,6 +197,22 @@ struct SolarHealthPassTests {
         #expect(abs(year2024 - 1.0) < 1e-9)
         #expect(abs(year2025 - 0.85) < 0.03)
     }
+
+    @Test func clippedReferenceAppliesScaleBeforeClipping() throws {
+        let planes = [SolarHealthPlane.face(180, kw: 8)]
+        var site = SyntheticSolarSite(planes: planes)
+        site.clipKw = 4.0
+        let samples = Self.samples(site, years: 2025 ... 2025)
+        let place = try Self.place(planes, site: site)
+        let fit = try #require(try SolarHealthYearFit(samples: samples, place: place, checkCancellation: {}))
+        let unscaled = fit.expectedDailyKwh(referenceScale: 1.0)
+        let scaled = fit.expectedDailyKwh(referenceScale: 1.5)
+        let day = try #require(unscaled.keys.max())
+        let baseKwh = try #require(unscaled[day])
+        let scaledKwh = try #require(scaled[day])
+        #expect(scaledKwh > baseKwh)
+        #expect(scaledKwh < baseKwh * 1.5 - 1.0)
+    }
 }
 
 /// Ten-year synthetic run under `-O`, gated like `SolarLayoutDetectorYearParityTests`.

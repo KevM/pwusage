@@ -36,6 +36,7 @@ final class SiteDeepHistoryModel {
     private let sleep: Sleep
     private let now: () -> Date
     @ObservationIgnored private var run: (id: UUID, task: Task<Void, Never>)?
+    @ObservationIgnored var onHistoryLoaded: (@MainActor (SolarForecastSiteScope) -> Void)?
     private(set) var scope: SolarForecastSiteScope?
     private(set) var status = Status()
 
@@ -180,6 +181,8 @@ final class SiteDeepHistoryModel {
             default: next.phase = .idle
             }
         }
+        let loadedMore = next.daysLoaded > status.daysLoaded
         if next != status { status = next }
+        if loadedMore || (finishing && next.daysLoaded > 0) { onHistoryLoaded?(scope) }
     }
 }

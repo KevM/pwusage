@@ -25,6 +25,7 @@ final class SiteHistoryOnboardingLifecycle {
     /// The user-started load of older history. It follows the selected site in the foreground and
     /// shares the background task, after onboarding's own work.
     let deepHistory: SiteDeepHistoryModel?
+    let solarHealth: SolarHealthModel?
     private struct ForegroundRun {
         let scope: SolarForecastSiteScope
         let id: UUID
@@ -46,6 +47,7 @@ final class SiteHistoryOnboardingLifecycle {
         store: SiteHistoryOnboardingStore = .shared,
         ledgers: SiteHistoryDayLedgerStore = .shared,
         deepHistory: SiteDeepHistoryModel? = nil,
+        solarHealth: SolarHealthModel? = nil,
         isHistoryEnabled: @escaping @MainActor (SolarForecastSiteScope) async -> Bool,
         scheduleBackground: @escaping @MainActor (Date?) -> Void,
         sleep: @escaping Sleep = { try await Task.sleep(for: .seconds($0)) },
@@ -53,6 +55,7 @@ final class SiteHistoryOnboardingLifecycle {
     ) {
         self.onboarding = onboarding
         self.deepHistory = deepHistory
+        self.solarHealth = solarHealth
         self.store = store
         self.ledgers = ledgers
         self.isHistoryEnabled = isHistoryEnabled
@@ -61,7 +64,14 @@ final class SiteHistoryOnboardingLifecycle {
         self.now = now
         onboarding.onProgress = { [weak self] scope in
             guard let self, scope == lastScope else { return }
-            Task { await self.refreshStatus() }
+            Task {
+                await self.refreshStatus()
+                self.solarHealth?.reload()
+            }
+        }
+        deepHistory?.onHistoryLoaded = { [weak self] scope in
+            guard let self, scope == lastScope else { return }
+            self.solarHealth?.reload()
         }
     }
 
@@ -92,6 +102,7 @@ final class SiteHistoryOnboardingLifecycle {
         if lastScope != scope { lastScope = scope }
         Task { await refreshStatus() }
         Task { await deepHistory?.activate(scope: scope) }
+        solarHealth?.activate(scope: scope)
         if foreground?.scope == scope { return }
         foreground?.task.cancel()
         // The task clears the slot only while it still owns it, so a newer run is never dropped.
@@ -123,6 +134,7 @@ final class SiteHistoryOnboardingLifecycle {
         background = nil
         session += 1
         deepHistory?.end()
+        solarHealth?.end()
         lastScope = nil
         status = nil
         statusGeneration += 1
@@ -139,6 +151,7 @@ final class SiteHistoryOnboardingLifecycle {
         try? await store.remove(scope: scope)
         try? await ledgers.remove(scope: scope)
         await deepHistory?.forget(scope: scope)
+        await solarHealth?.forget(scope: scope)
         await onboarding.acknowledgeReveal(scope: scope)
         await refreshStatus()
     }
@@ -254,6 +267,7 @@ final class SiteHistoryOnboardingLifecycle {
         return SiteHistoryOnboardingLifecycle(
             onboarding: SiteHistoryOnboarding(environment: environment),
             deepHistory: SiteDeepHistoryModel(deepHistory: SiteDeepHistory(environment: environment)),
+            solarHealth: SolarHealthModel(history: history, records: records),
             isHistoryEnabled: { await environment.isHistoryEnabled(scope: $0) },
             scheduleBackground: { BackgroundSiteHistoryOnboarding.schedule(earliest: $0) }
         )
