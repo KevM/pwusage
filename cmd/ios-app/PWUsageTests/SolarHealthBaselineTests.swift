@@ -49,7 +49,7 @@ struct SolarHealthBaselineTests {
         components.month = month
         components.day = day
         components.hour = 12
-        return Calendar.current.date(from: components) ?? Date(timeIntervalSince1970: 0)
+        return Calendar(identifier: .gregorian).date(from: components) ?? Date(timeIntervalSince1970: 0)
     }
 
     private static func makeBaseline(

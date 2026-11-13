@@ -152,4 +152,7 @@ struct SolarHealthResult: Equatable, Sendable {
     /// The years this run computed; the rest came from the cache.
     let recomputedYears: [Int]
     var weather = SolarHealthWeather()
+    /// For an entered-panel site whose newest clear day was clipped by the inverter: that day's
+    /// reference power, so an "as new" expectation scales it before the clip, not after.
+    var latestDayEnergy: SolarHealthYearFit.ScaledEnergyInputs?
 }

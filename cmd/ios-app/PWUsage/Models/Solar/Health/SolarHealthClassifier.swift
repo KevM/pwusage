@@ -31,7 +31,7 @@ enum SolarHealthClassifier {
         } else {
             nil
         }
-        let potential = potentialVsActual(from: result.years, baseline: baseline)
+        let potential = potentialVsActual(from: result.years, baseline: baseline, clipped: result.latestDayEnergy)
         let score = healthScore(baseline: baseline, years: result.years, manual: manual, now: now)
         let shadeAnalysis = analyzeShading(from: result.years)
         let soilingAnalysis = analyzeSoiling(from: result.years, rainDays: rainDays)
@@ -60,15 +60,18 @@ enum SolarHealthClassifier {
 
     private static func potentialVsActual(
         from years: [SolarHealthYear],
-        baseline: SolarHealthBaseline?
+        baseline: SolarHealthBaseline?,
+        clipped: SolarHealthYearFit.ScaledEnergyInputs?
     ) -> SolarHealthReport.PotentialVsActual? {
         for year in years.reversed() {
             if let latest = year.dailyRatios.last(where: { $0.expectedKwh != nil && $0.actualKwh != nil }),
                let expected = latest.expectedKwh, let actual = latest.actualKwh {
                 if let baseline {
                     let factor = monthNumber(from: latest.day).map(baseline.monthFactor) ?? baseline.siteFactor
+                    // Scale the reference before the inverter's clip: the ceiling does not grow with the baseline.
+                    let asNew = clipped?.expectedDailyKwh(referenceScale: factor)[latest.day] ?? expected * factor
                     return SolarHealthReport.PotentialVsActual(
-                        day: latest.day, expectedKwh: expected * factor, actualKwh: actual, isAsNew: true)
+                        day: latest.day, expectedKwh: asNew, actualKwh: actual, isAsNew: true)
                 }
                 return SolarHealthReport.PotentialVsActual(
                     day: latest.day, expectedKwh: expected, actualKwh: actual, isAsNew: false)

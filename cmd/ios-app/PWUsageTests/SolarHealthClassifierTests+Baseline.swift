@@ -12,7 +12,7 @@ struct SolarHealthClassifierBaselineTests {
         components.month = month
         components.day = day
         components.hour = 12
-        return Calendar.current.date(from: components) ?? Date(timeIntervalSince1970: 0)
+        return Calendar(identifier: .gregorian).date(from: components) ?? Date(timeIntervalSince1970: 0)
     }
 
     private static func makeMonth(_ month: Int, factor: Double, clearDays: Int = 10) -> SolarHealthMonth {
@@ -251,5 +251,33 @@ struct SolarHealthClassifierBaselineTests {
         let provisionalReport = SolarHealthClassifier.classify(result, manual: manual, now: Self.date(2024, 12, 15))
         let provisionalScore = try #require(provisionalReport.healthScore)
         #expect(!provisionalScore.isAboveHealthyRange)
+    }
+
+    @Test("As-new expected energy scales the reference before the inverter clip")
+    func potentialVsActualClipsAfterBaseline() throws {
+        let install = Self.date(2024, 5, 1)
+        let y2024 = Self.makeYear(2024, months: (5 ... 9).map { Self.makeMonth($0, factor: 1.10) })
+        let y2025 = Self.makeYear(
+            2025,
+            months: [Self.makeMonth(3, factor: 1.10)],
+            dailyRatios: [SolarDailyRatio(day: "2025-06-10", ratio: 1.0, expectedKwh: 4.8, actualKwh: 5)])
+        var (result, manual) = try Self.makeManualResult(years: [y2024, y2025], installDates: [install])
+        let clipped = SolarHealthYearFit.ScaledEnergyInputs(
+            clipKw: 5, dayPowers: ["2025-06-10": Array(repeating: 4.8, count: 12)])
+        result.latestDayEnergy = clipped
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: Self.date(2025, 7, 1))
+
+        let pva = try #require(report.potentialVsActual)
+        #expect(pva.isAsNew)
+        #expect(pva.expectedKwh <= 5)
+        #expect(pva.expectedKwh < 4.8 * 1.10)
+        #expect(pva.expectedKwh == clipped.expectedDailyKwh(referenceScale: 1.10)["2025-06-10"])
+    }
+
+    @Test("Baseline months are stamped on the Gregorian calendar")
+    func baselineStampsAreGregorian() {
+        let stamp = SolarHealthMonthStamp(Self.date(2024, 4, 15), calendar: .gregorianStamps)
+        #expect(stamp == SolarHealthMonthStamp(year: 2024, month: 4))
+        #expect(Calendar.gregorianStamps.identifier == .gregorian)
     }
 }

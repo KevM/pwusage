@@ -30,6 +30,16 @@ struct SolarHealthMonthStamp: Comparable, Hashable, Sendable {
     }
 }
 
+extension Calendar {
+    /// Gregorian in the device's time zone: the pass stamps months by Gregorian year, whatever
+    /// calendar the user prefers, so install dates and `now` must be stamped the same way.
+    static var gregorianStamps: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
+    }
+}
+
 /// Site-wide and per-month clear-day baseline learned from a site's earliest post-install months.
 struct SolarHealthBaseline: Equatable, Sendable {
     enum Label: Equatable, Sendable {
@@ -69,7 +79,7 @@ struct SolarHealthBaseline: Equatable, Sendable {
         reference: SolarHealthReference,
         manual: ManualSolarLayout,
         now: Date,
-        calendar: Calendar = .current
+        calendar: Calendar = .gregorianStamps
     ) {
         let factorMonths = Self.sortedFactorMonths(from: years)
         let latestInstall = manual.systems.compactMap(\.installDate).max()

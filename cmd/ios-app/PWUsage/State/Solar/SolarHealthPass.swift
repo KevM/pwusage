@@ -67,7 +67,7 @@ enum SolarHealthPass {
             if slice.year < currentYear,
                let cached = context.cache.year(slice.year, scope: context.scope),
                cached.key == key {
-                if place.reference.source == .detected, cached.hasClipping {
+                if cached.hasClipping {
                     cachedClippedSlices[slice.year] = samples
                 }
                 years.append(cached)
@@ -75,7 +75,7 @@ enum SolarHealthPass {
             }
             let yearFit = try SolarHealthYearFit(
                 samples: samples, place: place, checkCancellation: checkCancellation)
-            if place.reference.source == .detected, let inputs = yearFit?.scaledEnergyInputs {
+            if let inputs = yearFit?.scaledEnergyInputs {
                 energyInputs[slice.year] = inputs
             }
             var year = try yearFit?.result(year: slice.year, checkCancellation: checkCancellation)
@@ -86,21 +86,58 @@ enum SolarHealthPass {
             years.append(year)
             recomputed.append(slice.year)
         }
+        let clipped = ClippedEnergy(fresh: energyInputs, cachedSlices: cachedClippedSlices, place: place)
+        return try finish(
+            years, place: place, recomputed: recomputed, clipped: clipped, checkCancellation: checkCancellation)
+    }
+
+    /// Clip-aware energy inputs per year: from this run's fits, or refitted from a cached year's samples.
+    private struct ClippedEnergy {
+        let fresh: [Int: SolarHealthYearFit.ScaledEnergyInputs]
+        let cachedSlices: [Int: [(timestamp: Date, solarWh: Double)]]
+        let place: SolarHealthYearFit.Place
+
+        func inputs(
+            for year: SolarHealthYear, checkCancellation: () throws -> Void
+        ) throws -> SolarHealthYearFit.ScaledEnergyInputs? {
+            guard year.hasClipping else { return nil }
+            if let existing = fresh[year.year] { return existing }
+            return try SolarHealthYearFit(
+                samples: cachedSlices[year.year] ?? [], place: place, checkCancellation: checkCancellation)?
+                .scaledEnergyInputs
+        }
+    }
+
+    /// Scales detected-reference years to the best year, and keeps the newest clear day's clip-aware
+    /// energy for an entered-panel site.
+    private static func finish(
+        _ years: [SolarHealthYear], place: SolarHealthYearFit.Place, recomputed: [Int], clipped: ClippedEnergy,
+        checkCancellation: () throws -> Void
+    ) throws -> SolarHealthResult {
         let scale = place.reference.source == .detected ? bestSiteFactor(years) : 1
         let scaledYears = try years.map { year -> SolarHealthYear in
             guard scale > 0, scale != 1, year.hasClipping else { return year.scaled(by: scale) }
-            let inputs: SolarHealthYearFit.ScaledEnergyInputs?
-            if let existing = energyInputs[year.year] {
-                inputs = existing
-            } else {
-                inputs = try SolarHealthYearFit(
-                    samples: cachedClippedSlices[year.year] ?? [], place: place, checkCancellation: checkCancellation)?
-                    .scaledEnergyInputs
-            }
-            return year.scaled(by: scale, expectedDailyKwh: inputs?.expectedDailyKwh(referenceScale: scale))
+            let expected = try clipped.inputs(for: year, checkCancellation: checkCancellation)?
+                .expectedDailyKwh(referenceScale: scale)
+            return year.scaled(by: scale, expectedDailyKwh: expected)
         }
-        return SolarHealthResult(
+        var result = SolarHealthResult(
             reference: place.reference, years: scaledYears, referenceScale: scale, recomputedYears: recomputed)
+        if scale == 1, let latest = latestEnergyDay(scaledYears) {
+            let inputs = try clipped.inputs(for: latest.year, checkCancellation: checkCancellation)
+            result.latestDayEnergy = inputs?.only(day: latest.day)
+        }
+        return result
+    }
+
+    /// The newest clear day with both energies, the one Potential vs actual reports.
+    private static func latestEnergyDay(_ years: [SolarHealthYear]) -> (year: SolarHealthYear, day: String)? {
+        for year in years.reversed() {
+            if let ratio = year.dailyRatios.last(where: { $0.expectedKwh != nil && $0.actualKwh != nil }) {
+                return (year, ratio.day)
+            }
+        }
+        return nil
     }
 
     private static func excludingSnow(
