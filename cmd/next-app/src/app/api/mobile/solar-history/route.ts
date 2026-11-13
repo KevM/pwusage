@@ -3,7 +3,7 @@ import { Temporal } from '@js-temporal/polyfill';
 import { getCurrentRoles, verifySiteAccess } from '@/lib/auth-checks';
 import { formatSiteDate, parseSiteLocalDateToMidnight } from '@/lib/date-utils';
 import { pool } from '@/lib/db';
-import { Importer } from '@/lib/importer';
+import { Importer, planMissingWindows } from '@/lib/importer';
 import { CompactHistoryStore, type SolarHistoryDay } from '@/lib/prototypes/compact-history-store';
 import { withRequestContext } from '@/lib/request-context';
 import { SiteRepo } from '@/lib/site-repo';
@@ -18,9 +18,9 @@ export const maxDuration = 60;
 const PRIVATE_NO_STORE = 'private, no-store, max-age=0';
 /** Days per response. The read asks for one more, which reveals whether a next page exists. */
 const PAGE_DAYS = 92;
-/** A fill asks for at most this many complete site-local days; how far back is the caller's policy. */
-const MAX_FILL_DAYS = 3;
-const FILL_BUDGET = { maxWindows: MAX_FILL_DAYS, maxTimeMs: 15000 };
+/** A fill asks for at most this many complete site-local days; Tesla imports stay capped by FILL_BUDGET. */
+const MAX_FILL_DAYS = 92;
+const FILL_BUDGET = { maxWindows: 3, maxTimeMs: 15000 };
 const SLOT_MS = 300000;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
@@ -114,7 +114,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
 }
 
-/** Read a fill body: `{ siteId, from: 'YYYY-MM-DD', days: 1...3 }`, or null. */
+/** Read a fill body: `{ siteId, from: 'YYYY-MM-DD', days: 1...92 }`, or null. */
 function parseFill(body: unknown): { siteId: string; from: Temporal.PlainDate; days: number } | null {
     if (!body || typeof body !== 'object') return null;
     const { siteId, from, days } = body as Record<string, unknown>;
@@ -161,13 +161,16 @@ export async function POST(request: Request): Promise<NextResponse> {
             const end = parseSiteLocalDateToMidnight(until.toString(), timeZone);
             let status: 'complete' | 'partial' | 'busy' = 'complete';
             if (Temporal.PlainDate.compare(until, historyStart) > 0) {
-                const client = await createTeslaClientForSite(siteId, { rateLimit: 'surface' });
-                if (!client) return json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, 409);
                 const importFrom = Temporal.PlainDate.compare(from, historyStart) < 0
                     ? parseSiteLocalDateToMidnight(historyStart.toString(), timeZone) : start;
-                const result = await new Importer(client).ensureDataForRange(siteId, importFrom, end, undefined, FILL_BUDGET);
-                // A busy lock answers 0 of 0 without completing; an empty plan is 0 of 0 complete.
-                status = result.complete ? 'complete' : result.totalWindows === 0 ? 'busy' : 'partial';
+                const missing = await planMissingWindows(site, importFrom, end);
+                if (missing.length > 0) {
+                    const client = await createTeslaClientForSite(siteId, { rateLimit: 'surface' });
+                    if (!client) return json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, 409);
+                    const result = await new Importer(client).ensureDataForRange(siteId, importFrom, end, undefined, FILL_BUDGET);
+                    // A busy lock answers 0 of 0 without completing; an empty plan is 0 of 0 complete.
+                    status = result.complete ? 'complete' : result.totalWindows === 0 ? 'busy' : 'partial';
+                }
             }
             const rows = await new CompactHistoryStore(pool).readSolarDays(siteId, start, end, null, days);
             return json({ version: 1, enabled: true, timeZone, status, historyStart: historyStart.toString(),
