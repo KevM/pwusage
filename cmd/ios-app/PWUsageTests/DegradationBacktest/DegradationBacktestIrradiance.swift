@@ -2,10 +2,14 @@ import Foundation
 @testable import PWUsage
 
 /// Section 3: expected energy from ERA5 hourly irradiance on the entered layout, against production
-/// over the same UTC hours.
+/// over the same UTC hours. The shipped clear-sky reference is evaluated on the same hours (at each
+/// 5-minute slot), so both models are calibrated and scored against one measured series.
 enum DegradationBacktestIrradiance {
     struct Day {
+        /// Irradiance model kWh.
         var expected = 0.0
+        /// Shipped clear-sky reference kWh (entered faces at the detector's derate, AC clip applied).
+        var clearSky = 0.0
         var actual = 0.0
         var isComplete = true
     }
@@ -25,7 +29,11 @@ enum DegradationBacktestIrradiance {
     /// the array produced in, holds all twelve 5-minute samples. Snowfall days are left out.
     static func days(_ inputs: DegradationBacktestInputs) throws -> [String: Day] {
         guard let layout = inputs.config.manual.solarLayout(
-            detected: nil, on: inputs.config.now, detectedAt: nil) else { return [:] }
+                  detected: nil, on: inputs.config.now, detectedAt: nil),
+            let reference = SolarHealthReference(manual: inputs.config.manual, detected: nil) else { return [:] }
+        let planes = reference.planes(on: inputs.config.now).map {
+            LayoutPlane(azimuth: $0.azimuth, tilt: $0.tilt, effectiveKw: $0.effectiveKw)
+        }
         var energy: [Int: HourEnergy] = [:]
         for sample in inputs.samples {
             let hour = Int((sample.timestamp.timeIntervalSince1970 / 3600).rounded(.down))
@@ -38,60 +46,71 @@ enum DegradationBacktestIrradiance {
             let midpoint = hour.end.addingTimeInterval(-1800)
             let modeled = try OpenMeteoArrayModel.powerKw(
                 at: midpoint, radiation: hour.radiation, layout: layout, location: inputs.location)
+            let clearSky = clearSkyKwh(endingAt: hour.end, planes: planes, clipKw: layout.acClipKw, inputs: inputs)
             let measured = energy[Int((midpoint.timeIntervalSince1970 / 3600).rounded(.down))]
-            guard modeled > 0 || (measured?.wattHours ?? 0) > 0 else { continue }
+            guard modeled > 0 || clearSky > 0 || (measured?.wattHours ?? 0) > 0 else { continue }
             let day = DegradationBacktestInputs.dayString(midpoint, calendar: calendar)
             out[day, default: Day()].expected += modeled
+            out[day, default: Day()].clearSky += clearSky
             out[day, default: Day()].actual += (measured?.wattHours ?? 0) / 1000
             if measured?.samples != 12 { out[day, default: Day()].isComplete = false }
         }
         return out.filter { $0.value.isComplete && !inputs.snowDays.contains($0.key) }
     }
 
-    static func section(
-        _ inputs: DegradationBacktestInputs, clearSky: SolarHealthResult, clearSkyFactor: Double
-    ) -> [String] {
+    /// The detector's clear-sky model summed over the hour's twelve 5-minute slots, at each slot's midpoint.
+    private static func clearSkyKwh(
+        endingAt end: Date, planes: [LayoutPlane], clipKw: Double?, inputs: DegradationBacktestInputs
+    ) -> Double {
+        (0 ..< 12).reduce(0.0) { total, slot in
+            let time = end.addingTimeInterval(Double(slot * 300 + 150) - 3600)
+            let sun = layoutSun(at: time, latitude: inputs.latitude, longitude: inputs.longitude)
+            guard sun.ghi > 0 else { return total }
+            return total + SolarLayoutDetector.modelKw(sun, planes: planes, clipKw: clipKw) / 12
+        }
+    }
+
+    static func section(_ inputs: DegradationBacktestInputs, clearSky: SolarHealthResult) -> [String] {
         let days: [String: Day]
         do {
             days = try Self.days(inputs)
         } catch {
             return ["## 3. Historical irradiance", "", "Model failed: \(error)", ""]
         }
-        let clear = Dictionary(
-            DegradationBacktestTests.clearDays(clearSky).map { ($0.day, $0) }, uniquingKeysWith: { first, _ in first })
-        let calibration = days.filter { clear[$0.key] != nil && inputs.config.calibration.contains($0.key) }
-        let factor = calibration.values.reduce(0) { $0 + $1.actual }
-            / max(calibration.values.reduce(0) { $0 + $1.expected }, 1e-9)
+        let clearDays = Set(DegradationBacktestTests.clearDays(clearSky).map(\.day))
+        let calibration = days.filter { clearDays.contains($0.key) && inputs.config.calibration.contains($0.key) }
+        let actual = calibration.values.reduce(0) { $0 + $1.actual }
+        let irradianceFactor = actual / max(calibration.values.reduce(0) { $0 + $1.expected }, 1e-9)
+        let clearSkyFactor = actual / max(calibration.values.reduce(0) { $0 + $1.clearSky }, 1e-9)
         var lines = [
             "## 3. Historical irradiance", "",
-            "\(days.count) complete non-snow days with ERA5 hours (\(clear.count) shipped clear days overall). "
-                + String(format: "Frozen irradiance factor %.4f", factor)
-                + " from \(calibration.count) calibration clear days.", "",
+            "\(days.count) complete non-snow days with ERA5 hours (\(clearDays.count) shipped clear days overall). "
+                + "Both models are scored on the same whole UTC hours against the same production. "
+                + String(format: "Frozen factors from %d calibration clear days: ", calibration.count)
+                + String(format: "clear-sky %.4f, irradiance %.4f.", clearSkyFactor, irradianceFactor), "",
             "model | scope | days | MAE kWh | bias kWh | mean actual kWh", "--- | --- | --- | --- | --- | ---"
         ]
-        let holdout = days.filter { inputs.config.holdout.contains($0.key) }
-        let shared = holdout.keys.sorted().compactMap { clear[$0] }
+        let holdout = days.filter { inputs.config.holdout.contains($0.key) }.sorted { $0.key < $1.key }
+        let clearHoldout = holdout.filter { clearDays.contains($0.key) }
+        func scored(_ rows: [(key: String, value: Day)], _ model: (Day) -> Double) -> [DegradationDay] {
+            rows.map { DegradationDay(day: $0.key, expected: model($0.value), actual: $0.value.actual) }
+        }
         let latitude = inputs.latitude
         _ = DegradationBacktestTests.scoreRows(
-            "shipped 85% reference (clear)", shared, latitude: latitude, into: &lines)
-        let frozenClearSky = shared.map {
-            DegradationDay(day: $0.day, expected: $0.expected * clearSkyFactor, actual: $0.actual)
-        }
+            "shipped 85% reference (clear)", scored(clearHoldout, \.clearSky), latitude: latitude, into: &lines)
         let baseline = DegradationBacktestTests.scoreRows(
-            "frozen clear-sky factor (clear)", frozenClearSky, latitude: latitude, into: &lines)
-        let irradianceClear = shared.compactMap { day in
-            holdout[day.day].map { DegradationDay(day: day.day, expected: $0.expected * factor, actual: $0.actual) }
-        }
+            "frozen clear-sky factor (clear)", scored(clearHoldout) { $0.clearSky * clearSkyFactor },
+            latitude: latitude, into: &lines)
         let candidate = DegradationBacktestTests.scoreRows(
-            "frozen irradiance (clear)", irradianceClear, latitude: latitude, into: &lines)
-        let cloudy = holdout.filter { clear[$0.key] == nil }.map {
-            DegradationDay(day: $0.key, expected: $0.value.expected * factor, actual: $0.value.actual)
-        }
+            "frozen irradiance (clear)", scored(clearHoldout) { $0.expected * irradianceFactor },
+            latitude: latitude, into: &lines)
         _ = DegradationBacktestTests.scoreRows(
-            "frozen irradiance (not clear)", cloudy, latitude: latitude, into: &lines)
+            "frozen irradiance (not clear)",
+            scored(holdout.filter { !clearDays.contains($0.key) }) { $0.expected * irradianceFactor },
+            latitude: latitude, into: &lines)
         lines += ["", "Irradiance against the frozen clear-sky factor on the same held-out clear days:"]
         lines += DegradationBacktestTests.decision(baseline: baseline, candidate: candidate)
-        lines += trend(inputs, days: days, clearDays: Set(clear.keys), clearSky: clearSky)
+        lines += trend(inputs, days: days, clearDays: clearDays, clearSky: clearSky)
         return lines + [""]
     }
 

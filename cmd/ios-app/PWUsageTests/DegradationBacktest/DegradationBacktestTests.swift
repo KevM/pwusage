@@ -20,8 +20,7 @@ struct DegradationBacktestTests {
         lines += Self.coverage(inputs, result: shipped)
         let calibration = Self.expectedEnergy(inputs, result: shipped)
         lines += calibration.lines
-        lines += DegradationBacktestIrradiance.section(
-            inputs, clearSky: shipped, clearSkyFactor: calibration.factor)
+        lines += DegradationBacktestIrradiance.section(inputs, clearSky: shipped)
         lines += Self.trendSection(inputs, result: shipped, withSnow: withSnow)
         try inputs.write(lines, to: "report.md")
     }

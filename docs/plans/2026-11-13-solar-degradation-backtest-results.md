@@ -49,17 +49,20 @@ Calibration 2023-12-01..2024-11-30 (54 clear days), hold-out 2024-12-01..2026-10
 
 ## 3. Historical irradiance (ERA5)
 
-937 complete days (every lit hour with all twelve 5-minute samples, snowfall excluded). Frozen
-factor fitted on the same 54 calibration clear days.
+937 complete days (every lit hour with all twelve 5-minute samples, snowfall excluded). Both
+models are evaluated over the same whole UTC hours and scored against the same measured production.
+The clear-sky reference is summed at each 5-minute slot of those hours. Each frozen factor is
+fitted on the same 54 calibration clear days.
 
 | Model, held-out | Days | MAE (% of mean actual) | Bias |
 | --- | --- | --- | --- |
-| Frozen clear-sky factor, clear days | 93 | 5.1% | −2.3% |
+| Shipped 85% clear-sky reference, clear days | 93 | 5.2% | +2.4% |
+| Frozen clear-sky factor, clear days | 93 | 5.8% | −2.4% |
 | Frozen irradiance, clear days | 93 | 5.8% | −0.9% |
 | Frozen irradiance, non-clear days | 509 | 16.1% | −11.3% |
 
-- On the same clear days, irradiance is worse by +30% in kWh MAE (+13% relative to each model's
-  own actual), and worse than the shipped reference too. **Does not advance.**
+- On the same clear days, irradiance matches the frozen clear-sky factor (MAE −0.9%, needs −5%)
+  and is no better than the uncalibrated shipped reference. **Does not advance.**
 - It does add 509 usable cloudy days, but at three times the error, with a strong over-prediction.
   ERA5's grid misses local cloud, as the plan expected.
 - Trend from irradiance over all counted days: −2.29%/yr from 23 pairs, but the pair IQR is 8.7
