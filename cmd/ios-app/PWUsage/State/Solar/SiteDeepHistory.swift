@@ -202,7 +202,7 @@ final class SiteDeepHistory {
     ) -> Step {
         switch status {
         case .complete:
-            progress.oldestChecked = slice.from
+            progress.oldestChecked = max(slice.from, progress.historyStart ?? slice.from)
             progress.daysLoaded += loaded
             progress.failures = 0
             progress.nextAttemptAt = nil

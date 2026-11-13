@@ -44,8 +44,8 @@ struct SiteDeepHistoryBackgroundTests {
         let environment = FakeOnboardingEnvironment()
         let lifecycle = try await make(environment, deep: started())
         _ = await lifecycle.runInBackground(scope: scope, maxSlices: 2)
-        #expect(environment.requests.map(\.from) == ["2026-10-27", "2026-10-24"])
-        #expect(try await deepStore.progress(scope: scope)?.oldestChecked == "2026-10-24")
+        #expect(environment.requests.map(\.from) == ["2026-08-31", "2026-07-02"])
+        #expect(try await deepStore.progress(scope: scope)?.oldestChecked == "2026-07-02")
     }
 
     @Test func aSiteThatNeverStartedNeverRunsTheWalkInTheBackground() async throws {
@@ -112,7 +112,7 @@ struct SiteDeepHistoryBackgroundTests {
         let lifecycle = try await make(environment, deep: started())
         lifecycle.activate(scope: scope)
         try await eventually { lifecycle.deepHistory?.status.phase == .finished }
-        #expect(environment.requests.first?.from == "2026-10-27")
+        #expect(environment.requests.first?.from == "2026-08-31")
     }
 
     @Test func activationLeavesAStoppedWalkAlone() async throws {
