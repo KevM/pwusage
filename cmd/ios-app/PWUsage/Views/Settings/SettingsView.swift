@@ -20,6 +20,8 @@ struct SettingsView: View {
     var onRevealSeen: () -> Void = {}
     /// The user-started load of older solar history; nil in the demo and without the history beta.
     var deepHistory: SiteDeepHistoryModel?
+    /// On-device solar health model; nil in the demo and without the history beta.
+    var solarHealth: SolarHealthModel?
     /// Where the Trmnl screen reads from; nil hides the row, as in the demo, which has no devices.
     var trmnl: TrmnlSettingsAccess?
 
@@ -64,11 +66,19 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
-                NavigationLink(value: SettingsDestination.solarSystem()) {
+                NavigationLink(value: SettingsDestination.solarSystem(.root())) {
                     LabeledContent {
-                        if siteHistory != nil || hasManualLayout {
-                            Text(SiteHistoryPresentation(
-                                status: siteHistory, now: .now, hasManualLayout: hasManualLayout).rowValue)
+                        HStack(spacing: 6) {
+                            if solarHealth?.hasUnreadFinding == true {
+                                Circle()
+                                    .fill(Color.emphasis)
+                                    .frame(width: 8, height: 8)
+                                    .accessibilityLabel("New finding")
+                            }
+                            if siteHistory != nil || hasManualLayout {
+                                Text(SiteHistoryPresentation(
+                                    status: siteHistory, now: .now, hasManualLayout: hasManualLayout).rowValue)
+                            }
                         }
                     } label: {
                         Label("Solar System", systemImage: "sun.max")
@@ -120,11 +130,11 @@ struct SettingsView: View {
                     )
                 )
                 .id(site.id)
-            case .solarSystem(let startsAtLocation):
+            case .solarSystem(.root(let startsAtLocation)):
                 SolarSystemView(
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
                     startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved,
-                    onRevealSeen: onRevealSeen, deepHistory: deepHistory)
+                    onRevealSeen: onRevealSeen, deepHistory: deepHistory, solarHealth: solarHealth)
             case .billingDay:
                 BillingDaySettingsView(site: site, save: onSaveBillingDay)
                     .id(site.id)
@@ -159,11 +169,15 @@ struct SettingsView: View {
     }
 }
 
+enum SolarSystemDestination: Hashable {
+    /// `startsAtLocation` opens straight into the home location step.
+    case root(startsAtLocation: Bool = false)
+}
+
 enum SettingsDestination: Hashable {
     case ratePlans
     case billingDay
-    /// `startsAtLocation` opens straight into the home location step.
-    case solarSystem(startsAtLocation: Bool = false)
+    case solarSystem(SolarSystemDestination = .root())
     case trmnl
     case about
 }

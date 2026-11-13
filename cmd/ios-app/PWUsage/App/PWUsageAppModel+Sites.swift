@@ -100,7 +100,7 @@ extension PWUsageAppModel {
     /// From the banner; `focusingLocation` opens straight into the home location step.
     func openSolarSystem(focusingLocation: Bool = false) {
         selectTab(.settings)
-        settingsPath = [.solarSystem(startsAtLocation: focusingLocation)]
+        settingsPath = [.solarSystem(.root(startsAtLocation: focusingLocation))]
     }
 
     /// Solar System is the visible screen, where the banner would only repeat it.

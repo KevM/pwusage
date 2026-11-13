@@ -69,6 +69,16 @@ struct SolarDailyRatio: Codable, Equatable, Sendable {
     /// Site-local `yyyy-MM-dd`.
     let day: String
     let ratio: Double
+    /// Clear-day reference energy (kWh) and measured energy (kWh) on those shared rows.
+    let expectedKwh: Double?
+    let actualKwh: Double?
+
+    init(day: String, ratio: Double, expectedKwh: Double? = nil, actualKwh: Double? = nil) {
+        self.day = day
+        self.ratio = ratio
+        self.expectedKwh = expectedKwh
+        self.actualKwh = actualKwh
+    }
 }
 
 /// Everything the health pass derives from one calendar year. Derived data: cached per device, never synced.
@@ -95,7 +105,11 @@ struct SolarHealthYear: Codable, Equatable, Sendable {
             year: year, key: key, clearDays: clearDays, capacity: capacity.map(divide),
             months: months.map { SolarHealthMonth(month: $0.month, capacity: divide($0.capacity)) },
             shade: shade,
-            dailyRatios: dailyRatios.map { SolarDailyRatio(day: $0.day, ratio: $0.ratio / scale) })
+            dailyRatios: dailyRatios.map {
+                SolarDailyRatio(
+                    day: $0.day, ratio: $0.ratio / scale,
+                    expectedKwh: $0.expectedKwh.map { $0 * scale }, actualKwh: $0.actualKwh)
+            })
     }
 }
 

@@ -6,7 +6,7 @@ import Foundation
 /// per completed year and nothing is synced.
 enum SolarHealthPass {
     /// Bumped when the pass changes what it computes, so cached years recompute.
-    static let version = 1
+    static let version = 2
 
     /// Runs the pass for a site off the main actor. Nil when the site lacks a location, a time zone,
     /// stored history or any layout to compare with. Cancellable like detection.
