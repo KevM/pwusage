@@ -17,7 +17,7 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarLayoutStatus == AutomaticForecastHarness.detectedResponse)
     }
 
-    @Test("A persisted sync result overrides stale in-memory beta eligibility", arguments: [true, false])
+    @Test("A persisted sync result overrides stale in-memory history availability", arguments: [true, false])
     func persistedEligibilityWins(persistedEnabled: Bool) async throws {
         let harness = await AutomaticForecastHarness()
         let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
@@ -29,15 +29,16 @@ struct AutomaticForecastCoordinatorTests {
 
         await harness.coordinator.loadTimingDetailAppeared()
 
-        #expect(harness.api.historyFetches.count == fetches)
+        #expect(harness.api.historyFetches.count == fetches + (persistedEnabled ? 0 : 1))
         #expect(harness.coordinator.historyEnabled == persistedEnabled)
         #expect((harness.coordinator.solarLayoutStatus == .disabled) == !persistedEnabled)
         #expect((harness.coordinator.solarForecastSource == .openMeteo) == persistedEnabled)
     }
 
-    @Test("Outside the beta: no actuals, no automatic refresh, basic estimate")
+    @Test("Without history: no actuals, no automatic refresh, basic estimate")
     func disabled() async throws {
         let harness = await AutomaticForecastHarness()
+        harness.api.historyResponse = .disabled
         harness.coordinator.historyEnabled = false
         await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.coordinator.solarForecastState == .basic)
@@ -113,8 +114,8 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.publishedForecastIntervals == nil)
     }
 
-    @Test("Pull to refresh bypasses cached disabled status to pick up beta enrollment")
-    func pullToRefreshRechecksDisabledBetaEnrollment() async throws {
+    @Test("A cached disabled status rechecks immediately after the gate is removed")
+    func cachedDisabledStatusRechecksImmediately() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
         try await harness.setNeedsLocation()
         harness.api.historyResponse = .disabled
@@ -124,28 +125,22 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarLayoutStatus == .disabled)
         #expect(!harness.coordinator.historyEnabled)
 
-        // Subsequent lookup within 24h stays on cached disabled without network
+        // The server no longer uses an eligibility role, so a stale cached denial must not wait
+        // for its 24-hour TTL or a user-initiated refresh.
         let initialFetches = harness.api.historyFetches.count
-        await harness.coordinator.loadTimingDetailAppeared()
-        #expect(harness.api.historyFetches.count == initialFetches)
-        #expect(harness.coordinator.solarLayoutStatus == .disabled)
-
-        // Admin grants beta, user pulls to refresh
         harness.api.historyResponse = .enabled(timeZone: .gmt, days: [], nextFrom: nil)
-        harness.coordinator.invalidateSolarLayout()
-        await harness.coordinator.refreshSolarForecast(manual: true)
-
+        await harness.coordinator.loadTimingDetailAppeared()
         #expect(harness.api.historyFetches.count > initialFetches)
         #expect(harness.coordinator.historyEnabled)
         guard case .enabled(_, _, let reason) = harness.coordinator.solarLayoutStatus else {
-            Issue.record("Expected enabled status after pull to refresh")
+            Issue.record("Expected enabled status after the stale denial recheck")
             return
         }
         #expect(reason == .needsLocation)
     }
 
-    @Test("Site switch during history sync drops old lookup and does not disable beta on new site")
-    func siteSwitchDuringHistorySyncDoesNotDisableBetaOnNewSite() async throws {
+    @Test("Site switch during history sync drops the old lookup and leaves the new site unchanged")
+    func siteSwitchDuringHistorySyncLeavesNewSiteUnchanged() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
         harness.api.holdHistory = true
         let pending = Task { await harness.coordinator.loadTimingDetailAppeared() }
@@ -158,8 +153,8 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.solarLayoutStatus == nil)
     }
 
-    @Test("Offline history recheck with cached layout record preserves disabled beta status")
-    func offlineHistoryRecheckWithCachedRecordPreservesDisabledStatus() async throws {
+    @Test("Offline history recheck with a cached layout record preserves unavailable status")
+    func offlineHistoryRecheckWithCachedRecordPreservesUnavailableStatus() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
         harness.api.historyResponse = .disabled
         await harness.coordinator.refreshSolarForecast(manual: false)
@@ -187,8 +182,8 @@ struct AutomaticForecastCoordinatorTests {
         #expect(harness.coordinator.layoutInvalidated)
     }
 
-    @Test("Restoring beta eligibility with a pending location starts due detection")
-    func restoringEligibilityStartsDueDetection() async throws {
+    @Test("Restoring history availability with a pending location starts due detection")
+    func restoringHistoryAvailabilityStartsDueDetection() async throws {
         let harness = await AutomaticForecastHarness(seedDetected: false)
         try await harness.setPending()
         harness.api.historyResponse = .disabled

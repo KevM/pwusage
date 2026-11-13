@@ -17,7 +17,7 @@ final class SiteHistoryOnboardingLifecycle {
     private let onboarding: SiteHistoryOnboarding
     private let store: SiteHistoryOnboardingStore
     private let ledgers: SiteHistoryDayLedgerStore
-    /// Whether the site has the solar history beta; may sync history to find out.
+    /// Whether the site can provide solar history; may sync history to find out.
     private let isHistoryEnabled: @MainActor (SolarForecastSiteScope) async -> Bool
     private let scheduleBackground: @MainActor (Date?) -> Void
     private let sleep: Sleep
@@ -240,8 +240,8 @@ final class SiteHistoryOnboardingLifecycle {
         }
     }
 
-    /// Only sites with the history beta run. One that finished because history was unavailable is
-    /// reopened once history is enabled again, and one that stopped for want of a location once
+    /// Only sites with available history run. One that finished because history was unavailable is
+    /// reopened once history becomes available again, and one that stopped for want of a location once
     /// it has one. Any other finished site gets its days sorted if they never were.
     private func prepare(_ scope: SolarForecastSiteScope) async -> Bool {
         guard await isHistoryEnabled(scope), !Task.isCancelled else { return false }

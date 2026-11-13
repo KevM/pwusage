@@ -11,16 +11,16 @@ struct SettingsView: View {
     /// Set in the demo, where it replaces Sign Out. Nothing is lost by leaving,
     /// so it asks no confirmation.
     var onExitDemo: (() -> Void)?
-    /// The history beta's status for the site, outside the demo; nil otherwise.
+    /// The site's history status, outside the demo; nil otherwise.
     var siteHistory: SiteHistoryStatus?
     var siteHistoryDebug: SiteHistoryDebugActions?
     var onLocationSaved: () -> Void = {}
     /// Saves the site's billing day; the row is hidden in the demo, which cannot save.
     var onSaveBillingDay: (Int) async throws -> Void = { _ in }
     var onRevealSeen: () -> Void = {}
-    /// The user-started load of older solar history; nil in the demo and without the history beta.
+    /// The user-started load of older solar history; nil in the demo and without available history.
     var deepHistory: SiteDeepHistoryModel?
-    /// On-device solar health model; nil in the demo and without the history beta.
+    /// On-device solar health model; nil in the demo and without available history.
     var solarHealth: SolarHealthModel?
     /// Where the Trmnl screen reads from; nil hides the row, as in the demo, which has no devices.
     var trmnl: TrmnlSettingsAccess?

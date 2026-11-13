@@ -61,7 +61,7 @@ final class LiveSiteHistoryOnboardingEnvironment: SiteHistoryOnboardingEnvironme
         return zone
     }
 
-    /// The persisted beta flag, or the answer of a first history sync when there is none yet.
+    /// The persisted history availability, or the answer of a first history sync when there is none yet.
     func isHistoryEnabled(scope: SolarForecastSiteScope) async -> Bool {
         if let enabled = try? await history.isEnabled(scope: scope) { return enabled }
         guard case .synced = await runner.syncHistory(scope: scope) else { return false }

@@ -31,7 +31,7 @@ Most of the modelling exists. The gaps are persistence and history length.
 | Storage and sync | `SolarLayoutRecord`, `SolarLayoutRecordStore`, `SolarLayoutCloudSync`, `SolarLayoutCloudMerge` | No manual fields |
 | Weather | `OpenMeteoClient`, radiation columns only, `past_days=1` | No temperature, rain or snowfall |
 | UI | `SolarSystemView`, `SolarSystemDetailsRows` | Read-only |
-| Gating | `solar-forecast-beta` role, enforced by the history endpoint | None |
+| Gating | Site access, enforced by the history endpoint | None |
 
 Detection reruns every 30 days over a rolling 365-day window (`SolarLayoutDetectionSchedule`). The fitted capacity therefore drifts down with the panels, so health compares every year against one fixed reference instead of the latest fit.
 
@@ -165,7 +165,7 @@ Weather history sharpens three rules, and none of them depend on it:
 
 ## Gating
 
-Trend detection works for everyone with a detected layout. Anything needing an absolute reference requires a manual layout. Both stay inside the `solar-forecast-beta` role.
+Trend detection works for everyone with a detected layout. Anything needing an absolute reference requires a manual layout. Both require access to the site.
 
 | Capability | Detected layout | Manual layout |
 | --- | --- | --- |

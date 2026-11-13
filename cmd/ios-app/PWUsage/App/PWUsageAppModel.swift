@@ -62,6 +62,8 @@ final class PWUsageAppModel: ObservableObject {
     let solarRunner: SolarLayoutDetectionRunner?
     /// Backfills the selected site's history until a layout can be detected. Absent in the demo.
     let historyOnboarding: SiteHistoryOnboardingLifecycle?
+    /// Simulated health model for Demo Mode so house shading, soiling and aging can be previewed.
+    let demoSolarHealth: SolarHealthModel?
     var solarCloudSession: SolarCloudSession?
     var solarCloudStartup: Task<Void, Never>?
     private var solarCloudRecordsWaitID: UUID?
@@ -96,6 +98,7 @@ final class PWUsageAppModel: ObservableObject {
         solarRecords: SolarLayoutRecordStore = .shared,
         solarRunner: SolarLayoutDetectionRunner? = nil,
         historyOnboarding: SiteHistoryOnboardingLifecycle? = nil,
+        demoSolarHealth: SolarHealthModel? = nil,
         solarCloudSync: SolarLayoutCloudSync = .shared,
         sessionCleanup: SolarSessionCleanup? = nil,
         isDemo: Bool = false
@@ -115,6 +118,7 @@ final class PWUsageAppModel: ObservableObject {
         ) : nil)
         self.solarRunner = runner
         self.historyOnboarding = isDemo ? nil : historyOnboarding
+        self.demoSolarHealth = isDemo ? demoSolarHealth : nil
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
         if let coordinatorFactory {
             self.coordinatorFactory = coordinatorFactory

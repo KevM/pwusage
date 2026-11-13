@@ -23,6 +23,7 @@ final class SolarHealthModel {
     @ObservationIgnored private var runID: UInt64 = 0
     private(set) var scope: SolarForecastSiteScope?
     private(set) var report: SolarHealthReport?
+    private(set) var result: SolarHealthResult?
     private(set) var isRunning = false
     private(set) var hasUnreadFinding = false
 
@@ -54,6 +55,7 @@ final class SolarHealthModel {
         runTask = nil
         scope = next
         report = nil
+        result = nil
         hasUnreadFinding = false
         reload()
     }
@@ -82,6 +84,7 @@ final class SolarHealthModel {
         runTask = nil
         scope = nil
         report = nil
+        result = nil
         isRunning = false
         hasUnreadFinding = false
     }
@@ -105,6 +108,7 @@ final class SolarHealthModel {
             return
         }
         let classified = SolarHealthClassifier.classify(result, manual: record.manualLayout, now: now())
+        self.result = result
         report = classified
         let seen = Set(defaults.stringArray(forKey: Self.seenKeyPrefix + target.storageHash) ?? [])
         hasUnreadFinding = classified.visibleFindings.contains { !seen.contains($0.id) }

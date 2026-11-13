@@ -147,7 +147,7 @@ struct AppTabView: View {
                          deepHistory: coordinator.solarLayoutStatus == .disabled
                              ? nil : model.historyOnboarding?.deepHistory,
                          solarHealth: coordinator.solarLayoutStatus == .disabled
-                             ? nil : model.historyOnboarding?.solarHealth,
+                             ? nil : (model.historyOnboarding?.solarHealth ?? model.demoSolarHealth),
                          trmnl: model.isDemo ? nil : TrmnlSettingsAccess(api: model.api))
         }
     }

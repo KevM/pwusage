@@ -19,7 +19,7 @@ export default function PrivacyPage() {
                 <SectionCard title="Tesla account and energy information" bodyClassName="space-y-4">
                     <p>When you connect Tesla, Tesla handles your sign-in. pwusage receives account identifiers, your email address when provided by Tesla, and authorization tokens for the permissions you grant. We do not receive your Tesla password.</p>
                     <p>Our server stores connected energy-site information, including site names, identifiers, utility and time zone information, energy readings, battery status, rate plans, and settings. Tesla site responses may include location information. We use this data to show your dashboard, history, bill estimates, and Smart Shift recommendations.</p>
-                    <p>If you are in the automatic solar forecast beta, the app downloads your solar production history from pwusage and uses it on your device to work out which way your solar panels face, how steeply they are tilted and how large they are.</p>
+                    <p>The app downloads your solar production history from pwusage and uses it on your device to work out which way your solar panels face, how steeply they are tilted and how large they are.</p>
                     <p>If you use Battery Saver and grant the required command permission, pwusage stores Battery Saver settings and status and sends the backup reserve changes you request to Tesla. Scheduled checks use energy readings to monitor Battery Saver and restore your previous reserve.</p>
                 </SectionCard>
                 <SectionCard title="Information on your device" bodyClassName="space-y-4">
@@ -30,7 +30,7 @@ export default function PrivacyPage() {
                 <SectionCard title="How information is used and shared" bodyClassName="space-y-4">
                     <p>We use account and energy information to provide the features you request, keep your connection working, and investigate service problems. We do not sell your personal data or use it for advertising tracking.</p>
                     <p>The service runs on Vercel and uses a hosted PostgreSQL database on Supabase. Those providers process information needed to host and operate pwusage. Requests may produce operational logs containing technical details such as request paths, identifiers, IP addresses, and errors.</p>
-                    <p>Tesla processes your sign-in and API requests under its own privacy policy. Open-Meteo processes weather forecast requests from the app for users in the automatic solar forecast beta. Support services receive information you choose to submit.</p>
+                    <p>Tesla processes your sign-in and API requests under its own privacy policy. Open-Meteo processes weather forecast requests from the app. Support services receive information you choose to submit.</p>
                 </SectionCard>
                 <SectionCard title="TRMNL integration" bodyClassName="space-y-4">
                     <p>If you install a TRMNL integration, pwusage shares the dashboard information needed to render your connected display. Our server stores your TRMNL OAuth access token, account and installation identifiers, display settings, and account information supplied by TRMNL, including your email address. We use these records to connect your display, authenticate integration requests, and maintain its settings. If your pwusage account has no email address, we may fill it from the email supplied by TRMNL.</p>

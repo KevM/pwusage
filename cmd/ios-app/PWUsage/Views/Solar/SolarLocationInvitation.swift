@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The one-time Smart Shift invitation to share (or refine) the home location, for beta
-/// sites. It never asks for permission itself: the button opens the home location sheet, where
+/// The one-time Smart Shift invitation to share (or refine) the home location. It never asks for
+/// permission itself: the button opens the home location sheet, where
 /// the user chooses the current location, a search or a map pin.
 enum SolarLocationInvitation {
     enum Kind: Equatable {
