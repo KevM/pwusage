@@ -88,10 +88,29 @@ struct SolarHealthYearFit {
         return SolarHealthCapacity(site: scales.site, directions: directions, clearDays: days)
     }
 
+    /// Lightweight inputs needed to recompute clipped daily energy after cross-year normalization.
+    struct ScaledEnergyInputs: Sendable {
+        let clipKw: Double
+        let dayPowers: [String: [Double]]
+
+        func expectedDailyKwh(referenceScale: Double) -> [String: Double] {
+            dayPowers.mapValues { powers in
+                let sum = powers.reduce(0) { total, power in
+                    total + SolarHealthYearFit.clipPower(referenceScale * power, clip: clipKw)
+                }
+                return (sum / 12 * 100).rounded() / 100
+            }
+        }
+    }
+
+    static func clipPower(_ power: Double, clip: Double?) -> Double {
+        guard let clip else { return power }
+        return clip * LayoutPOA.softmin(power / clip)
+    }
+
     /// The reference total with the inverter's clip applied, as the detector models it.
     private func clipped(_ power: Double) -> Double {
-        guard let clip = LayoutFit.clip(selection.clipKw) else { return power }
-        return clip * LayoutPOA.softmin(power / clip)
+        Self.clipPower(power, clip: LayoutFit.clip(selection.clipKw))
     }
 
     /// Per season: the horizon learned from every clear row of the season, as measured over the
@@ -118,8 +137,24 @@ struct SolarHealthYearFit {
         return out
     }
 
+    /// Returns lightweight energy inputs for clipped years; nil when no inverter clipping was detected.
+    var scaledEnergyInputs: ScaledEnergyInputs? {
+        guard let clip = LayoutFit.clip(selection.clipKw) else { return nil }
+        var dayPowers: [String: [Double]] = [:]
+        for row in rows.powerKw.indices where covered[row] && rows.powerKw[row].isFinite {
+            let day = rows.days[rows.day[row]]
+            if selection.days.clear.contains(day) {
+                dayPowers[day, default: []].append(total[row])
+            }
+        }
+        return ScaledEnergyInputs(clipKw: clip, dayPowers: dayPowers)
+    }
+
     /// Expected clear-day energy (kWh) keyed by day string, scaling reference power before clipping.
     func expectedDailyKwh(referenceScale: Double) -> [String: Double] {
+        if let inputs = scaledEnergyInputs {
+            return inputs.expectedDailyKwh(referenceScale: referenceScale)
+        }
         let totals = dayEnergyTotals(referenceScale: referenceScale).expected
         var out: [String: Double] = [:]
         for day in rows.days.indices where selection.days.clear.contains(rows.days[day]) {

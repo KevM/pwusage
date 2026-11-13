@@ -49,21 +49,25 @@ enum SolarHealthPass {
         let currentYear = calendar.component(.year, from: context.now)
         var years: [SolarHealthYear] = []
         var recomputed: [Int] = []
-        var fits: [Int: SolarHealthYearFit] = [:]
-        var slicesByYear: [Int: [(timestamp: Date, solarWh: Double)]] = [:]
+        var energyInputs: [Int: SolarHealthYearFit.ScaledEnergyInputs] = [:]
+        var cachedClippedSlices: [Int: [(timestamp: Date, solarWh: Double)]] = [:]
         for slice in yearSlices(samples, calendar: calendar) {
             try checkCancellation()
-            slicesByYear[slice.year] = slice.samples
             let key = cacheKey(place: place, slice: slice.samples)
             if slice.year < currentYear,
                let cached = context.cache.year(slice.year, scope: context.scope),
                cached.key == key {
+                if place.reference.source == .detected, cached.hasClipping {
+                    cachedClippedSlices[slice.year] = slice.samples
+                }
                 years.append(cached)
                 continue
             }
             let yearFit = try SolarHealthYearFit(
                 samples: slice.samples, place: place, checkCancellation: checkCancellation)
-            fits[slice.year] = yearFit
+            if place.reference.source == .detected, let inputs = yearFit?.scaledEnergyInputs {
+                energyInputs[slice.year] = inputs
+            }
             var year = try yearFit?.result(year: slice.year, checkCancellation: checkCancellation)
                 ?? SolarHealthYear(
                     year: slice.year, key: key, clearDays: 0, capacity: nil, months: [], shade: [], dailyRatios: [])
@@ -75,14 +79,15 @@ enum SolarHealthPass {
         let scale = place.reference.source == .detected ? bestSiteFactor(years) : 1
         let scaledYears = try years.map { year -> SolarHealthYear in
             guard scale > 0, scale != 1, year.hasClipping else { return year.scaled(by: scale) }
-            let fit: SolarHealthYearFit?
-            if let existing = fits[year.year] {
-                fit = existing
+            let inputs: SolarHealthYearFit.ScaledEnergyInputs?
+            if let existing = energyInputs[year.year] {
+                inputs = existing
             } else {
-                fit = try SolarHealthYearFit(
-                    samples: slicesByYear[year.year] ?? [], place: place, checkCancellation: checkCancellation)
+                inputs = try SolarHealthYearFit(
+                    samples: cachedClippedSlices[year.year] ?? [], place: place, checkCancellation: checkCancellation)?
+                    .scaledEnergyInputs
             }
-            return year.scaled(by: scale, expectedDailyKwh: fit?.expectedDailyKwh(referenceScale: scale))
+            return year.scaled(by: scale, expectedDailyKwh: inputs?.expectedDailyKwh(referenceScale: scale))
         }
         return SolarHealthResult(
             reference: place.reference, years: scaledYears, referenceScale: scale, recomputedYears: recomputed)
