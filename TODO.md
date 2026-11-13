@@ -10,6 +10,12 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 - [ ] **Plan a "Send to Tesla" feature:** the probe showed Tesla accepts and keeps 5-decimal rates through `time_of_use_settings` (findings and open questions in [docs/tesla-tou-write-probe.md](docs/tesla-tou-write-probe.md)). Nothing in the app writes a plan to Tesla yet; `TeslaClient.setTimeOfUseSettings` is unused. Needs a confirmation step, an undo, a decision on how Tesla sync treats our upload, and the `energy_cmds` scope for every user. Still unknown: whether the Tesla app shows more than two decimals and whether the Powerwall uses the extra digits.
 
+## iOS: Solar Health follow-ups from the degradation backtest (2026-11-13)
+
+See the [results](docs/plans/2026-11-13-solar-degradation-backtest-results.md).
+
+- [ ] **Undated added system:** with no install date entered, a manual reference reads an added array as +33%/yr growth. Consider step detection or a prompt for the date.
+
 ## iOS: dark-mode contrast of the tall rate bar (2026-11-09)
 
 - [ ] **Make the unhighlighted part of the tall bar readable in dark mode:** the region without the highlight is dark grey and hard to see. Which bar and which screen is still unconfirmed (likely the Smart Shift rate chart); ask for a screenshot first. Use the theming vars (see `Color.emphasis`), not a hardcoded grey.
@@ -77,7 +83,7 @@ Smart Shift now projects rate-period banks to the bill date from 7 days of Solca
 
 ## Automatic solar forecast (2026-10-27)
 
-Layout detection runs on the phone (Swift port of the detector), from a year of day records served by `/api/mobile/solar-history`; the home location and layout stay on the user's devices and sync through their private iCloud. The server's `SiteSolarLayout`, `detect-solar-layouts` cron and layout/actuals endpoints were removed on 2026-11-01. Everything stays gated by the `solar-forecast-beta` role. See the [spec](docs/superpowers/specs/2026-10-27-auto-solar-forecast-design.md) and the [on-device plan](docs/superpowers/plans/2026-10-30-on-device-solar-layout.md).
+Layout detection runs on the phone (Swift port of the detector), from a year of day records served by `/api/mobile/solar-history`; the home location and layout stay on the user's devices and sync through their private iCloud. The server's `SiteSolarLayout`, `detect-solar-layouts` cron and layout/actuals endpoints were removed on 2026-11-01. Solar history is available to every user with access to their site. See the [spec](docs/superpowers/specs/2026-10-27-auto-solar-forecast-design.md) and the [on-device plan](docs/superpowers/plans/2026-10-30-on-device-solar-layout.md).
 
 - [ ] **Provider decision rule:** the forward capture (`.forecast-compare/capture.py`, `score.py`, local only) keeps running until it has 20+ scored days; Open-Meteo is now the preferred automatic beta provider. Before wider release, its matched day-ahead forecasts must beat the 14-day history median on both daily and hourly error; the retrospective fixed-lead Harrison backtest supports the trial but does not replace this gate.
 - [ ] **Location check threshold:** the solar-noon check flags a location more than 3° of longitude off (not the spec's 1.5°): terrain shifts one research site's sunrise/sunset edges by ~2.4°. Revisit with more sites.
@@ -290,3 +296,14 @@ first scope addition.
 
 **Change:** set `require_requested_scopes` alongside `prompt_missing_scopes`, or document
 why a partial grant is acceptable.
+
+## Project rates across a plan change inside the forecast horizon (2026-11-12, PR #358)
+
+`SiteRepo` loads one tariff (the plan in effect today), and `Schedule` prices every projected
+timestamp with it. A future-dated plan that starts inside the billing cycle (up to a year ahead
+is allowed) is ignored by the bill outlook and Smart Shift timeline until the day it starts,
+while archive attribution switches on that date. The same limitation existed with `is_current`.
+
+**Change:** give `Schedule` effective-dated tariffs (period ranges on `SiteWithTariffs`) and
+pick the tariff per timestamp, including `boundaryMinutes()` and the timing-window key in
+`mobile-bill-revision.ts`. Keep today's plan for live rates.

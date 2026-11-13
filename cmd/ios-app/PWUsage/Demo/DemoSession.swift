@@ -41,6 +41,11 @@ enum DemoSession {
             history: SolarForecastHistory(file: MemorySolarForecastFile())
         )
         let runner = SolarLayoutDetectionRunner(history: solar.history, records: solar.records, api: api)
+        let demoSolarHealth: SolarHealthModel? = isDemo
+            ? DemoSolarHealth.makeModel(records: solar.records, defaults: defaults, folder: folder)
+            : nil
+        demoSolarHealth?.activate(
+            scope: SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: DemoFixtures.site.id))
         return PWUsageAppModel(
             configuration: configuration,
             api: api,
@@ -61,6 +66,7 @@ enum DemoSession {
             solarHistory: solar.history,
             solarRecords: solar.records,
             solarRunner: runner,
+            demoSolarHealth: demoSolarHealth,
             solarCloudSync: solar.cloudSync,
             isDemo: isDemo
         )
@@ -123,7 +129,8 @@ enum DemoSession {
             let record = SolarLayoutRecord(
                 location: location, locationSetAt: Date(),
                 result: result, detectedAt: Date(), attemptedAt: Date(),
-                detectorVersion: SolarLayoutDetector.version, resultLocation: location
+                detectorVersion: SolarLayoutDetector.version, resultLocation: location,
+                manualLayout: DemoSolarHealth.manualLayout, manualSetAt: Date()
             )
             if let data = try? JSONEncoder().encode(record) {
                 try? data.write(to: fileURL)

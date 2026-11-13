@@ -158,7 +158,7 @@ final class SolarLayoutDetectionRunner {
         }
 
         guard let timeZone = await resolveTimeZone(existing: resolvedTimeZone, scope: scope, run: run),
-              let samples = try? await history.samples(scope: scope),
+              let samples = try? await history.samples(scope: scope, now: now()),
               isCurrent(run, scope: scope) else {
             return nil
         }

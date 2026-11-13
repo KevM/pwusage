@@ -49,9 +49,16 @@ struct AppTabView: View {
             // One accessory slot: a running Battery Saver session outranks the banner on its own tab.
             let hold = model.selectedTab == .smartShift
                 ? BatteryHoldAccessoryModel(state: coordinator.batteryHold, now: .now) : nil
-            tabView.tabViewBottomAccessory(isEnabled: hold != nil || showsBanner) {
+            // Loading older history is the user's choice and runs after the layout import.
+            let deep = model.historyOnboarding?.deepHistory.flatMap {
+                $0.status.isLoading && !model.isDemo && !model.isShowingSolarSystem
+                    ? SiteDeepHistoryPresentation(status: $0.status) : nil
+            }
+            tabView.tabViewBottomAccessory(isEnabled: hold != nil || deep != nil || showsBanner) {
                 if let hold {
                     BatteryHoldAccessory(model: hold) { coordinator.isBatteryHoldSheetPresented = true }
+                } else if let deep {
+                    SiteDeepHistoryAccessory(presentation: deep) { model.openSolarSystem() }
                 } else {
                     SolarSystemBanner(model: banner, clocks: bannerClocks) {
                         model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
@@ -137,6 +144,10 @@ struct AppTabView: View {
                          onLocationSaved: model.homeLocationSaved,
                          onSaveBillingDay: { try await model.saveBillingDay($0, siteID: site.id) },
                          onRevealSeen: model.solarSystemRevealSeen,
+                         deepHistory: coordinator.solarLayoutStatus == .disabled
+                             ? nil : model.historyOnboarding?.deepHistory,
+                         solarHealth: coordinator.solarLayoutStatus == .disabled
+                             ? nil : (model.historyOnboarding?.solarHealth ?? model.demoSolarHealth),
                          trmnl: model.isDemo ? nil : TrmnlSettingsAccess(api: model.api))
         }
     }

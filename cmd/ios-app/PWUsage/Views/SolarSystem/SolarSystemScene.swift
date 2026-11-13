@@ -11,19 +11,34 @@ struct SolarSystemSceneInput: Equatable {
     var isWaiting = false
     /// Found while nobody was watching: replay the find the first time it can be seen.
     var isRevealOwed = false
+    /// Health overlay for shading, dirt tint and aging on the house.
+    var healthOverlay: SolarHouseHealthOverlay?
 
-    init(status: SiteHistoryStatus?, layout: SolarLayout?, isWaiting: Bool) {
+    /// `manualLayout`: the faces the owner entered, which replace the found groups on the house.
+    init(
+        status: SiteHistoryStatus?, layout: SolarLayout?, isWaiting: Bool,
+        manualLayout: ManualSolarLayout? = nil, healthOverlay: SolarHouseHealthOverlay? = nil,
+        now: Date = .now
+    ) {
         days = status?.days ?? []
         clearDays = status?.clearDays ?? 0
         if case .fitted(let range)? = status?.wedge { fittedRange = range }
         latitude = status?.latitude
-        let planes = (status?.layout ?? layout)?.planes ?? []
-        groups = planes.map { SolarSystemHouse.Group(azimuth: $0.azimuth, tilt: $0.tilt, kilowatts: $0.dcKwp) }
-        if fittedRange == nil, let largest = planes.max(by: { $0.dcKwp < $1.dcKwp }) {
-            fittedRange = [largest.azimuth, largest.azimuth]
+        let found = status?.layout ?? layout
+        if let manualLayout {
+            groups = manualLayout.houseGroups(detected: found, on: now)
+            // The compass follows the entered main face, not the fit it replaces.
+            fittedRange = groups.max { $0.kilowatts < $1.kilowatts }.map { [$0.azimuth, $0.azimuth] }
+        } else {
+            let planes = found?.planes ?? []
+            groups = planes.map { SolarSystemHouse.Group(azimuth: $0.azimuth, tilt: $0.tilt, kilowatts: $0.dcKwp) }
+            if fittedRange == nil, let largest = planes.max(by: { $0.dcKwp < $1.dcKwp }) {
+                fittedRange = [largest.azimuth, largest.azimuth]
+            }
         }
         self.isWaiting = isWaiting
         isRevealOwed = status?.isRevealOwed ?? false
+        self.healthOverlay = healthOverlay
     }
 
     var isFound: Bool { !groups.isEmpty }
@@ -267,7 +282,8 @@ struct SolarSystemSceneCanvas: View {
             let ground = frame.projection(width: size.width)
             drawCompass(context, ground)
             if input.isFound, clocks.houseTime(at: now) >= 0 {
-                SolarSystemHouseDrawing(groups: input.groups, time: clocks.houseTime(at: now))
+                SolarSystemHouseDrawing(
+                    groups: input.groups, time: clocks.houseTime(at: now), health: input.healthOverlay)
                     .draw(context, ground)
             }
         }

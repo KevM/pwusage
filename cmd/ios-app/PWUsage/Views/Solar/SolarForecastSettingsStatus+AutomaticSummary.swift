@@ -2,7 +2,7 @@ import Foundation
 
 extension SolarForecastSettingsStatus {
     /// Ordered lines for the settings sheet's automatic forecast section: source, panel faces,
-    /// then confidence or the reason there is no layout yet. Empty outside the beta. The
+    /// then confidence or the reason there is no layout yet. Empty when solar history is unavailable. The
     /// source's name comes from its registered descriptor.
     static func automaticSummary(
         response: MobileSolarLayoutResponse,

@@ -1,93 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySiteAccess } from '@/lib/auth-checks';
-import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
+import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { Importer } from '@/lib/importer';
-import { SiteRepo } from '@/lib/site-repo';
-import { withRequestContext } from '@/lib/request-context';
-import { buildTariffContract } from '@/lib/tariff-contract';
+import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
+import { isCrossOriginRequest } from '@/lib/request-security';
+import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
+import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
 
 export const dynamic = 'force-dynamic';
 
-function json(body: unknown, status = 200) {
-    return NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
-}
+const json = (body: unknown, status = 200) =>
+  NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
 
-export async function GET(
-    _request: Request,
-    { params }: { params: Promise<{ id: string }> }
+export function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
 ) {
-    return withRequestContext(async () => {
-        try {
-            const { id: siteId } = await params;
-            if (!(await verifySiteAccess(siteId))) return json({ error: 'Unauthorized' }, 401);
-            const repo = new SiteRepo();
-            const site = await repo.getSite(siteId);
-            if (!site) return json({ error: 'Site not found' }, 404);
-            const asOf = new Date();
-            return json({
-                version: 1, site: { id: site.id, name: site.name, timezone: site.timezone },
-                currency: await repo.getSiteCurrencyCode(siteId) || 'USD',
-                asOf: asOf.toISOString(),
-                tariffs: buildTariffContract(site.tariffs, site.timezone, asOf),
-            });
-        } catch (error) {
-            console.error('[tariffs] request failed:', error);
-            return json({ error: 'Couldn’t load your rate plan.' }, 500);
-        }
-    });
-}
+  return observeRoute('/api/site/[id]/refresh-tariffs', async () => {
+    if (isCrossOriginRequest(request)) {
+      return json({ error: 'Cross-origin requests are not allowed' }, 403);
+    }
+    try {
+      const { id: siteId } = await params;
+      setLogContext({ siteId });
 
-export async function POST(
-    request: NextRequest,
-    { params }: { params: Promise<{ id: string }> }
-) {
-    return withRequestContext(async () => {
-        try {
-        const { id: siteId } = await params;
+      const hasAccess = await verifySiteAccess(siteId);
+      if (!hasAccess) {
+        return json({ error: 'Unauthorized' }, 403);
+      }
 
-        // Verify user has access to this site
-        const hasAccess = await verifySiteAccess(siteId);
-        if (!hasAccess) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
-        }
+      const user = await getCurrentUser();
+      const repo = new TariffTimelineRepo();
+      const beforeTimeline = await repo.getTimeline(siteId, user?.id ?? null);
 
-        // Verify site exists
-        const siteRepo = new SiteRepo();
-        const site = await siteRepo.getSite(siteId);
-        if (!site) {
-            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-        }
+      const client = await createTeslaClientForSite(siteId);
+      if (!client) {
+        return json({ error: 'Site has no Tesla credentials' }, 401);
+      }
 
-        // Create Tesla client and importer
-        const client = await createTeslaClientForSite(siteId);
-        if (!client) {
-            return NextResponse.json({ error: 'Site has no Tesla credentials' }, { status: 401 });
-        }
+      const importer = new Importer(client);
+      const updatedSite = await importer.ensureSite(siteId);
+      if (!updatedSite) {
+        return json({ error: 'Couldn’t refresh your rate plan from Tesla.' }, 500);
+      }
 
-        const importer = new Importer(client);
+      const timeline = await repo.getTimeline(siteId, user?.id ?? null);
+      const updatedFromTesla =
+        timeline.teslaSync.latestTariffId !== null &&
+        timeline.teslaSync.latestTariffId !== beforeTimeline.teslaSync.latestTariffId;
 
-        // Refresh tariffs
-        const updatedSite = await importer.ensureSite(siteId);
-
-        if (!updatedSite) {
-            return NextResponse.json(
-                { error: 'Couldn’t refresh your rate plan from Tesla.' },
-                { status: 500 }
-            );
-        }
-
-        return NextResponse.json({
-            success: true,
-            message: 'Rate plan refreshed',
-            tariffCount: updatedSite.tariffs.length
-        });
-        } catch (error) {
-            console.error(`[API] Refresh tariffs error:`, error);
-            const message = error instanceof Error ? error.message : 'Couldn’t refresh your rate plan from Tesla.';
-            return NextResponse.json(
-                { error: message },
-                { status: 500 }
-            );
-        }
-    });
+      return json({
+        success: true,
+        message: 'Rate plan refreshed',
+        updatedFromTesla,
+        timeline,
+      });
+    } catch (error) {
+      if (error instanceof TariffNotFoundError) {
+        return json({ error: 'Site not found' }, 404);
+      }
+      return json({ error: 'Couldn’t refresh your rate plan from Tesla.', ...errorFields(error) }, 500);
+    }
+  })(request);
 }

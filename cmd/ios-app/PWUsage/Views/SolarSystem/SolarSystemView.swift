@@ -5,7 +5,7 @@ import SwiftUI
 /// Site History and Solar Forecast.
 struct SolarSystemView: View {
     @ObservedObject var coordinator: DashboardCoordinator
-    /// Nil for a site without the history beta; the screen then shows only what is stored.
+    /// Nil when the site has no history available; the screen then shows only what is stored.
     let status: SiteHistoryStatus?
     var debugActions: SiteHistoryDebugActions?
     /// Opened from the banner's location prompt: go straight to the location step.
@@ -14,6 +14,10 @@ struct SolarSystemView: View {
     var onLocationSaved: () -> Void = {}
     /// The reveal owed for a system found while nobody was watching has been seen.
     var onRevealSeen: () -> Void = {}
+    /// Loads history older than the layout search reads, on request; nil hides the row.
+    var deepHistory: SiteDeepHistoryModel?
+    /// On-device health classification and stats; nil hides the health sections.
+    var solarHealth: SolarHealthModel?
 
     private static let visualID = "solar-system-visual"
 
@@ -21,6 +25,9 @@ struct SolarSystemView: View {
     @State private var isConfirmingLocation = false
     @State private var outcome: SolarLocationShareResult?
     @State private var didStartAtLocation = false
+    @State private var record: SolarLayoutRecord?
+    @State private var isEditingLayout = false
+    @State private var healthState = SolarHouseHealthState()
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -40,11 +47,25 @@ struct SolarSystemView: View {
                 onLocationSaved()
             }
         }
+        .sheet(isPresented: $isEditingLayout) {
+            ManualLayoutEditor(initial: record?.manualLayout, detected: record?.result) { layout in
+                guard await coordinator.saveManualLayout(layout) else { return false }
+                record = await coordinator.manualLayoutRecord()
+                solarHealth?.reload()
+                return true
+            }
+        }
+        .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
+            solarHealth?.markFindingsSeen()
+            if solarHealth?.report == nil, solarHealth?.isRunning == false {
+                solarHealth?.reload()
+            }
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
             isConfirmingLocation = true
         }
+        .onChange(of: solarHealth?.hasUnreadFinding) { solarHealth?.markFindingsSeen() }
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
     }
@@ -66,33 +87,80 @@ struct SolarSystemView: View {
     }
 
     private func list(_ presentation: SiteHistoryPresentation, layout: SolarLayout?) -> some View {
-        List {
+        let overlay = houseHealthOverlay
+        let sceneDate = healthState.selectedYear.map(SolarHouseHealthOverlay.endOfYearDate) ?? .now
+        return List {
             if status != nil || layout != nil {
                 Section {
                     SolarSystemVisual(
                         input: SolarSystemSceneInput(
-                            status: status, layout: layout, isWaiting: presentation.phase == .waiting),
+                            status: status, layout: layout, isWaiting: presentation.phase == .waiting,
+                            manualLayout: record?.manualLayout, healthOverlay: overlay, now: sceneDate),
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
                         .id(Self.visualID)
+                    if layout != nil, let report = solarHealth?.report, let overlay {
+                        SolarSystemHealthControls(
+                            state: $healthState,
+                            report: report,
+                            overlay: overlay,
+                            shadedMoment: firstShadedMoment)
+                    }
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
-                        SolarSystemDetailsRows(layout: layout, isImproving: presentation.phase == .foundImproving)
+                        SolarSystemDetailsRows(
+                            layout: layout, manual: record?.manualLayout,
+                            isImproving: presentation.phase == .foundImproving)
                     }
                 } header: {
-                    Text(layout == nil ? "Find Your Solar System" : "System")
+                    systemHeader(hasLayout: layout != nil)
                 }
             } else if coordinator.solarLayoutStatus == nil {
                 Section { Text("Checking solar forecast availability…") }
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
             }
+            panelHealthSection
+            if layout != nil, status != nil, let deepHistory { SiteDeepHistorySection(model: deepHistory) }
             if stored != nil || status != nil { locationSection }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    @ViewBuilder
+    private var panelHealthSection: some View {
+        if let report = solarHealth?.report {
+            SolarHealthSection(
+                report: report,
+                isLoading: solarHealth?.isRunning ?? false,
+                usedWeather: solarHealth?.result?.weather.hasPrecipitation ?? false,
+                onEditLayout: { isEditingLayout = true },
+                onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
+        } else if solarHealth?.isRunning == true {
+            Section("Panel Health") {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Checking panel health…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// The card's title, with Edit at the top right once a system is found, as Smart Shift's cards do.
+    private func systemHeader(hasLayout: Bool) -> some View {
+        HStack {
+            Text(hasLayout ? "System" : "Find Your Solar System")
+            Spacer()
+            if hasLayout {
+                Button("Edit") { isEditingLayout = true }
+                    .textCase(nil)
+                    .font(.subheadline.weight(.medium))
+            }
         }
     }
 
@@ -124,6 +192,23 @@ struct SolarSystemView: View {
     // MARK: - Home location
 
     private var location: SolarHomeLocation? { stored?.location }
+
+    private var houseHealthOverlay: SolarHouseHealthOverlay? {
+        guard solarHealth?.report != nil || solarHealth?.result != nil else { return nil }
+        return SolarHouseHealthOverlay(
+            report: solarHealth?.report,
+            result: solarHealth?.result,
+            state: healthState,
+            latitude: location?.latitude ?? status?.latitude ?? 40.0,
+            longitude: location?.longitude ?? 0.0)
+    }
+
+    private var firstShadedMoment: (season: SolarSeason, hourOfDay: Double)? {
+        SolarHouseHealthOverlay.firstShadedMoment(
+            in: solarHealth?.result,
+            latitude: location?.latitude ?? status?.latitude ?? 40.0,
+            longitude: location?.longitude ?? 0.0)
+    }
 
     private var locationSection: some View {
         Section {

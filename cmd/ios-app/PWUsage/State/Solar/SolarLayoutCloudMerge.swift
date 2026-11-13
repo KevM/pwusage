@@ -6,6 +6,7 @@ enum SolarLayoutCloudMerge {
         let localCand = validateResult(candidate(for: local), for: winningLoc.location)
         let remoteCand = validateResult(candidate(for: remote), for: winningLoc.location)
         let validated = winningCandidate(local: localCand, remote: remoteCand)
+        let manual = winningManualLayout(local: local, remote: remote)
         return SolarLayoutRecord(
             location: winningLoc.location,
             locationSetAt: winningLoc.locationSetAt,
@@ -13,8 +14,27 @@ enum SolarLayoutCloudMerge {
             detectedAt: validated?.detectedAt,
             attemptedAt: validated?.attemptedAt,
             detectorVersion: validated?.detectorVersion,
-            resultLocation: validated?.resultLocation
+            resultLocation: validated?.resultLocation,
+            manualLayout: manual.layout,
+            manualSetAt: manual.setAt
         )
+    }
+
+    /// Last writer wins, a clear included. Unlike a detected result, the layout is the owner's own
+    /// entry and does not depend on which home location wins.
+    private static func winningManualLayout(
+        local: SolarLayoutRecord?, remote: SolarLayoutRecord
+    ) -> (layout: ManualSolarLayout?, setAt: Date?) {
+        guard let local else { return (remote.manualLayout, remote.manualSetAt) }
+        switch (local.manualSetAt, remote.manualSetAt) {
+        case (nil, nil): return (nil, nil)
+        case (_?, nil): return (local.manualLayout, local.manualSetAt)
+        case (nil, _?): return (remote.manualLayout, remote.manualSetAt)
+        case let (localDate?, remoteDate?):
+            return remoteDate > localDate
+                ? (remote.manualLayout, remote.manualSetAt)
+                : (local.manualLayout, local.manualSetAt)
+        }
     }
 
     private static func winningLocation(

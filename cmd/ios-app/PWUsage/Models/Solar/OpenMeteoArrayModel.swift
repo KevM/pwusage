@@ -19,7 +19,7 @@ enum OpenMeteoArrayModel {
     ) throws -> Double {
         guard midpoint.timeIntervalSince1970.isFinite, location.isValid,
               [radiation.ghi, radiation.dni, radiation.dhi].allSatisfy({ $0.isFinite && $0 >= 0 }),
-              (1 ... 3).contains(layout.planes.count), layout.planes.allSatisfy(\.isValid),
+              layout.hasValidPlaneCount, layout.planes.allSatisfy(\.isValid),
               layout.acClipKw.map({ $0.isFinite && $0 > 0 }) ?? true else { throw Error.invalidInput }
         let sun = SolarPosition.at(midpoint, latitude: location.latitude, longitude: location.longitude)
         let total = layout.planes.reduce(0.0) { result, plane in

@@ -31,6 +31,24 @@ export interface EmptyDayState {
 }
 
 export const currentTariffTimelineRevision = (tariffId: number): string => `current-tariff:${tariffId}`;
+export const tariffTimelineRevision = (tariffId: number): string => `effective-tariff:${tariffId}`;
+
+export function segmentsEqual(
+    a: TariffSegment[] | null | undefined,
+    b: TariffSegment[] | null | undefined
+): boolean {
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (
+            a[i].offset !== b[i].offset ||
+            a[i].tariffId !== b[i].tariffId ||
+            a[i].scheduleId !== b[i].scheduleId
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
 
 const dayMinutes = (start: Date, end: Date): number => {
     const ms = +end - +start;
@@ -60,7 +78,7 @@ export function deriveDayAttribution(schedule: Pick<Schedule, 'getTariffPeriod'>
         const period = schedule.getTariffPeriod(new Date(+start + i * SLOT_MS));
         return period ? { tariffId: Number(period.tariff.id), scheduleId: Number(period.schedule.id) } : { tariffId, scheduleId: null };
     });
-    const attribution = { timelineRevision: currentTariffTimelineRevision(tariffId), segments: encodeSlots(slots) };
+    const attribution = { timelineRevision: tariffTimelineRevision(tariffId), segments: encodeSlots(slots) };
     validateDayAttribution(attribution, start, end);
     return attribution;
 }

@@ -65,7 +65,7 @@ struct BackgroundSolarForecastTests {
         #expect(harness.defaults.string(forKey: PWUsageAppModel.accountScopeDefaultsKey) == nil)
     }
 
-    @Test("A revoked site or disabled beta cannot fetch weather")
+    @Test("A revoked site or missing layout cannot fetch weather")
     func revokedSite() async throws {
         let harness = try await BackgroundForecastHarness()
         harness.api.sites = []
@@ -81,8 +81,8 @@ struct BackgroundSolarForecastTests {
         #expect(await harness.provider.refreshes == 0)
     }
 
-    @Test("Persisted disabled beta status skips automatic background forecast even with detected record")
-    func persistedDisabledBetaStatusPreventsBackgroundForecast() async throws {
+    @Test("Persisted unavailable history prevents automatic background forecast even with a detected record")
+    func persistedUnavailableHistoryPreventsBackgroundForecast() async throws {
         let harness = try await BackgroundForecastHarness()
         let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: "site-a")
         harness.api.solarHistoryResponse = .disabled

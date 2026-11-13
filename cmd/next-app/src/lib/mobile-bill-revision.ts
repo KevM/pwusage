@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
 import { Temporal } from '@js-temporal/polyfill';
+import { effectiveTariffIdSql } from './effective-tariff-sql';
 import { pool, type SiteWithTariffs } from './db';
 import { readMobileHistoryRevision } from './mobile-history-revision';
 import { getRequestContext } from './request-context';
 import type { SiteRepo } from './site-repo';
 import type { Schedule } from './schedule';
+import type { ReattributionStatusDTO } from './tariff-contract';
+import { getSiteReattributionStatus } from './tariff-reattribution';
 
 const HOUR_NS = 3_600_000_000_000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -21,7 +24,7 @@ export interface MobileBillConfiguration {
 export async function readMobileBillConfiguration(siteId: string): Promise<MobileBillConfiguration | undefined> {
     const result = await pool.query<MobileBillConfiguration>(`
         SELECT name, timezone, billing_start_day, json -> 'tariff_content_v2' ->> 'currency' AS currency,
-            ARRAY(SELECT id FROM "Tariff" WHERE site_id = s.id AND is_current ORDER BY id) AS tariff_ids
+            ARRAY(SELECT t.id FROM "Tariff" t WHERE t.site_id = s.id AND t.id = ${effectiveTariffIdSql('s.id')} ORDER BY t.id) AS tariff_ids
         FROM "Site" s WHERE id = $1
     `, [siteId]);
     return result.rows[0];
@@ -72,12 +75,19 @@ export async function readMobileBillRevision(
     cycleEnd: Date,
     now: Date,
     includeOutlook: boolean,
+    reattribution?: ReattributionStatusDTO | null,
 ): Promise<string | null> {
     const history = await readMobileHistoryRevision(site.id, cycleStart, cycleEnd);
     if (!history.latest || history.latest >= now || history.hasFutureSamples) return null;
     const active = schedule.getTariffPeriod(now);
+    const activeReattribution = reattribution === undefined
+        ? await getSiteReattributionStatus(site.id)
+        : reattribution;
+    const reattributionKey = activeReattribution && activeReattribution.status !== 'idle'
+        ? [activeReattribution.status, activeReattribution.processedDays, activeReattribution.updatedDays]
+        : null;
     return createHash('sha256').update(JSON.stringify([
         1, site.id, config, cycleStart, cycleEnd, history.revision, includeOutlook,
-        timingWindow(now, schedule), active?.schedule.id,
+        timingWindow(now, schedule), active?.schedule.id, reattributionKey,
     ])).digest('hex');
 }

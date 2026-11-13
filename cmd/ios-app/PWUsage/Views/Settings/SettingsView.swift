@@ -11,19 +11,25 @@ struct SettingsView: View {
     /// Set in the demo, where it replaces Sign Out. Nothing is lost by leaving,
     /// so it asks no confirmation.
     var onExitDemo: (() -> Void)?
-    /// The history beta's status for the site, outside the demo; nil otherwise.
+    /// The site's history status, outside the demo; nil otherwise.
     var siteHistory: SiteHistoryStatus?
     var siteHistoryDebug: SiteHistoryDebugActions?
     var onLocationSaved: () -> Void = {}
     /// Saves the site's billing day; the row is hidden in the demo, which cannot save.
     var onSaveBillingDay: (Int) async throws -> Void = { _ in }
     var onRevealSeen: () -> Void = {}
+    /// The user-started load of older solar history; nil in the demo and without available history.
+    var deepHistory: SiteDeepHistoryModel?
+    /// On-device solar health model; nil in the demo and without available history.
+    var solarHealth: SolarHealthModel?
     /// Where the Trmnl screen reads from; nil hides the row, as in the demo, which has no devices.
     var trmnl: TrmnlSettingsAccess?
 
     @State private var isConfirmingSignOut = false
     /// Loaded when Settings opens, for the row's device count, and handed to the Trmnl screen.
     @State private var trmnlModel: TrmnlSettingsModel?
+    /// Whether the owner edited the solar system; read again on return from the Solar System screen.
+    @State private var hasManualLayout = false
 
     var body: some View {
         List {
@@ -60,10 +66,19 @@ struct SettingsView: View {
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }
-                NavigationLink(value: SettingsDestination.solarSystem()) {
+                NavigationLink(value: SettingsDestination.solarSystem(.root())) {
                     LabeledContent {
-                        if siteHistory != nil {
-                            Text(SiteHistoryPresentation(status: siteHistory, now: .now).rowValue)
+                        HStack(spacing: 6) {
+                            if solarHealth?.hasUnreadFinding == true {
+                                Circle()
+                                    .fill(Color.emphasis)
+                                    .frame(width: 8, height: 8)
+                                    .accessibilityLabel("New finding")
+                            }
+                            if siteHistory != nil || hasManualLayout {
+                                Text(SiteHistoryPresentation(
+                                    status: siteHistory, now: .now, hasManualLayout: hasManualLayout).rowValue)
+                            }
                         }
                     } label: {
                         Label("Solar System", systemImage: "sun.max")
@@ -97,16 +112,29 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .inlineNavigationTitle()
         .task(id: site.id) { await loadTrmnlDevices() }
+        .onAppear { Task { hasManualLayout = await coordinator.manualLayoutRecord()?.manualLayout != nil } }
         .navigationDestination(for: SettingsDestination.self) { destination in
             switch destination {
             case .ratePlans:
-                TariffSheet(site: site, load: { try await coordinator.fetchTariffs() })
-                    .id(site.id)
-            case .solarSystem(let startsAtLocation):
+                TariffSheet(
+                    site: site,
+                    actions: TariffTimelineActions(
+                        load: { try await coordinator.fetchTariffTimeline() },
+                        refreshFromTesla: { try await coordinator.refreshTariffsFromTesla() },
+                        createPeriod: { body in try await coordinator.createTariffPeriod(body) },
+                        updatePeriod: { periodID, body in
+                            try await coordinator.updateTariffPeriod(periodID: periodID, body: body)
+                        },
+                        deletePeriod: { periodID in try await coordinator.deleteTariffPeriod(periodID: periodID) },
+                        retryReattribution: { try await coordinator.retryTariffReattribution() }
+                    )
+                )
+                .id(site.id)
+            case .solarSystem(.root(let startsAtLocation)):
                 SolarSystemView(
                     coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
                     startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved,
-                    onRevealSeen: onRevealSeen)
+                    onRevealSeen: onRevealSeen, deepHistory: deepHistory, solarHealth: solarHealth)
             case .billingDay:
                 BillingDaySettingsView(site: site, save: onSaveBillingDay)
                     .id(site.id)
@@ -141,11 +169,15 @@ struct SettingsView: View {
     }
 }
 
+enum SolarSystemDestination: Hashable {
+    /// `startsAtLocation` opens straight into the home location step.
+    case root(startsAtLocation: Bool = false)
+}
+
 enum SettingsDestination: Hashable {
     case ratePlans
     case billingDay
-    /// `startsAtLocation` opens straight into the home location step.
-    case solarSystem(startsAtLocation: Bool = false)
+    case solarSystem(SolarSystemDestination = .root())
     case trmnl
     case about
 }

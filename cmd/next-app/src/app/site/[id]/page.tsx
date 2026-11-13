@@ -1,5 +1,7 @@
 import { requiresTeslaReconnect } from '@/lib/tesla-refresh-outcome';
 import { getSiteConnectionTokens } from '@/lib/tesla-client-factory';
+import { getCurrentUser } from '@/lib/auth-checks';
+import { TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import { UserRepo } from '@/lib/user-repo';
 import { observePage, setLogContext } from '@/lib/observability';
 import { SiteRepo } from '@/lib/site-repo';
@@ -117,7 +119,11 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
 
     const connection = await getSiteConnectionTokens(id);
     const reconnectRequired = !connection || requiresTeslaReconnect(connection);
-    const memberEmails = await new UserRepo().getSiteMemberEmails(id);
+    const [memberEmails, currentUser] = await Promise.all([
+        new UserRepo().getSiteMemberEmails(id),
+        getCurrentUser(),
+    ]);
+    const tariffTimeline = await new TariffTimelineRepo().getTimeline(id, currentUser?.id ?? null);
 
     return (
         <PageShell maxWidth="7xl" padding="compact">
@@ -167,7 +173,12 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                     />
                 }
                 settingsSlot={
-                    <SettingsView site={site} installations={installations} memberEmails={memberEmails} />
+                    <SettingsView
+                        site={site}
+                        installations={installations}
+                        memberEmails={memberEmails}
+                        tariffTimeline={tariffTimeline}
+                    />
                 }
             >
                 {/* Fallback or shared content could go here if needed */}

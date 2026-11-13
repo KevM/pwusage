@@ -52,7 +52,9 @@ final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {
         case .failure(let error): throw error
         case .fill(let status):
             let zone = timeZone ?? .gmt
-            let list = (0 ..< days).compactMap { SiteLocalDays.adding($0, to: from, timeZone: zone) }
+            let list = (0 ..< days)
+                .compactMap { SiteLocalDays.adding($0, to: from, timeZone: zone) }
+                .filter { $0 >= historyStart }
             return .enabled(MobileSolarHistoryFill(
                 timeZone: zone, status: status, historyStart: historyStart,
                 days: list.map { day in

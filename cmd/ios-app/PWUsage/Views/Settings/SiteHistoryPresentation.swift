@@ -26,7 +26,9 @@ struct SiteHistoryPresentation: Equatable {
     /// "96 days downloaded, 21 clear", just the downloaded days before the first pass, or empty.
     let countsText: String
 
-    init(status: SiteHistoryStatus?, now: Date, timeZone: TimeZone = .current) {
+    /// `hasManualLayout`: the owner edited the system, so the Settings row says Configured instead of
+    /// what the search found.
+    init(status: SiteHistoryStatus?, now: Date, timeZone: TimeZone = .current, hasManualLayout: Bool = false) {
         downloadedDays = status?.downloadedDays ?? 0
         producingDays = status?.producingDays ?? 0
         clearDays = status?.clearDays ?? 0
@@ -34,7 +36,7 @@ struct SiteHistoryPresentation: Equatable {
         let phase = Self.phase(status, now: now)
         self.phase = phase
         let wording = Self.wording(phase, status: status, now: now, timeZone: timeZone)
-        rowValue = wording.row
+        rowValue = hasManualLayout ? "Configured" : wording.row
         statusLine = wording.line
         action = Self.action(phase, status: status)
         let isActive = status?.progress?.phase == .active

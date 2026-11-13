@@ -115,23 +115,6 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         }
     }
 
-    func fetchTariffs(siteID: String) async throws -> MobileTariffsResponse {
-        let segmentCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/%?#"))
-        guard !siteID.isEmpty,
-              let encodedSiteID = siteID.addingPercentEncoding(withAllowedCharacters: segmentCharacters),
-              var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
-            throw PWUsageAPIError.invalidResponse
-        }
-        components.percentEncodedPath = "/api/site/\(encodedSiteID)/refresh-tariffs"
-        components.query = nil
-        guard let url = components.url else { throw PWUsageAPIError.invalidResponse }
-        let data = try await request(url: url)
-        do {
-            return try MobileContractDecoder.make().decode(MobileTariffsResponse.self, from: data)
-                .validating(siteID: siteID)
-        } catch { throw PWUsageAPIError.invalidResponse }
-    }
-
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {
         let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "battery-hold"))
         do {

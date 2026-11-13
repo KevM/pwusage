@@ -9,7 +9,6 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { SystemAnnouncementsManager } from './SystemAnnouncementsManager';
-import { SolarBetaManager } from './SolarBetaManager';
 import { SiteHistoryTable, type SiteHistoryRow } from './SiteHistoryTable';
 
 // Define minimal user type based on usage in page.tsx
@@ -43,7 +42,7 @@ interface AdminDashboardProps {
     sites: SiteHistoryRow[];
 }
 
-type AdminTab = 'users' | 'sites' | 'solar-beta' | 'announcements';
+type AdminTab = 'users' | 'sites' | 'announcements';
 
 export function AdminDashboard({ users, sites }: AdminDashboardProps) {
     const [activeTab, setActiveTab] = useState<AdminTab>('users');
@@ -60,7 +59,6 @@ export function AdminDashboard({ users, sites }: AdminDashboardProps) {
                     <TabsList>
                         <TabsTrigger value="users">Users</TabsTrigger>
                         <TabsTrigger value="sites">Sites</TabsTrigger>
-                        <TabsTrigger value="solar-beta">Solar Beta</TabsTrigger>
                         <TabsTrigger value="announcements">System Announcements</TabsTrigger>
                     </TabsList>
 
@@ -155,10 +153,6 @@ export function AdminDashboard({ users, sites }: AdminDashboardProps) {
                         >
                             <SiteHistoryTable sites={sites} />
                         </SectionCard>
-                    </TabsContent>
-
-                    <TabsContent value="solar-beta">
-                        <SolarBetaManager />
                     </TabsContent>
 
                     <TabsContent value="announcements">

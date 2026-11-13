@@ -1,0 +1,206 @@
+import CryptoKit
+import Foundation
+
+/// The health pass: for each calendar year of a site's whole stored history, capacity against the
+/// reference, shade per season and daily ratios. Pure computation on the phone; results are cached
+/// per completed year and nothing is synced.
+enum SolarHealthPass {
+    /// Bumped when the pass changes what it computes, so cached years recompute.
+    static let version = 3
+
+    /// Runs the pass for a site off the main actor. Nil when the site lacks a location, a time zone,
+    /// stored history or any layout to compare with. Cancellable like detection.
+    static func run(
+        scope: SolarForecastSiteScope, history: SolarHistoryStore, record: SolarLayoutRecord,
+        cache: SolarHealthCache = SolarHealthCache(), now: Date = .now
+    ) async throws -> SolarHealthResult? {
+        guard let location = record.location,
+              let timeZone = try await history.timeZone(scope: scope),
+              let reference = SolarHealthReference(manual: record.manualLayout, detected: record.result) else {
+            return nil
+        }
+        let samples = try await history.allSamples(scope: scope)
+        let place = SolarHealthYearFit.Place(
+            reference: reference, latitude: location.latitude, longitude: location.longitude, timeZone: timeZone)
+        guard let first = samples.min(by: { $0.timestamp < $1.timestamp }),
+              let last = samples.max(by: { $0.timestamp < $1.timestamp }) else { return nil }
+        let weather = try await SolarHealthWeatherStore.shared.weather(
+            scope: scope, cache: cache, place: .init(location: location, timeZone: timeZone),
+            samples: first.timestamp ... last.timestamp, now: now)
+        let context = Context(scope: scope, cache: cache, now: now, snowDays: weather.snowDays)
+        let task = Task.detached(priority: .utility) {
+            var result = try compute(
+                samples: samples, place: place, context: context,
+                checkCancellation: { try Task.checkCancellation() })
+            result.weather = weather
+            return result
+        }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    struct Context: Sendable {
+        let scope: SolarForecastSiteScope
+        let cache: SolarHealthCache
+        let now: Date
+        var snowDays: Set<String> = []
+    }
+
+    /// The pass over `samples` (ascending). A completed year is read from `cache` when its key
+    /// matches (reference, location, detector, pass version and the year's data); otherwise, and for
+    /// the current year always, it is computed.
+    static func compute(
+        samples: [(timestamp: Date, solarWh: Double)], place: SolarHealthYearFit.Place,
+        context: Context, checkCancellation: () throws -> Void
+    ) throws -> SolarHealthResult {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = place.timeZone
+        let currentYear = calendar.component(.year, from: context.now)
+        var years: [SolarHealthYear] = []
+        var recomputed: [Int] = []
+        var energyInputs: [Int: SolarHealthYearFit.ScaledEnergyInputs] = [:]
+        var cachedClippedSlices: [Int: [(timestamp: Date, solarWh: Double)]] = [:]
+        for slice in yearSlices(samples, calendar: calendar) {
+            try checkCancellation()
+            let samples = excludingSnow(
+                from: slice.samples, days: context.snowDays, year: slice.year, calendar: calendar)
+            let key = cacheKey(place: place, slice: samples)
+            if slice.year < currentYear,
+               let cached = context.cache.year(slice.year, scope: context.scope),
+               cached.key == key {
+                if cached.hasClipping {
+                    cachedClippedSlices[slice.year] = samples
+                }
+                years.append(cached)
+                continue
+            }
+            let yearFit = try SolarHealthYearFit(
+                samples: samples, place: place, checkCancellation: checkCancellation)
+            if let inputs = yearFit?.scaledEnergyInputs {
+                energyInputs[slice.year] = inputs
+            }
+            var year = try yearFit?.result(year: slice.year, checkCancellation: checkCancellation)
+                ?? SolarHealthYear(
+                    year: slice.year, key: key, clearDays: 0, capacity: nil, months: [], shade: [], dailyRatios: [])
+            year.key = key
+            if slice.year < currentYear { try context.cache.store(year, scope: context.scope) }
+            years.append(year)
+            recomputed.append(slice.year)
+        }
+        let clipped = ClippedEnergy(fresh: energyInputs, cachedSlices: cachedClippedSlices, place: place)
+        return try finish(
+            years, place: place, recomputed: recomputed, clipped: clipped, checkCancellation: checkCancellation)
+    }
+
+    /// Clip-aware energy inputs per year: from this run's fits, or refitted from a cached year's samples.
+    private struct ClippedEnergy {
+        let fresh: [Int: SolarHealthYearFit.ScaledEnergyInputs]
+        let cachedSlices: [Int: [(timestamp: Date, solarWh: Double)]]
+        let place: SolarHealthYearFit.Place
+
+        func inputs(
+            for year: SolarHealthYear, checkCancellation: () throws -> Void
+        ) throws -> SolarHealthYearFit.ScaledEnergyInputs? {
+            guard year.hasClipping else { return nil }
+            if let existing = fresh[year.year] { return existing }
+            return try SolarHealthYearFit(
+                samples: cachedSlices[year.year] ?? [], place: place, checkCancellation: checkCancellation)?
+                .scaledEnergyInputs
+        }
+    }
+
+    /// Scales detected-reference years to the best year, and keeps the newest clear day's clip-aware
+    /// energy for an entered-panel site.
+    private static func finish(
+        _ years: [SolarHealthYear], place: SolarHealthYearFit.Place, recomputed: [Int], clipped: ClippedEnergy,
+        checkCancellation: () throws -> Void
+    ) throws -> SolarHealthResult {
+        let scale = place.reference.source == .detected ? bestSiteFactor(years) : 1
+        let scaledYears = try years.map { year -> SolarHealthYear in
+            guard scale > 0, scale != 1, year.hasClipping else { return year.scaled(by: scale) }
+            let expected = try clipped.inputs(for: year, checkCancellation: checkCancellation)?
+                .expectedDailyKwh(referenceScale: scale)
+            return year.scaled(by: scale, expectedDailyKwh: expected)
+        }
+        var result = SolarHealthResult(
+            reference: place.reference, years: scaledYears, referenceScale: scale, recomputedYears: recomputed)
+        if scale == 1, let latest = latestEnergyDay(scaledYears) {
+            let inputs = try clipped.inputs(for: latest.year, checkCancellation: checkCancellation)
+            result.latestDayEnergy = inputs?.only(day: latest.day)
+        }
+        return result
+    }
+
+    /// The newest clear day with both energies, the one Potential vs actual reports.
+    private static func latestEnergyDay(_ years: [SolarHealthYear]) -> (year: SolarHealthYear, day: String)? {
+        for year in years.reversed() {
+            if let ratio = year.dailyRatios.last(where: { $0.expectedKwh != nil && $0.actualKwh != nil }) {
+                return (year, ratio.day)
+            }
+        }
+        return nil
+    }
+
+    private static func excludingSnow(
+        from samples: [(timestamp: Date, solarWh: Double)], days: Set<String>, year: Int, calendar: Calendar
+    ) -> [(timestamp: Date, solarWh: Double)] {
+        let snowStarts = Set(days.compactMap { day -> Date? in
+            guard day.hasPrefix("\(year)-") else { return nil }
+            let parts = day.split(separator: "-")
+            guard parts.count == 3, let month = Int(parts[1]), let day = Int(parts[2]) else { return nil }
+            let noon = DateComponents(year: year, month: month, day: day, hour: 12)
+            guard noon.isValidDate(in: calendar), let date = calendar.date(from: noon) else { return nil }
+            return calendar.startOfDay(for: date)
+        })
+        guard !snowStarts.isEmpty else { return samples }
+        return samples.filter { !snowStarts.contains(calendar.startOfDay(for: $0.timestamp)) }
+    }
+
+    /// Without entered faces the reference is the detected geometry at the site's best year.
+    private static func bestSiteFactor(_ years: [SolarHealthYear]) -> Double {
+        years.compactMap { year in
+            year.clearDays >= SolarHealthYearFit.minYearClearDays ? year.capacity?.site : nil
+        }.max() ?? 1
+    }
+
+    private static func cacheKey(
+        place: SolarHealthYearFit.Place, slice: [(timestamp: Date, solarWh: Double)]
+    ) -> String {
+        var hasher = SHA256()
+        let header = [
+            place.reference.key, "detector\(SolarLayoutDetector.version)", "pass\(version)",
+            String(format: "%.3f,%.3f", place.latitude, place.longitude), place.timeZone.identifier,
+            String(slice.count)
+        ].joined(separator: "|")
+        hasher.update(data: Data(header.utf8))
+        for sample in slice {
+            var timeBits = sample.timestamp.timeIntervalSince1970.bitPattern.littleEndian
+            var energyBits = sample.solarWh.bitPattern.littleEndian
+            withUnsafeBytes(of: &timeBits) { hasher.update(bufferPointer: $0) }
+            withUnsafeBytes(of: &energyBits) { hasher.update(bufferPointer: $0) }
+        }
+        return hasher.finalize().prefix(10).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The samples of each site-local calendar year, in order.
+    private static func yearSlices(
+        _ samples: [(timestamp: Date, solarWh: Double)], calendar: Calendar
+    ) -> [(year: Int, samples: [(timestamp: Date, solarWh: Double)])] {
+        guard !samples.isEmpty else { return [] }
+        let ordered = isSorted(samples) ? samples : samples.sorted { $0.timestamp < $1.timestamp }
+        let first = calendar.component(.year, from: ordered[0].timestamp)
+        let last = calendar.component(.year, from: ordered[ordered.count - 1].timestamp)
+        var slices: [(year: Int, samples: [(timestamp: Date, solarWh: Double)])] = []
+        var start = 0
+        for year in first ... last {
+            guard let end = calendar.date(from: DateComponents(year: year + 1)) else { continue }
+            var stop = start
+            while stop < ordered.count, ordered[stop].timestamp < end { stop += 1 }
+            if stop > start { slices.append((year, Array(ordered[start ..< stop]))) }
+            start = stop
+        }
+        return slices
+    }
+    private static func isSorted(_ samples: [(timestamp: Date, solarWh: Double)]) -> Bool {
+        zip(samples, samples.dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp }
+    }
+}

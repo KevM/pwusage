@@ -17,6 +17,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
     private let now: () -> Date
     private var hold: BatteryHold?
     private var nextHoldID = 1
+    private var demoTimeline: SiteTariffsTimelineResponse?
+    private var nextPeriodID = 100
 
     init(now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -47,9 +49,104 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         DemoFixtures.planningContext(asOf: currentSource())
     }
 
-    /// Activity markers need the current minute, not the data's source instant.
-    func fetchTariffs(siteID: String) async throws -> MobileTariffsResponse {
-        DemoFixtures.tariffs(asOf: now())
+    func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        let current = demoTimeline ?? DemoFixtures.tariffs(asOf: now())
+        demoTimeline = current
+        return current
+    }
+
+    func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func createTariffPeriod(
+        siteID: String,
+        body: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        var current = try await fetchTariffTimeline(siteID: siteID)
+        nextPeriodID += 1
+        let created = TariffPeriodDTO(
+            periodId: nextPeriodID,
+            tariffId: nextPeriodID * 10,
+            name: body.name,
+            version: 1,
+            source: .manual,
+            effectiveFrom: body.effectiveFrom,
+            effectiveTo: body.effectiveTo,
+            isCurrentToday: body.effectiveTo == nil,
+            updatedBy: TariffUpdatedByDTO(email: nil, isCurrentUser: true),
+            seasons: body.seasons
+        )
+        let periods = ([created] + current.periods).sorted { $0.effectiveFrom > $1.effectiveFrom }
+        current = SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: current.siteId,
+            timezone: current.timezone,
+            currency: current.currency,
+            periods: periods,
+            reattribution: current.reattribution,
+            teslaSync: current.teslaSync
+        )
+        demoTimeline = current
+        return current
+    }
+
+    func updateTariffPeriod(
+        siteID: String,
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        let updatedPeriods = current.periods.map { period -> TariffPeriodDTO in
+            guard period.periodId == periodID else { return period }
+            let nextTo: String? = switch body.effectiveTo {
+            case .unchanged: period.effectiveTo
+            case .set(let date): date
+            }
+            return TariffPeriodDTO(
+                periodId: period.periodId,
+                tariffId: period.tariffId + 1,
+                name: body.name ?? period.name,
+                version: period.version + 1,
+                source: period.source,
+                effectiveFrom: body.effectiveFrom ?? period.effectiveFrom,
+                effectiveTo: nextTo,
+                isCurrentToday: period.isCurrentToday,
+                updatedBy: TariffUpdatedByDTO(email: nil, isCurrentUser: true),
+                seasons: body.seasons ?? period.seasons
+            )
+        }
+        let next = SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: current.siteId,
+            timezone: current.timezone,
+            currency: current.currency,
+            periods: updatedPeriods.sorted { $0.effectiveFrom > $1.effectiveFrom },
+            reattribution: current.reattribution,
+            teslaSync: current.teslaSync
+        )
+        demoTimeline = next
+        return next
+    }
+
+    func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        let remaining = current.periods.filter { $0.periodId != periodID }
+        let next = SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: current.siteId,
+            timezone: current.timezone,
+            currency: current.currency,
+            periods: remaining,
+            reattribution: current.reattribution,
+            teslaSync: current.teslaSync
+        )
+        demoTimeline = next
+        return next
+    }
+
+    func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
     }
 
     func fetchSolarHistory(
