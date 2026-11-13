@@ -154,4 +154,14 @@ extension SolarHealthBaselineTests {
         #expect(abs(score.site - 0.95) < 1e-9)
         #expect(score.comparedMonths == 1)
     }
+
+    @Test("Trend values divide by the site-wide baseline")
+    func trendValuesDivideBySiteBaseline() throws {
+        let entries = (4 ... 7).map { MonthEntry(2026, $0, 1.10, 10) }
+        let (baseline, _) = try Self.makeScoreBaseline(
+            entries: entries,
+            now: Self.date(2026, 8, 1))
+
+        #expect(abs(baseline.relative(1.078) - 0.98) < 1e-9)
+    }
 }

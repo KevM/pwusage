@@ -10,6 +10,11 @@ struct SolarHealthBaselineScore: Equatable, Sendable {
 }
 
 extension SolarHealthBaseline {
+    /// Expresses a fitted capacity factor relative to the site-wide baseline (`factor / siteFactor`).
+    func relative(_ factor: Double) -> Double {
+        factor / siteFactor
+    }
+
     /// Compares each calendar month's most recent post-baseline observation against its own baseline.
     func score(of years: [SolarHealthYear]) -> SolarHealthBaselineScore {
         let factorMonths = Self.sortedFactorMonths(from: years)

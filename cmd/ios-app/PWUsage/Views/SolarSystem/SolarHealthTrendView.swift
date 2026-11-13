@@ -24,11 +24,26 @@ struct SolarHealthTrendView: View {
     private var yearlySection: some View {
         Section("By Year") {
             ForEach(report.changeOverTime.years) { entry in
-                let percent = Int((entry.factor * 100).rounded())
-                LabeledContent(
-                    String(entry.year),
-                    value: "\(percent)% · \(entry.clearDays) clear days")
+                yearlyRow(for: entry)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func yearlyRow(for entry: SolarHealthYearEntry) -> some View {
+        if let baseline = report.baseline {
+            let percent = (baseline.relative(entry.factor) * 100)
+                .formatted(.number.precision(.fractionLength(0)))
+            LabeledContent(
+                String(entry.year),
+                value: "\(percent)% \(baseline.relativeUnit) · \(entry.clearDays) clear days")
+                .foregroundStyle(baseline.isBeforeWindow(year: entry.year) ? .secondary : .primary)
+        } else {
+            let percent = (entry.factor * 100)
+                .formatted(.number.precision(.fractionLength(0)))
+            LabeledContent(
+                String(entry.year),
+                value: "\(percent)% · \(entry.clearDays) clear days")
         }
     }
 
@@ -37,18 +52,34 @@ struct SolarHealthTrendView: View {
             Chart(report.changeOverTime.months) { entry in
                 PointMark(
                     x: .value("Month", monthDate(year: entry.year, month: entry.month)),
-                    y: .value("Capacity", entry.factor * 100))
-                    .foregroundStyle(Color.emphasis)
+                    y: .value("Capacity", monthlyYValue(for: entry)))
+                    .foregroundStyle(monthlyPointColor(for: entry))
                 LineMark(
                     x: .value("Month", monthDate(year: entry.year, month: entry.month)),
-                    y: .value("Capacity", entry.factor * 100))
+                    y: .value("Capacity", monthlyYValue(for: entry)))
                     .foregroundStyle(Color.emphasis.opacity(0.6))
             }
             .chartYScale(domain: .automatic(includesZero: false))
-            .chartYAxisLabel("%")
+            .chartYAxisLabel(monthlyYAxisLabel)
             .frame(height: 180)
             .padding(.vertical, 4)
         }
+    }
+
+    private func monthlyYValue(for entry: SolarHealthMonthEntry) -> Double {
+        let factor = report.baseline?.relative(entry.factor) ?? entry.factor
+        return factor * 100
+    }
+
+    private func monthlyPointColor(for entry: SolarHealthMonthEntry) -> Color {
+        guard let baseline = report.baseline else { return Color.emphasis }
+        let stamp = SolarHealthMonthStamp(year: entry.year, month: entry.month)
+        return baseline.isBeforeWindow(stamp) ? Color.secondary : Color.emphasis
+    }
+
+    private var monthlyYAxisLabel: String {
+        guard let baseline = report.baseline else { return "%" }
+        return "% \(baseline.relativeUnit)"
     }
 
     private var dailyChartSection: some View {

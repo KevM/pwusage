@@ -242,4 +242,84 @@ struct SolarSystemHouseHealthTests {
         #expect(overlay.yearFactor == 0.85)
         #expect(overlay.dirtAmount > 0)
     }
+
+    private static func makeBaselineFixture(
+        installDate: Date? = nil,
+        extraYears: [SolarHealthYear] = []
+    ) throws -> (report: SolarHealthReport, result: SolarHealthResult) {
+        let manual = ManualSolarLayout(systems: [
+            ManualSolarSystem(label: "Main", installDate: installDate, inverterAcKw: nil, faces: [
+                ManualSolarFace(
+                    label: "East", panelCount: 10, panelWatts: 400, azimuthDegrees: 90, tiltDegrees: 25),
+                ManualSolarFace(
+                    label: "West", panelCount: 10, panelWatts: 400, azimuthDegrees: 270, tiltDegrees: 25)
+            ])
+        ])
+        let reference = try #require(SolarHealthReference(manual: manual, detected: nil))
+        let windowMonths = [1, 4, 7, 10].map { month in
+            SolarHealthMonth(
+                month: month,
+                capacity: SolarHealthCapacity(
+                    site: 1.05,
+                    directions: [.init(azimuth: 90, factor: 1.10), .init(azimuth: 270, factor: 1.00)],
+                    clearDays: 10))
+        }
+        let year2023 = SolarHealthYear(
+            year: 2023, key: "k23", clearDays: 40,
+            capacity: SolarHealthCapacity(
+                site: 1.05,
+                directions: [.init(azimuth: 90, factor: 1.10), .init(azimuth: 270, factor: 1.00)],
+                clearDays: 40),
+            months: windowMonths, shade: [], dailyRatios: [])
+        let year2025 = SolarHealthYear(
+            year: 2025, key: "k25", clearDays: 40,
+            capacity: SolarHealthCapacity(
+                site: 0.995,
+                directions: [.init(azimuth: 90, factor: 0.99), .init(azimuth: 270, factor: 1.00)],
+                clearDays: 40),
+            months: [], shade: [], dailyRatios: [])
+        let result = SolarHealthResult(
+            reference: reference,
+            years: extraYears + [year2023, year2025],
+            referenceScale: 1.0,
+            recomputedYears: [2025])
+        let now = Calendar(identifier: .gregorian)
+            .date(from: DateComponents(year: 2026, month: 1, day: 15)) ?? .now
+        let report = SolarHealthClassifier.classify(result, manual: manual, now: now)
+        return (report, result)
+    }
+
+    @Test("Entered-panel faces fade by their score against each face's baseline")
+    func enteredPanelFacesFadeAgainstEachFaceBaseline() throws {
+        let (report, result) = try Self.makeBaselineFixture()
+        let overlay2025 = SolarHouseHealthOverlay(
+            report: report, result: result,
+            state: SolarHouseHealthState(season: .summer, hourOfDay: 12.0, selectedYear: 2025),
+            latitude: Self.latitude, longitude: Self.longitude)
+
+        #expect(abs(overlay2025.panelOpacity(forAzimuth: 90) - 0.90) < 0.001)
+        #expect(abs(overlay2025.panelOpacity(forAzimuth: 270) - 1.0) < 0.001)
+    }
+
+    @Test("Years before the baseline window do not fade")
+    func yearsBeforeBaselineWindowDoNotFade() throws {
+        let install2023 = Calendar(identifier: .gregorian)
+            .date(from: DateComponents(year: 2023, month: 1, day: 1)) ?? .now
+        let year2021 = SolarHealthYear(
+            year: 2021, key: "k21", clearDays: 40,
+            capacity: SolarHealthCapacity(
+                site: 0.70,
+                directions: [.init(azimuth: 90, factor: 0.70), .init(azimuth: 270, factor: 0.70)],
+                clearDays: 40),
+            months: [], shade: [], dailyRatios: [])
+        let (report, result) = try Self.makeBaselineFixture(
+            installDate: install2023,
+            extraYears: [year2021])
+        let overlay2021 = SolarHouseHealthOverlay(
+            report: report, result: result,
+            state: SolarHouseHealthState(season: .summer, hourOfDay: 12.0, selectedYear: 2021),
+            latitude: Self.latitude, longitude: Self.longitude)
+
+        #expect(overlay2021.panelOpacity(forAzimuth: 90) == 1.0)
+    }
 }
