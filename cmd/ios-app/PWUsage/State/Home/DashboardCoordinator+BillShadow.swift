@@ -69,7 +69,13 @@ extension DashboardCoordinator {
         guard localResponse.tariffReattribution?.status != .running,
               Self.snapshotsMatch(server: server, local: localResponse) else { return }
         guard shadowDedup.shouldReport(siteID: siteID, cycleStart: server.currentBill.cycleStart) else { return }
-        guard let report = BillShadowComparison.differences(server: server, local: localResponse) else { return }
+        let cycleStart = server.currentBill.cycleStart
+        let cycleEnd = server.currentBill.cycleEnd
+        let localDays = (try? await history.flowDays(scope: scope, from: cycleStart, to: cycleEnd))
+            .map { BillShadowComparison.dailyTotals($0, from: cycleStart, to: cycleEnd) }
+        guard let report = BillShadowComparison.differences(
+            server: server, local: localResponse, localDays: localDays
+        ) else { return }
         guard let shadowAPI = api as? any MobileBillShadowAPI else { return }
         shadowDedup.markReported(siteID: siteID, cycleStart: server.currentBill.cycleStart)
         try? await shadowAPI.reportBillShadow(report)

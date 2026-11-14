@@ -263,7 +263,7 @@
 - Test: `cmd/ios-app/PWUsageTests/BillShadowComparisonTests.swift`, `cmd/ios-app/PWUsageTests/DashboardCoordinatorBillShadowTests.swift`
 
 **Interfaces:**
-- Produces (wire): `POST /api/mobile/bill-shadow` body `{ siteId, appBuild, cycleStart, server: { estimatedCost, periods: [{ tariffName, periodName, cost }] }, local: { same }, reattributionRunning: boolean }`; auth via `verifySiteAccess`; logs one `console.warn('[bill-shadow]', JSON)` line; answers 204. Rejects bodies over 16 KB or with non-finite amounts (400). No location or flows in the body.
+- Produces (wire): `POST /api/mobile/bill-shadow` body `{ siteId, appBuild, cycleStart, server: { estimatedCost, periods: [{ tariffName, periodName, cost }] }, local: { same }, reattributionRunning: boolean }`; auth via `verifySiteAccess`; logs one `console.warn('[bill-shadow]', JSON)` line; answers 204. Rejects bodies over 16 KB or with non-finite amounts (400). No location or raw flows in the body; an optional `localDays: [{ day, gridWh, last }]` carries the phone's per-day totals, and the server logs `dayDiffs` against its own totals read at report time.
 - Produces: `enum BillPricingMode: String { case server, shadow, local }` read from `AppConfiguration` (default `.shadow` in this release).
 - Produces: `enum BillShadowComparison { static func differences(server: MobileBillResponse, local: MobileBillResponse, threshold: Double = 0.01) -> BillShadowReport? }`.
 - `performBill` in `.shadow`: fetch from the server as today and show it; then build locally; skip the comparison when `tariffReattribution` says running or the local result is `.notReady`; otherwise send the report when `differences` is non-nil, at most once per site per cycle per app launch.

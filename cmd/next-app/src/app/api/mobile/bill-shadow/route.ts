@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
 import { verifySiteAccess } from '@/lib/auth-checks';
+import { compareShadowDays, summarizeShadowDays, type ShadowDay, type ShadowDayDiff } from '@/lib/bill-shadow-days';
+import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { logEvent } from '@/lib/observability';
 import { withRequestContext } from '@/lib/request-context';
+import { SiteRepo } from '@/lib/site-repo';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_BODY_BYTES = 16 * 1024;
+/** A billing cycle has at most 31 days; leave room for a cycle that straddles a DST change. */
+const MAX_LOCAL_DAYS = 40;
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PRIVATE_RESPONSE = { 'Cache-Control': 'private, no-store' };
 
 interface BillShadowPeriod {
@@ -26,6 +32,8 @@ interface BillShadowReport {
     server: BillShadowSummary;
     local: BillShadowSummary;
     reattributionRunning: boolean;
+    /** The phone's net grid energy and last slot per site-local day of the cycle, when it sent them. */
+    localDays?: ShadowDay[];
 }
 
 function jsonError(error: string, status: number): NextResponse {
@@ -71,6 +79,23 @@ function parseSummary(raw: unknown): BillShadowSummary | null {
     return { estimatedCost, periods };
 }
 
+/** `undefined` when absent, `null` when malformed. */
+function parseLocalDays(raw: unknown): ShadowDay[] | null | undefined {
+    if (raw === undefined) return undefined;
+    if (!Array.isArray(raw) || raw.length > MAX_LOCAL_DAYS) return null;
+    const days: ShadowDay[] = [];
+    for (const item of raw) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+        const { day, gridWh, last } = item as Record<string, unknown>;
+        if (typeof day !== 'string' || !DAY_PATTERN.test(day)) return null;
+        if (typeof gridWh !== 'number' || !Number.isFinite(gridWh)) return null;
+        // The phone omits `last` for a day without data.
+        if (last !== undefined && last !== null && (typeof last !== 'string' || !Number.isFinite(Date.parse(last)))) return null;
+        days.push({ day, gridWh, last: typeof last === 'string' ? last : null });
+    }
+    return days;
+}
+
 function parseReport(raw: unknown): BillShadowReport | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const obj = raw as Record<string, unknown>;
@@ -88,6 +113,8 @@ function parseReport(raw: unknown): BillShadowReport | null {
     const server = parseSummary(obj.server);
     const local = parseSummary(obj.local);
     if (!server || !local) return null;
+    const localDays = parseLocalDays(obj.localDays);
+    if (localDays === null) return null;
     return {
         siteId: obj.siteId,
         appBuild: obj.appBuild,
@@ -95,7 +122,25 @@ function parseReport(raw: unknown): BillShadowReport | null {
         server,
         local,
         reattributionRunning: obj.reattributionRunning,
+        ...(localDays ? { localDays } : {}),
     };
+}
+
+/** The server's per-day totals for the cycle, read now, compared with the phone's. Never fails the report. */
+async function dayDiffFields(report: BillShadowReport & { localDays: ShadowDay[] }): Promise<{
+    dayDiffs: ShadowDayDiff[] | null;
+    dayDiffsError?: string;
+}> {
+    try {
+        const cycleStart = new Date(report.cycleStart);
+        if (!Number.isFinite(+cycleStart)) throw new Error('Invalid cycleStart');
+        const site = await new SiteRepo().getSite(report.siteId);
+        if (!site) throw new Error('Site not found');
+        const rows = await createEnergyRepo(site.timezone).getRawEnergyData(report.siteId, cycleStart, new Date());
+        return { dayDiffs: compareShadowDays(summarizeShadowDays(rows, site.timezone), report.localDays) };
+    } catch (error) {
+        return { dayDiffs: null, dayDiffsError: error instanceof Error ? error.message : String(error) };
+    }
 }
 
 interface PeriodDiff {
@@ -163,6 +208,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             ? report.local.estimatedCost - report.server.estimatedCost
             : null;
         const periodDiffs = buildPeriodDiffs(report.server.periods, report.local.periods);
+        const localDays = report.localDays;
+        const days = localDays ? await dayDiffFields({ ...report, localDays }) : {};
 
         logEvent('warn', 'mobile.bill-shadow.mismatch', {
             siteId: report.siteId,
@@ -173,6 +220,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             localEstimatedCost: report.local.estimatedCost,
             estimatedCostDiff,
             periodDiffs,
+            ...days,
         });
         return new NextResponse(null, { status: 204, headers: PRIVATE_RESPONSE });
     });

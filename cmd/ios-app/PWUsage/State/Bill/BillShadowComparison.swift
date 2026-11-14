@@ -22,6 +22,13 @@ struct BillShadowBillSummary: Codable, Equatable, Sendable {
     }
 }
 
+/// One site-local day of the phone's stored flows: net grid energy (Wh) and its last slot with data.
+struct BillShadowDay: Codable, Equatable, Sendable {
+    let day: String
+    let gridWh: Double
+    let last: Date?
+}
+
 struct BillShadowReport: Codable, Equatable, Sendable {
     let siteId: String
     let appBuild: String
@@ -29,6 +36,8 @@ struct BillShadowReport: Codable, Equatable, Sendable {
     let server: BillShadowBillSummary
     let local: BillShadowBillSummary
     let reattributionRunning: Bool
+    /// The phone's per-day totals for the cycle, so the server can name the day that differs.
+    let localDays: [BillShadowDay]?
 }
 
 @MainActor
@@ -58,6 +67,7 @@ enum BillShadowComparison {
     static func differences(
         server: MobileBillResponse,
         local: MobileBillResponse,
+        localDays: [BillShadowDay]? = nil,
         threshold: Double = 0.01
     ) -> BillShadowReport? {
         let totalDiffers = estimatedCostDiffers(
@@ -81,8 +91,25 @@ enum BillShadowComparison {
             cycleStart: server.currentBill.cycleStart,
             server: BillShadowBillSummary(from: server.currentBill),
             local: BillShadowBillSummary(from: local.currentBill),
-            reattributionRunning: reattributionRunning
+            reattributionRunning: reattributionRunning,
+            localDays: localDays
         )
+    }
+
+    /// Net grid energy and last slot with data per stored day, counting only slots in `[start, end)`.
+    static func dailyTotals(_ days: [EnergyFlowDay], from start: Date, to end: Date) -> [BillShadowDay] {
+        days.map { day in
+            var gridWh = 0.0
+            var last: Date?
+            for (slotIndex, maybeGrid) in day.gridWh.enumerated() {
+                guard let grid = maybeGrid else { continue }
+                let instant = day.dayStart.addingTimeInterval(TimeInterval(slotIndex) * 300)
+                guard instant >= start, instant < end else { continue }
+                gridWh += Double(grid)
+                last = instant
+            }
+            return BillShadowDay(day: day.day, gridWh: gridWh, last: last)
+        }
     }
 
     private static func estimatedCostDiffers(
