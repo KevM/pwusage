@@ -175,17 +175,72 @@ struct SolarHouseHealthOverlay: Equatable, Sendable {
     ) -> (season: SolarSeason, hourOfDay: Double)? {
         guard let result, let year = result.years.last?.year else { return nil }
         for season in SolarSeason.allCases {
-            guard let mask = shadeMask(for: season, year: year, in: result) else { continue }
-            for hour in stride(from: 6.0, through: 20.0, by: 0.5) {
-                let sun = sunSample(
-                    season: season, year: year, hourOfDay: hour,
-                    latitude: latitude, longitude: longitude)
-                if sun.elevation > 0, mask.shaded(azimuth: sun.azimuth, elevation: sun.elevation) {
-                    return (season, hour)
-                }
+            let query = ShadedHourQuery(
+                season: season, year: year, azimuthBounds: nil,
+                latitude: latitude, longitude: longitude)
+            if let hour = firstShadedHour(query, in: result) {
+                return (season, hour)
             }
         }
         return nil
+    }
+
+    /// Initial interactive scrubber state tailored to inspect a specific health finding on the house.
+    static func initialState(
+        for finding: SolarHealthFinding,
+        in result: SolarHealthResult?,
+        latitude: Double,
+        longitude: Double,
+        now: Date = .now
+    ) -> SolarHouseHealthState {
+        let base = SolarHouseHealthState(latitude: latitude, now: now)
+        guard finding.kind == .shading || finding.kind == .shadingGrowth else { return base }
+        let bounds = finding.azimuthFrom.flatMap { start in
+            finding.azimuthTo.map { (start: start, end: $0) }
+        }
+        if let season = finding.season, let year = result?.years.last?.year {
+            let query = ShadedHourQuery(
+                season: season, year: year, azimuthBounds: bounds,
+                latitude: latitude, longitude: longitude)
+            if let hour = firstShadedHour(query, in: result) {
+                return SolarHouseHealthState(season: season, hourOfDay: hour, latitude: latitude, now: now)
+            }
+        }
+        if let moment = firstShadedMoment(in: result, latitude: latitude, longitude: longitude) {
+            return SolarHouseHealthState(
+                season: moment.season, hourOfDay: moment.hourOfDay, latitude: latitude, now: now)
+        }
+        if let season = finding.season {
+            return SolarHouseHealthState(season: season, hourOfDay: 12.0, latitude: latitude, now: now)
+        }
+        return base
+    }
+
+    private struct ShadedHourQuery {
+        let season: SolarSeason
+        let year: Int
+        let azimuthBounds: (start: Double, end: Double)?
+        let latitude: Double
+        let longitude: Double
+    }
+
+    private static func firstShadedHour(_ query: ShadedHourQuery, in result: SolarHealthResult?) -> Double? {
+        guard let mask = shadeMask(for: query.season, year: query.year, in: result) else { return nil }
+        var firstAny: Double?
+        for hour in stride(from: 6.0, through: 20.0, by: 0.25) {
+            let sun = sunSample(
+                season: query.season, year: query.year, hourOfDay: hour,
+                latitude: query.latitude, longitude: query.longitude)
+            guard sun.elevation > 0, mask.shaded(azimuth: sun.azimuth, elevation: sun.elevation) else { continue }
+            if firstAny == nil { firstAny = hour }
+            if let bounds = query.azimuthBounds {
+                let inRange = bounds.start <= bounds.end
+                    ? (sun.azimuth >= bounds.start && sun.azimuth <= bounds.end)
+                    : (sun.azimuth >= bounds.start || sun.azimuth <= bounds.end)
+                if inRange { return hour }
+            }
+        }
+        return firstAny
     }
 
     private static func shadeMask(for season: SolarSeason, year: Int, in result: SolarHealthResult?) -> ShadeMask? {

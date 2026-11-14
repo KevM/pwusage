@@ -1,44 +1,54 @@
 import SwiftUI
 
-/// Health stats, capacity score, ratio trend link and plain-language findings for Solar System.
+/// Combined Panel Health section: score, stats, compact findings row, ratio trend, and history analyzed.
 struct SolarHealthSection: View {
     let report: SolarHealthReport
     let isLoading: Bool
-    var usedWeather = false
+    var onShowFindings: () -> Void = {}
     var onEditLayout: () -> Void = {}
     var deepHistory: SiteDeepHistoryModel?
+    var healthResult: SolarHealthResult?
 
     var body: some View {
-        healthCardSection
-        statsSection
-        findingsSection
-    }
-
-    private var healthCardSection: some View {
         Section {
-            if let score = report.healthScore {
-                healthScoreRows(score)
-            } else if report.source == .manual {
-                Text(SolarHealthScorePresentation.waitingForClearDays)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                manualPromptRow
-            }
+            scoreBlock
+            potentialRow
+            shadingRow
+            dirtRow
+            changeRow
+            findingsRow
             if !report.changeOverTime.months.isEmpty || !report.dailyRatios.isEmpty {
                 NavigationLink("Capacity & Ratio Trend") {
                     SolarHealthTrendView(report: report)
                 }
             }
+            historyAnalyzedRow
         } header: {
-            HStack {
-                Text("Panel Health")
-                if isLoading {
-                    Spacer()
-                    ProgressView()
-                        .controlSize(.small)
-                }
+            sectionHeader
+        }
+    }
+
+    private var sectionHeader: some View {
+        HStack {
+            Text("Panel Health")
+            if isLoading {
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var scoreBlock: some View {
+        if let score = report.healthScore {
+            healthScoreRows(score)
+        } else if report.source == .manual {
+            Text(SolarHealthScorePresentation.waitingForClearDays)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else {
+            manualPromptRow
         }
     }
 
@@ -103,15 +113,6 @@ struct SolarHealthSection: View {
         }
     }
 
-    private var statsSection: some View {
-        Section("Health Stats") {
-            potentialRow
-            shadingRow
-            dirtRow
-            changeRow
-        }
-    }
-
     @ViewBuilder private var potentialRow: some View {
         if let pva = report.potentialVsActual {
             let expected = pva.expectedKwh.formatted(.number.precision(.fractionLength(1)))
@@ -151,93 +152,161 @@ struct SolarHealthSection: View {
         return LabeledContent("Dirt level", value: value)
     }
 
-    @ViewBuilder private var changeRow: some View {
+    private var changeRow: some View {
         let change = report.changeOverTime
+        let value: String
         if change.hasEnoughHistoryForTrend {
             if let rate = change.agingPercentPerYear {
                 let sign = rate >= 0 ? "+" : ""
-                let formatted = "\(sign)\(rate.formatted(.number.precision(.fractionLength(1))))% / yr"
-                LabeledContent("Change over time", value: formatted)
+                value = "\(sign)\(rate.formatted(.number.precision(.fractionLength(1))))% / yr"
             } else {
-                LabeledContent("Change over time", value: "\(change.years.count) years loaded")
+                value = "\(change.years.count) years loaded"
             }
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                LabeledContent("Change over time", value: "Needs more history")
-                deepHistoryFeedback
-            }
+            value = "Needs more history"
         }
+        return LabeledContent("Change over time", value: value)
     }
 
-    @ViewBuilder private var deepHistoryFeedback: some View {
-        if let deepHistory {
-            let deep = SiteDeepHistoryPresentation(status: deepHistory.status)
-            if deepHistory.status.isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text(deep.statusLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Button("Stop") { Task { await deepHistory.stop() } }
-                    .font(.subheadline.weight(.medium))
-            } else if deep.action == .load || deep.action == .continueLoading {
-                Text("Load older history to track panel aging and shading growth over years.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button(deep.action == .continueLoading ? "Continue Loading" : "Load More History") {
-                    deepHistory.start()
-                }
-                .font(.subheadline.weight(.medium))
-            } else {
-                Text(deep.statusLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            Text("Load older history to track panel aging and shading growth over years.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var findingsSection: some View {
-        Section {
-            if report.visibleFindings.isEmpty {
+    @ViewBuilder
+    private var findingsRow: some View {
+        let findings = report.visibleFindings
+        if findings.isEmpty {
+            LabeledContent("Findings") {
                 Label("No issues found", systemImage: "checkmark.circle")
                     .foregroundStyle(.secondary)
-            } else {
-                ForEach(report.visibleFindings) { finding in
-                    SolarHealthFindingRow(finding: finding)
+            }
+        } else {
+            Button(action: onShowFindings) {
+                findingsSummaryLabel(findings: findings)
+            }
+            .foregroundStyle(.primary)
+        }
+    }
+
+    private func findingsSummaryLabel(findings: [SolarHealthFinding]) -> some View {
+        let categories = SolarHealthFindingCategory.unique(in: findings)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Findings")
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text("\(findings.count)")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.onEmphasis)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.emphasis, in: Capsule())
+                    .fixedSize()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 6) {
+                ForEach(categories, id: \.self) { category in
+                    Text(category.label)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.emphasis)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.emphasis.opacity(0.14), in: Capsule())
+                        .fixedSize()
                 }
             }
-        } header: {
-            Text("Findings")
-        } footer: {
-            if usedWeather {
-                SolarForecastAttributionView(
-                    attribution: "Weather history by Open-Meteo.",
-                    url: OpenMeteoProvider.sourceDescriptor.attributionURL)
-            }
         }
+        .padding(.vertical, 2)
+    }
+
+    private var historyAnalyzedRow: some View {
+        SolarHistoryAnalyzedRow(
+            report: report,
+            healthResult: healthResult,
+            deepHistory: deepHistory)
     }
 }
 
-private struct SolarHealthFindingRow: View {
-    let finding: SolarHealthFinding
+/// Compact summary of what went into the health analysis (history span, clear days, weather),
+/// with inline deep-history controls only while more history can be or is being loaded.
+private struct SolarHistoryAnalyzedRow: View {
+    let report: SolarHealthReport
+    let healthResult: SolarHealthResult?
+    let deepHistory: SiteDeepHistoryModel?
+
+    @Environment(\.reconnectTesla) private var reconnectTesla
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(finding.title)
-                .font(.subheadline.weight(.semibold))
-            Text(finding.detail)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("\(finding.confidence.label) · \(finding.clearDays) clear days")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        let presentation = deepHistory.map { SiteDeepHistoryPresentation(status: $0.status) }
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("History analyzed", value: headlineValue)
+            if !detailParts.isEmpty {
+                Text(detailParts.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let deepHistory, let presentation, presentation.action != nil || deepHistory.status.isLoading {
+                deepHistoryActionView(model: deepHistory, presentation: presentation)
+            }
         }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
+    }
+
+    private var headlineValue: String {
+        let resultDays = healthResult?.years.reduce(0) { $0 + $1.clearDays }
+        let clearCount = resultDays ?? report.dailyRatios.count
+        return "\(clearCount) clear \(clearCount == 1 ? "day" : "days")"
+    }
+
+    private var detailParts: [String] {
+        var parts: [String] = []
+        if let back = deepHistory?.status.loadedBack {
+            parts.append("Back to \(SiteDeepHistoryPresentation.format(back))")
+        } else if !report.changeOverTime.years.isEmpty {
+            let count = report.changeOverTime.years.count
+            parts.append("\(count) \(count == 1 ? "year" : "years")")
+        }
+        if let days = deepHistory?.status.daysLoaded, days > 0 {
+            parts.append("\(days) days loaded")
+        }
+        if let weather = healthResult?.weather, weather.hasPrecipitation {
+            let precipDays = weather.rainDays.union(weather.snowDays).count
+            parts.append("\(precipDays) rain/snow \(precipDays == 1 ? "day" : "days")")
+        }
+        return parts
+    }
+
+    @ViewBuilder
+    private func deepHistoryActionView(
+        model: SiteDeepHistoryModel,
+        presentation: SiteDeepHistoryPresentation
+    ) -> some View {
+        if model.status.isLoading {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(presentation.statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if let action = presentation.action {
+            actionButton(action, model: model)
+                .font(.subheadline.weight(.medium))
+        }
+    }
+
+    @ViewBuilder
+    private func actionButton(_ action: SiteDeepHistoryPresentation.Action, model: SiteDeepHistoryModel) -> some View {
+        switch action {
+        case .load:
+            Button("Load More History") { model.start() }
+        case .continueLoading:
+            Button("Continue Loading") { model.start() }
+        case .stop:
+            Button("Stop") { Task { await model.stop() } }
+        case .reconnectTesla:
+            if let reconnectTesla {
+                Button("Reconnect Tesla") { Task { await reconnectTesla.perform() } }
+            }
+        }
     }
 }
