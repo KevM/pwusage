@@ -127,6 +127,50 @@ struct BillPricingParityTests {
         try Self.assertMatchesExpected(computed: computed, expected: fixture.expected.currentBill)
     }
 
+    @Test(arguments: BillPricingFixture.allNames)
+    func outlookPointsMatchServer(name: String) throws {
+        let rawFixture = try BillPricingFixture.load(name)
+        let timeline = name == "uncovered-window"
+            ? Self.withGapFrom13To14(rawFixture.timeline)
+            : rawFixture.timeline
+        let resolver = try #require(RatePeriodResolver(timeline: timeline))
+        let siteZone = try #require(TimeZone(identifier: timeline.timezone))
+        let cycle = BillingCycle.current(
+            billingDay: rawFixture.billingDay,
+            now: rawFixture.now,
+            timeZone: siteZone
+        )
+        let expected = try #require(rawFixture.expected.outlook)
+        let history = try #require(BillOutlookHistoryBuilder.build(.init(
+            days: rawFixture.days.map { $0.asEnergyFlowDay() },
+            cycleStart: cycle.start,
+            cycleEnd: cycle.end,
+            now: rawFixture.now,
+            resolver: resolver,
+            timeZone: siteZone
+        )))
+
+        #expect(history.observedThrough == expected.observedThrough)
+        #expect(history.complete == expected.complete)
+        #expect(history.points.count == expected.points.count)
+
+        for (actualPoint, expectedPoint) in zip(history.points, expected.points) {
+            #expect(actualPoint.date == expectedPoint.date)
+            #expect(actualPoint.complete == expectedPoint.complete)
+            #expect(abs(actualPoint.estimatedCost - expectedPoint.estimatedCost) <= 1e-9)
+            #expect(actualPoint.buckets.count == expectedPoint.buckets.count)
+            for expectedBucket in expectedPoint.buckets {
+                let actualBucket = try #require(actualPoint.buckets.first {
+                    $0.tariffName == expectedBucket.tariffName
+                        && $0.periodName == expectedBucket.periodName
+                        && $0.buyRate == expectedBucket.buyRate
+                        && $0.sellRate == expectedBucket.sellRate
+                })
+                #expect(abs(actualBucket.netGridKwh - expectedBucket.netGridKwh) <= 1e-9)
+            }
+        }
+    }
+
     private static func withGapFrom13To14(_ timeline: SiteTariffsTimelineResponse) -> SiteTariffsTimelineResponse {
         let trimWindow: (TimePeriodWindowInput) -> TimePeriodWindowInput = { window in
             guard window.fromHour == 0, window.toHour == 14 else { return window }

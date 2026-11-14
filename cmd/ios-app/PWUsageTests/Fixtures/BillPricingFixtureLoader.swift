@@ -33,6 +33,13 @@ struct BillPricingFixture: Decodable {
 
     struct Expected: Decodable {
         let currentBill: CurrentBill
+        let outlook: Outlook?
+    }
+
+    struct Outlook: Decodable {
+        let points: [BillOutlookPoint]
+        let observedThrough: Date
+        let complete: Bool
     }
 
     struct CurrentBill: Decodable {
