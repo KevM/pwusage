@@ -11,8 +11,9 @@
 -- were deleted in between.
 --
 -- Kept: the last 45 days (the window scripts/prune-dev-copy.sql keeps) for the
--- 5 sites with the most recent live status refresh, plus Harrison, the site used
--- for live tests. A day record is kept when its day starts inside the window.
+-- 5 sites with the most recent live status refresh, plus full history for
+-- Harrison (the site used for live tests). A day record is kept when its day
+-- starts inside the window (or belongs to Harrison).
 -- Columns come out in table order (SELECT *), which matches dev because dev's
 -- schema is restored from the same prod dump.
 \set ON_ERROR_STOP on
@@ -23,8 +24,8 @@ BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 COPY (
     SELECT a.*
     FROM public."EnergyDayArchive" a
-    WHERE a.day_start >= now() - interval '45 days'
-      AND a.site_id IN (:dev_sites)
+    WHERE a.site_id IN (:dev_sites)
+      AND (a.site_id = '2252268092126997' OR a.day_start >= now() - interval '45 days')
     ORDER BY a.site_id, a.day_start
 ) TO STDOUT WITH (FORMAT csv, HEADER true) \g dev-day-archive.csv
 
@@ -32,8 +33,8 @@ COPY (
     SELECT s.*
     FROM public."EnergyDaySummary" s
     JOIN public."EnergyDayArchive" a USING (site_id, day_start, revision)
-    WHERE a.day_start >= now() - interval '45 days'
-      AND a.site_id IN (:dev_sites)
+    WHERE a.site_id IN (:dev_sites)
+      AND (a.site_id = '2252268092126997' OR a.day_start >= now() - interval '45 days')
     ORDER BY s.site_id, s.day_start
 ) TO STDOUT WITH (FORMAT csv, HEADER true) \g dev-day-summary.csv
 
