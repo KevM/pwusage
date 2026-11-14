@@ -6,14 +6,7 @@ extension DashboardCoordinator {
             if generation == siteGeneration { billTask = nil }
         }
         do {
-            if billPricingMode == .local,
-               let scope = accountScopeID.map({ SolarForecastSiteScope(accountScopeID: $0, siteID: siteID) }),
-               let cachedSite = bill.response?.site,
-               case .ready(let localResponse) = await buildLocalBill(
-                   scope: scope, site: cachedSite, generation: generation
-               ) {
-                guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
-                publishBillResponse(localResponse)
+            if await tryPerformLocalBill(siteID: siteID, generation: generation) {
                 return
             }
             let response: MobileBillResponse
@@ -105,6 +98,41 @@ extension DashboardCoordinator {
             scope: scope,
             now: now()
         )) ?? .notReady(.flowsMissing)
+    }
+
+    private func tryPerformLocalBill(siteID: String, generation: Int) async -> Bool {
+        guard billPricingMode == .local,
+              let accountScopeID,
+              let cachedSite = bill.response?.site else { return false }
+        let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
+        await refreshLocalFlows(scope: scope, site: cachedSite, generation: generation)
+        guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return true }
+        guard case .ready(let localResponse) = await buildLocalBill(
+            scope: scope, site: cachedSite, generation: generation
+        ) else { return false }
+        guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return true }
+        publishBillResponse(localResponse)
+        return true
+    }
+
+    private func refreshLocalFlows(
+        scope: SolarForecastSiteScope,
+        site: MobileBillResponse.Site,
+        generation: Int
+    ) async {
+        guard generation == siteGeneration,
+              canRequestAccountData,
+              let solarAPI = api as? any MobileSolarHistoryDataAPI,
+              let siteZone = TimeZone(identifier: site.timezone) else { return }
+        let currentNow = now()
+        let cycle = BillingCycle.current(billingDay: billingDay, now: currentNow, timeZone: siteZone)
+        let cycleStartDay = SolarHistoryStore.dayString(cycle.start, timeZone: siteZone)
+        _ = try? await history.syncFlows(
+            scope: scope,
+            api: solarAPI,
+            cycleStartDay: cycleStartDay,
+            now: currentNow
+        )
     }
 
     private func syncFlowsIfNeeded(
