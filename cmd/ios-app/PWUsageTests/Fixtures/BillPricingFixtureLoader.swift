@@ -34,6 +34,7 @@ struct BillPricingFixture: Decodable {
     struct Expected: Decodable {
         let currentBill: CurrentBill
         let outlook: Outlook?
+        let loadTiming: LoadTiming?
     }
 
     struct Outlook: Decodable {

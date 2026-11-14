@@ -33,7 +33,23 @@ enum BillOutlookHistoryBuilder {
             return nil
         }
         let cutoff = min(lastTimestamp.addingTimeInterval(slotSeconds), input.cycleEnd)
+        let points = buildPoints(input: input, cutoff: cutoff)
+        let tariffTimeline = buildTariffTimeline(
+            resolver: input.resolver,
+            from: cutoff,
+            to: input.cycleEnd,
+            requiredEnd: min(input.now, input.cycleEnd)
+        )
 
+        return BillOutlookHistory(
+            points: points,
+            observedThrough: cutoff,
+            complete: points.last?.complete ?? false,
+            tariffTimeline: tariffTimeline
+        )
+    }
+
+    private static func buildPoints(input: Input, cutoff: Date) -> [BillOutlookPoint] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = input.timeZone
 
@@ -58,27 +74,45 @@ enum BillOutlookHistoryBuilder {
                 to: through,
                 resolver: input.resolver
             )
-            let dayComplete = isWindowComplete(days: overlappingDays, from: dayStart, to: through)
-            runningComplete = runningComplete && dayComplete
+            runningComplete = runningComplete && isWindowComplete(days: overlappingDays, from: dayStart, to: through)
 
             merge(dayBuckets, into: &cumulativeBuckets, indexByKey: &bucketIndexByKey)
-            let snapshotBuckets = cumulativeBuckets
             points.append(BillOutlookPoint(
                 date: through,
-                buckets: snapshotBuckets,
+                buckets: cumulativeBuckets,
                 complete: runningComplete,
-                estimatedCost: BillOutlook.cost(snapshotBuckets),
-                periods: summarizePeriods(snapshotBuckets)
+                estimatedCost: BillOutlook.cost(cumulativeBuckets),
+                periods: summarizePeriods(cumulativeBuckets)
             ))
             dayStart = next
         }
+        return points
+    }
 
-        return BillOutlookHistory(
-            points: points,
-            observedThrough: cutoff,
-            complete: points.last?.complete ?? false,
-            tariffTimeline: []
-        )
+    private static func buildTariffTimeline(
+        resolver: RatePeriodResolver,
+        from start: Date,
+        to end: Date,
+        requiredEnd: Date
+    ) -> [BillOutlookTariff] {
+        LoadTimingTimelineBuilder.segments(
+            resolver: resolver,
+            from: start,
+            to: end,
+            requiredEnd: requiredEnd
+        ).map { segment in
+            let resolved = resolver.period(at: segment.start)
+            return BillOutlookTariff(
+                start: segment.start,
+                end: segment.end,
+                periodKey: segment.periodKey,
+                name: segment.name,
+                buyRate: segment.buyRate,
+                sellRate: segment.sellRate,
+                tariffName: resolved.planName,
+                periodName: resolved.periodName
+            )
+        }
     }
 
     private static func lastObservedSlotStart(

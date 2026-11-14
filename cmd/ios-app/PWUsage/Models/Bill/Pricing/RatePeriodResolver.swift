@@ -15,9 +15,38 @@ struct ResolvedRatePeriod: Equatable, Sendable {
 }
 
 struct RatePeriodResolver: Sendable {
+    struct ScheduleMatch: Equatable, Sendable {
+        let period: TariffPeriodDTO
+        let season: TariffSeasonInput
+        let window: TimePeriodWindowInput
+        let seasonIndex: Int
+        let isWeekend: Bool
+        let windowIndex: Int
+
+        var windowIdentity: WindowIdentity {
+            WindowIdentity(
+                periodId: period.periodId,
+                seasonIndex: seasonIndex,
+                isWeekend: isWeekend,
+                windowIndex: windowIndex
+            )
+        }
+    }
+
+    struct WindowIdentity: Hashable, Sendable {
+        let periodId: Int
+        let seasonIndex: Int
+        let isWeekend: Bool
+        let windowIndex: Int
+    }
+
     private let periods: [TariffPeriodDTO]
     private let holidayDates: Set<String>
     private let calendar: Calendar
+
+    var siteTimeZone: TimeZone {
+        calendar.timeZone
+    }
 
     init?(timeline: SiteTariffsTimelineResponse) {
         guard let timeZone = TimeZone(identifier: timeline.timezone) else { return nil }
@@ -40,6 +69,11 @@ struct RatePeriodResolver: Sendable {
     }
 
     func match(at instant: Date) -> ActiveTariffPeriodMatch? {
+        guard let found = scheduleMatch(at: instant) else { return nil }
+        return ActiveTariffPeriodMatch(period: found.period, season: found.season, window: found.window)
+    }
+
+    func scheduleMatch(at instant: Date) -> ScheduleMatch? {
         let comps = calendar.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: instant)
         guard let year = comps.year, let month = comps.month, let day = comps.day,
               let weekday = comps.weekday, let hour = comps.hour, let minute = comps.minute else {
@@ -47,18 +81,41 @@ struct RatePeriodResolver: Sendable {
         }
         let today = String(format: "%04d-%02d-%02d", year, month, day)
         guard let period = period(on: today) else { return nil }
-        guard let season = period.seasons.first(where: {
+        guard let seasonIndex = period.seasons.firstIndex(where: {
             Self.seasonMatches(month: month, day: day, season: $0)
         }) else {
             return nil
         }
+        let season = period.seasons[seasonIndex]
         let isWeekend = weekday == 1 || weekday == 7 || holidayDates.contains(today)
         let windows = isWeekend ? season.weekendPeriods : season.weekdayPeriods
         let minuteOfDay = hour * 60 + minute
-        guard let window = windows.first(where: { Self.windowMatches(minuteOfDay: minuteOfDay, window: $0) }) else {
+        guard let windowIndex = windows.firstIndex(where: {
+            Self.windowMatches(minuteOfDay: minuteOfDay, window: $0)
+        }) else {
             return nil
         }
-        return ActiveTariffPeriodMatch(period: period, season: season, window: window)
+        return ScheduleMatch(
+            period: period,
+            season: season,
+            window: windows[windowIndex],
+            seasonIndex: seasonIndex,
+            isWeekend: isWeekend,
+            windowIndex: windowIndex
+        )
+    }
+
+    func boundaryMinutes() -> [Int] {
+        var minutes: Set<Int> = [0]
+        for period in periods {
+            for season in period.seasons {
+                for window in season.weekdayPeriods + season.weekendPeriods {
+                    minutes.insert((window.fromHour * 60 + window.fromMinute) % 1440)
+                    minutes.insert((window.toHour * 60 + window.toMinute) % 1440)
+                }
+            }
+        }
+        return minutes.sorted()
     }
 
     /// The plan the server prices `day` with: the one covering it, else (in a gap) the nearest

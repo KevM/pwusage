@@ -171,6 +171,168 @@ struct BillPricingParityTests {
         }
     }
 
+    @Test(arguments: BillPricingFixture.allNames)
+    func loadTimingMatchesServer(name: String) throws {
+        let rawFixture = try BillPricingFixture.load(name)
+        let timeline = name == "uncovered-window"
+            ? Self.withGapFrom13To14(rawFixture.timeline)
+            : rawFixture.timeline
+        let resolver = try #require(RatePeriodResolver(timeline: timeline))
+        let siteZone = try #require(TimeZone(identifier: timeline.timezone))
+        let cycle = BillingCycle.current(
+            billingDay: rawFixture.billingDay,
+            now: rawFixture.now,
+            timeZone: siteZone
+        )
+        let flowDays = rawFixture.days.map { $0.asEnergyFlowDay() }
+        let buckets = BillUsageAggregator.buckets(
+            days: flowDays,
+            from: cycle.start,
+            to: cycle.end,
+            resolver: resolver
+        )
+        let costs = BillPricing.costs(buckets)
+        let actual = LoadTimingCalculator.compute(
+            buckets: buckets,
+            costs: costs,
+            resolver: resolver,
+            now: rawFixture.now,
+            timeZone: siteZone
+        )
+
+        guard let expected = rawFixture.expected.loadTiming else {
+            #expect(actual == nil)
+            return
+        }
+        let actualTiming = try #require(actual)
+        #expect(actualTiming.hasTariff == expected.hasTariff)
+        #expect(actualTiming.hasCycleData == expected.hasCycleData)
+        #expect(actualTiming.activeIsCheapest == expected.activeIsCheapest)
+        #expect(actualTiming.nextCheaperPhrase == expected.nextCheaperPhrase)
+        #expect(actualTiming.nextStartPhraseByKey == expected.nextStartPhraseByKey)
+        if let expectedNextCheaper = expected.nextCheaper {
+            let actualNextCheaper = try #require(actualTiming.nextCheaper)
+            #expect(actualNextCheaper.name == expectedNextCheaper.name)
+            #expect(actualNextCheaper.phrase == expectedNextCheaper.phrase)
+            #expect(abs(actualNextCheaper.marginalCost - expectedNextCheaper.marginalCost) <= 1e-9)
+        } else {
+            #expect(actualTiming.nextCheaper == nil)
+        }
+        try Self.assertPeriodsMatch(actual: actualTiming.periods, expected: expected.periods)
+        try Self.assertPeriodsMatch(actual: actualTiming.pricingPeriods, expected: expected.pricingPeriods)
+    }
+
+    @Test(arguments: BillPricingFixture.allNames)
+    func outlookTariffTimelineMatchesServer(name: String) throws {
+        let rawFixture = try BillPricingFixture.load(name)
+        let timeline = name == "uncovered-window"
+            ? Self.withGapFrom13To14(rawFixture.timeline)
+            : rawFixture.timeline
+        let resolver = try #require(RatePeriodResolver(timeline: timeline))
+        let siteZone = try #require(TimeZone(identifier: timeline.timezone))
+        let cycle = BillingCycle.current(
+            billingDay: rawFixture.billingDay,
+            now: rawFixture.now,
+            timeZone: siteZone
+        )
+        let history = BillOutlookHistoryBuilder.build(.init(
+            days: rawFixture.days.map { $0.asEnergyFlowDay() },
+            cycleStart: cycle.start,
+            cycleEnd: cycle.end,
+            now: rawFixture.now,
+            resolver: resolver,
+            timeZone: siteZone
+        ))
+        guard let expectedLoadTiming = rawFixture.expected.loadTiming else {
+            #expect(history?.tariffTimeline ?? [] == [])
+            return
+        }
+        let builtHistory = try #require(history)
+        if name == "uncovered-window" {
+            // Outlook uses requiredEnd = min(now, cycleEnd), so coverage stops at the 13:00 gap (>= now).
+            #expect(builtHistory.tariffTimeline.count == 1)
+            #expect(builtHistory.tariffTimeline[0].start == builtHistory.observedThrough)
+            let sevenDaysOut = rawFixture.now.addingTimeInterval(7 * 24 * 3600)
+            let loadTimingSegments = LoadTimingTimelineBuilder.segments(
+                resolver: resolver,
+                from: builtHistory.observedThrough,
+                to: max(sevenDaysOut, cycle.end),
+                requiredEnd: sevenDaysOut
+            )
+            #expect(loadTimingSegments.isEmpty)
+            return
+        }
+        let expectedSegments = Self.sliceTimeline(
+            expectedLoadTiming.tariffTimeline,
+            from: builtHistory.observedThrough,
+            to: cycle.end
+        )
+        #expect(builtHistory.tariffTimeline.count == expectedSegments.count)
+        Self.assertTimelineSegmentsMatch(actual: builtHistory.tariffTimeline, expected: expectedSegments)
+    }
+
+    private static func assertTimelineSegmentsMatch(
+        actual: [BillOutlookTariff],
+        expected: [LoadTimingTariffSegment]
+    ) {
+        for (actualSegment, expectedSegment) in zip(actual, expected) {
+            #expect(actualSegment.start == expectedSegment.start)
+            #expect(actualSegment.end == expectedSegment.end)
+            #expect(actualSegment.periodKey == expectedSegment.periodKey)
+            #expect(actualSegment.name == expectedSegment.name)
+            #expect(abs(actualSegment.buyRate - expectedSegment.buyRate) <= 1e-9)
+            #expect(abs(actualSegment.sellRate - expectedSegment.sellRate) <= 1e-9)
+            #expect(actualSegment.periodName == expectedSegment.name)
+        }
+    }
+
+    private static func assertPeriodsMatch(
+        actual: [LoadTimingPeriod],
+        expected: [LoadTimingPeriod]
+    ) throws {
+        #expect(actual.count == expected.count)
+        for expectedPeriod in expected {
+            let actualPeriod = try #require(
+                actual.first { $0.name == expectedPeriod.name },
+                "Missing period \(expectedPeriod.name)"
+            )
+            #expect(actualPeriod.basis == expectedPeriod.basis)
+            #expect(actualPeriod.isActive == expectedPeriod.isActive)
+            #expect(actualPeriod.nextStartPhrase == expectedPeriod.nextStartPhrase)
+            #expect(abs(actualPeriod.cycleNetExportKwh - expectedPeriod.cycleNetExportKwh) <= 1e-9)
+            #expect(abs(actualPeriod.buyRate - expectedPeriod.buyRate) <= 1e-9)
+            #expect(abs(actualPeriod.sellRate - expectedPeriod.sellRate) <= 1e-9)
+            switch (actualPeriod.marginalCost, expectedPeriod.marginalCost) {
+            case let (lhs?, rhs?):
+                #expect(abs(lhs - rhs) <= 1e-9)
+            case (nil, nil):
+                break
+            default:
+                Issue.record("Mismatched marginalCost for \(expectedPeriod.name)")
+            }
+        }
+    }
+
+    private static func sliceTimeline(
+        _ segments: [LoadTimingTariffSegment],
+        from start: Date,
+        to end: Date
+    ) -> [LoadTimingTariffSegment] {
+        segments.compactMap { segment in
+            let clippedStart = max(segment.start, start)
+            let clippedEnd = min(segment.end, end)
+            guard clippedStart < clippedEnd else { return nil }
+            return LoadTimingTariffSegment(
+                start: clippedStart,
+                end: clippedEnd,
+                periodKey: segment.periodKey,
+                name: segment.name,
+                buyRate: segment.buyRate,
+                sellRate: segment.sellRate
+            )
+        }
+    }
+
     private static func withGapFrom13To14(_ timeline: SiteTariffsTimelineResponse) -> SiteTariffsTimelineResponse {
         let trimWindow: (TimePeriodWindowInput) -> TimePeriodWindowInput = { window in
             guard window.fromHour == 0, window.toHour == 14 else { return window }
