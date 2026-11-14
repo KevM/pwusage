@@ -99,6 +99,7 @@ final class DashboardCoordinator: ObservableObject {
     let forecastService: (any SolarForecastServing)?
     let history: SolarHistoryStore
     let records: SolarLayoutRecordStore
+    let ratePlanTimelines: RatePlanTimelineStore
     let runner: SolarLayoutDetectionRunner?
     var historyEnabled = true
     var layoutInvalidated = false
@@ -179,6 +180,7 @@ final class DashboardCoordinator: ObservableObject {
         forecastService: (any SolarForecastServing)? = nil,
         history: SolarHistoryStore = .shared,
         records: SolarLayoutRecordStore = .shared,
+        ratePlanTimelines: RatePlanTimelineStore = .shared,
         runner: SolarLayoutDetectionRunner? = nil
     ) {
         selectedSiteID = siteID
@@ -192,6 +194,7 @@ final class DashboardCoordinator: ObservableObject {
         self.forecastService = forecastService
         self.history = history
         self.records = records
+        self.ratePlanTimelines = ratePlanTimelines
         self.runner = runner
         configureRunner()
         if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }

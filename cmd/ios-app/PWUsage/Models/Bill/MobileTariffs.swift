@@ -215,9 +215,15 @@ struct TariffPlanPatchRequest: Encodable, Equatable, Sendable {
     }
 }
 
+enum TimelineFetch: Equatable, Sendable {
+    case unchanged
+    case changed(SiteTariffsTimelineResponse, etag: String?)
+}
+
 @MainActor
 protocol MobileTariffDataAPI: Sendable {
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse
+    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch
     func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse
     func createTariffPeriod(
         siteID: String,
@@ -230,4 +236,10 @@ protocol MobileTariffDataAPI: Sendable {
     ) async throws -> SiteTariffsTimelineResponse
     func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse
+}
+
+extension MobileTariffDataAPI {
+    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
+        .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
+    }
 }

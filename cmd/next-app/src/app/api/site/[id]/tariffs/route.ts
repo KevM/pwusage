@@ -7,6 +7,7 @@ import {
   REATTRIBUTION_AFTER_MAX_TIME_MS,
   runSiteReattribution,
 } from '@/lib/tariff-reattribution';
+import { conditionalTimelineResponse, jsonWithETag } from '@/lib/tariff-etag';
 import { TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
 
-export function GET(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   return observeRoute('/api/site/[id]/tariffs', async () => {
     const { id: siteId } = await context.params;
     setLogContext({ siteId });
@@ -25,12 +26,12 @@ export function GET(_req: NextRequest, context: { params: Promise<{ id: string }
     }
     try {
       const timeline = await new TariffTimelineRepo().getTimeline(siteId, user.id);
-      return json(timeline);
+      return conditionalTimelineResponse(req, timeline);
     } catch (error) {
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);
       return json({ error: 'Could not load rate plans.', ...errorFields(error) }, 500);
     }
-  })(_req);
+  })(req);
 }
 
 export function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -58,7 +59,7 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
           flushLogEvents();
         }
       });
-      return json(timeline, 201);
+      return jsonWithETag(timeline, 201);
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);

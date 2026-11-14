@@ -48,6 +48,43 @@ extension PWUsageAPITests {
         #expect(components.fragment == nil)
     }
 
+    @Test("Tariff timeline sends If-None-Match and handles 304 vs 200 ETag")
+    func tariffTimelineRevalidatesWithETag() async throws {
+        var sentIfNoneMatch: [String?] = []
+        StubURLProtocol.requestHandler = { request in
+            let url = try #require(request.url)
+            sentIfNoneMatch.append(request.value(forHTTPHeaderField: "If-None-Match"))
+            if request.value(forHTTPHeaderField: "If-None-Match") == "\"etag-1\"" {
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 304,
+                    httpVersion: nil,
+                    headerFields: ["ETag": "\"etag-1\""]
+                ))
+                return (response, Data())
+            }
+            let response = try #require(HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["ETag": "\"etag-1\""]
+            ))
+            return (response, Data(TariffSheetTests.fixture.utf8))
+        }
+
+        let first = try await api.fetchTariffTimeline(siteID: "a", knownETag: nil)
+        guard case .changed(let timeline, let etag) = first else {
+            Issue.record("Expected .changed on 200")
+            return
+        }
+        #expect(timeline.siteId == "a")
+        #expect(etag == "\"etag-1\"")
+
+        let second = try await api.fetchTariffTimeline(siteID: "a", knownETag: etag)
+        #expect(second == .unchanged)
+        #expect(sentIfNoneMatch == [nil, "\"etag-1\""])
+    }
+
     @Test("Tariff mutations and refresh target expected endpoints and methods")
     func tariffMutationsTargetExpectedEndpoints() async throws {
         var calls: [(String, String)] = []

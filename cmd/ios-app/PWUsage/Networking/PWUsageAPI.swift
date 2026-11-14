@@ -287,13 +287,13 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         return try check(http, data: data)
     }
 
-    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response): (Data, URLResponse) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
         return (data, http)
     }
 
-    private func check(_ http: HTTPURLResponse, data: Data) throws -> Data {
+    func check(_ http: HTTPURLResponse, data: Data) throws -> Data {
         guard (200 ..< 300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw PWUsageAPIError.signInRequired }
             if (500 ..< 600).contains(http.statusCode) {
