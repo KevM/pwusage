@@ -5,7 +5,7 @@ enum BillPricingMode: String, Sendable {
     case shadow
     case local
 
-    static let defaultMode: Self = .shadow
+    static let defaultMode: Self = .local
 
     init(configuration: AppConfiguration, defaults: UserDefaults = .standard) {
         let raw = configuration.billPricingModeRaw

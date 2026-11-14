@@ -209,61 +209,109 @@ struct DashboardCoordinatorBillShadowTests {
         #expect(coordinator.bill.response?.currentBill.estimatedCost == 999.99)
         try await staysTrue { api.shadowReports.isEmpty && api.timelineFetchCount == 0 }
     }
-}
 
-@MainActor
-private final class BillShadowAPISpy: MobileDashboardDataAPI, MobileTariffDataAPI, MobileBillShadowAPI {
-    let bill: MobileBillResponse
-    let timeline: SiteTariffsTimelineResponse
-    var shadowReports: [BillShadowReport] = []
-    var timelineFetchCount = 0
+    @Test("Local mode prices on device without calling bill-summary")
+    func localModeDoesNotCallBillSummary() async throws {
+        let stores = makeStores()
+        defer { try? FileManager.default.removeItem(at: stores.folder) }
 
-    init(bill: MobileBillResponse, timeline: SiteTariffsTimelineResponse) {
-        self.bill = bill
-        self.timeline = timeline
+        let fixture = try BillPricingFixture.load("single-plan-cycle")
+        try await seedFlows(in: stores.history, fixture: fixture)
+        try await stores.timelines.save(fixture.timeline, etag: "etag-1", scope: scope)
+
+        let api = BillShadowAPISpy(
+            bill: makeServerBill(fixture: fixture, estimatedCost: 999.99),
+            timeline: fixture.timeline
+        )
+        let coordinator = DashboardCoordinator(
+            siteID: fixture.timeline.siteId,
+            api: api,
+            accountScopeID: scope.accountScopeID,
+            now: { fixture.now },
+            timerInterval: nil,
+            history: stores.history,
+            ratePlanTimelines: stores.timelines,
+            billPricingMode: .local
+        )
+        coordinator.billingDay = fixture.billingDay
+
+        await coordinator.refreshBill(trigger: .userGesture)
+
+        #expect(api.billFetchCount == 0)
+        let estimatedCost = try #require(coordinator.bill.response?.currentBill.estimatedCost)
+        let expectedCost = try #require(fixture.expected.currentBill.estimatedCost)
+        #expect(abs(estimatedCost - expectedCost) < 0.001)
+        #expect(coordinator.bill.lastSuccess != nil)
     }
 
-    func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
-        throw PWUsageAPIError.invalidResponse
+    @Test("Local mode falls back to server and syncs flows when not ready")
+    func localModeFallsBackWhenNotReady() async throws {
+        let stores = makeStores()
+        defer { try? FileManager.default.removeItem(at: stores.folder) }
+
+        let fixture = try BillPricingFixture.load("single-plan-cycle")
+        // No saved timeline and no flows: LocalBillBuilder returns .notReady.
+
+        let api = BillShadowAPISpy(
+            bill: makeServerBill(fixture: fixture, estimatedCost: 999.99),
+            timeline: fixture.timeline
+        )
+        let coordinator = DashboardCoordinator(
+            siteID: fixture.timeline.siteId,
+            api: api,
+            accountScopeID: scope.accountScopeID,
+            now: { fixture.now },
+            timerInterval: nil,
+            history: stores.history,
+            ratePlanTimelines: stores.timelines,
+            billPricingMode: .local
+        )
+        coordinator.billingDay = fixture.billingDay
+
+        await coordinator.refreshBill(trigger: .userGesture)
+
+        #expect(api.billFetchCount == 1)
+        #expect(coordinator.bill.response?.currentBill.estimatedCost == 999.99)
+        try await eventually { api.solarHistoryFetchCount > 0 }
     }
 
-    func fetchBill(siteID: String) async throws -> MobileBillResponse {
-        bill
-    }
+    @Test("Local mode reprices when timeline fingerprint changes after revalidation")
+    func localModeRepricesWhenTimelineFingerprintChanges() async throws {
+        let stores = makeStores()
+        defer { try? FileManager.default.removeItem(at: stores.folder) }
 
-    func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
-        timelineFetchCount += 1
-        return timeline
-    }
+        let fixture = try BillPricingFixture.load("single-plan-cycle")
+        try await seedFlows(in: stores.history, fixture: fixture)
+        try await stores.timelines.save(fixture.timeline, etag: "etag-1", scope: scope)
 
-    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
-        timelineFetchCount += 1
-        return .unchanged
-    }
+        let api = BillShadowAPISpy(
+            bill: makeServerBill(fixture: fixture, estimatedCost: 999.99),
+            timeline: fixture.timeline
+        )
+        let coordinator = DashboardCoordinator(
+            siteID: fixture.timeline.siteId,
+            api: api,
+            accountScopeID: scope.accountScopeID,
+            now: { fixture.now },
+            timerInterval: nil,
+            history: stores.history,
+            ratePlanTimelines: stores.timelines,
+            billPricingMode: .local
+        )
+        coordinator.billingDay = fixture.billingDay
 
-    func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse {
-        timeline
-    }
+        await coordinator.refreshBill(trigger: .userGesture)
 
-    func createTariffPeriod(siteID: String, body: TariffPlanWriteRequest) async throws -> SiteTariffsTimelineResponse {
-        timeline
-    }
+        #expect(api.billFetchCount == 0)
+        let initialCost = try #require(coordinator.bill.response?.currentBill.estimatedCost)
 
-    func updateTariffPeriod(
-        siteID: String, periodID: Int, body: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        timeline
-    }
+        let updatedTimeline = timelineWithIncrementedBuyRate(fixture.timeline, delta: 0.10)
+        api.timelineFetchResult = .changed(updatedTimeline, etag: "etag-2")
 
-    func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
-        timeline
-    }
+        _ = try await coordinator.revalidateTariffTimeline()
 
-    func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse {
-        timeline
-    }
-
-    func reportBillShadow(_ report: BillShadowReport) async throws {
-        shadowReports.append(report)
+        #expect(api.billFetchCount == 0)
+        let updatedCost = try #require(coordinator.bill.response?.currentBill.estimatedCost)
+        #expect(updatedCost > initialCost)
     }
 }

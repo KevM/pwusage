@@ -86,13 +86,7 @@ extension DashboardCoordinator {
         site: MobileBillResponse.Site,
         generation: Int
     ) async -> LocalBillResult {
-        var timeline: SiteTariffsTimelineResponse?
-        if api is any MobileTariffDataAPI {
-            timeline = try? await revalidateTariffTimeline()
-        }
-        if timeline == nil {
-            timeline = try? await ratePlanTimelines.saved(scope: scope)?.timeline
-        }
+        let timeline = await resolveTimeline(scope: scope)
         guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else {
             return .notReady(.noTimeline)
         }
@@ -106,19 +100,79 @@ extension DashboardCoordinator {
         )) ?? .notReady(.flowsMissing)
     }
 
+    func repriceLocalBillIfTimelineChanged(
+        _ timeline: SiteTariffsTimelineResponse,
+        scope: SolarForecastSiteScope,
+        generation: Int
+    ) async {
+        guard !isPerformingLocalBill,
+              billPricingMode == .local,
+              bill.response != nil,
+              generation == siteGeneration,
+              canRequestAccountData,
+              !Task.isCancelled else { return }
+        let fingerprint = LocalBillBuilder.timelineFingerprint(timeline)
+        guard lastLocalTimelineFingerprint[scope.siteID] != fingerprint else { return }
+        let site = resolveLocalSite(siteID: scope.siteID, timezone: timeline.timezone)
+        let builder = LocalBillBuilder(store: history)
+        let result = (try? await builder.build(
+            site: site,
+            billingDay: billingDay,
+            timeline: timeline,
+            scope: scope,
+            now: now()
+        )) ?? .notReady(.flowsMissing)
+        guard case .ready(let localResponse) = result else { return }
+        guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
+        lastLocalTimelineFingerprint[scope.siteID] = fingerprint
+        publishBillResponse(localResponse)
+    }
+
     private func tryPerformLocalBill(siteID: String, generation: Int) async -> Bool {
-        guard billPricingMode == .local,
-              let accountScopeID,
-              let cachedSite = bill.response?.site else { return false }
+        guard billPricingMode == .local, let accountScopeID else { return false }
         let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
-        await refreshLocalFlows(scope: scope, site: cachedSite, generation: generation)
+        isPerformingLocalBill = true
+        defer { isPerformingLocalBill = false }
+        guard let timeline = await resolveTimeline(scope: scope) else { return false }
         guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return true }
-        guard case .ready(let localResponse) = await buildLocalBill(
-            scope: scope, site: cachedSite, generation: generation
-        ) else { return false }
+        let site = resolveLocalSite(siteID: siteID, timezone: timeline.timezone)
+        await refreshLocalFlows(scope: scope, site: site, generation: generation)
         guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return true }
+        let builder = LocalBillBuilder(store: history)
+        let result = (try? await builder.build(
+            site: site,
+            billingDay: billingDay,
+            timeline: timeline,
+            scope: scope,
+            now: now()
+        )) ?? .notReady(.flowsMissing)
+        guard case .ready(let localResponse) = result else { return false }
+        guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return true }
+        lastLocalTimelineFingerprint[siteID] = LocalBillBuilder.timelineFingerprint(timeline)
         publishBillResponse(localResponse)
         return true
+    }
+
+    private func resolveTimeline(scope: SolarForecastSiteScope) async -> SiteTariffsTimelineResponse? {
+        var timeline: SiteTariffsTimelineResponse?
+        if api is any MobileTariffDataAPI {
+            timeline = try? await revalidateTariffTimeline()
+        }
+        if timeline == nil {
+            timeline = try? await ratePlanTimelines.saved(scope: scope)?.timeline
+        }
+        return timeline
+    }
+
+    private func resolveLocalSite(siteID: String, timezone: String) -> MobileBillResponse.Site {
+        if let existing = bill.response?.site, existing.id == siteID {
+            return existing
+        }
+        if let liveSite = live.response?.site, liveSite.id == siteID {
+            return MobileBillResponse.Site(id: liveSite.id, name: liveSite.name, timezone: liveSite.timezone)
+        }
+        let name = cache?.snapshot.sites.first { $0.id == siteID }?.name ?? ""
+        return MobileBillResponse.Site(id: siteID, name: name, timezone: timezone)
     }
 
     private func refreshLocalFlows(

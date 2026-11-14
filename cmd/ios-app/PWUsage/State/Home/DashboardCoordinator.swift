@@ -142,6 +142,8 @@ final class DashboardCoordinator: ObservableObject {
     var usesLivePowerEndpoint: Bool { livePowerEndpointAvailable && api is any MobileLivePowerDataAPI }
     var billTask: Task<Void, Never>?
     var flowSyncTask: Task<Void, Never>?
+    var lastLocalTimelineFingerprint: [String: String] = [:]
+    var isPerformingLocalBill = false
     var siteGeneration = 0
     var forecastGeneration = 0
     var billSuccessGeneration = 0
@@ -340,6 +342,7 @@ final class DashboardCoordinator: ObservableObject {
         power.reset()
         bill.response = nil
         bill.isRestored = false
+        lastLocalTimelineFingerprint.removeAll()
         requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
         householdPattern = nil
