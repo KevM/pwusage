@@ -157,6 +157,7 @@ if [[ "$mode" == default && "$#" -eq 0 ]]; then
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutFitTests")
     test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassTests")
     test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassCacheTests")
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthClassifierPassTests")
   fi
 fi
 
