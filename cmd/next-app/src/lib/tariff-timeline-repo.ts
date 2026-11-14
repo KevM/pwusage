@@ -38,7 +38,7 @@ export class TariffNotFoundError extends Error {
   readonly status = 404;
 }
 
-interface PeriodQueryRow {
+export interface PeriodQueryRow {
   period_id: number;
   tariff_id: number;
   effective_from: string;
@@ -49,6 +49,115 @@ interface PeriodQueryRow {
   name: string | null;
   version: number;
   content_hash: string | null;
+}
+
+export interface LatestTeslaTariffSummary {
+  id: number;
+  name: string | null;
+  updated: Date;
+  content_hash: string | null;
+}
+
+export interface BuildSiteTariffsTimelineInput {
+  siteId: string;
+  timezone: string;
+  currency: string;
+  today: string;
+  viewerUserId: string | null;
+  periodRows: PeriodQueryRow[];
+  tariffMap: Map<number, Tariff>;
+  reattribution?: SiteTariffReattributionRow;
+  latestTesla?: LatestTeslaTariffSummary;
+}
+
+/**
+ * Same pick as `resolveTariffForDate`: the plan covering `date`, else (in a gap)
+ * the nearest earlier plan by end date, else (before every plan) the earliest.
+ */
+export function pickActivePeriodForDate<
+  T extends { effectiveFrom: string; effectiveTo: string | null; periodId: number }
+>(periods: T[], date: string): T | undefined {
+  return (
+    periods.find(p => p.effectiveFrom <= date && (p.effectiveTo === null || p.effectiveTo >= date)) ??
+    periods
+      .filter(p => p.effectiveTo !== null && p.effectiveTo < date)
+      .sort((a, b) => (b.effectiveTo as string).localeCompare(a.effectiveTo as string) || b.periodId - a.periodId)[0] ??
+    [...periods].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.periodId - b.periodId)[0]
+  );
+}
+
+/**
+ * Pure DTO mapping from `TariffEffectivePeriod` + `Tariff` rows to
+ * `SiteTariffsTimelineResponse` v2. Shared by `TariffTimelineRepo.getTimeline`
+ * and fixture generation.
+ */
+export function buildSiteTariffsTimelineResponse(
+  input: BuildSiteTariffsTimelineInput
+): SiteTariffsTimelineResponse {
+  const { siteId, timezone, currency, today, viewerUserId, periodRows, tariffMap, reattribution, latestTesla } = input;
+
+  const periods: TariffPeriodDTO[] = periodRows.map(r => {
+    const effectiveFrom = r.effective_from.slice(0, 10);
+    const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
+    const tariff = tariffMap.get(Number(r.tariff_id));
+    return {
+      periodId: Number(r.period_id),
+      tariffId: Number(r.tariff_id),
+      name: r.name || 'Rate Plan',
+      version: Number(r.version ?? 1),
+      source: r.source,
+      effectiveFrom,
+      effectiveTo,
+      isCurrentToday: false,
+      updatedBy: r.updated_by_user_id
+        ? {
+            email: r.updated_by_email ?? null,
+            isCurrentUser: viewerUserId !== null && r.updated_by_user_id === viewerUserId,
+          }
+        : null,
+      seasons: tariff ? decompileTariffToSeasons(tariff) : [],
+    };
+  });
+
+  const activeToday = pickActivePeriodForDate(periods, today);
+  if (activeToday) activeToday.isCurrentToday = true;
+
+  const activeManualRow = periodRows.find(r => {
+    const from = r.effective_from.slice(0, 10);
+    const to = r.effective_to ? r.effective_to.slice(0, 10) : null;
+    return r.source === 'manual' && from <= today && (to === null || to >= today);
+  });
+  const differsFromActiveManual = Boolean(
+    activeManualRow && latestTesla && latestTesla.content_hash !== activeManualRow.content_hash
+  );
+
+  const currentYear = Number(today.slice(0, 4));
+  const startYear = Math.min(
+    currentYear,
+    ...periods.map(p => Number(p.effectiveFrom.slice(0, 4))).filter(Number.isFinite)
+  );
+  const endYear = currentYear + 1;
+  const holidayYears: number[] = [];
+  for (let y = startYear; y <= endYear; y++) {
+    holidayYears.push(y);
+  }
+
+  return {
+    version: 2,
+    siteId,
+    timezone,
+    currency,
+    periods,
+    reattribution: toReattributionDTO(reattribution),
+    holidayDates: holidayYears.flatMap(y => observedHolidayDates(y)),
+    teslaSync: {
+      latestTariffId: latestTesla ? Number(latestTesla.id) : null,
+      latestTariffName: latestTesla?.name ?? null,
+      latestUpdatedAt: toIsoOrNull(latestTesla?.updated),
+      activeManualUpdatedAt: toIsoOrNull(activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id))?.updated : null),
+      differsFromActiveManual,
+    },
+  };
 }
 
 function toReattributionDTO(row: SiteTariffReattributionRow | undefined): ReattributionStatusDTO | null {
@@ -386,82 +495,29 @@ export class TariffTimelineRepo {
     const tariffIds = [...new Set(periodsRes.rows.map(r => Number(r.tariff_id)))];
     const tariffMap = await hydrateTariffs(pool, tariffIds);
 
-    const periods: TariffPeriodDTO[] = periodsRes.rows.map(r => {
-      const effectiveFrom = r.effective_from.slice(0, 10);
-      const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
-      const tariff = tariffMap.get(Number(r.tariff_id));
-      return {
-        periodId: Number(r.period_id),
-        tariffId: Number(r.tariff_id),
-        name: r.name || 'Rate Plan',
-        version: Number(r.version ?? 1),
-        source: r.source,
-        effectiveFrom,
-        effectiveTo,
-        isCurrentToday: false,
-        updatedBy: r.updated_by_user_id
-          ? {
-              email: r.updated_by_email ?? null,
-              isCurrentUser: viewerUserId !== null && r.updated_by_user_id === viewerUserId,
-            }
-          : null,
-        seasons: tariff ? decompileTariffToSeasons(tariff) : [],
-      };
-    });
-
-    // Same pick as resolveTariffForDate: the plan covering today, else (in a gap) the nearest earlier
-    // plan by end date, else (before every plan) the earliest. Keeps "Active today" in step with billing.
-    const activeToday =
-      periods.find(p => p.effectiveFrom <= today && (p.effectiveTo === null || p.effectiveTo >= today)) ??
-      periods
-        .filter(p => p.effectiveTo !== null && p.effectiveTo < today)
-        .sort((a, b) => (b.effectiveTo as string).localeCompare(a.effectiveTo as string) || b.periodId - a.periodId)[0] ??
-      [...periods].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.periodId - b.periodId)[0];
-    if (activeToday) activeToday.isCurrentToday = true;
-
-    const latestTeslaRes = await pool.query<{
-      id: number;
-      name: string | null;
-      updated: Date;
-      content_hash: string | null;
-    }>(
+    const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
       `SELECT id, name, updated, content_hash
        FROM "Tariff"
        WHERE site_id = $1 AND source = 'tesla'
        ORDER BY id DESC LIMIT 1`,
       [siteId]
     );
-    const latestTesla = latestTeslaRes.rows[0];
-    const activeManualRow = periodsRes.rows.find(r => {
-      const from = r.effective_from.slice(0, 10);
-      const to = r.effective_to ? r.effective_to.slice(0, 10) : null;
-      return r.source === 'manual' && from <= today && (to === null || to >= today);
-    });
-    const differsFromActiveManual = Boolean(
-      activeManualRow && latestTesla && latestTesla.content_hash !== activeManualRow.content_hash
-    );
-
     const reattrRes = await pool.query<SiteTariffReattributionRow>(
       'SELECT * FROM "SiteTariffReattribution" WHERE site_id = $1',
       [siteId]
     );
 
-    return {
-      version: 2,
+    return buildSiteTariffsTimelineResponse({
       siteId,
       timezone,
       currency,
-      periods,
-      reattribution: toReattributionDTO(reattrRes.rows[0]),
-      holidayDates: [Number(today.slice(0, 4)), Number(today.slice(0, 4)) + 1].flatMap(y => observedHolidayDates(y)),
-      teslaSync: {
-        latestTariffId: latestTesla ? Number(latestTesla.id) : null,
-        latestTariffName: latestTesla?.name ?? null,
-        latestUpdatedAt: toIsoOrNull(latestTesla?.updated),
-        activeManualUpdatedAt: toIsoOrNull(activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id))?.updated : null),
-        differsFromActiveManual,
-      },
-    };
+      today,
+      viewerUserId,
+      periodRows: periodsRes.rows,
+      tariffMap,
+      reattribution: reattrRes.rows[0],
+      latestTesla: latestTeslaRes.rows[0],
+    });
   }
 
   async createManualPeriod(

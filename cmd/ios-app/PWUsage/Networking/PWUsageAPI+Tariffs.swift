@@ -2,9 +2,24 @@ import Foundation
 
 extension PWUsageAPI {
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
-        let url = try makeSiteURL(siteID: siteID, suffix: "tariffs")
-        let data = try await request(url: url)
-        return try decodeTariffTimeline(data, siteID: siteID)
+        guard case .changed(let timeline, _) = try await fetchTariffTimeline(siteID: siteID, knownETag: nil) else {
+            throw PWUsageAPIError.invalidResponse
+        }
+        return timeline
+    }
+
+    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
+        var req = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "tariffs"))
+        if let knownETag, !knownETag.isEmpty {
+            req.setValue(knownETag, forHTTPHeaderField: "If-None-Match")
+        }
+        let (data, http) = try await send(req)
+        if http.statusCode == 304 {
+            return .unchanged
+        }
+        let verifiedData = try check(http, data: data)
+        let timeline = try decodeTariffTimeline(verifiedData, siteID: siteID)
+        return .changed(timeline, etag: http.value(forHTTPHeaderField: "ETag"))
     }
 
     func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse {

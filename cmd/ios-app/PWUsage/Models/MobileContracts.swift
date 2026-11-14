@@ -76,6 +76,26 @@ struct MobileBillResponse: Codable, Equatable {
         case version, site, currentBill, loadTiming, tariffReattribution, sources, outlook, revision
     }
 
+    init(
+        version: Int,
+        site: Site,
+        currentBill: Bill,
+        loadTiming: LoadTiming?,
+        tariffReattribution: ReattributionStatusDTO?,
+        sources: Sources,
+        outlook: BillOutlookHistory? = nil,
+        revision: String? = nil
+    ) {
+        self.version = version
+        self.site = site
+        self.currentBill = currentBill
+        self.loadTiming = loadTiming
+        self.tariffReattribution = tariffReattribution
+        self.sources = sources
+        self.outlook = outlook
+        self.revision = revision
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .version)

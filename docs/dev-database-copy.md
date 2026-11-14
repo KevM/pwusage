@@ -53,8 +53,10 @@ full copy was downloaded only for most of it to be deleted.
    against prod's row count here. Check such migrations against prod's size
    separately.
 5. **Prunes the copy** (`scripts/prune-dev-copy.sql`): deletes day records
-   (summaries by cascade) older than 45 days, then `VACUUM FULL`s both tables. The slice already covers only 45 days, so this is a safety net. A test
-   checks that the export and the prune use the same interval.
+   (summaries by cascade) older than 45 days for sites other than Harrison, then
+   `VACUUM FULL`s both tables. The slice already covers only 45 days (and full
+   history for Harrison), so this is a safety net. A test checks that the export
+   and the prune use the same interval.
 
 ## What the scrub changes
 

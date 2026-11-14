@@ -32,23 +32,51 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
     let status: Status
     let fetchedAt: Date?
     let solarWh: [Double?]
+    let loadWh: [Double?]
+    let gridWh: [Double?]
+    let batteryWh: [Double?]
+    let batterySoc: [Double?]
 
-    init(day: String, dayStart: Date, status: Status, fetchedAt: Date?, solarWh: [Double?]) {
+    init(
+        day: String,
+        dayStart: Date,
+        status: Status,
+        fetchedAt: Date?,
+        solarWh: [Double?],
+        loadWh: [Double?]? = nil,
+        gridWh: [Double?]? = nil,
+        batteryWh: [Double?]? = nil,
+        batterySoc: [Double?]? = nil
+    ) {
         self.day = day
         self.dayStart = dayStart
         self.status = status
         self.fetchedAt = fetchedAt
         self.solarWh = solarWh
+        self.loadWh = loadWh ?? Array(repeating: nil, count: solarWh.count)
+        self.gridWh = gridWh ?? Array(repeating: nil, count: solarWh.count)
+        self.batteryWh = batteryWh ?? Array(repeating: nil, count: solarWh.count)
+        self.batterySoc = batterySoc ?? Array(repeating: nil, count: solarWh.count)
     }
 
-    private enum CodingKeys: String, CodingKey { case day, dayStart, status, fetchedAt, solarWh }
+    private enum CodingKeys: String, CodingKey {
+        case day, dayStart, status, fetchedAt, solarWh, loadWh, gridWh, batteryWh, batterySoc
+    }
 
     /// Whether every day holds one 5-minute slot per slot of its site-local day (276/288/300 with DST).
     static func slotsMatchDays(_ days: [MobileSolarHistoryDay], timeZone: TimeZone) -> Bool {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         return days.allSatisfy { day in
-            calendar.dateInterval(of: .day, for: day.dayStart)?.duration == Double(day.solarWh.count) * 300
+            guard let duration = calendar.dateInterval(of: .day, for: day.dayStart)?.duration else {
+                return false
+            }
+            let expected = Double(day.solarWh.count) * 300
+            return duration == expected
+                && day.loadWh.count == day.solarWh.count
+                && day.gridWh.count == day.solarWh.count
+                && day.batteryWh.count == day.solarWh.count
+                && day.batterySoc.count == day.solarWh.count
         }
     }
 
@@ -58,11 +86,30 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
         dayStart = try values.decode(Date.self, forKey: .dayStart)
         status = try values.decode(Status.self, forKey: .status)
         fetchedAt = try values.decodeIfPresent(Date.self, forKey: .fetchedAt)
-        solarWh = try values.decode([Double?].self, forKey: .solarWh)
-        guard solarWh.compactMap(\.self).allSatisfy(\.isFinite) else {
+        solarWh = try Self.decodeSeries(from: values, key: .solarWh)
+        loadWh = try Self.decodeSeries(from: values, key: .loadWh)
+        gridWh = try Self.decodeSeries(from: values, key: .gridWh)
+        batteryWh = try Self.decodeSeries(from: values, key: .batteryWh)
+        batterySoc = try Self.decodeSeries(from: values, key: .batterySoc)
+        guard loadWh.count == solarWh.count,
+              gridWh.count == solarWh.count,
+              batteryWh.count == solarWh.count,
+              batterySoc.count == solarWh.count else {
             throw DecodingError.dataCorruptedError(
-                forKey: .solarWh, in: values, debugDescription: "Invalid solar slots")
+                forKey: .solarWh, in: values, debugDescription: "Flow series must match solar slot count")
         }
+    }
+
+    private static func decodeSeries(
+        from values: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) throws -> [Double?] {
+        let series = try values.decode([Double?].self, forKey: key)
+        guard series.compactMap(\.self).allSatisfy(\.isFinite) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key, in: values, debugDescription: "Invalid \(key.rawValue) slots")
+        }
+        return series
     }
 }
 

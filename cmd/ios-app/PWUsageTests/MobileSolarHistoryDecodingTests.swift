@@ -55,7 +55,8 @@ struct MobileSolarHistoryDecodingTests {
     ) throws -> MobileSolarHistoryResponse {
         let slots = Array(repeating: "1", count: slotCount).joined(separator: ",")
         let json = #"{"version":1,"enabled":true,"timeZone":"\#(timeZone)","days":[{"day":"\#(day)","#
-            + #""dayStart":"\#(start)","status":"complete","fetchedAt":"\#(start)","solarWh":[\#(slots)]}]}"#
+            + #""dayStart":"\#(start)","status":"complete","fetchedAt":"\#(start)","solarWh":[\#(slots)],"#
+            + #""loadWh":[\#(slots)],"gridWh":[\#(slots)],"batteryWh":[\#(slots)],"batterySoc":[\#(slots)]}]}"#
         return try MobileContractDecoder.make().decode(MobileSolarHistoryResponse.self, from: Data(json.utf8))
     }
 }

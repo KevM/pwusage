@@ -39,6 +39,10 @@ protocol MobileBatteryHoldDataAPI: Sendable {
     func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult
 }
 
+protocol MobileBillShadowAPI: Sendable {
+    func reportBillShadow(_ report: BillShadowReport) async throws
+}
+
 enum SolarForecastEnhancementState: Equatable {
     case basic
     case loadingWithBasic

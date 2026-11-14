@@ -20,7 +20,7 @@ protocol MobileAuthAPI: Sendable {
     func clearSiteAuthCookie() async
 }
 
-final class PWUsageAPI: MobileAuthAPI, Sendable {
+final class PWUsageAPI: MobileAuthAPI, MobileBillShadowAPI, Sendable {
     private let origin: URL
     /// Not private so tests can pin the session policy the default initializer builds.
     let session: URLSession
@@ -133,6 +133,16 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         do {
             return try JSONDecoder().decode(MobileBillingDay.self, from: data)
         } catch { throw PWUsageAPIError.invalidResponse }
+    }
+
+    func reportBillShadow(_ report: BillShadowReport) async throws {
+        var request = URLRequest(url: try makeURL(path: "/api/mobile/bill-shadow"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        request.httpBody = try encoder.encode(report)
+        _ = try await perform(request)
     }
 
     func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult {
@@ -287,13 +297,13 @@ final class PWUsageAPI: MobileAuthAPI, Sendable {
         return try check(http, data: data)
     }
 
-    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response): (Data, URLResponse) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
         return (data, http)
     }
 
-    private func check(_ http: HTTPURLResponse, data: Data) throws -> Data {
+    func check(_ http: HTTPURLResponse, data: Data) throws -> Data {
         guard (200 ..< 300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw PWUsageAPIError.signInRequired }
             if (500 ..< 600).contains(http.statusCode) {

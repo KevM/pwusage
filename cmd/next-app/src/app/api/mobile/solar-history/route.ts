@@ -4,7 +4,7 @@ import { verifySiteAccess } from '@/lib/auth-checks';
 import { formatSiteDate, parseSiteLocalDateToMidnight } from '@/lib/date-utils';
 import { pool } from '@/lib/db';
 import { Importer, planMissingWindows } from '@/lib/importer';
-import { CompactHistoryStore, type SolarHistoryDay } from '@/lib/prototypes/compact-history-store';
+import { CompactHistoryStore, type EnergyHistoryDay } from '@/lib/prototypes/compact-history-store';
 import { withRequestContext } from '@/lib/request-context';
 import { SiteRepo } from '@/lib/site-repo';
 import { TeslaRateLimitError } from '@/lib/tesla-client';
@@ -50,24 +50,43 @@ function parseInstant(value: string): Date | null {
     return Number.isNaN(ms) ? null : new Date(ms);
 }
 
+const round1 = (value: number): number => Math.round(value * 10) / 10;
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
 /** One slot per 5 minutes from the day start; slots without a sample on the grid stay null. */
-function solarSlots(day: SolarHistoryDay): (number | null)[] {
-    const slots: (number | null)[] = Array(day.expectedSlots).fill(null);
-    for (const { timestamp, solarWh } of day.samples) {
-        const offset = +timestamp - +day.dayStart;
+function flowSlots(day: EnergyHistoryDay): {
+    solarWh: (number | null)[];
+    loadWh: (number | null)[];
+    gridWh: (number | null)[];
+    batteryWh: (number | null)[];
+    batterySoc: (number | null)[];
+} {
+    const empty = (): (number | null)[] => Array<number | null>(day.expectedSlots).fill(null);
+    const solarWh = empty();
+    const loadWh = empty();
+    const gridWh = empty();
+    const batteryWh = empty();
+    const batterySoc = empty();
+    for (const sample of day.samples) {
+        const offset = +sample.timestamp - +day.dayStart;
         if (offset < 0 || offset % SLOT_MS !== 0 || offset / SLOT_MS >= day.expectedSlots) continue;
-        slots[offset / SLOT_MS] = Math.round(solarWh * 10) / 10;
+        const slot = offset / SLOT_MS;
+        solarWh[slot] = round1(sample.solarWh);
+        loadWh[slot] = round2(sample.loadWh);
+        gridWh[slot] = round2(sample.gridWh);
+        batteryWh[slot] = round2(sample.batteryWh);
+        batterySoc[slot] = sample.batterySoc === null ? null : round1(sample.batterySoc);
     }
-    return slots;
+    return { solarWh, loadWh, gridWh, batteryWh, batterySoc };
 }
 
-function dayJson(day: SolarHistoryDay, timeZone: string) {
+function dayJson(day: EnergyHistoryDay, timeZone: string) {
     return {
         day: formatSiteDate(day.dayStart, timeZone),
         dayStart: day.dayStart.toISOString(),
         status: day.status,
         fetchedAt: day.fetchedAt?.toISOString() ?? null,
-        solarWh: solarSlots(day),
+        ...flowSlots(day),
     };
 }
 
@@ -100,7 +119,7 @@ export async function GET(request: Request): Promise<NextResponse> {
             // The window runs through today's open day, which is archived as it fills.
             const start = parseSiteLocalDateToMidnight(from.toString(), timeZone);
             const end = parseSiteLocalDateToMidnight(today.add({ days: 1 }).toString(), timeZone);
-            const rows = await new CompactHistoryStore(pool).readSolarDays(siteId, start, end, changedSince, PAGE_DAYS + 1);
+            const rows = await new CompactHistoryStore(pool).readEnergyDays(siteId, start, end, changedSince, PAGE_DAYS + 1);
             const days = rows.slice(0, PAGE_DAYS).map(day => dayJson(day, timeZone));
             const last = days.at(-1);
             const nextFrom = rows.length > PAGE_DAYS && last ? Temporal.PlainDate.from(last.day).add({ days: 1 }).toString() : null;
@@ -169,7 +188,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                     status = result.complete ? 'complete' : result.totalWindows === 0 ? 'busy' : 'partial';
                 }
             }
-            const rows = await new CompactHistoryStore(pool).readSolarDays(siteId, start, end, null, days);
+            const rows = await new CompactHistoryStore(pool).readEnergyDays(siteId, start, end, null, days);
             return json({ version: 1, enabled: true, timeZone, status, historyStart: historyStart.toString(),
                 days: rows.map(day => dayJson(day, timeZone)) });
         } catch (error) {

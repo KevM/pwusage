@@ -9,7 +9,7 @@ const { verifyAccessMock, siteMock, readDaysMock, boundaryMock, clientMock, ensu
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
 vi.mock('@/lib/site-repo', () => ({ SiteRepo: class { getSite = siteMock; getHistoryBackfillFrom = boundaryMock; } }));
 vi.mock('@/lib/db', () => ({ pool: {} }));
-vi.mock('@/lib/prototypes/compact-history-store', () => ({ CompactHistoryStore: class { readSolarDays = readDaysMock; } }));
+vi.mock('@/lib/prototypes/compact-history-store', () => ({ CompactHistoryStore: class { readSolarDays = readDaysMock; readEnergyDays = readDaysMock; } }));
 vi.mock('@/lib/tesla-client-factory', () => ({ createTeslaClientForSite: clientMock }));
 vi.mock('@/lib/importer', () => ({ Importer: class { ensureDataForRange = ensureMock; }, planMissingWindows: planMissingMock }));
 
@@ -24,8 +24,11 @@ const NO_STORE = 'private, no-store, max-age=0';
 
 /** Site-local midnight of a calendar day, as a UTC instant. */
 const midnight = (date: string) => new Date(Temporal.PlainDate.from(date).toZonedDateTime({ timeZone: TZ }).toInstant().epochMilliseconds);
-const sample = (timestamp: Date, solarWh: number) => ({ timestamp, solarWh });
-const dayRow = (dayStart: Date, samples: { timestamp: Date; solarWh: number }[] = [], overrides: Record<string, unknown> = {}) => ({
+type FlowSample = { timestamp: Date; solarWh: number; loadWh: number; gridWh: number; batteryWh: number; batterySoc: number | null };
+const sample = (timestamp: Date, solarWh: number, flows: Partial<Omit<FlowSample, 'timestamp' | 'solarWh'>> = {}): FlowSample => ({
+    timestamp, solarWh, loadWh: 0, gridWh: 0, batteryWh: 0, batterySoc: null, ...flows,
+});
+const dayRow = (dayStart: Date, samples: FlowSample[] = [], overrides: Record<string, unknown> = {}) => ({
     dayStart, status: 'complete', fetchedAt: new Date('2026-10-27T12:00:00Z'), expectedSlots: 288, samples, ...overrides,
 });
 const get = (query: string) => GET(new Request(`${URL_BASE}?${query}`));
@@ -133,7 +136,7 @@ describe('mobile solar history route', () => {
         expect(body.days).toHaveLength(1);
         expect(body.days[0]).toEqual({
             day: '2026-10-20', dayStart: '2026-10-20T05:00:00.000Z', status: 'complete', fetchedAt: '2026-10-27T12:00:00.000Z',
-            solarWh: expect.any(Array),
+            solarWh: expect.any(Array), loadWh: expect.any(Array), gridWh: expect.any(Array), batteryWh: expect.any(Array), batterySoc: expect.any(Array),
         });
         const { solarWh } = body.days[0];
         expect(solarWh).toHaveLength(288);
@@ -200,6 +203,31 @@ describe('mobile solar history route', () => {
         const body = await (await get('siteId=site-a&from=2026-10-01')).json();
         expect(body.days).toHaveLength(92);
         expect(body.nextFrom).toBeNull();
+    });
+
+    it('GET adds slot-aligned flow series', async () => {
+        const start = midnight('2026-10-20');
+        readDaysMock.mockResolvedValueOnce([dayRow(start, [
+            sample(start, 5.25, { loadWh: 200.126, gridWh: 120.5, batteryWh: -30.334, batterySoc: 80.16 }),
+            sample(new Date(+start + SLOT_MS), 10.5, { loadWh: 10.004, gridWh: -40.25, batteryWh: 15.5, batterySoc: null }),
+        ])]);
+        const day = (await (await get('siteId=site-a&from=2026-10-20')).json()).days[0];
+        expect(day.loadWh).toHaveLength(288);
+        expect(day.gridWh).toHaveLength(288);
+        expect(day.batteryWh).toHaveLength(288);
+        expect(day.batterySoc).toHaveLength(288);
+        expect(day.gridWh[0]).toBe(120.5);
+        expect(day.gridWh[1]).toBe(-40.25);
+        expect(day.loadWh[0]).toBe(200.13);
+        expect(day.loadWh[1]).toBe(10);
+        expect(day.batteryWh[0]).toBe(-30.33);
+        expect(day.batteryWh[1]).toBe(15.5);
+        expect(day.batterySoc[0]).toBe(80.2);
+        expect(day.batterySoc[1]).toBeNull();
+        expect(day.loadWh[2]).toBeNull();
+        expect(day.gridWh[2]).toBeNull();
+        expect(day.batteryWh[2]).toBeNull();
+        expect(day.batterySoc[2]).toBeNull();
     });
 });
 
@@ -352,5 +380,20 @@ describe('mobile solar history fill', () => {
     it('returns 500 on any other failure', async () => {
         ensureMock.mockRejectedValueOnce(new Error('Tesla API Error: 500'));
         expect((await fill(valid)).status).toBe(500);
+    });
+
+    it('POST fill returns flows for filled days', async () => {
+        const start = midnight('2026-10-24');
+        readDaysMock.mockResolvedValueOnce([dayRow(start, [
+            sample(start, 5, { loadWh: 150.25, gridWh: 120.5, batteryWh: -25.25, batterySoc: 65.4 }),
+        ])]);
+        const res = await fill(valid);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.days[0].loadWh[0]).toBe(150.25);
+        expect(body.days[0].gridWh[0]).toBe(120.5);
+        expect(body.days[0].batteryWh[0]).toBe(-25.25);
+        expect(body.days[0].batterySoc[0]).toBe(65.4);
+        expect(body.days[0].loadWh[1]).toBeNull();
     });
 });

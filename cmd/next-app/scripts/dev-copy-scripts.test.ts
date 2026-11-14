@@ -203,14 +203,15 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
                 ('live6', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
                 ('live6', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288),
                 ('live1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
-                ('${PINNED_SITE}', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288);
             INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
         const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', script('scripts/export-dev-energy-data.sql')], { cwd: work });
         expect(result.stdout).toBe('');
         const csvSites = async (file: string) => (await readFile(join(work, file), 'utf8')).trim().split('\n').slice(1).map((line) => line.split(',')[0]);
-        // live1 is not among the 5 most recently live; live6's 50-day-old record is outside the window.
-        expect(await csvSites('dev-day-archive.csv')).toEqual([PINNED_SITE, 'live6']);
-        expect(await csvSites('dev-day-summary.csv')).toEqual([PINNED_SITE, 'live6']);
+        // live1 is not among the 5 most recently live; live6's 50-day-old record is outside the window, while Harrison keeps full history.
+        expect(await csvSites('dev-day-archive.csv')).toEqual([PINNED_SITE, PINNED_SITE, 'live6']);
+        expect(await csvSites('dev-day-summary.csv')).toEqual([PINNED_SITE, PINNED_SITE, 'live6']);
         expect((await readFile(join(work, 'dev-day-archive.csv'), 'utf8')).split('\n')[0] + '\n').toBe(ARCHIVE_HEADER);
     });
 
@@ -246,16 +247,18 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         expect(result.code).not.toBe(0);
     });
 
-    it('prunes day records older than 45 days on a marked dev copy, with their summaries', async () => {
+    it('prunes day records older than 45 days on a marked dev copy, keeping Harrison full history', async () => {
         await target!.query(`${MARK_DEV} DELETE FROM public."EnergyDayArchive";
+            INSERT INTO public."Site" (id) VALUES ('${PINNED_SITE}') ON CONFLICT (id) DO NOTHING;
             INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count) VALUES
                 ('s1', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288),
-                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
+                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288);
             INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
         const result = await psql('scripts/prune-dev-copy.sql');
         expect(result.code, result.out).toBe(0);
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDaySummary"`)).toEqual([{ n: 1 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 2 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDaySummary"`)).toEqual([{ n: 2 }]);
         // The marker survives; the scripts never touch it.
         expect(await rows(`SELECT name FROM pwusage_env.environment`)).toEqual([{ name: 'dev' }]);
     });

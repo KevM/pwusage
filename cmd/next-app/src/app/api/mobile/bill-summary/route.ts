@@ -5,25 +5,15 @@ import { SiteRepo } from '@/lib/site-repo';
 import { verifySiteAccess } from '@/lib/auth-checks';
 import { withRequestContext } from '@/lib/request-context';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
-import { MOBILE_DASHBOARD_CONTRACT_VERSION, type MobileBillPeriod } from '@/lib/mobile-dashboard-contract';
-import { wattsToKilowatts } from '@/lib/energy-utils';
+import { MOBILE_DASHBOARD_CONTRACT_VERSION } from '@/lib/mobile-dashboard-contract';
+import { buildMobileLoadTiming, summarizeBillUsage } from '@/lib/mobile-bill-summary';
 import { Schedule } from '@/lib/schedule';
-import { computeLoadTiming } from '@/lib/load-timing';
 import { buildLoadTimingTimeline } from '@/lib/load-timing-timeline';
 import { matchesMobileBillConfiguration, readCurrentMobileSite, readMobileBillConfiguration, readMobileBillRevision } from '@/lib/mobile-bill-revision';
 import { getSiteReattributionStatus } from '@/lib/tariff-reattribution';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * The tariff timeline is consumed only for forward planning from the balance
- * snapshot. The iOS estimator accepts a balance up to 60 minutes old for its
- * forecast-free (history or flat) card, and 30 minutes with a solar forecast,
- * so the timeline must reach back an hour. A site that last reported months
- * ago would otherwise make this request resolve tariffs across the entire gap
- * between its final sample and now. Clamp the start to that usable window.
- */
-const TIMELINE_LOOKBACK_MS = 60 * 60 * 1000;
 const PRIVATE_RESPONSE = { 'Cache-Control': 'private, no-store' };
 
 export async function GET(request: Request) {
@@ -87,64 +77,18 @@ export async function GET(request: Request) {
                 }
             }
             const usage = billing.value.usage;
-            const estimatedCost = usage.length > 0
-                ? usage.reduce((sum, item) => sum + (item.cost ?? 0), 0)
-                : null;
-            // Match the web bill's grouping across seasonal rates and tariff
-            // versions. Sum the canonical netted costs so historical rates survive.
-            const periodGroups = new Map<string, MobileBillPeriod>();
-            for (const item of usage) {
-                const tariffName = item.tariff?.name || 'Unknown';
-                const periodName = item.touName || 'Unknown';
-                const key = JSON.stringify([tariffName, periodName]);
-                let period = periodGroups.get(key);
-                if (!period) {
-                    period = { tariffName, periodName, netGridKwh: 0, cost: 0 };
-                    periodGroups.set(key, period);
-                }
-                period.netGridKwh += wattsToKilowatts(item.gridUsage);
-                period.cost += item.cost ?? 0;
-            }
-            const periods = Array.from(periodGroups.values());
-            const active = schedule.getTariffPeriod(now);
-            const buyRate = active ? active.schedule.buy_rate ?? active.season.buy_rate : null;
-            const sellRate = active ? active.schedule.sell_rate ?? active.season.sell_rate : null;
-            const hasResolvableSeasonRates = active !== null && (active.season.schedules ?? []).every((period) =>
-                Number.isFinite(period.buy_rate ?? active.season.buy_rate)
-                && Number.isFinite(period.sell_rate ?? active.season.sell_rate)
-            );
-            const hasResolvableActiveRates = hasResolvableSeasonRates
-                && typeof buyRate === 'number' && Number.isFinite(buyRate)
-                && typeof sellRate === 'number' && Number.isFinite(sellRate);
-            const activePeriod = active && hasResolvableActiveRates ? {
-                name: active.schedule.name || 'Standard', buyRate, sellRate,
-            } : null;
-            const loadTiming = billing.status==='complete' && site.tariffs.length > 0 && activePeriod
-                ? computeLoadTiming(schedule, usage, now, site.timezone, activePeriod)
-                : null;
-            // Start the timeline at the balance snapshot the app will project
-            // from, but never further back than the freshness window that
-            // projection requires.
-            const timelineStart = new Date(Math.max(
-                energyDataThrough ? Math.min(energyDataThrough.getTime(), now.getTime()) : now.getTime(),
-                now.getTime() - TIMELINE_LOOKBACK_MS,
-            ));
-            const sevenDaysOut = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-            // An unchanged reply can reuse a timeline made earlier in this
-            // hour. Extend its horizon when the schedule has that coverage.
-            const outlookHorizon = sevenDaysOut.getTime() + (revision ? 60 * 60 * 1000 : 0);
-            const loadTimingWithTimeline = loadTiming
-                ? {
-                    ...loadTiming,
-                    // Reach the bill date so the app can project banks to it;
-                    // never less than the seven days the app always needs.
-                    tariffTimeline: buildLoadTimingTimeline(
-                        schedule,
-                        timelineStart,
-                        new Date(Math.max(outlookHorizon, cycleEnd.getTime())),
-                        sevenDaysOut
-                    ),
-                }
+            const { estimatedCost, periods } = summarizeBillUsage(usage);
+            const loadTimingWithTimeline = billing.status === 'complete'
+                ? buildMobileLoadTiming({
+                    schedule,
+                    usage,
+                    now,
+                    timezone: site.timezone,
+                    cycleEnd,
+                    energyDataThrough,
+                    hasTariffs: site.tariffs.length > 0,
+                    hasRevision: Boolean(revision),
+                })
                 : null;
 
             return NextResponse.json({

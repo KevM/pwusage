@@ -274,27 +274,17 @@ FROM w`,
         ]);
         const usage = EnergyRepo.aggregateUsageByTOU({ ...context, start, priorAggregates: prior.aggregates, todayRaw: raw });
         const last = Math.max(...prior.coverage.flatMap(day => day.last ? [+day.last] : []), ...raw.map(row => +row.timestamp));
-        if (!Number.isFinite(last) || last < +start) return { usage, outlook: null };
-        const cutoff = new Date(Math.min(last + 300_000, +end));
-        const days: BillOutlookDay[] = [{ date: start.toISOString(), buckets: [], complete: true }];
-        for (let day = start; day < cutoff;) {
-            // 36 hours from local midnight always falls on the following local day, including DST.
-            const next = EnergyRepo.getSiteMidnight(new Date(+day + 36 * 3600_000), context.timezone);
-            const through = new Date(Math.min(+next, +cutoff));
-            const aggregates = prior.aggregates.filter(row => row.day >= day && row.day < through);
-            const rows = raw.filter(row => row.timestamp >= day && row.timestamp < through);
-            const coverage = prior.coverage.find(row => row.first && row.first >= day && row.first < through);
-            const expected = Math.round((+through - +day) / 300_000);
-            const count = day < split ? coverage?.count ?? 0 : new Set(rows.map(row => +row.timestamp)).size;
-            const totals = EnergyRepo.aggregateUsageByTOU({ ...context, start, priorAggregates: aggregates, todayRaw: rows });
-            days.push({ date: through.toISOString(), complete: count === expected && expected > 0
-                && (coverage?.maxInteriorGapMs ?? 0) <= 300_000,
-                buckets: totals.map(row => ({ tariffName: row.tariff.name || 'Unknown', periodName: row.touName || 'Unknown',
-                    netGridKwh: row.gridUsage / 1000, buyRate: row.buyRate ?? 0, sellRate: row.sellRate ?? 0 })) });
-            day = next;
-        }
-        const points = buildBillOutlookHistory(days);
-        return { usage, outlook: { points, observedThrough: cutoff.toISOString(), complete: points.at(-1)?.complete ?? false } };
+        const outlook = buildBillOutlook({
+            ...context,
+            start,
+            end,
+            priorAggregates: prior.aggregates,
+            todayRaw: raw,
+            coverage: prior.coverage,
+            split,
+            lastTimestampMs: last,
+        });
+        return { usage, outlook };
     }
 
     /**
@@ -513,4 +503,65 @@ FROM w`,
     async getBucketedEnergyData(siteId: string, start: Date, end: Date, rows?: EnergyData[]): Promise<EnergyData[]> {
         return rows ? bucketEnergyRows(rows) : this.historyReader.getBucketedEnergyData(siteId, start, end);
     }
+}
+
+export interface BuildBillOutlookInputs {
+    siteId: string;
+    start: Date;
+    end: Date;
+    timezone: string;
+    schedule: Schedule;
+    tariffMap: Map<number, Tariff>;
+    scheduleMap: Map<number, TariffSchedule>;
+    priorAggregates: CycleAggregateRow[];
+    todayRaw: EnergyData[];
+    coverage: DailyCoverageStat[];
+    split: Date;
+    lastTimestampMs: number;
+    scheduleForDay?: (day: Date) => Schedule;
+}
+
+/**
+ * Pure day-loop builder for `EnergyRepo.getBillOutlook`. Shared by the repo
+ * and the bill-pricing fixture generator so both produce identical outlook
+ * series.
+ */
+export function buildBillOutlook(inputs: BuildBillOutlookInputs): BillOutlookHistory | null {
+    const {
+        siteId, start, end, timezone, schedule, tariffMap, scheduleMap,
+        priorAggregates, todayRaw, coverage: priorCoverage, split, lastTimestampMs,
+        scheduleForDay,
+    } = inputs;
+    if (!Number.isFinite(lastTimestampMs) || lastTimestampMs < +start) return null;
+    const cutoff = new Date(Math.min(lastTimestampMs + 300_000, +end));
+    const days: BillOutlookDay[] = [{ date: start.toISOString(), buckets: [], complete: true }];
+    for (let day = start; day < cutoff;) {
+        // 36 hours from local midnight always falls on the following local day, including DST.
+        const next = EnergyRepo.getSiteMidnight(new Date(+day + 36 * 3600_000), timezone);
+        const through = new Date(Math.min(+next, +cutoff));
+        const aggregates = priorAggregates.filter(row => row.day >= day && row.day < through);
+        const rows = todayRaw.filter(row => row.timestamp >= day && row.timestamp < through);
+        const coverage = priorCoverage.find(row => row.first && row.first >= day && row.first < through);
+        const expected = Math.round((+through - +day) / 300_000);
+        const count = day < split ? coverage?.count ?? 0 : new Set(rows.map(row => +row.timestamp)).size;
+        const daySchedule = scheduleForDay ? scheduleForDay(day) : schedule;
+        const totals = EnergyRepo.aggregateUsageByTOU({
+            siteId, start, priorAggregates: aggregates, todayRaw: rows,
+            schedule: daySchedule, tariffMap, scheduleMap,
+        });
+        days.push({
+            date: through.toISOString(),
+            complete: count === expected && expected > 0 && (coverage?.maxInteriorGapMs ?? 0) <= 300_000,
+            buckets: totals.map(row => ({
+                tariffName: row.tariff.name || 'Unknown',
+                periodName: row.touName || 'Unknown',
+                netGridKwh: row.gridUsage / 1000,
+                buyRate: row.buyRate ?? 0,
+                sellRate: row.sellRate ?? 0,
+            })),
+        });
+        day = next;
+    }
+    const points = buildBillOutlookHistory(days);
+    return { points, observedThrough: cutoff.toISOString(), complete: points.at(-1)?.complete ?? false };
 }

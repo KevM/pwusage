@@ -9,6 +9,7 @@ import {
   REATTRIBUTION_AFTER_MAX_TIME_MS,
   runSiteReattribution,
 } from '@/lib/tariff-reattribution';
+import { jsonWithETag } from '@/lib/tariff-etag';
 import { TariffValidationError, siteLocalDateString, validateEffectiveDates } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 
@@ -72,7 +73,7 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
         }
       });
       const timeline = await new TariffTimelineRepo().getTimeline(siteId, user.id);
-      return json({ ...timeline, reattribution });
+      return jsonWithETag({ ...timeline, reattribution });
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);
