@@ -174,6 +174,127 @@ struct SolarHistoryStoreFlowsTests {
         #expect(try await history.oldestDayMissingFlows(scope: scope) == nil)
     }
 
+    @Test("syncFlows fetches the current billing cycle before backfilling older days")
+    func syncFlowsFetchesCurrentCycleFirst() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flows-sync-order-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let oldDay = try date("2026-03-01T00:00:00Z")
+        try writeLegacyStore(folder: folder, dayStarts: [oldDay])
+        let history = store(in: folder)
+        let now = try date("2026-10-24T12:00:00Z")
+
+        let api = HistoryAPI(responses: [
+            .enabled(timeZone: utc, days: [try makeFlowDay("2026-10-01")], nextFrom: nil),
+            .enabled(timeZone: utc, days: [try makeFlowDay("2026-03-01")], nextFrom: nil)
+        ])
+
+        let progress = try await history.syncFlows(
+            scope: scope, api: api, cycleStartDay: "2026-10-01", now: now
+        )
+
+        #expect(progress == .complete)
+        let requests = await api.requests
+        #expect(requests.map(\.from) == ["2026-10-01", "2026-03-01"])
+        #expect(requests.allSatisfy { $0.changedSince == nil })
+        #expect(try await history.oldestDayMissingFlows(scope: scope) == nil)
+    }
+
+    @Test("syncFlows resumes from the oldest missing day after an interrupted backfill")
+    func syncFlowsResumesFromOldestMissingDay() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flows-sync-resume-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let dayOne = try date("2026-03-01T00:00:00Z")
+        let dayTwo = try date("2026-03-02T00:00:00Z")
+        try writeLegacyStore(folder: folder, dayStarts: [dayOne, dayTwo])
+        let history = store(in: folder)
+        let now = try date("2026-10-24T12:00:00Z")
+
+        let firstAPI = HistoryAPI(
+            responses: [
+                .enabled(timeZone: utc, days: [try makeFlowDay("2026-10-01")], nextFrom: nil),
+                .enabled(timeZone: utc, days: [try makeFlowDay("2026-03-01")], nextFrom: "2026-03-02")
+            ],
+            failAt: 3
+        )
+        await #expect(throws: HistoryFailure.injected) {
+            try await history.syncFlows(scope: scope, api: firstAPI, cycleStartDay: "2026-10-01", now: now)
+        }
+
+        let reloaded = store(in: folder)
+        #expect(try await reloaded.oldestDayMissingFlows(scope: scope) == "2026-03-02")
+
+        let secondAPI = HistoryAPI(responses: [
+            .enabled(timeZone: utc, days: [try makeFlowDay("2026-10-01")], nextFrom: nil),
+            .enabled(timeZone: utc, days: [try makeFlowDay("2026-03-02")], nextFrom: nil)
+        ])
+        let progress = try await reloaded.syncFlows(
+            scope: scope, api: secondAPI, cycleStartDay: "2026-10-01", now: now
+        )
+
+        #expect(progress == .complete)
+        #expect(await secondAPI.requests.map(\.from) == ["2026-10-01", "2026-03-02"])
+        #expect(try await reloaded.oldestDayMissingFlows(scope: scope) == nil)
+    }
+
+    @Test("syncFlows returns complete when no stored days are missing flows")
+    func syncFlowsCompleteWhenNothingMissing() async throws {
+        let history = store()
+        defer { Task { try? await history.removeAll() } }
+        let cycleDay = try makeFlowDay("2026-10-01")
+        try await history.merge(
+            MobileSolarHistoryFill(timeZone: utc, status: .complete, historyStart: "2026-01-01", days: [cycleDay]),
+            scope: scope
+        )
+        let now = try date("2026-10-24T12:00:00Z")
+        let api = HistoryAPI(responses: [
+            .enabled(timeZone: utc, days: [cycleDay], nextFrom: nil)
+        ])
+
+        let progress = try await history.syncFlows(
+            scope: scope, api: api, cycleStartDay: "2026-10-01", now: now
+        )
+
+        #expect(progress == .complete)
+        #expect(await api.requests.map(\.from) == ["2026-10-01"])
+    }
+
+    @Test("syncFlows returns partial when a stored day still lacks flows after backfill")
+    func syncFlowsPartialWhenDaysRemainMissing() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flows-sync-partial-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let dayOne = try date("2026-03-01T00:00:00Z")
+        let dayTwo = try date("2026-03-02T00:00:00Z")
+        try writeLegacyStore(folder: folder, dayStarts: [dayOne, dayTwo])
+        let history = store(in: folder)
+        let now = try date("2026-10-24T12:00:00Z")
+
+        let api = HistoryAPI(responses: [
+            .enabled(timeZone: utc, days: [try makeFlowDay("2026-10-01")], nextFrom: nil),
+            .enabled(timeZone: utc, days: [try makeFlowDay("2026-03-01")], nextFrom: nil)
+        ])
+
+        let progress = try await history.syncFlows(
+            scope: scope, api: api, cycleStartDay: "2026-10-01", now: now
+        )
+
+        #expect(progress == .partial(oldestMissing: "2026-03-02"))
+    }
+
+    private func makeFlowDay(_ day: String) throws -> MobileSolarHistoryDay {
+        let start = try date("\(day)T00:00:00Z")
+        return MobileSolarHistoryDay(
+            day: day, dayStart: start, status: .complete, fetchedAt: start,
+            solarWh: Array(repeating: 1, count: 288),
+            loadWh: Array(repeating: 2, count: 288),
+            gridWh: Array(repeating: 3, count: 288),
+            batteryWh: Array(repeating: 4, count: 288),
+            batterySoc: Array(repeating: 50, count: 288)
+        )
+    }
+
     private func writeLegacyStore(folder: URL, dayStarts: [Date]) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)

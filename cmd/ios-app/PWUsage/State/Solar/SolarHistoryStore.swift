@@ -2,6 +2,11 @@ import Foundation
 
 enum SolarHistorySyncResult: Equatable, Sendable { case disabled, synced(timeZone: TimeZone) }
 
+struct SolarHistorySyncToken {
+    let generation: Int
+    let scopeGeneration: Int
+}
+
 actor SolarHistoryStore {
     static let shared = SolarHistoryStore()
     /// How many days back `hourlyActuals` reads.
@@ -41,17 +46,8 @@ actor SolarHistoryStore {
         api: any MobileSolarHistoryDataAPI,
         now: Date = .now
     ) async throws -> SolarHistorySyncResult {
-        scopeGenerations[scope, default: 0] += 1
-        activeSyncs[scope, default: 0] += 1
-        defer {
-            activeSyncs[scope, default: 1] -= 1
-            if activeSyncs[scope] == 0 {
-                activeSyncs.removeValue(forKey: scope)
-                lateDays.removeValue(forKey: scope)
-            }
-        }
-        let syncGeneration = generation
-        let scopeGeneration = scopeGenerations[scope, default: 0]
+        let token = beginSync(scope: scope)
+        defer { endSync(scope: scope) }
         var state = try load(scope)
         let zone = TimeZone(identifier: state.timeZone ?? "UTC") ?? .gmt
         // The endpoint returns the site zone only with page one. Bootstrap in UTC, then restart
@@ -67,9 +63,9 @@ actor SolarHistoryStore {
         let from = Self.dayString(scanStart, timeZone: zone)
         let pageContext = PageSyncContext(
             scope: scope, api: api, now: now, startingFrom: from,
-            generation: syncGeneration, scopeGeneration: scopeGeneration)
+            generation: token.generation, scopeGeneration: token.scopeGeneration)
         let pageResult = try await fetchPages(pageContext, state: &state)
-        try validateGeneration(syncGeneration, scope: scope, scopeGeneration: scopeGeneration)
+        try validateGeneration(token.generation, scope: scope, scopeGeneration: token.scopeGeneration)
         guard case .completed(let timeZone, let maxFetchedAt) = pageResult else {
             state.isEnabled = false
             state.syncedAt = now
@@ -83,10 +79,32 @@ actor SolarHistoryStore {
         state.timeZone = timeZone.identifier
         if let maxFetchedAt { state.syncedThrough = maxFetchedAt.addingTimeInterval(-300) }
         state.syncedAt = now
-        _ = store(days: lateDays[scope] ?? [], in: &state, maximumFetchedAt: nil)
-        try validateGeneration(syncGeneration, scope: scope, scopeGeneration: scopeGeneration)
+        applyLateDays(scope: scope, to: &state)
+        try validateGeneration(token.generation, scope: scope, scopeGeneration: token.scopeGeneration)
         try save(state, scope: scope)
         return .synced(timeZone: timeZone)
+    }
+
+    func beginSync(scope: SolarForecastSiteScope) -> SolarHistorySyncToken {
+        scopeGenerations[scope, default: 0] += 1
+        activeSyncs[scope, default: 0] += 1
+        return SolarHistorySyncToken(
+            generation: generation,
+            scopeGeneration: scopeGenerations[scope, default: 0]
+        )
+    }
+
+    func endSync(scope: SolarForecastSiteScope) {
+        activeSyncs[scope, default: 1] -= 1
+        if activeSyncs[scope] == 0 {
+            activeSyncs.removeValue(forKey: scope)
+            lateDays.removeValue(forKey: scope)
+        }
+    }
+
+    func applyLateDays(scope: SolarForecastSiteScope, to state: inout SolarHistoryPersisted) {
+        _ = store(days: lateDays[scope] ?? [], in: &state, maximumFetchedAt: nil)
+        lateDays[scope] = []
     }
 
     /// Keep the days a history fill returned. The sync watermark does not move, so the next sync
@@ -148,9 +166,9 @@ actor SolarHistoryStore {
         return .completed(timeZone: resultZone ?? .gmt, maxFetchedAt: maxFetchedAt)
     }
 
-    private func store(
+    func store(
         days: [MobileSolarHistoryDay],
-        in state: inout Persisted,
+        in state: inout SolarHistoryPersisted,
         maximumFetchedAt: Date?
     ) -> Date? {
         var latestFetchedAt = maximumFetchedAt
@@ -312,7 +330,7 @@ actor SolarHistoryStore {
         SolarHistoryYearFiles(fileManager: fileManager, folder: daysDirectory(scope))
     }
 
-    private func save(_ state: Persisted, scope: SolarForecastSiteScope) throws {
+    func save(_ state: SolarHistoryPersisted, scope: SolarForecastSiteScope) throws {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         var directoryValues = URLResourceValues()
         directoryValues.isExcludedFromBackup = true
@@ -342,7 +360,7 @@ actor SolarHistoryStore {
         try protectedFile.setResourceValues(fileValues)
     }
 
-    private func validateGeneration(
+    func validateGeneration(
         _ expected: Int,
         scope: SolarForecastSiteScope,
         scopeGeneration expectedScopeGeneration: Int
@@ -363,33 +381,5 @@ actor SolarHistoryStore {
 
     private func scopeHash(_ scope: SolarForecastSiteScope) -> String {
         scope.storageHash
-    }
-
-    private static func date(daysBefore days: Int, now: Date, timeZone: TimeZone) -> Date {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        return calendar.date(byAdding: .day, value: -days, to: now) ?? now.addingTimeInterval(Double(-days) * 86_400)
-    }
-
-    private static func localDay(daysBefore days: Int, now: Date, timeZone: TimeZone) -> Date {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let today = calendar.startOfDay(for: now)
-        return calendar.date(byAdding: .day, value: -days, to: today)
-            ?? date(daysBefore: days, now: now, timeZone: timeZone)
-    }
-
-    private static func utcBootstrapDate(now: Date) -> Date {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        let today = calendar.startOfDay(for: now)
-        return calendar.date(byAdding: .day, value: -364, to: today) ?? today
-    }
-
-    static func dayString(_ date: Date, timeZone: TimeZone) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", components.year ?? 1970, components.month ?? 1, components.day ?? 1)
     }
 }
