@@ -166,6 +166,9 @@ extension PWUsageAppModel {
 
     func installCoordinator(siteID: String, accountScopeID: String) {
         let nextCoordinator = coordinatorFactory(siteID, accountScopeID)
+        if let site = sites.first(where: { $0.id == siteID }) {
+            nextCoordinator.billingDay = site.billingDay
+        }
         nextCoordinator.restoreLaunchCache(cache, sessionVerified: sessionVerified)
         nextCoordinator.batteryHoldActivityObserver = liveActivities
         coordinator = nextCoordinator
@@ -186,6 +189,39 @@ extension PWUsageAppModel {
         selectedTab = .home
         settingsPath = []
         userDefaults.removeObject(forKey: Self.selectedTabDefaultsKey)
+    }
+
+    struct DefaultCoordinatorDependencies {
+        let api: any PWUsageApplicationAPI
+        let now: () -> Date
+        let cadenceNow: () -> ContinuousClock.Instant
+        let forecastService: (any SolarForecastServing)?
+        let solarHistory: SolarHistoryStore
+        let solarRecords: SolarLayoutRecordStore
+        let runner: SolarLayoutDetectionRunner?
+        let billPricingMode: BillPricingMode
+        let shadowDedup: BillShadowDedupTracker
+    }
+
+    static func makeDefaultCoordinatorFactory(
+        _ deps: DefaultCoordinatorDependencies
+    ) -> CoordinatorFactory {
+        { siteID, accountScopeID in
+            DashboardCoordinator(
+                siteID: siteID,
+                api: deps.api,
+                planningAPI: deps.api,
+                accountScopeID: accountScopeID,
+                now: deps.now,
+                cadenceNow: deps.cadenceNow,
+                forecastService: deps.forecastService,
+                history: deps.solarHistory,
+                records: deps.solarRecords,
+                runner: deps.runner,
+                billPricingMode: deps.billPricingMode,
+                shadowDedup: deps.shadowDedup
+            )
+        }
     }
 
     func ensureAccountScopeID() -> String {

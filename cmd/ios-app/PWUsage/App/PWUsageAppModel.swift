@@ -74,6 +74,7 @@ final class PWUsageAppModel: ObservableObject {
     let solarCloudSync: SolarLayoutCloudSync
     let solarSessionCleanup: SolarSessionCleanup
     let coordinatorFactory: CoordinatorFactory
+    let shadowDedup = BillShadowDedupTracker()
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
 
@@ -120,24 +121,20 @@ final class PWUsageAppModel: ObservableObject {
         self.historyOnboarding = isDemo ? nil : historyOnboarding
         self.demoSolarHealth = isDemo ? demoSolarHealth : nil
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
-        if let coordinatorFactory {
-            self.coordinatorFactory = coordinatorFactory
-        } else {
-            self.coordinatorFactory = { [solarHistory, solarRecords, runner] siteID, accountScopeID in
-                DashboardCoordinator(
-                    siteID: siteID,
-                    api: api,
-                    planningAPI: api,
-                    accountScopeID: accountScopeID,
-                    now: now,
-                    cadenceNow: cadenceNow,
-                    forecastService: forecastService,
-                    history: solarHistory,
-                    records: solarRecords,
-                    runner: runner
-                )
-            }
-        }
+        let billPricingMode = BillPricingMode(configuration: configuration, defaults: userDefaults)
+        self.coordinatorFactory = coordinatorFactory ?? Self.makeDefaultCoordinatorFactory(
+            DefaultCoordinatorDependencies(
+                api: api,
+                now: now,
+                cadenceNow: cadenceNow,
+                forecastService: forecastService,
+                solarHistory: solarHistory,
+                solarRecords: solarRecords,
+                runner: runner,
+                billPricingMode: billPricingMode,
+                shadowDedup: shadowDedup
+            )
+        )
         var cleanup = sessionCleanup ?? SolarSessionCleanup(
             service: forecastService,
             historyStore: solarHistory, layoutRecordStore: solarRecords,

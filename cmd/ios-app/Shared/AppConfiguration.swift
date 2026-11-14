@@ -36,9 +36,12 @@ struct AppConfiguration: Equatable {
             ?? AppConfiguration(fallbackOrigin: debugFallbackAPIOrigin, reason: "Debug fallback configuration")
     }()
 
+    static let billPricingModeKey = "PWUSAGE_BILL_PRICING_MODE"
+
     private static let logger = Logger(subsystem: "fm.rodeo.pwusage", category: "configuration")
 
     let apiOrigin: URL
+    let billPricingModeRaw: String?
 
     /// Non-nil when the configured origin was unusable and `apiOrigin` is a
     /// fallback rather than what the build asked for.
@@ -54,22 +57,35 @@ struct AppConfiguration: Equatable {
     init(
         apiOrigin: URL = Self.defaultAPIOrigin,
         isRelease: Bool = true,
-        allowUnlistedHost: Bool = false
+        allowUnlistedHost: Bool = false,
+        billPricingModeRaw: String? = nil
     ) throws {
         try Self.validate(apiOrigin, isRelease: isRelease, allowUnlistedHost: allowUnlistedHost)
         self.apiOrigin = apiOrigin
+        self.billPricingModeRaw = billPricingModeRaw
         self.initializationError = nil
     }
 
-    init(apiOriginString: String, isRelease: Bool = true, allowUnlistedHost: Bool = false) throws {
+    init(
+        apiOriginString: String,
+        isRelease: Bool = true,
+        allowUnlistedHost: Bool = false,
+        billPricingModeRaw: String? = nil
+    ) throws {
         guard let url = URL(string: apiOriginString) else {
             throw ValidationError.invalidOrigin
         }
-        try self.init(apiOrigin: url, isRelease: isRelease, allowUnlistedHost: allowUnlistedHost)
+        try self.init(
+            apiOrigin: url,
+            isRelease: isRelease,
+            allowUnlistedHost: allowUnlistedHost,
+            billPricingModeRaw: billPricingModeRaw
+        )
     }
 
-    private init(fallbackOrigin: URL, reason: String) {
+    private init(fallbackOrigin: URL, reason: String, billPricingModeRaw: String? = nil) {
         self.apiOrigin = fallbackOrigin
+        self.billPricingModeRaw = billPricingModeRaw
         self.initializationError = reason
     }
 
@@ -83,19 +99,31 @@ struct AppConfiguration: Equatable {
     static func fromBundle(
         _ bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults = .standard,
         isDebug: Bool = Self.buildIsDebug
     ) throws -> AppConfiguration {
         let configuredOrigin = environment["PWUSAGE_API_ORIGIN"]
             ?? bundle.object(forInfoDictionaryKey: "PWUSAGE_API_ORIGIN") as? String
             ?? defaultAPIOrigin.absoluteString
+        let billPricingModeRaw = environment[Self.billPricingModeKey]
+            ?? defaults.string(forKey: Self.billPricingModeKey)
+            ?? bundle.object(forInfoDictionaryKey: Self.billPricingModeKey) as? String
         do {
             // No opt-out: this is the path a shipped origin travels.
-            return try AppConfiguration(apiOriginString: configuredOrigin, isRelease: !isDebug)
+            return try AppConfiguration(
+                apiOriginString: configuredOrigin,
+                isRelease: !isDebug,
+                billPricingModeRaw: billPricingModeRaw
+            )
         } catch {
             let reason = "PWUSAGE_API_ORIGIN \"\(configuredOrigin)\" is not a valid API origin."
             logger.error("\(reason, privacy: .public)")
             guard isDebug else { throw error }
-            return AppConfiguration(fallbackOrigin: debugFallbackAPIOrigin, reason: reason)
+            return AppConfiguration(
+                fallbackOrigin: debugFallbackAPIOrigin,
+                reason: reason,
+                billPricingModeRaw: billPricingModeRaw
+            )
         }
     }
 

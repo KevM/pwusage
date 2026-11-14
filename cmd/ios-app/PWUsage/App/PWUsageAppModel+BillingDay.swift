@@ -30,7 +30,10 @@ extension PWUsageAppModel {
         guard let index = sites.firstIndex(where: { $0.id == siteID }) else { return }
         sites[index] = sites[index].settingBillingDay(saved.billingDay)
         cache?.storeSites(sites)
-        if siteID == selectedSiteID { await coordinator?.refreshBillDiscardingRunning() }
+        if siteID == selectedSiteID {
+            coordinator?.billingDay = saved.billingDay
+            await coordinator?.refreshBillDiscardingRunning()
+        }
     }
 
     /// Picks up a billing day chosen elsewhere (the web app, another phone) while this one still
@@ -56,7 +59,8 @@ extension PWUsageAppModel {
         guard updated != sites else { return }
         sites = updated
         cache?.storeSites(sites)
-        if let siteID = selectedSiteID, updated.first(where: { $0.id == siteID }) != nil {
+        if let siteID = selectedSiteID, let match = updated.first(where: { $0.id == siteID }) {
+            coordinator?.billingDay = match.billingDay
             await coordinator?.refreshBill(trigger: .automaticRecovery)
         }
     }

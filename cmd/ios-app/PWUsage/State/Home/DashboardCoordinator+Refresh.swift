@@ -254,35 +254,6 @@ extension DashboardCoordinator {
         handle(error, generation: generation, endpoint: .power)
     }
 
-    func performBill(siteID: String, generation: Int) async {
-        defer {
-            if generation == siteGeneration { billTask = nil }
-        }
-        do {
-            let response: MobileBillResponse
-            if let conditionalAPI = api as? any MobileConditionalDashboardDataAPI {
-                response = try await conditionalAPI.fetchBill(siteID: siteID, reusing: bill.response)
-            } else {
-                response = try await api.fetchBill(siteID: siteID)
-            }
-            guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
-            recordAttempt(.bill)
-            bill.response = response
-            billSuccessGeneration += 1
-            let successTime = now()
-            bill.lastSuccess = successTime
-            bill.isRestored = false
-            cache?.storeBill(response, at: successTime)
-            bill.isUnavailable = false
-            bill.freshReadingWait = nil
-        } catch {
-            guard !isAbandonedRequest() else { return }
-            guard generation == siteGeneration else { return }
-            recordAttempt(.bill)
-            handle(error, generation: generation, endpoint: .bill)
-        }
-    }
-
     enum Endpoint { case live, bill, power }
 
     func handle(_ error: Error, generation: Int, endpoint: Endpoint) {
@@ -390,10 +361,12 @@ extension DashboardCoordinator {
         liveTask?.cancel()
         powerTask?.cancel()
         billTask?.cancel()
+        flowSyncTask?.cancel()
         liveTask = nil
         liveTaskImportsHistory = false
         manualRefreshCount = 0
         powerTask = nil
         billTask = nil
+        flowSyncTask = nil
     }
 }

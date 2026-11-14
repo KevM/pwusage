@@ -100,7 +100,10 @@ final class DashboardCoordinator: ObservableObject {
     let history: SolarHistoryStore
     let records: SolarLayoutRecordStore
     let ratePlanTimelines: RatePlanTimelineStore
+    let billPricingMode: BillPricingMode
+    let shadowDedup: BillShadowDedupTracker
     let runner: SolarLayoutDetectionRunner?
+    var billingDay: Int = 1
     var historyEnabled = true
     var layoutInvalidated = false
     var activeSolarLayoutLookups = 0
@@ -138,6 +141,7 @@ final class DashboardCoordinator: ObservableObject {
     var livePowerIsVisible = true
     var usesLivePowerEndpoint: Bool { livePowerEndpointAvailable && api is any MobileLivePowerDataAPI }
     var billTask: Task<Void, Never>?
+    var flowSyncTask: Task<Void, Never>?
     var siteGeneration = 0
     var forecastGeneration = 0
     var billSuccessGeneration = 0
@@ -181,7 +185,9 @@ final class DashboardCoordinator: ObservableObject {
         history: SolarHistoryStore = .shared,
         records: SolarLayoutRecordStore = .shared,
         ratePlanTimelines: RatePlanTimelineStore = .shared,
-        runner: SolarLayoutDetectionRunner? = nil
+        runner: SolarLayoutDetectionRunner? = nil,
+        billPricingMode: BillPricingMode = .defaultMode,
+        shadowDedup: BillShadowDedupTracker = BillShadowDedupTracker()
     ) {
         selectedSiteID = siteID
         self.api = api
@@ -196,6 +202,8 @@ final class DashboardCoordinator: ObservableObject {
         self.records = records
         self.ratePlanTimelines = ratePlanTimelines
         self.runner = runner
+        self.billPricingMode = billPricingMode
+        self.shadowDedup = shadowDedup
         configureRunner()
         if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }
         restoreCachedReadings()
@@ -237,6 +245,7 @@ final class DashboardCoordinator: ObservableObject {
     /// delivers the backstop.
     deinit {
         timerTask?.cancel()
+        flowSyncTask?.cancel()
     }
 
     /// Attach the app-owned snapshot even when a custom coordinator factory is used.
