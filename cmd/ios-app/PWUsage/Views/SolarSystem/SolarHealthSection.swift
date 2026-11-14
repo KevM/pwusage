@@ -6,7 +6,7 @@ struct SolarHealthSection: View {
     let isLoading: Bool
     var usedWeather = false
     var onEditLayout: () -> Void = {}
-    var onLoadMoreHistory: (() -> Void)?
+    var deepHistory: SiteDeepHistoryModel?
 
     var body: some View {
         healthCardSection
@@ -164,14 +164,40 @@ struct SolarHealthSection: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 LabeledContent("Change over time", value: "Needs more history")
+                deepHistoryFeedback
+            }
+        }
+    }
+
+    @ViewBuilder private var deepHistoryFeedback: some View {
+        if let deepHistory {
+            let deep = SiteDeepHistoryPresentation(status: deepHistory.status)
+            if deepHistory.status.isLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(deep.statusLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Stop") { Task { await deepHistory.stop() } }
+                    .font(.subheadline.weight(.medium))
+            } else if deep.action == .load || deep.action == .continueLoading {
                 Text("Load older history to track panel aging and shading growth over years.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let onLoadMoreHistory {
-                    Button("Load More History", action: onLoadMoreHistory)
-                        .font(.subheadline.weight(.medium))
+                Button(deep.action == .continueLoading ? "Continue Loading" : "Load More History") {
+                    deepHistory.start()
                 }
+                .font(.subheadline.weight(.medium))
+            } else {
+                Text(deep.statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+        } else {
+            Text("Load older history to track panel aging and shading growth over years.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
