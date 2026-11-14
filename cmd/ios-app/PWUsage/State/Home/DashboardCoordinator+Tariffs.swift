@@ -116,11 +116,11 @@ extension DashboardCoordinator {
         }
     }
 
-    private func tariffScope(siteID: String) -> SolarForecastSiteScope? {
+    func tariffScope(siteID: String) -> SolarForecastSiteScope? {
         accountScopeID.map { SolarForecastSiteScope(accountScopeID: $0, siteID: siteID) }
     }
 
-    private func savedTimeline(for scope: SolarForecastSiteScope?) async -> SavedRatePlanTimeline? {
+    func savedTimeline(for scope: SolarForecastSiteScope?) async -> SavedRatePlanTimeline? {
         guard let scope else { return nil }
         return try? await ratePlanTimelines.saved(scope: scope)
     }
@@ -133,5 +133,6 @@ extension DashboardCoordinator {
         guard let scope else { return }
         try? await ratePlanTimelines.save(timeline, etag: etag, scope: scope)
         await repriceLocalBillIfTimelineChanged(timeline, scope: scope, generation: siteGeneration)
+        await refreshSavings()
     }
 }

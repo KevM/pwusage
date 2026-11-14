@@ -174,8 +174,8 @@
 
 ### Task 7: Mockups (gate for Task 8)
 
-- [ ] **Step 1:** Publish mockups as an Artifact: the Bill tab savings card (cycle figure, breakdown line, coverage, the no-reference-plan prompt), the Solar System savings section (year and lifetime, fixed-rate comparison), and the fixed rate plan form (plan name, price per kWh, export credit per kWh, starts on). Copy from Global Constraints.
-- [ ] **Step 2:** The user approves or edits them. **Task 8 does not start until they approve.** Record the approved layout and any copy changes in this plan before Task 8.
+- [x] **Step 1:** Publish mockups as an Artifact: the Bill tab savings card (cycle figure, breakdown line, coverage, the no-reference-plan prompt), the Solar System savings section (year and lifetime, fixed-rate comparison), and the fixed rate plan form (plan name, price per kWh, export credit per kWh, starts on). Copy from Global Constraints.
+- [x] **Step 2:** The user approves or edits them. **Task 8 does not start until they approve.** Record the approved layout and any copy changes in this plan before Task 8. (Approved 2026-11-14: text & layout in `savings-phase-2-mockups.md` approved as-is.)
 
 ### Task 8: iOS — fixed rate plan form and savings UI
 
