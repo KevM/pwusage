@@ -26,6 +26,16 @@ extension DashboardCoordinator {
             publishBillResponse(response)
             if billPricingMode == .shadow {
                 await evaluateBillShadow(server: response, siteID: siteID, generation: generation)
+            } else if billPricingMode == .local,
+                      let accountScopeID {
+                let scope = SolarForecastSiteScope(accountScopeID: accountScopeID, siteID: siteID)
+                await syncFlowsIfNeeded(
+                    scope: scope,
+                    site: response.site,
+                    cycle: DateInterval(start: response.currentBill.cycleStart, end: response.currentBill.cycleEnd),
+                    expectedThrough: response.sources.energyDataThrough,
+                    generation: generation
+                )
             }
         } catch {
             guard !isAbandonedRequest() else { return }
@@ -54,20 +64,17 @@ extension DashboardCoordinator {
         await syncFlowsIfNeeded(
             scope: scope,
             site: server.site,
-            cycleStart: server.currentBill.cycleStart,
-            cycleEnd: server.currentBill.cycleEnd,
+            cycle: DateInterval(start: server.currentBill.cycleStart, end: server.currentBill.cycleEnd),
+            expectedThrough: server.sources.energyDataThrough,
             generation: generation
         )
         guard server.tariffReattribution?.status != .running else { return }
-        let flowDays = try? await history.flowDays(
-            scope: scope, from: server.currentBill.cycleStart, to: server.currentBill.cycleEnd
-        )
-        if let flowDays, flowDays.isEmpty, !server.currentBill.periods.isEmpty { return }
         guard case .ready(let localResponse) = await buildLocalBill(
             scope: scope, site: server.site, generation: generation
         ) else { return }
         guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return }
-        guard localResponse.tariffReattribution?.status != .running else { return }
+        guard localResponse.tariffReattribution?.status != .running,
+              Self.snapshotsMatch(server: server, local: localResponse) else { return }
         guard shadowDedup.shouldReport(siteID: siteID, cycleStart: server.currentBill.cycleStart) else { return }
         guard let report = BillShadowComparison.differences(server: server, local: localResponse) else { return }
         guard let shadowAPI = api as? any MobileBillShadowAPI else { return }
@@ -103,18 +110,26 @@ extension DashboardCoordinator {
     private func syncFlowsIfNeeded(
         scope: SolarForecastSiteScope,
         site: MobileBillResponse.Site,
-        cycleStart: Date,
-        cycleEnd: Date,
+        cycle: DateInterval,
+        expectedThrough: Date?,
         generation: Int
     ) async {
         guard flowSyncTask == nil,
               let solarAPI = api as? any MobileSolarHistoryDataAPI,
               let siteZone = TimeZone(identifier: site.timezone) else { return }
-        let flowDays = try? await history.flowDays(scope: scope, from: cycleStart, to: cycleEnd)
+        let flowDays = try? await history.flowDays(scope: scope, from: cycle.start, to: cycle.end)
         let oldestMissing = try? await history.oldestDayMissingFlows(scope: scope)
-        let needsSync = flowDays == nil || flowDays?.isEmpty == true || oldestMissing != nil
+        let localThrough = flowDays.flatMap {
+            LocalBillBuilder.lastNonNilSlotInstant(in: $0, cycleStart: cycle.start, cycleEnd: cycle.end)
+        }
+        let isBehindServer = if let expectedThrough {
+            localThrough.map { $0 < expectedThrough } ?? true
+        } else {
+            false
+        }
+        let needsSync = flowDays == nil || flowDays?.isEmpty == true || oldestMissing != nil || isBehindServer
         guard needsSync else { return }
-        let cycleStartDay = SolarHistoryStore.dayString(cycleStart, timeZone: siteZone)
+        let cycleStartDay = SolarHistoryStore.dayString(cycle.start, timeZone: siteZone)
         let currentNow = now()
         flowSyncTask = Task { [weak self] in
             defer {
@@ -129,6 +144,11 @@ extension DashboardCoordinator {
                 now: currentNow
             )
         }
+    }
+
+    private static func snapshotsMatch(server: MobileBillResponse, local: MobileBillResponse) -> Bool {
+        guard let serverThrough = server.sources.energyDataThrough else { return true }
+        return local.sources.energyDataThrough == serverThrough
     }
 
     private func clearFlowSyncTask() {

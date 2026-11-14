@@ -52,7 +52,8 @@ struct LocalBillBuilder {
         }
 
         let cycle = BillingCycle.current(billingDay: billingDay, now: now, timeZone: siteZone)
-        guard let flowDays = try await store.flowDays(scope: scope, from: cycle.start, to: cycle.end) else {
+        guard let flowDays = try await store.flowDays(scope: scope, from: cycle.start, to: cycle.end),
+              !flowDays.isEmpty else {
             return .notReady(.flowsMissing)
         }
 
@@ -186,7 +187,7 @@ struct LocalBillBuilder {
         )
     }
 
-    private static func lastNonNilSlotInstant(
+    static func lastNonNilSlotInstant(
         in days: [EnergyFlowDay],
         cycleStart: Date,
         cycleEnd: Date
