@@ -244,7 +244,8 @@ private struct SolarHistoryAnalyzedRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let deepHistory, let presentation, presentation.action != nil || deepHistory.status.isLoading {
+            if let deepHistory, let presentation,
+               shouldShowHistoryStatus(deepHistory.status, presentation: presentation) {
                 deepHistoryActionView(model: deepHistory, presentation: presentation)
             }
         }
@@ -274,6 +275,21 @@ private struct SolarHistoryAnalyzedRow: View {
         return parts
     }
 
+    private func shouldShowHistoryStatus(
+        _ status: SiteDeepHistoryModel.Status,
+        presentation: SiteDeepHistoryPresentation
+    ) -> Bool {
+        if presentation.action != nil || status.isLoading { return true }
+        switch status.phase {
+        case .paused(.signIn), .unavailable:
+            return true
+        case .finished:
+            return status.loadedBack == nil
+        case .idle, .running, .waiting, .paused(.reconnectTesla):
+            return false
+        }
+    }
+
     @ViewBuilder
     private func deepHistoryActionView(
         model: SiteDeepHistoryModel,
@@ -287,10 +303,25 @@ private struct SolarHistoryAnalyzedRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        } else if shouldShowNonLoadingStatus(model.status) {
+            Text(presentation.statusLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         if let action = presentation.action {
             actionButton(action, model: model)
                 .font(.subheadline.weight(.medium))
+        }
+    }
+
+    private func shouldShowNonLoadingStatus(_ status: SiteDeepHistoryModel.Status) -> Bool {
+        switch status.phase {
+        case .paused, .unavailable:
+            true
+        case .finished:
+            status.loadedBack == nil
+        case .idle, .running, .waiting:
+            false
         }
     }
 
