@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyAccessMock } = vi.hoisted(() => ({
+const { verifyAccessMock, logEventMock } = vi.hoisted(() => ({
     verifyAccessMock: vi.fn(),
+    logEventMock: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({ verifySiteAccess: verifyAccessMock }));
+vi.mock('@/lib/observability', () => ({ logEvent: logEventMock }));
 
 import { POST } from './route';
 
@@ -38,20 +40,30 @@ describe('POST /api/mobile/bill-shadow', () => {
     });
 
     it('logs a valid report and answers 204', async () => {
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        try {
-            const response = await POST(makeRequest(validReport));
+        const response = await POST(makeRequest(validReport));
 
-            expect(response.status).toBe(204);
-            expect(await response.text()).toBe('');
-            expect(verifyAccessMock).toHaveBeenCalledWith('site-a');
-            expect(warnSpy).toHaveBeenCalledTimes(1);
-            expect(warnSpy.mock.calls[0]?.[0]).toBe('[bill-shadow]');
-            const logged = JSON.parse(String(warnSpy.mock.calls[0]?.[1]));
-            expect(logged).toEqual(validReport);
-        } finally {
-            warnSpy.mockRestore();
-        }
+        expect(response.status).toBe(204);
+        expect(await response.text()).toBe('');
+        expect(verifyAccessMock).toHaveBeenCalledWith('site-a');
+        expect(logEventMock).toHaveBeenCalledTimes(1);
+        expect(logEventMock).toHaveBeenCalledWith('warn', 'mobile.bill-shadow.mismatch', {
+            siteId: 'site-a',
+            appBuild: '42',
+            cycleStart: '2026-10-01T07:00:00.000Z',
+            reattributionRunning: false,
+            serverEstimatedCost: 12.34,
+            localEstimatedCost: 12.5,
+            estimatedCostDiff: expect.closeTo(0.16, 9),
+            periodDiffs: [
+                {
+                    tariffName: 'TOU-D',
+                    periodName: 'Peak',
+                    serverCost: 12.34,
+                    localCost: 12.5,
+                    diff: expect.closeTo(0.16, 9),
+                },
+            ],
+        });
     });
 
     it('rejects non-finite amounts', async () => {

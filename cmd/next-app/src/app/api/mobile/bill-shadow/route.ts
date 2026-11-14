@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifySiteAccess } from '@/lib/auth-checks';
+import { logEvent } from '@/lib/observability';
 import { withRequestContext } from '@/lib/request-context';
 
 export const dynamic = 'force-dynamic';
@@ -97,6 +98,39 @@ function parseReport(raw: unknown): BillShadowReport | null {
     };
 }
 
+interface PeriodDiff {
+    tariffName: string;
+    periodName: string;
+    serverCost: number | null;
+    localCost: number | null;
+    diff: number;
+}
+
+function buildPeriodDiffs(server: BillShadowPeriod[], local: BillShadowPeriod[]): PeriodDiff[] {
+    const map = new Map<string, { tariffName: string; periodName: string; serverCost: number | null; localCost: number | null }>();
+    const upsert = (p: BillShadowPeriod, side: 'server' | 'local') => {
+        const key = `${p.tariffName}\0${p.periodName}`;
+        const existing = map.get(key) ?? {
+            tariffName: p.tariffName,
+            periodName: p.periodName,
+            serverCost: null,
+            localCost: null,
+        };
+        if (side === 'server') {
+            existing.serverCost = (existing.serverCost ?? 0) + p.cost;
+        } else {
+            existing.localCost = (existing.localCost ?? 0) + p.cost;
+        }
+        map.set(key, existing);
+    };
+    for (const p of server) upsert(p, 'server');
+    for (const p of local) upsert(p, 'local');
+    return Array.from(map.values()).map((entry) => ({
+        ...entry,
+        diff: (entry.localCost ?? 0) - (entry.serverCost ?? 0),
+    }));
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
     return withRequestContext(async () => {
         const contentType = request.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
@@ -125,7 +159,21 @@ export async function POST(request: Request): Promise<NextResponse> {
             return jsonError('Unauthorized', 401);
         }
 
-        console.warn('[bill-shadow]', JSON.stringify(report));
+        const estimatedCostDiff = report.server.estimatedCost !== null && report.local.estimatedCost !== null
+            ? report.local.estimatedCost - report.server.estimatedCost
+            : null;
+        const periodDiffs = buildPeriodDiffs(report.server.periods, report.local.periods);
+
+        logEvent('warn', 'mobile.bill-shadow.mismatch', {
+            siteId: report.siteId,
+            appBuild: report.appBuild,
+            cycleStart: report.cycleStart,
+            reattributionRunning: report.reattributionRunning,
+            serverEstimatedCost: report.server.estimatedCost,
+            localEstimatedCost: report.local.estimatedCost,
+            estimatedCostDiff,
+            periodDiffs,
+        });
         return new NextResponse(null, { status: 204, headers: PRIVATE_RESPONSE });
     });
 }
