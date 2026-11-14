@@ -238,4 +238,71 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
       contentHashChanged: true,
     }));
   });
+
+  it('holidayDates span from the earliest plan year through next year', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T12:00:00Z'));
+    try {
+      mocks.queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM "Site"')) {
+          return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD' }] };
+        }
+        if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+          return {
+            rows: [
+              {
+                period_id: 1,
+                tariff_id: 10,
+                effective_from: '2019-03-01',
+                effective_to: null,
+                source: 'tesla',
+                updated_by_user_id: null,
+                updated_by_email: null,
+                name: 'Historic Plan',
+                version: 1,
+                content_hash: 'h1',
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+
+      const repo = new TariffTimelineRepo();
+      const timeline = await repo.getTimeline('s1', null);
+
+      expect(timeline.holidayDates).toContain('2019-07-04');
+      expect(timeline.holidayDates).toContain('2027-01-01');
+      expect(timeline.holidayDates.every(d => d >= '2019-01-01')).toBe(true);
+      expect(timeline.holidayDates.every(d => d <= '2027-12-31')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holidayDates span from this year through next year when there are no periods', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-14T12:00:00Z'));
+    try {
+      mocks.queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM "Site"')) {
+          return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD' }] };
+        }
+        if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+
+      const repo = new TariffTimelineRepo();
+      const timeline = await repo.getTimeline('s1', null);
+
+      expect(timeline.holidayDates).toContain('2026-07-04');
+      expect(timeline.holidayDates).toContain('2027-01-01');
+      expect(timeline.holidayDates.every(d => d >= '2026-01-01')).toBe(true);
+      expect(timeline.holidayDates.every(d => d <= '2027-12-31')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

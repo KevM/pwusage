@@ -446,6 +446,17 @@ export class TariffTimelineRepo {
       [siteId]
     );
 
+    const currentYear = Number(today.slice(0, 4));
+    const startYear = Math.min(
+      currentYear,
+      ...periods.map(p => Number(p.effectiveFrom.slice(0, 4))).filter(Number.isFinite)
+    );
+    const endYear = currentYear + 1;
+    const holidayYears: number[] = [];
+    for (let y = startYear; y <= endYear; y++) {
+      holidayYears.push(y);
+    }
+
     return {
       version: 2,
       siteId,
@@ -453,7 +464,7 @@ export class TariffTimelineRepo {
       currency,
       periods,
       reattribution: toReattributionDTO(reattrRes.rows[0]),
-      holidayDates: [Number(today.slice(0, 4)), Number(today.slice(0, 4)) + 1].flatMap(y => observedHolidayDates(y)),
+      holidayDates: holidayYears.flatMap(y => observedHolidayDates(y)),
       teslaSync: {
         latestTariffId: latestTesla ? Number(latestTesla.id) : null,
         latestTariffName: latestTesla?.name ?? null,
