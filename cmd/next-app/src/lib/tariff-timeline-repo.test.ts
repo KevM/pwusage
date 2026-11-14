@@ -26,7 +26,11 @@ vi.mock('./observability', () => ({
 }));
 
 import { TariffRepo } from './tariff-repo';
-import { recomputeIsCurrentTariff, TariffTimelineRepo } from './tariff-timeline-repo';
+import {
+  buildSiteTariffsTimelineResponse,
+  recomputeIsCurrentTariff,
+  TariffTimelineRepo,
+} from './tariff-timeline-repo';
 import { TariffValidationError } from './tariff-timeline';
 import type { PoolClient } from 'pg';
 
@@ -304,5 +308,94 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('buildSiteTariffsTimelineResponse includes reference periods ordered by start', () => {
+    const res = buildSiteTariffsTimelineResponse({
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      today: '2026-11-14',
+      viewerUserId: 'u1',
+      periodRows: [],
+      referencePeriodRows: [
+        {
+          period_id: 2,
+          tariff_id: 20,
+          effective_from: '2025-01-01',
+          effective_to: null,
+          source: 'manual',
+          updated_by_user_id: 'u1',
+          updated_by_email: 'owner@example.com',
+          name: 'Fixed 2025',
+          version: 1,
+          content_hash: 'h2',
+        },
+        {
+          period_id: 1,
+          tariff_id: 10,
+          effective_from: '2024-01-01',
+          effective_to: '2024-12-31',
+          source: 'manual',
+          updated_by_user_id: 'u1',
+          updated_by_email: 'owner@example.com',
+          name: 'Fixed 2024',
+          version: 1,
+          content_hash: 'h1',
+        },
+      ],
+      tariffMap: new Map(),
+      battery: null,
+    });
+
+    expect(res.referencePeriods.map(p => p.effectiveFrom)).toEqual(['2024-01-01', '2025-01-01']);
+    expect(res.referencePeriods.map(p => p.name)).toEqual(['Fixed 2024', 'Fixed 2025']);
+    expect(res.referencePeriods.every(p => p.source === 'manual')).toBe(true);
+    expect(res.battery).toBeNull();
+  });
+
+  it('maps battery fields from site json', async () => {
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return {
+          rows: [{
+            id: 's1',
+            timezone: 'America/Chicago',
+            currency: 'USD',
+            nameplate_energy: '13500',
+            nameplate_power: '5000',
+            backup_reserve_percent: '20',
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const repo = new TariffTimelineRepo();
+    const withBattery = await repo.getTimeline('s1', null);
+    expect(withBattery.battery).toEqual({
+      nameplateEnergyWh: 13500,
+      nameplatePowerW: 5000,
+      backupReservePercent: 20,
+    });
+
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return {
+          rows: [{
+            id: 's1',
+            timezone: 'America/Chicago',
+            currency: 'USD',
+            nameplate_energy: null,
+            nameplate_power: null,
+            backup_reserve_percent: null,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const withoutBattery = await repo.getTimeline('s1', null);
+    expect(withoutBattery.battery).toBeNull();
   });
 });

@@ -281,4 +281,47 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const kept = await local.database.query(`SELECT 1 FROM "Tariff" WHERE site_id = 's6'`);
     expect(kept.rowCount).toBe(1);
   });
+
+  it('reference periods never change the actual timeline', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s7', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const migRef = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_reference_periods.sql'));
+    if (!migRef) throw new Error('Reference migration missing');
+    await local.database.query(await readFile(`db-migrations/${migRef}`, 'utf8'));
+
+    const tariffRepo = new TariffRepo();
+    const teslaTariffId = await tariffRepo.addTariffVersion('s7', {
+      name: 'Tesla ToU',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.25, sell_rate: 0.05,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.25, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+
+    const refTariffRes = await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
+       VALUES ('s7', 'Flat Reference', 2, FALSE, 'manual') RETURNING id`
+    );
+    const refTariffId = refTariffRes.rows[0].id;
+
+    // Overlapping a Tesla span in TariffEffectivePeriod is accepted in TariffReferencePeriod.
+    await local.database.query(
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
+       VALUES ('s7', $1, '2024-01-01', NULL, 'u1')`,
+      [refTariffId]
+    );
+
+    const repo = new TariffTimelineRepo();
+    const client = await local.database.connect();
+    try {
+      const resolved = await repo.resolveTariffForDate(client, 's7', '2026-06-15');
+      expect(resolved).toBe(teslaTariffId);
+    } finally {
+      client.release();
+    }
+
+    const timeline = await repo.getTimeline('s7', 'u1');
+    expect(timeline.referencePeriods).toHaveLength(1);
+    expect(timeline.referencePeriods[0]?.name).toBe('Flat Reference');
+    expect(timeline.periods.every(p => p.name === 'Tesla ToU')).toBe(true);
+  });
 });

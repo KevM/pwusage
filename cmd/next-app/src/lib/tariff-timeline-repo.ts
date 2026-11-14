@@ -14,6 +14,7 @@ import { SiteRepo } from './site-repo';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import type {
   ReattributionStatusDTO,
+  SiteBatteryDTO,
   SiteTariffsTimelineResponse,
   TariffPeriodDTO,
   TariffSeasonInput,
@@ -65,7 +66,9 @@ export interface BuildSiteTariffsTimelineInput {
   today: string;
   viewerUserId: string | null;
   periodRows: PeriodQueryRow[];
+  referencePeriodRows?: PeriodQueryRow[];
   tariffMap: Map<number, Tariff>;
+  battery?: SiteBatteryDTO | null;
   reattribution?: SiteTariffReattributionRow;
   latestTesla?: LatestTeslaTariffSummary;
 }
@@ -86,6 +89,49 @@ export function pickActivePeriodForDate<
   );
 }
 
+function mapPeriodRowToDTO(
+  r: PeriodQueryRow,
+  viewerUserId: string | null,
+  tariffMap: Map<number, Tariff>
+): TariffPeriodDTO {
+  const effectiveFrom = r.effective_from.slice(0, 10);
+  const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
+  const tariff = tariffMap.get(Number(r.tariff_id));
+  return {
+    periodId: Number(r.period_id),
+    tariffId: Number(r.tariff_id),
+    name: r.name || 'Rate Plan',
+    version: Number(r.version ?? 1),
+    source: r.source,
+    effectiveFrom,
+    effectiveTo,
+    isCurrentToday: false,
+    updatedBy: r.updated_by_user_id
+      ? {
+          email: r.updated_by_email ?? null,
+          isCurrentUser: viewerUserId !== null && r.updated_by_user_id === viewerUserId,
+        }
+      : null,
+    seasons: tariff ? decompileTariffToSeasons(tariff) : [],
+  };
+}
+
+function parseSiteBattery(row: {
+  nameplate_energy?: string | number | null;
+  nameplate_power?: string | number | null;
+  backup_reserve_percent?: string | number | null;
+}): SiteBatteryDTO | null {
+  const energy = Number(row.nameplate_energy);
+  if (!Number.isFinite(energy) || energy <= 0) return null;
+  const power = Number(row.nameplate_power);
+  const reserve = Number(row.backup_reserve_percent);
+  return {
+    nameplateEnergyWh: energy,
+    nameplatePowerW: Number.isFinite(power) && power > 0 ? power : 0,
+    backupReservePercent: Number.isFinite(reserve) ? reserve : 0,
+  };
+}
+
 /**
  * Pure DTO mapping from `TariffEffectivePeriod` + `Tariff` rows to
  * `SiteTariffsTimelineResponse` v2. Shared by `TariffTimelineRepo.getTimeline`
@@ -94,33 +140,29 @@ export function pickActivePeriodForDate<
 export function buildSiteTariffsTimelineResponse(
   input: BuildSiteTariffsTimelineInput
 ): SiteTariffsTimelineResponse {
-  const { siteId, timezone, currency, today, viewerUserId, periodRows, tariffMap, reattribution, latestTesla } = input;
+  const {
+    siteId,
+    timezone,
+    currency,
+    today,
+    viewerUserId,
+    periodRows,
+    referencePeriodRows = [],
+    tariffMap,
+    battery = null,
+    reattribution,
+    latestTesla,
+  } = input;
 
-  const periods: TariffPeriodDTO[] = periodRows.map(r => {
-    const effectiveFrom = r.effective_from.slice(0, 10);
-    const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
-    const tariff = tariffMap.get(Number(r.tariff_id));
-    return {
-      periodId: Number(r.period_id),
-      tariffId: Number(r.tariff_id),
-      name: r.name || 'Rate Plan',
-      version: Number(r.version ?? 1),
-      source: r.source,
-      effectiveFrom,
-      effectiveTo,
-      isCurrentToday: false,
-      updatedBy: r.updated_by_user_id
-        ? {
-            email: r.updated_by_email ?? null,
-            isCurrentUser: viewerUserId !== null && r.updated_by_user_id === viewerUserId,
-          }
-        : null,
-      seasons: tariff ? decompileTariffToSeasons(tariff) : [],
-    };
-  });
+  const periods: TariffPeriodDTO[] = periodRows.map(r => mapPeriodRowToDTO(r, viewerUserId, tariffMap));
+  const referencePeriods: TariffPeriodDTO[] = referencePeriodRows
+    .map(r => mapPeriodRowToDTO({ ...r, source: 'manual' }, viewerUserId, tariffMap))
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.periodId - b.periodId);
 
   const activeToday = pickActivePeriodForDate(periods, today);
   if (activeToday) activeToday.isCurrentToday = true;
+  const activeRefToday = pickActivePeriodForDate(referencePeriods, today);
+  if (activeRefToday) activeRefToday.isCurrentToday = true;
 
   const activeManualRow = periodRows.find(r => {
     const from = r.effective_from.slice(0, 10);
@@ -134,7 +176,7 @@ export function buildSiteTariffsTimelineResponse(
   const currentYear = Number(today.slice(0, 4));
   const startYear = Math.min(
     currentYear,
-    ...periods.map(p => Number(p.effectiveFrom.slice(0, 4))).filter(Number.isFinite)
+    ...[...periods, ...referencePeriods].map(p => Number(p.effectiveFrom.slice(0, 4))).filter(Number.isFinite)
   );
   const endYear = currentYear + 1;
   const holidayYears: number[] = [];
@@ -148,6 +190,8 @@ export function buildSiteTariffsTimelineResponse(
     timezone,
     currency,
     periods,
+    referencePeriods,
+    battery,
     reattribution: toReattributionDTO(reattribution),
     holidayDates: holidayYears.flatMap(y => observedHolidayDates(y)),
     teslaSync: {
@@ -469,8 +513,19 @@ async function hydrateTariffs(
 
 export class TariffTimelineRepo {
   async getTimeline(siteId: string, viewerUserId: string | null): Promise<SiteTariffsTimelineResponse> {
-    const siteRes = await pool.query<{ id: string; timezone: string; currency: string | null }>(
-      `SELECT id, timezone, COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency
+    const siteRes = await pool.query<{
+      id: string;
+      timezone: string;
+      currency: string | null;
+      nameplate_energy: string | number | null;
+      nameplate_power: string | number | null;
+      backup_reserve_percent: string | number | null;
+    }>(
+      `SELECT id, timezone,
+              COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
+              json ->> 'nameplate_energy' AS nameplate_energy,
+              json ->> 'nameplate_power' AS nameplate_power,
+              json ->> 'backup_reserve_percent' AS backup_reserve_percent
        FROM "Site" WHERE id = $1`,
       [siteId]
     );
@@ -479,6 +534,7 @@ export class TariffTimelineRepo {
     const timezone = siteRow.timezone || 'UTC';
     const currency = siteRow.currency || 'USD';
     const today = siteLocalDateString(new Date(), timezone);
+    const battery = parseSiteBattery(siteRow);
 
     const periodsRes = await pool.query<PeriodQueryRow>(
       `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
@@ -492,7 +548,22 @@ export class TariffTimelineRepo {
       [siteId]
     );
 
-    const tariffIds = [...new Set(periodsRes.rows.map(r => Number(r.tariff_id)))];
+    const referencePeriodsRes = await pool.query<PeriodQueryRow>(
+      `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
+              'manual'::text AS source, p.updated_by_user_id, u.email AS updated_by_email,
+              t.name, t.version, t.content_hash
+       FROM "TariffReferencePeriod" p
+       JOIN "Tariff" t ON t.id = p.tariff_id
+       LEFT JOIN "User" u ON u.id = p.updated_by_user_id
+       WHERE p.site_id = $1
+       ORDER BY p.effective_from ASC, p.id ASC`,
+      [siteId]
+    );
+
+    const tariffIds = [...new Set([
+      ...periodsRes.rows.map(r => Number(r.tariff_id)),
+      ...referencePeriodsRes.rows.map(r => Number(r.tariff_id)),
+    ])];
     const tariffMap = await hydrateTariffs(pool, tariffIds);
 
     const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
@@ -514,7 +585,9 @@ export class TariffTimelineRepo {
       today,
       viewerUserId,
       periodRows: periodsRes.rows,
+      referencePeriodRows: referencePeriodsRes.rows,
       tariffMap,
+      battery,
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
     });
