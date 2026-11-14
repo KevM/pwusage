@@ -3,7 +3,7 @@ import { brotliDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import type { EnergyData } from '../db-types';
 import { addDaysInSiteTimezone, parseSiteLocalDateToMidnight } from '../date-utils';
-import { decodeDaySamples, decodeDaySolar, encodeDaySamples, rollupDay, type ArchiveCodec, toSample, type EnergySample } from './compact-energy';
+import { decodeDayFlows, decodeDaySamples, decodeDaySolar, encodeDaySamples, rollupDay, type ArchiveCodec, toSample, type EnergySample } from './compact-energy';
 
 import { attributeSamples } from './day-attribution';
 
@@ -77,6 +77,21 @@ describe('compact energy format v2 (samples only)', () => {
         bytes.writeDoubleLE(NaN, 4 + bytes.readUInt32LE(0) + 8);
         const tampered = { ...archive, sha256: createHash('sha256').update(bytes).digest('hex'), data: gzipSync(bytes) };
         expect(() => decodeDaySolar(tampered)).toThrow('Nonfinite sample');
+    });
+    it('decodeDayFlows returns the archived load, grid and battery per sample', () => {
+        const rows = [
+            v2(start, { solar_power: 5.25, load_power: 200, grid_power: 120.5, battery_power: -30, battery_soc: 80 }),
+            v2(new Date(+start + 300000), { solar_power: 10.5, load_power: 10, grid_power: -40.25, battery_power: 15.5, battery_soc: 80.5 }),
+            v2(new Date(+start + 600000), { solar_power: 0, load_power: 5, grid_power: 0, battery_power: 0, battery_soc: null }),
+        ];
+        const archive = encodeDaySamples(rows, start, end, 'brotli');
+        const identity = { siteId: 'site', start, end };
+        expect(decodeDayFlows(archive, identity)).toEqual([
+            { timestamp: rows[0].timestamp, solarWh: 5.25, loadWh: 200, gridWh: 120.5, batteryWh: -30, batterySoc: 80 },
+            { timestamp: rows[1].timestamp, solarWh: 10.5, loadWh: 10, gridWh: -40.25, batteryWh: 15.5, batterySoc: 80.5 },
+            { timestamp: rows[2].timestamp, solarWh: 0, loadWh: 5, gridWh: 0, batteryWh: 0, batterySoc: null },
+        ]);
+        expect(decodeDaySolar(archive, identity)).toEqual(rows.map(r => ({ timestamp: r.timestamp, solarWh: r.solar_power })));
     });
     it('rejects corrupt, mis-identified, nonfinite, duplicate, mixed-site and out-of-day input', () => {
         const archive = encodeDaySamples([v2(start)], start, end, 'gzip');
