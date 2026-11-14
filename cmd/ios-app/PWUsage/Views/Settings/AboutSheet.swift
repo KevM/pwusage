@@ -28,9 +28,9 @@ struct AboutSheet: View {
             }
             Section("Data Sources") {
                 if let url = Self.forecastSource.attributionURL {
-                    Link(Self.forecastSource.attribution, destination: url)
+                    Link("Solar forecasts and weather history by Open-Meteo.", destination: url)
                 } else {
-                    Text(Self.forecastSource.attribution)
+                    Text("Solar forecasts and weather history by Open-Meteo.")
                 }
             }
         }
