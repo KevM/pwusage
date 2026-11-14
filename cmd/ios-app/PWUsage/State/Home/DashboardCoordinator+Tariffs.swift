@@ -42,6 +42,25 @@ extension DashboardCoordinator {
         try await runTariffRequest { api, siteID in try await api.retryTariffReattribution(siteID: siteID) }
     }
 
+    func createReferenceRatePlan(_ body: TariffPlanWriteRequest) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in try await api.createReferenceRatePlan(siteID: siteID, body: body) }
+    }
+
+    func updateReferenceRatePlan(
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in
+            try await api.updateReferenceRatePlan(siteID: siteID, periodID: periodID, body: body)
+        }
+    }
+
+    func deleteReferenceRatePlan(periodID: Int) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in
+            try await api.deleteReferenceRatePlan(siteID: siteID, periodID: periodID)
+        }
+    }
+
     private func runTariffFetch(knownETag: String?) async throws -> SiteTariffsTimelineResponse? {
         guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }

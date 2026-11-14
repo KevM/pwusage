@@ -49,9 +49,26 @@ struct RatePeriodResolver: Sendable {
     }
 
     init?(timeline: SiteTariffsTimelineResponse) {
-        guard let timeZone = TimeZone(identifier: timeline.timezone) else { return nil }
-        self.periods = timeline.periods
-        self.holidayDates = Set(timeline.holidayDates ?? [])
+        self.init(
+            periods: timeline.periods,
+            timezone: timeline.timezone,
+            holidayDates: timeline.holidayDates
+        )
+    }
+
+    init?(referenceOf timeline: SiteTariffsTimelineResponse) {
+        guard !timeline.referencePeriods.isEmpty else { return nil }
+        self.init(
+            periods: timeline.referencePeriods,
+            timezone: timeline.timezone,
+            holidayDates: timeline.holidayDates
+        )
+    }
+
+    private init?(periods: [TariffPeriodDTO], timezone: String, holidayDates: [String]?) {
+        guard let timeZone = TimeZone(identifier: timezone) else { return nil }
+        self.periods = periods
+        self.holidayDates = Set(holidayDates ?? [])
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         self.calendar = calendar
