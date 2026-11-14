@@ -158,7 +158,7 @@ actor SolarHistoryStore {
             if let fetchedAt = day.fetchedAt {
                 latestFetchedAt = max(latestFetchedAt ?? fetchedAt, fetchedAt)
             }
-            let storedDay = StoredDay(dayStart: day.dayStart, slots: day.solarWh.map { $0.map(Float.init) })
+            let storedDay = Self.makeStoredDay(from: day)
             state.days.removeAll { $0.dayStart == day.dayStart }
             state.days.append(storedDay)
             state.dirtyYears.insert(SolarHistoryYearFiles.year(of: day.dayStart))
@@ -289,7 +289,7 @@ actor SolarHistoryStore {
         if fileManager.fileExists(atPath: directory.path) { try fileManager.removeItem(at: directory) }
     }
 
-    private func load(_ scope: SolarForecastSiteScope) throws -> Persisted {
+    func load(_ scope: SolarForecastSiteScope) throws -> SolarHistoryPersisted {
         if let state = cache[scope] { return state }
         let url = fileURL(scope)
         guard fileManager.fileExists(atPath: url.path) else { return Persisted() }
@@ -386,7 +386,7 @@ actor SolarHistoryStore {
         return calendar.date(byAdding: .day, value: -364, to: today) ?? today
     }
 
-    private static func dayString(_ date: Date, timeZone: TimeZone) -> String {
+    static func dayString(_ date: Date, timeZone: TimeZone) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let components = calendar.dateComponents([.year, .month, .day], from: date)

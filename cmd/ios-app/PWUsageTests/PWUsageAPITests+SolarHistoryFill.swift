@@ -14,7 +14,11 @@ extension PWUsageAPITests {
 
     static let fillDayJSON = """
     {"day":"2026-10-24","dayStart":"2026-10-24T00:00:00.000Z","status":"complete",
-     "fetchedAt":"2026-10-27T12:00:00.000Z","solarWh":[5\(String(repeating: ",null", count: 287))]}
+     "fetchedAt":"2026-10-27T12:00:00.000Z","solarWh":[5\(String(repeating: ",null", count: 287))],
+     "loadWh":[null\(String(repeating: ",null", count: 287))],
+     "gridWh":[null\(String(repeating: ",null", count: 287))],
+     "batteryWh":[null\(String(repeating: ",null", count: 287))],
+     "batterySoc":[null\(String(repeating: ",null", count: 287))]}
     """
 
     @Test("Solar history fill posts the slice and decodes its status, bound and days")
