@@ -398,4 +398,42 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     const withoutBattery = await repo.getTimeline('s1', null);
     expect(withoutBattery.battery).toBeNull();
   });
+
+  it('creates, updates, and deletes a reference period without queuing re-attribution or touching is_current', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
+      if (sql.includes('SELECT COALESCE(MAX(version), 0) + 1 AS next FROM "Tariff"')) return { rows: [{ next: 2 }] };
+      if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 55 }] };
+      if (sql.includes('INSERT INTO "TariffSeason"')) return { rows: [{ id: 66 }] };
+      if (sql.includes('FROM "TariffReferencePeriod"')) return { rows: [] };
+      if (sql.includes('INSERT INTO "TariffReferencePeriod"')) return { rows: [{ id: 77 }] };
+      return { rows: [] };
+    };
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD', nameplate_energy: null, nameplate_power: null, backup_reserve_percent: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const repo = new TariffTimelineRepo();
+    await repo.createReferencePeriod('s1', 'u1', {
+      name: 'Standard Fixed',
+      effectiveFrom: '2024-01-01',
+      effectiveTo: null,
+      seasons: [{
+        name: 'All Year',
+        fromMonth: 1,
+        toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.14, sellRate: 0.04 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.14, sellRate: 0.04 }],
+      }],
+    });
+
+    const insertTariff = clientQueries.find(q => q.sql.includes('INSERT INTO "Tariff"('));
+    expect(insertTariff?.params?.[3]).toBe(false); // is_current = false
+    expect(clientQueries.some(q => q.sql.includes('UPDATE "Tariff" SET is_current'))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffReferencePeriod"'))).toBe(true);
+  });
 });

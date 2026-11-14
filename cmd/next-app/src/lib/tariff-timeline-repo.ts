@@ -934,4 +934,227 @@ export class TariffTimelineRepo {
     const schedules = tariff.seasons?.flatMap(s => s.schedules ?? []) ?? [];
     return { tariffs: [tariff], schedules };
   }
+
+  async createReferencePeriod(
+    siteId: string,
+    userId: string,
+    input: TariffPlanWriteInput
+  ): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    let createdPeriodId = 0;
+    let newTariffId = 0;
+    let validated: TariffPlanWriteInput;
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>(
+        'SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+      const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
+      validated = validateTariffPlanInput(input, today);
+
+      const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
+      newTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false);
+
+      const existing = await loadReferenceSpans(client, siteId);
+      const plan = computeSpanMutations(existing, {
+        tariffId: newTariffId,
+        source: 'manual',
+        effectiveFrom: validated.effectiveFrom,
+        effectiveTo: validated.effectiveTo,
+        updatedByUserId: userId,
+      });
+      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
+        throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
+      }
+      const inserted = await applyReferenceSpanMutationPlan(client, siteId, plan);
+      createdPeriodId = inserted.at(-1)?.id ?? 0;
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    new SiteRepo().invalidateCache(siteId);
+    logEvent('info', 'tariff.reference_period.created', {
+      periodId: createdPeriodId,
+      tariffId: newTariffId,
+      effectiveFrom: validated.effectiveFrom,
+      effectiveTo: validated.effectiveTo,
+      seasonCount: validated.seasons.length,
+      accountId: accountFingerprint(userId),
+    });
+    return this.getTimeline(siteId, userId);
+  }
+
+  async updateReferencePeriod(
+    siteId: string,
+    userId: string,
+    periodId: number,
+    patch: Partial<TariffPlanWriteInput>
+  ): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    let targetTariffId = 0;
+    let nextFrom = '';
+    let nextTo: string | null = null;
+    let seasonCount = 0;
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>(
+        'SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+      const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
+
+      const existing = await loadReferenceSpans(client, siteId);
+      const target = existing.find(s => s.id === periodId);
+      if (!target) throw new TariffNotFoundError('Reference rate plan period not found');
+
+      nextFrom = patch.effectiveFrom ?? target.effectiveFrom;
+      nextTo = patch.effectiveTo !== undefined ? patch.effectiveTo : target.effectiveTo;
+
+      const tariffMap = await hydrateTariffs(client, [target.tariffId]);
+      const currentTariff = tariffMap.get(target.tariffId);
+      if (!currentTariff) throw new TariffNotFoundError('Tariff not found');
+      const currentSeasons: TariffSeasonInput[] = decompileTariffToSeasons(currentTariff);
+      const validated = validateTariffPlanInput({
+        name: patch.name ?? currentTariff.name ?? '',
+        effectiveFrom: nextFrom,
+        effectiveTo: nextTo,
+        seasons: patch.seasons ?? currentSeasons,
+      }, today);
+      seasonCount = validated.seasons.length;
+
+      const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
+      const newHash = tariffContentHash(parsed);
+      if (newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
+        targetTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false, newHash);
+      } else {
+        targetTariffId = target.tariffId;
+      }
+
+      const remaining = existing.filter(s => s.id !== periodId);
+      const mutationPlan = computeSpanMutations(remaining, {
+        tariffId: targetTariffId,
+        source: 'manual',
+        effectiveFrom: nextFrom,
+        effectiveTo: nextTo,
+        updatedByUserId: userId,
+      });
+      const plan: SpanMutationPlan = {
+        deleteIds: [periodId, ...mutationPlan.deleteIds],
+        inserts: mutationPlan.inserts,
+      };
+      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
+        throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
+      }
+      await applyReferenceSpanMutationPlan(client, siteId, plan);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    new SiteRepo().invalidateCache(siteId);
+    logEvent('info', 'tariff.reference_period.updated', {
+      periodId,
+      tariffId: targetTariffId,
+      effectiveFrom: nextFrom,
+      effectiveTo: nextTo,
+      seasonCount,
+      accountId: accountFingerprint(userId),
+    });
+    return this.getTimeline(siteId, userId);
+  }
+
+  async deleteReferencePeriod(
+    siteId: string,
+    periodId: number,
+    viewerUserId: string | null = null
+  ): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>(
+        'SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+
+      const delRes = await client.query<{ id: number }>(
+        'DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = $2 RETURNING id',
+        [siteId, periodId]
+      );
+      if (delRes.rowCount === 0) throw new TariffNotFoundError('Reference rate plan period not found');
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    new SiteRepo().invalidateCache(siteId);
+    logEvent('info', 'tariff.reference_period.deleted', {
+      periodId,
+      accountId: viewerUserId ? accountFingerprint(viewerUserId) : null,
+    });
+    return this.getTimeline(siteId, viewerUserId);
+  }
+}
+
+async function loadReferenceSpans(client: PoolClient, siteId: string): Promise<ExistingSpan[]> {
+  const res = await client.query<{
+    id: number;
+    tariff_id: number;
+    effective_from: string;
+    effective_to: string | null;
+    updated_by_user_id: string | null;
+  }>(
+    `SELECT id, tariff_id, effective_from::text, effective_to::text, updated_by_user_id
+     FROM "TariffReferencePeriod"
+     WHERE site_id = $1
+     ORDER BY effective_from ASC, id ASC`,
+    [siteId]
+  );
+  return res.rows.map(r => ({
+    id: Number(r.id),
+    tariffId: Number(r.tariff_id),
+    source: 'manual',
+    effectiveFrom: r.effective_from.slice(0, 10),
+    effectiveTo: r.effective_to ? r.effective_to.slice(0, 10) : null,
+    updatedByUserId: r.updated_by_user_id,
+  }));
+}
+
+async function applyReferenceSpanMutationPlan(
+  client: PoolClient,
+  siteId: string,
+  plan: SpanMutationPlan
+): Promise<Array<{ id: number }>> {
+  if (plan.deleteIds.length > 0) {
+    await client.query(
+      'DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = ANY($2::int[])',
+      [siteId, plan.deleteIds]
+    );
+  }
+  const inserted: Array<{ id: number }> = [];
+  for (const row of plan.inserts) {
+    const res = await client.query<{ id: number }>(
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
+       VALUES ($1, $2, $3::date, $4::date, $5)
+       RETURNING id`,
+      [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.updatedByUserId]
+    );
+    inserted.push({ id: Number(res.rows[0].id) });
+  }
+  return inserted;
 }

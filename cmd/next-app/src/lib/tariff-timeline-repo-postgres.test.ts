@@ -314,7 +314,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const client = await local.database.connect();
     try {
       const resolved = await repo.resolveTariffForDate(client, 's7', '2026-06-15');
-      expect(resolved).toBe(teslaTariffId);
+      expect(resolved.tariffs[0]?.id).toBe(teslaTariffId);
     } finally {
       client.release();
     }
@@ -323,5 +323,26 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(timeline.referencePeriods).toHaveLength(1);
     expect(timeline.referencePeriods[0]?.name).toBe('Flat Reference');
     expect(timeline.periods.every(p => p.name === 'Tesla ToU')).toBe(true);
+
+    // Creating/updating/deleting a reference period leaves the site's current Tesla plan current.
+    const created = await repo.createReferencePeriod('s7', 'u1', {
+      name: 'Owner Fixed',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.15, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.15, sellRate: 0.03 }],
+      }],
+    });
+    const refId = created.referencePeriods.find(p => p.name === 'Owner Fixed')!.periodId;
+    await repo.updateReferencePeriod('s7', 'u1', refId, { name: 'Owner Fixed v2' });
+    const afterDelete = await repo.deleteReferencePeriod('s7', refId, 'u1');
+    expect(afterDelete.referencePeriods.some(p => p.periodId === refId)).toBe(false);
+
+    const currentRows = await local.database.query<{ id: number }>(
+      `SELECT id FROM "Tariff" WHERE site_id = 's7' AND is_current`
+    );
+    expect(currentRows.rows.map(r => r.id)).toEqual([teslaTariffId]);
   });
 });
