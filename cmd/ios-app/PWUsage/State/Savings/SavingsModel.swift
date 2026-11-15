@@ -61,6 +61,7 @@ final class SavingsModel {
 
     private(set) var state: SavingsState = .notReady(.noTimeline)
     private var lastCacheKey: CacheKey?
+    private var refreshGeneration: UInt64 = 0
 
     private let store: SolarHistoryStore
     private let computeReport: ComputeReport
@@ -80,6 +81,8 @@ final class SavingsModel {
         billingDay: Int,
         now: Date = .now
     ) async -> SavingsState {
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         guard let timeline,
               !timeline.periods.isEmpty,
               let actual = RatePeriodResolver(timeline: timeline) else {
@@ -92,37 +95,26 @@ final class SavingsModel {
             state = .notReady(.noReferencePlan)
             return state
         }
-        guard let flowDays = try? await store.flowDays(scope: scope, from: .distantPast, to: now),
-              !flowDays.isEmpty else {
+        let flowDays = try? await store.flowDays(scope: scope, from: .distantPast, to: now)
+        guard generation == refreshGeneration else { return state }
+        guard let flowDays, !flowDays.isEmpty else {
             lastCacheKey = nil
             state = .notReady(.flowsMissing)
             return state
         }
 
-        let siteZone = TimeZone(identifier: timeline.timezone) ?? .current
-        let timelineFingerprint = LocalBillBuilder.timelineFingerprint(timeline)
-        let siteLocalDate = SolarHistoryStore.dayString(now, timeZone: siteZone)
-        let existingCacheKey = lastCacheKey
-        let hasReadyState = if case .ready = state { true } else { false }
-        let battery = timeline.battery
-        let computeFn = computeReport
-
-        let outcome: (CacheKey, SavingsReport)? = await Task.detached(priority: .utility) {
-            let cacheKey = CacheKey(
+        let outcome = await computeInBackground(
+            ComputeRequest(
                 scope: scope,
-                timelineFingerprint: timelineFingerprint,
-                flowsSignature: FlowsSignature(days: flowDays),
+                timeline: timeline,
+                flowDays: flowDays,
+                actual: actual,
+                reference: reference,
                 billingDay: billingDay,
-                siteLocalDate: siteLocalDate
+                now: now
             )
-            if hasReadyState, cacheKey == existingCacheKey {
-                return nil
-            }
-            let scenarios = SavingsScenarioFlows.build(days: flowDays, battery: battery)
-            let report = computeFn(scenarios, actual, reference, billingDay, now)
-            return (cacheKey, report)
-        }.value
-
+        )
+        guard generation == refreshGeneration else { return state }
         guard let (cacheKey, report) = outcome else {
             return state
         }
@@ -133,7 +125,44 @@ final class SavingsModel {
     }
 
     func reset() {
+        refreshGeneration &+= 1
         lastCacheKey = nil
         state = .notReady(.noTimeline)
+    }
+
+    private struct ComputeRequest {
+        let scope: SolarForecastSiteScope
+        let timeline: SiteTariffsTimelineResponse
+        let flowDays: [EnergyFlowDay]
+        let actual: RatePeriodResolver
+        let reference: RatePeriodResolver
+        let billingDay: Int
+        let now: Date
+    }
+
+    private func computeInBackground(_ request: ComputeRequest) async -> (CacheKey, SavingsReport)? {
+        let siteZone = TimeZone(identifier: request.timeline.timezone) ?? .current
+        let timelineFingerprint = LocalBillBuilder.timelineFingerprint(request.timeline)
+        let siteLocalDate = SolarHistoryStore.dayString(request.now, timeZone: siteZone)
+        let existingCacheKey = lastCacheKey
+        let hasReadyState = if case .ready = state { true } else { false }
+        let battery = request.timeline.battery
+        let computeFn = computeReport
+
+        return await Task.detached(priority: .utility) {
+            let cacheKey = CacheKey(
+                scope: request.scope,
+                timelineFingerprint: timelineFingerprint,
+                flowsSignature: FlowsSignature(days: request.flowDays),
+                billingDay: request.billingDay,
+                siteLocalDate: siteLocalDate
+            )
+            if hasReadyState, cacheKey == existingCacheKey {
+                return nil
+            }
+            let scenarios = SavingsScenarioFlows.build(days: request.flowDays, battery: battery)
+            let report = computeFn(scenarios, request.actual, request.reference, request.billingDay, request.now)
+            return (cacheKey, report)
+        }.value
     }
 }

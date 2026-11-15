@@ -192,6 +192,44 @@ struct SavingsModelTests {
         #expect(result == .notReady(.noTimeline))
     }
 
+    @Test("Superseded refresh does not overwrite newer notReady state")
+    func supersededRefreshDoesNotOverwriteNewerState() async throws {
+        let (store, folder) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await seedDay(store, day: "2026-06-01")
+
+        let (enteredStream, enteredContinuation) = AsyncStream.makeStream(of: Void.self)
+        let release = DispatchSemaphore(value: 0)
+        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
+            enteredContinuation.yield()
+            enteredContinuation.finish()
+            release.wait()
+            return SavingsCalculator.compute(
+                scenarios: scenarios,
+                actual: actual,
+                reference: reference,
+                billingDay: billingDay,
+                now: now
+            )
+        }
+
+        let withRef = makeTimeline(referenceBuyRate: 0.14)
+        let withoutRef = makeTimeline(referenceBuyRate: nil)
+        let now = makeUTCDate(year: 2026, month: 6, day: 10)
+
+        let firstTask = Task {
+            await model.refresh(scope: scope, timeline: withRef, billingDay: 1, now: now)
+        }
+        for await _ in enteredStream { break }
+
+        let secondResult = await model.refresh(scope: scope, timeline: withoutRef, billingDay: 1, now: now)
+        #expect(secondResult == .notReady(.noReferencePlan))
+
+        release.signal()
+        _ = await firstTask.value
+        #expect(model.state == .notReady(.noReferencePlan))
+    }
+
     private func makeTempStore() -> (store: SolarHistoryStore, folder: URL) {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("savings-model-\(UUID().uuidString)")
