@@ -7,8 +7,8 @@ extension DashboardCoordinator {
         return periods.first(where: \.isCurrentToday) ?? periods.last
     }
 
-    /// Recomputes cached savings from the stored rate-plan timeline and daily energy flows.
-    func refreshSavings() async {
+    /// Recomputes cached savings from `overrideTimeline` (if provided) or the stored rate-plan timeline.
+    func refreshSavings(timeline overrideTimeline: SiteTariffsTimelineResponse? = nil) async {
         let siteID = selectedSiteID
         let generation = siteGeneration
         guard let scope = tariffScope(siteID: siteID) else {
@@ -16,7 +16,10 @@ extension DashboardCoordinator {
             savings = .notReady(.noTimeline)
             return
         }
-        var timeline = await savedTimeline(for: scope)?.timeline
+        var timeline = overrideTimeline
+        if timeline == nil {
+            timeline = await savedTimeline(for: scope)?.timeline ?? savingsTimeline
+        }
         if timeline == nil, canRequestAccountData {
             timeline = try? await revalidateTariffTimeline()
         }
@@ -51,7 +54,7 @@ extension DashboardCoordinator {
                 timeline = try await createReferenceRatePlan(request)
             }
             savingsTimeline = timeline
-            await refreshSavings()
+            await refreshSavings(timeline: timeline)
             return nil
         } catch {
             return error.localizedDescription
@@ -63,7 +66,7 @@ extension DashboardCoordinator {
         do {
             let timeline = try await deleteReferenceRatePlan(periodID: periodID)
             savingsTimeline = timeline
-            await refreshSavings()
+            await refreshSavings(timeline: timeline)
             return nil
         } catch {
             return error.localizedDescription

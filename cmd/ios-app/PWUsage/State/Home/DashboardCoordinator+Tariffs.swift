@@ -133,6 +133,6 @@ extension DashboardCoordinator {
         guard let scope else { return }
         try? await ratePlanTimelines.save(timeline, etag: etag, scope: scope)
         await repriceLocalBillIfTimelineChanged(timeline, scope: scope, generation: siteGeneration)
-        await refreshSavings()
+        await refreshSavings(timeline: timeline)
     }
 }
