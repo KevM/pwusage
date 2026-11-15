@@ -58,6 +58,7 @@ struct BillView: View {
             visibleTop = top
         }
         .refreshable {
+            Task { await coordinator.refreshSavings() }
             await coordinator.billOutlookRefreshed()
         }
         .task(id: "\(site.id)-\(isSelected)") {
@@ -70,6 +71,7 @@ struct BillView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && isSelected {
+                Task { await coordinator.refreshSavings() }
                 Task { await coordinator.billOutlookAppeared(markVisible: false) }
             }
         }

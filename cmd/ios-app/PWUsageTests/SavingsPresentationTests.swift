@@ -29,7 +29,7 @@ struct SavingsPresentationTests {
         )
     }
 
-    @Test("Breakdown line matches fixed copy")
+    @Test("Breakdown line matches fixed copy and preserves negative components")
     func breakdownLineMatchesCopy() {
         let figures = SavingsFigures(
             costs: ScenarioCosts(recorded: 100, batteryFixed: 130, solarAlone: 146, noSolar: 242),
@@ -39,6 +39,16 @@ struct SavingsPresentationTests {
         #expect(
             SavingsPresentation.breakdownLine(figures, currency: "USD", locale: Self.usLocale)
                 == "Solar about $96 · Powerwall and your rate plan about $46"
+        )
+
+        let negativeRatePlan = SavingsFigures(
+            costs: ScenarioCosts(recorded: 140, batteryFixed: 100, solarAlone: 100, noSolar: 200),
+            daysWithData: 14,
+            daysInPeriod: 14
+        )
+        #expect(
+            SavingsPresentation.breakdownLine(negativeRatePlan, currency: "USD", locale: Self.usLocale)
+                == "Solar about $100 · Powerwall and your rate plan about -$40"
         )
     }
 

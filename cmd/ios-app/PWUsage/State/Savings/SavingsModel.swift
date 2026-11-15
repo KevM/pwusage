@@ -21,23 +21,33 @@ final class SavingsModel {
 
     private struct FlowsSignature: Equatable, Sendable {
         let dayCount: Int
-        let firstDay: String?
-        let lastDay: String?
-        let totalRecordedSlots: Int
-        let lastDayLastGridWh: Float?
+        let contentHash: UInt64
 
         init(days: [EnergyFlowDay]) {
             self.dayCount = days.count
-            self.firstDay = days.first?.day
-            self.lastDay = days.last?.day
-            var recorded = 0
+            var hash: UInt64 = 14_695_981_039_346_656_037
             for day in days {
-                for value in day.gridWh where value != nil {
-                    recorded += 1
+                for byte in day.day.utf8 {
+                    hash = Self.fnvMix(hash, UInt64(byte))
                 }
+                hash = Self.mixSamples(hash, day.gridWh)
+                hash = Self.mixSamples(hash, day.solarWh)
+                hash = Self.mixSamples(hash, day.loadWh)
+                hash = Self.mixSamples(hash, day.batteryWh)
             }
-            self.totalRecordedSlots = recorded
-            self.lastDayLastGridWh = days.last?.gridWh.last(where: { $0 != nil }) ?? nil
+            self.contentHash = hash
+        }
+
+        private static func mixSamples(_ hash: UInt64, _ samples: [Float?]) -> UInt64 {
+            var current = fnvMix(hash, UInt64(samples.count))
+            for sample in samples {
+                current = fnvMix(current, sample.map { UInt64($0.bitPattern) } ?? 0xFFFF_FFFF_0000_0000)
+            }
+            return current
+        }
+
+        private static func fnvMix(_ hash: UInt64, _ value: UInt64) -> UInt64 {
+            (hash ^ value) &* 1_099_511_628_211
         }
     }
 

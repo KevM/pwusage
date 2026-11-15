@@ -193,6 +193,9 @@ extension DashboardCoordinator {
             cycleStartDay: cycleStartDay,
             now: currentNow
         )
+        if generation == siteGeneration {
+            await refreshSavings()
+        }
     }
 
     private func syncFlowsIfNeeded(
@@ -231,6 +234,9 @@ extension DashboardCoordinator {
                 cycleStartDay: cycleStartDay,
                 now: currentNow
             )
+            if let self, generation == siteGeneration {
+                await refreshSavings()
+            }
         }
     }
 

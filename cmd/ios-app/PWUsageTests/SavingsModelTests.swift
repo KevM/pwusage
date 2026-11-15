@@ -103,13 +103,39 @@ struct SavingsModelTests {
         #expect(counter.count == 2)
     }
 
+    @Test("Recomputes when an existing day sample changes")
+    func recomputesWhenExistingDayChanges() async throws {
+        let (store, folder) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await seedDay(store, day: "2026-06-01", solarWh: 1_000)
+
+        let counter = ComputeCounter()
+        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
+            counter.compute(
+                scenarios: scenarios,
+                actual: actual,
+                reference: reference,
+                billingDay: billingDay,
+                now: now
+            )
+        }
+        let timeline = makeTimeline(referenceBuyRate: 0.14)
+        let now = makeUTCDate(year: 2026, month: 6, day: 10)
+
+        _ = await model.refresh(scope: scope, timeline: timeline, billingDay: 1, now: now)
+        try await seedDay(store, day: "2026-06-01", solarWh: 1_500)
+        _ = await model.refresh(scope: scope, timeline: timeline, billingDay: 1, now: now)
+
+        #expect(counter.count == 2)
+    }
+
     private func makeTempStore() -> (store: SolarHistoryStore, folder: URL) {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("savings-model-\(UUID().uuidString)")
         return (SolarHistoryStore(directory: folder), folder)
     }
 
-    private func seedDay(_ store: SolarHistoryStore, day: String) async throws {
+    private func seedDay(_ store: SolarHistoryStore, day: String, solarWh: Double = 1_000) async throws {
         let zone = try #require(TimeZone(identifier: "UTC"))
         let parts = day.split(separator: "-").compactMap { Int($0) }
         var cal = Calendar(identifier: .gregorian)
@@ -120,7 +146,7 @@ struct SavingsModelTests {
             dayStart: dayStart,
             status: .complete,
             fetchedAt: dayStart,
-            solarWh: [1_000],
+            solarWh: [solarWh],
             loadWh: [500],
             gridWh: [-500],
             batteryWh: [0],

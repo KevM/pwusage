@@ -33,14 +33,25 @@ enum SavingsPresentation {
         return "Your system \(verb) \(amount)"
     }
 
+    /// Whole-dollar currency string with `about`, preserving negative signs (e.g. `"about -$40"`).
+    static func signedAboutAmount(
+        _ amount: Double,
+        currency: String,
+        locale: Locale = .current
+    ) -> String {
+        let rounded = amount.rounded()
+        let normalized = rounded == 0 ? 0 : rounded
+        return "about \(wholeCurrency(normalized, currency: currency, locale: locale))"
+    }
+
     /// Breakdown line for solar and Powerwall + rate plan components.
     static func breakdownLine(
         _ figures: SavingsFigures,
         currency: String,
         locale: Locale = .current
     ) -> String {
-        let solar = aboutAmount(figures.solar, currency: currency, locale: locale)
-        let tou = aboutAmount(figures.powerwallAndRatePlan, currency: currency, locale: locale)
+        let solar = signedAboutAmount(figures.solar, currency: currency, locale: locale)
+        let tou = signedAboutAmount(figures.powerwallAndRatePlan, currency: currency, locale: locale)
         return "Solar \(solar) · Powerwall and your rate plan \(tou)"
     }
 
