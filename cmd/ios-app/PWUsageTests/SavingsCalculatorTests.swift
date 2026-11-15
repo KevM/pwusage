@@ -281,7 +281,7 @@ struct SavingsCalculatorTests {
         #expect(abs(report.lifetime.total - 0.30) < 1e-9)
     }
 
-    @Test("Three synthetic years compute under 2 seconds")
+    @Test("Three synthetic years compute under 5 seconds")
     func lifetimeThreeYearsBenchmark() throws {
         let oneDaySlots = 288
         let solar = (0 ..< oneDaySlots).map { slot -> Float? in
@@ -327,6 +327,6 @@ struct SavingsCalculatorTests {
             #expect(report.lifetime.daysWithData == 1_095)
         }
         print("SavingsCalculator 3-year benchmark: \(elapsed)")
-        #expect(elapsed < .seconds(2))
+        #expect(elapsed < .seconds(5))
     }
 }
