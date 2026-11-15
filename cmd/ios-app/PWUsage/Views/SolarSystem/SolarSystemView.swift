@@ -66,13 +66,11 @@ struct SolarSystemView: View {
         .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
             solarHealth?.markFindingsSeen()
-            if solarHealth?.report == nil, solarHealth?.isRunning == false {
-                solarHealth?.reload()
-            }
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
             isConfirmingLocation = true
         }
+        .task { await solarHealth?.reloadIfNeeded() }
         .onChange(of: solarHealth?.hasUnreadFinding) { solarHealth?.markFindingsSeen() }
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
