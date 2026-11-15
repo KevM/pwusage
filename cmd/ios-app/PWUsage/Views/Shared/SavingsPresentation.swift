@@ -87,6 +87,79 @@ enum SavingsPresentation {
                 .precision(.fractionLength(0))
         )
     }
+
+    static func caveats(_ figures: SavingsFigures) -> [SavingsCaveat] {
+        var result: [SavingsCaveat] = []
+        if let gap = figures.gap(.noFixedRatePlan) {
+            let text: String
+            let suggestedStart: String?
+            if let start = gap.fixedRatePlanStart {
+                text = "Your fixed rate plan starts \(RatePlanTimelineFormatting.displayDate(start)), "
+                    + "so earlier days aren’t counted."
+                suggestedStart = gap.ranges.first?.first
+            } else {
+                text = "We don’t have your fixed rate plan for \(dayRangesText(gap.ranges, days: gap.days)), "
+                    + "so those days aren’t counted."
+                suggestedStart = nil
+            }
+            result.append(SavingsCaveat(text: text, action: .editFixedRatePlan(suggestedStart: suggestedStart)))
+        }
+        if let gap = figures.gap(.noRatePlan) {
+            let text = "We don’t have your rate plan for \(dayRangesText(gap.ranges, days: gap.days)), "
+                + "so those days aren’t counted."
+            result.append(SavingsCaveat(text: text, action: .fixRatePlans))
+        }
+        return result
+    }
+
+    static func dayRangesText(_ ranges: [SavingsDayRange], days: Int) -> String {
+        guard let first = ranges.first, let last = ranges.last else { return "" }
+        if ranges.count >= 3 {
+            return "\(days) days between \(RatePlanTimelineFormatting.displayDate(first.first)) and "
+                + RatePlanTimelineFormatting.displayDate(last.last)
+        }
+        return ranges.map(rangeText).joined(separator: " and ")
+    }
+
+    private static func rangeText(_ range: SavingsDayRange) -> String {
+        let end = RatePlanTimelineFormatting.displayDate(range.last)
+        guard range.first != range.last else { return end }
+        let start: String
+        if range.first.prefix(4) == range.last.prefix(4),
+           let date = RatePlanTimelineFormatting.parseYMD(range.first) {
+            var style = Date.FormatStyle.dateTime.month(.abbreviated).day()
+                .locale(Locale(identifier: "en_US_POSIX"))
+            style.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+            start = date.formatted(style)
+        } else {
+            start = RatePlanTimelineFormatting.displayDate(range.first)
+        }
+        return "\(start) to \(end)"
+    }
+}
+
+struct SavingsCaveat: Equatable, Sendable, Identifiable {
+    enum Action: Equatable, Sendable {
+        case editFixedRatePlan(suggestedStart: String?)
+        case fixRatePlans
+    }
+
+    let text: String
+    let action: Action
+
+    var actionTitle: String {
+        switch action {
+        case .editFixedRatePlan: "Edit Fixed Rate Plan"
+        case .fixRatePlans: "Fix Rate Plans"
+        }
+    }
+
+    var id: String {
+        switch action {
+        case .editFixedRatePlan: "fixed"
+        case .fixRatePlans: "ratePlan"
+        }
+    }
 }
 
 /// Builds API payloads for a single-rate-all-day reference rate plan.
