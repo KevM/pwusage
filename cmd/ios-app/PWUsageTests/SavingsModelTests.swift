@@ -129,6 +129,69 @@ struct SavingsModelTests {
         #expect(counter.count == 2)
     }
 
+    @Test("Recomputes when site-local date advances")
+    func recomputesWhenSiteLocalDateAdvances() async throws {
+        let (store, folder) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await seedDay(store, day: "2026-06-01")
+
+        let counter = ComputeCounter()
+        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
+            counter.compute(
+                scenarios: scenarios,
+                actual: actual,
+                reference: reference,
+                billingDay: billingDay,
+                now: now
+            )
+        }
+        let timeline = makeTimeline(referenceBuyRate: 0.14)
+
+        _ = await model.refresh(
+            scope: scope,
+            timeline: timeline,
+            billingDay: 1,
+            now: makeUTCDate(year: 2026, month: 6, day: 10)
+        )
+        _ = await model.refresh(
+            scope: scope,
+            timeline: timeline,
+            billingDay: 1,
+            now: makeUTCDate(year: 2026, month: 6, day: 11)
+        )
+
+        #expect(counter.count == 2)
+    }
+
+    @Test("Empty actual periods yields notReady(.noTimeline)")
+    func emptyActualPeriodsYieldsNotReady() async throws {
+        let (store, folder) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await seedDay(store, day: "2026-06-01")
+
+        let base = makeTimeline(referenceBuyRate: 0.14)
+        let withoutActual = SiteTariffsTimelineResponse(
+            version: base.version,
+            siteId: base.siteId,
+            timezone: base.timezone,
+            currency: base.currency,
+            periods: [],
+            referencePeriods: base.referencePeriods,
+            battery: base.battery,
+            reattribution: base.reattribution,
+            holidayDates: base.holidayDates,
+            teslaSync: base.teslaSync
+        )
+        let model = SavingsModel(store: store)
+        let result = await model.refresh(
+            scope: scope,
+            timeline: withoutActual,
+            billingDay: 1,
+            now: makeUTCDate(year: 2026, month: 6, day: 10)
+        )
+        #expect(result == .notReady(.noTimeline))
+    }
+
     private func makeTempStore() -> (store: SolarHistoryStore, folder: URL) {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("savings-model-\(UUID().uuidString)")

@@ -56,6 +56,7 @@ final class SavingsModel {
         let timelineFingerprint: String
         let flowsSignature: FlowsSignature
         let billingDay: Int
+        let siteLocalDate: String
     }
 
     private(set) var state: SavingsState = .notReady(.noTimeline)
@@ -80,6 +81,7 @@ final class SavingsModel {
         now: Date = .now
     ) async -> SavingsState {
         guard let timeline,
+              !timeline.periods.isEmpty,
               let actual = RatePeriodResolver(timeline: timeline) else {
             lastCacheKey = nil
             state = .notReady(.noTimeline)
@@ -97,11 +99,13 @@ final class SavingsModel {
             return state
         }
 
+        let siteZone = TimeZone(identifier: timeline.timezone) ?? .current
         let cacheKey = CacheKey(
             scope: scope,
             timelineFingerprint: LocalBillBuilder.timelineFingerprint(timeline),
             flowsSignature: FlowsSignature(days: flowDays),
-            billingDay: billingDay
+            billingDay: billingDay,
+            siteLocalDate: SolarHistoryStore.dayString(now, timeZone: siteZone)
         )
         if cacheKey == lastCacheKey, case .ready = state {
             return state
