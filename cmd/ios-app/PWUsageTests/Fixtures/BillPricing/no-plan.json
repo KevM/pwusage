@@ -8,6 +8,8 @@
     "timezone": "America/Denver",
     "currency": "USD",
     "periods": [],
+    "referencePeriods": [],
+    "battery": null,
     "reattribution": null,
     "holidayDates": [
       "2026-01-01",
