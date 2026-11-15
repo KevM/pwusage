@@ -123,25 +123,92 @@ struct ActiveTariffPeriodMatch: Equatable, Sendable {
     let window: TimePeriodWindowInput
 }
 
+struct SiteBatteryDTO: Codable, Equatable, Sendable {
+    let nameplateEnergyWh: Double
+    let nameplatePowerW: Double
+    let backupReservePercent: Double
+}
+
 struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
     let version: Int
     let siteId: String
     let timezone: String
     let currency: String
     let periods: [TariffPeriodDTO]
+    let referencePeriods: [TariffPeriodDTO]
+    let battery: SiteBatteryDTO?
     let reattribution: ReattributionStatusDTO?
     /// Observed holidays (site-local YYYY-MM-DD); they follow the weekend schedule. Nil from older servers.
     var holidayDates: [String]?
     let teslaSync: TeslaSyncDTO
 
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case siteId
+        case timezone
+        case currency
+        case periods
+        case referencePeriods
+        case battery
+        case reattribution
+        case holidayDates
+        case teslaSync
+    }
+
+    init(
+        version: Int,
+        siteId: String,
+        timezone: String,
+        currency: String,
+        periods: [TariffPeriodDTO],
+        referencePeriods: [TariffPeriodDTO] = [],
+        battery: SiteBatteryDTO? = nil,
+        reattribution: ReattributionStatusDTO?,
+        holidayDates: [String]? = nil,
+        teslaSync: TeslaSyncDTO
+    ) {
+        self.version = version
+        self.siteId = siteId
+        self.timezone = timezone
+        self.currency = currency
+        self.periods = periods
+        self.referencePeriods = referencePeriods
+        self.battery = battery
+        self.reattribution = reattribution
+        self.holidayDates = holidayDates
+        self.teslaSync = teslaSync
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        siteId = try container.decode(String.self, forKey: .siteId)
+        timezone = try container.decode(String.self, forKey: .timezone)
+        currency = try container.decode(String.self, forKey: .currency)
+        periods = try container.decode([TariffPeriodDTO].self, forKey: .periods)
+        referencePeriods = try container.decodeIfPresent([TariffPeriodDTO].self, forKey: .referencePeriods) ?? []
+        battery = try container.decodeIfPresent(SiteBatteryDTO.self, forKey: .battery)
+        reattribution = try container.decodeIfPresent(ReattributionStatusDTO.self, forKey: .reattribution)
+        holidayDates = try container.decodeIfPresent([String].self, forKey: .holidayDates)
+        teslaSync = try container.decode(TeslaSyncDTO.self, forKey: .teslaSync)
+    }
+
     func validating(siteID: String) throws -> Self {
-        let ratesAreFinite = periods.allSatisfy { period in
+        let allPeriods = periods + referencePeriods
+        let ratesAreFinite = allPeriods.allSatisfy { period in
             period.seasons.allSatisfy { season in
-                let allPeriods = season.weekdayPeriods + season.weekendPeriods
-                return allPeriods.allSatisfy { $0.buyRate.isFinite && $0.sellRate.isFinite }
+                let windows = season.weekdayPeriods + season.weekendPeriods
+                return windows.allSatisfy { $0.buyRate.isFinite && $0.sellRate.isFinite }
             }
         }
-        guard version == 2, siteId == siteID, TimeZone(identifier: timezone) != nil, ratesAreFinite else {
+        let batteryValid = battery.map {
+            $0.nameplateEnergyWh.isFinite && $0.nameplatePowerW.isFinite && $0.backupReservePercent.isFinite
+        } ?? true
+        guard version == 2,
+              siteId == siteID,
+              TimeZone(identifier: timezone) != nil,
+              ratesAreFinite,
+              batteryValid else {
             throw PWUsageAPIError.invalidResponse
         }
         return self
@@ -236,10 +303,39 @@ protocol MobileTariffDataAPI: Sendable {
     ) async throws -> SiteTariffsTimelineResponse
     func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse
+    func createReferenceRatePlan(
+        siteID: String,
+        body: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse
+    func updateReferenceRatePlan(
+        siteID: String,
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse
+    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
 }
 
 extension MobileTariffDataAPI {
     func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
         .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
+    }
+
+    func createReferenceRatePlan(
+        siteID _: String,
+        body _: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func updateReferenceRatePlan(
+        siteID _: String,
+        periodID _: Int,
+        body _: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func deleteReferenceRatePlan(siteID _: String, periodID _: Int) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
     }
 }

@@ -281,4 +281,68 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const kept = await local.database.query(`SELECT 1 FROM "Tariff" WHERE site_id = 's6'`);
     expect(kept.rowCount).toBe(1);
   });
+
+  it('reference periods never change the actual timeline', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s7', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const migRef = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_reference_periods.sql'));
+    if (!migRef) throw new Error('Reference migration missing');
+    await local.database.query(await readFile(`db-migrations/${migRef}`, 'utf8'));
+
+    const tariffRepo = new TariffRepo();
+    const teslaTariffId = await tariffRepo.addTariffVersion('s7', {
+      name: 'Tesla ToU',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.25, sell_rate: 0.05,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.25, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+
+    const refTariffRes = await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
+       VALUES ('s7', 'Flat Reference', 2, FALSE, 'manual') RETURNING id`
+    );
+    const refTariffId = refTariffRes.rows[0].id;
+
+    // Overlapping a Tesla span in TariffEffectivePeriod is accepted in TariffReferencePeriod.
+    await local.database.query(
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
+       VALUES ('s7', $1, '2024-01-01', NULL, 'u1')`,
+      [refTariffId]
+    );
+
+    const repo = new TariffTimelineRepo();
+    const client = await local.database.connect();
+    try {
+      const resolved = await repo.resolveTariffForDate(client, 's7', '2026-06-15');
+      expect(resolved.tariffs[0]?.id).toBe(teslaTariffId);
+    } finally {
+      client.release();
+    }
+
+    const timeline = await repo.getTimeline('s7', 'u1');
+    expect(timeline.referencePeriods).toHaveLength(1);
+    expect(timeline.referencePeriods[0]?.name).toBe('Flat Reference');
+    expect(timeline.periods.every(p => p.name === 'Tesla ToU')).toBe(true);
+
+    // Creating/updating/deleting a reference period leaves the site's current Tesla plan current.
+    const created = await repo.createReferencePeriod('s7', 'u1', {
+      name: 'Owner Fixed',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.15, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.15, sellRate: 0.03 }],
+      }],
+    });
+    const refId = created.referencePeriods.find(p => p.name === 'Owner Fixed')!.periodId;
+    await repo.updateReferencePeriod('s7', 'u1', refId, { name: 'Owner Fixed v2' });
+    const afterDelete = await repo.deleteReferencePeriod('s7', refId, 'u1');
+    expect(afterDelete.referencePeriods.some(p => p.periodId === refId)).toBe(false);
+
+    const currentRows = await local.database.query<{ id: number }>(
+      `SELECT id FROM "Tariff" WHERE site_id = 's7' AND is_current`
+    );
+    expect(currentRows.rows.map(r => r.id)).toEqual([teslaTariffId]);
+  });
 });

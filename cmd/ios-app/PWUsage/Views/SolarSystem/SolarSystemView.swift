@@ -28,6 +28,7 @@ struct SolarSystemView: View {
     @State private var record: SolarLayoutRecord?
     @State private var isEditingLayout = false
     @State private var isShowingFindings = false
+    @State private var isEditingFixedRatePlan = false
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -65,16 +66,29 @@ struct SolarSystemView: View {
         .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
             solarHealth?.markFindingsSeen()
-            if solarHealth?.report == nil, solarHealth?.isRunning == false {
-                solarHealth?.reload()
-            }
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
             isConfirmingLocation = true
         }
+        .task { await solarHealth?.reloadIfNeeded() }
         .onChange(of: solarHealth?.hasUnreadFinding) { solarHealth?.markFindingsSeen() }
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
+        .task { await coordinator.refreshSavings() }
+        .sheet(isPresented: $isEditingFixedRatePlan) {
+            FixedRatePlanForm(
+                existing: coordinator.activeReferencePeriod,
+                defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
+                timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
+                currency: coordinator.bill.response?.currentBill.currency ?? "USD",
+                onSave: { request, editing in
+                    await coordinator.saveFixedRatePlan(request, editing: editing)
+                },
+                onDelete: { periodID in
+                    await coordinator.removeFixedRatePlan(periodID: periodID)
+                }
+            )
+        }
     }
 
     private var activeLayout: SolarLayout? {
@@ -125,6 +139,13 @@ struct SolarSystemView: View {
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
             }
+            SolarSystemSavingsSection(
+                state: coordinator.savings,
+                currency: coordinator.bill.response?.currentBill.currency ?? "USD",
+                hasReferencePlan: coordinator.activeReferencePeriod != nil,
+                onAddFixedRatePlan: { isEditingFixedRatePlan = true },
+                onEditFixedRatePlan: { isEditingFixedRatePlan = true }
+            )
             panelHealthSection
             if stored != nil || status != nil { locationSection }
             #if DEBUG

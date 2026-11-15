@@ -246,4 +246,51 @@ struct LocalBillBuilderTests {
         let changed = LocalBillBuilder.timelineFingerprint(updatedTimeline)
         #expect(changed != baseline)
     }
+
+    @Test("timelineFingerprint changes when reference plan or battery changes")
+    func fingerprintChangesWhenReferencePlanChanges() throws {
+        let fixture = try BillPricingFixture.load("single-plan-cycle")
+        let baseline = LocalBillBuilder.timelineFingerprint(fixture.timeline)
+        let refWindow = TimePeriodWindowInput(
+            touName: .offPeak,
+            fromHour: 0,
+            fromMinute: 0,
+            toHour: 24,
+            toMinute: 0,
+            buyRate: 0.14,
+            sellRate: 0.04
+        )
+        let refSeason = TariffSeasonInput(
+            name: "All Year",
+            fromMonth: 1,
+            toMonth: 12,
+            weekdayPeriods: [refWindow],
+            weekendPeriods: [refWindow]
+        )
+        let refPeriod = TariffPeriodDTO(
+            periodId: 99,
+            tariffId: 990,
+            name: "Fixed",
+            version: 1,
+            source: .manual,
+            effectiveFrom: "2024-01-01",
+            effectiveTo: nil,
+            isCurrentToday: true,
+            updatedBy: nil,
+            seasons: [refSeason]
+        )
+        let withRef = SiteTariffsTimelineResponse(
+            version: fixture.timeline.version,
+            siteId: fixture.timeline.siteId,
+            timezone: fixture.timeline.timezone,
+            currency: fixture.timeline.currency,
+            periods: fixture.timeline.periods,
+            referencePeriods: [refPeriod],
+            battery: SiteBatteryDTO(nameplateEnergyWh: 13_500, nameplatePowerW: 5_000, backupReservePercent: 20),
+            reattribution: fixture.timeline.reattribution,
+            holidayDates: fixture.timeline.holidayDates,
+            teslaSync: fixture.timeline.teslaSync
+        )
+        #expect(LocalBillBuilder.timelineFingerprint(withRef) != baseline)
+    }
 }

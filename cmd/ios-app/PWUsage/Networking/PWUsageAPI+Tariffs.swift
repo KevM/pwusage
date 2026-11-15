@@ -59,10 +59,7 @@ extension PWUsageAPI {
     }
 
     func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
-        var req = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "tariffs/\(periodID)"))
-        req.httpMethod = "DELETE"
-        let data = try await perform(req)
-        return try decodeTariffTimeline(data, siteID: siteID)
+        try await deleteTariff(siteID: siteID, suffix: "tariffs/\(periodID)")
     }
 
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse {
@@ -72,6 +69,42 @@ extension PWUsageAPI {
             method: "POST",
             body: EmptyTariffMutationBody()
         )
+    }
+
+    func createReferenceRatePlan(
+        siteID: String,
+        body: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(
+            siteID: siteID,
+            suffix: "tariffs/reference",
+            method: "POST",
+            body: body
+        )
+    }
+
+    func updateReferenceRatePlan(
+        siteID: String,
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(
+            siteID: siteID,
+            suffix: "tariffs/reference/\(periodID)",
+            method: "PATCH",
+            body: body
+        )
+    }
+
+    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
+        try await deleteTariff(siteID: siteID, suffix: "tariffs/reference/\(periodID)")
+    }
+
+    private func deleteTariff(siteID: String, suffix: String) async throws -> SiteTariffsTimelineResponse {
+        var req = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: suffix))
+        req.httpMethod = "DELETE"
+        let data = try await perform(req)
+        return try decodeTariffTimeline(data, siteID: siteID)
     }
 
     private func performTariffMutation<Body: Encodable>(

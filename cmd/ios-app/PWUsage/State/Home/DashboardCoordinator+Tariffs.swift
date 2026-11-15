@@ -42,6 +42,25 @@ extension DashboardCoordinator {
         try await runTariffRequest { api, siteID in try await api.retryTariffReattribution(siteID: siteID) }
     }
 
+    func createReferenceRatePlan(_ body: TariffPlanWriteRequest) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in try await api.createReferenceRatePlan(siteID: siteID, body: body) }
+    }
+
+    func updateReferenceRatePlan(
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in
+            try await api.updateReferenceRatePlan(siteID: siteID, periodID: periodID, body: body)
+        }
+    }
+
+    func deleteReferenceRatePlan(periodID: Int) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in
+            try await api.deleteReferenceRatePlan(siteID: siteID, periodID: periodID)
+        }
+    }
+
     private func runTariffFetch(knownETag: String?) async throws -> SiteTariffsTimelineResponse? {
         guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
@@ -97,11 +116,11 @@ extension DashboardCoordinator {
         }
     }
 
-    private func tariffScope(siteID: String) -> SolarForecastSiteScope? {
+    func tariffScope(siteID: String) -> SolarForecastSiteScope? {
         accountScopeID.map { SolarForecastSiteScope(accountScopeID: $0, siteID: siteID) }
     }
 
-    private func savedTimeline(for scope: SolarForecastSiteScope?) async -> SavedRatePlanTimeline? {
+    func savedTimeline(for scope: SolarForecastSiteScope?) async -> SavedRatePlanTimeline? {
         guard let scope else { return nil }
         return try? await ratePlanTimelines.saved(scope: scope)
     }
@@ -112,7 +131,12 @@ extension DashboardCoordinator {
         scope: SolarForecastSiteScope?
     ) async {
         guard let scope else { return }
+        let generation = siteGeneration
         try? await ratePlanTimelines.save(timeline, etag: etag, scope: scope)
-        await repriceLocalBillIfTimelineChanged(timeline, scope: scope, generation: siteGeneration)
+        await repriceLocalBillIfTimelineChanged(timeline, scope: scope, generation: generation)
+        guard !Task.isCancelled,
+              siteGeneration == generation,
+              tariffScope(siteID: selectedSiteID) == scope else { return }
+        await refreshSavings(timeline: timeline)
     }
 }

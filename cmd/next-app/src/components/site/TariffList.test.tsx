@@ -8,6 +8,8 @@ const baseTimeline: SiteTariffsTimelineResponse = {
   siteId: 'site-1',
   timezone: 'America/Chicago',
   currency: 'USD',
+  referencePeriods: [],
+  battery: null,
   periods: [
     {
       periodId: 2,

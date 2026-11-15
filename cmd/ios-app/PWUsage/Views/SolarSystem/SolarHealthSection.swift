@@ -172,8 +172,12 @@ struct SolarHealthSection: View {
     private var findingsRow: some View {
         let findings = report.visibleFindings
         if findings.isEmpty {
-            LabeledContent("Findings") {
-                Label("No issues found", systemImage: "checkmark.circle")
+            HStack(spacing: 6) {
+                Text("Findings")
+                Spacer(minLength: 8)
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                Text("No issues found")
                     .foregroundStyle(.secondary)
             }
         } else {

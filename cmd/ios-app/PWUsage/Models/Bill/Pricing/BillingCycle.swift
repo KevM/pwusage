@@ -43,6 +43,27 @@ enum BillingCycle {
         return (start: start, end: end)
     }
 
+    static func cycles(
+        billingDay: Int,
+        from startDate: Date,
+        through endDate: Date,
+        timeZone: TimeZone
+    ) -> [(start: Date, end: Date)] {
+        let effectiveStart = min(startDate, endDate)
+        let first = current(billingDay: billingDay, now: effectiveStart, timeZone: timeZone)
+        let last = current(billingDay: billingDay, now: endDate, timeZone: timeZone)
+        guard first.start < last.end else { return [last] }
+
+        var result: [(start: Date, end: Date)] = []
+        var cursor = first
+        while cursor.start <= last.start {
+            result.append(cursor)
+            if cursor.start == last.start { break }
+            cursor = current(billingDay: billingDay, now: cursor.end, timeZone: timeZone)
+        }
+        return result
+    }
+
     private static func siteLocalMidnight(
         year: Int,
         month: Int,

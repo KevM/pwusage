@@ -87,6 +87,8 @@ final class DashboardCoordinator: ObservableObject {
     /// The automatic provider's published forecast, already corrected.
     @Published var solarForecastPublication: SolarForecastPublication?
     @Published var solarForecastAttempt: SolarForecastPublicationAttempt?
+    @Published var savings: SavingsState = .notReady(.noTimeline)
+    @Published var savingsTimeline: SiteTariffsTimelineResponse?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
     /// Whichever endpoint supplies Home's power readings owns their availability:
@@ -100,6 +102,7 @@ final class DashboardCoordinator: ObservableObject {
     let history: SolarHistoryStore
     let records: SolarLayoutRecordStore
     let ratePlanTimelines: RatePlanTimelineStore
+    let savingsModel: SavingsModel
     let billPricingMode: BillPricingMode
     let shadowDedup: BillShadowDedupTracker
     let runner: SolarLayoutDetectionRunner?
@@ -203,6 +206,7 @@ final class DashboardCoordinator: ObservableObject {
         self.history = history
         self.records = records
         self.ratePlanTimelines = ratePlanTimelines
+        self.savingsModel = SavingsModel(store: history)
         self.runner = runner
         self.billPricingMode = billPricingMode
         self.shadowDedup = shadowDedup
@@ -351,6 +355,9 @@ final class DashboardCoordinator: ObservableObject {
         historyEnabled = true
         layoutInvalidated = false
         runner?.cancel()
+        savingsModel.reset()
+        savings = .notReady(.noTimeline)
+        savingsTimeline = nil
     }
 
     func selectSite(_ siteID: String) {
@@ -380,6 +387,9 @@ final class DashboardCoordinator: ObservableObject {
         // Solcast leaves it in place.
         householdPattern = nil
         forecastLoadSettled = false
+        savingsModel.reset()
+        savings = .notReady(.noTimeline)
+        savingsTimeline = nil
         guard isForeground, canRequestAccountData else { return }
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the

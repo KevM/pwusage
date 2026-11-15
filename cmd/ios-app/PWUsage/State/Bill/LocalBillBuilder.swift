@@ -102,12 +102,16 @@ struct LocalBillBuilder {
     static func timelineFingerprint(_ timeline: SiteTariffsTimelineResponse) -> String {
         struct FingerprintPayload: Encodable {
             let periods: [TariffPeriodDTO]
+            let referencePeriods: [TariffPeriodDTO]
+            let battery: SiteBatteryDTO?
             let holidayDates: [String]
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let payload = FingerprintPayload(
             periods: timeline.periods,
+            referencePeriods: timeline.referencePeriods,
+            battery: timeline.battery,
             holidayDates: timeline.holidayDates ?? []
         )
         let data = (try? encoder.encode(payload)) ?? Data()

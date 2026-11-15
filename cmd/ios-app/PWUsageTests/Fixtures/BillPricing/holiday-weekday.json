@@ -69,6 +69,8 @@
         ]
       }
     ],
+    "referencePeriods": [],
+    "battery": null,
     "reattribution": null,
     "holidayDates": [
       "2024-01-01",

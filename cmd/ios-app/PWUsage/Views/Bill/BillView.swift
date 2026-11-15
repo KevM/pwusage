@@ -58,15 +58,20 @@ struct BillView: View {
             visibleTop = top
         }
         .refreshable {
+            Task { await coordinator.refreshSavings() }
             await coordinator.billOutlookRefreshed()
         }
         .task(id: "\(site.id)-\(isSelected)") {
-            if isSelected { await coordinator.billOutlookAppeared() } else {
+            if isSelected {
+                Task { await coordinator.refreshSavings() }
+                await coordinator.billOutlookAppeared()
+            } else {
                 coordinator.solarSurfaceDisappeared(.bill)
             }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && isSelected {
+                Task { await coordinator.refreshSavings() }
                 Task { await coordinator.billOutlookAppeared(markVisible: false) }
             }
         }
@@ -78,6 +83,19 @@ struct BillView: View {
                 BillSavingsSheet(move: move, currency: currency, onOpenSmartShift: onOpenSmartShift)
             case let .details(details):
                 BillEstimateDetailsSheet(details: details)
+            case let .fixedRatePlan(existing):
+                FixedRatePlanForm(
+                    existing: existing,
+                    defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
+                    timeZone: TimeZone(identifier: timeZone) ?? .current,
+                    currency: response?.currentBill.currency ?? "USD",
+                    onSave: { request, editing in
+                        await coordinator.saveFixedRatePlan(request, editing: editing)
+                    },
+                    onDelete: { periodID in
+                        await coordinator.removeFixedRatePlan(periodID: periodID)
+                    }
+                )
             }
         }
         .navigationTitle("Current Bill")
@@ -127,6 +145,12 @@ struct BillView: View {
                 sheet = .savings(move, currency: bill.currency)
             }
         }
+        BillSavingsCard(
+            state: coordinator.savings,
+            currency: bill.currency,
+            onAddFixedRatePlan: { sheet = .fixedRatePlan(nil) },
+            onEditFixedRatePlan: { sheet = .fixedRatePlan(coordinator.activeReferencePeriod) }
+        )
         if let history = response.outlook, !history.points.isEmpty {
             BillOutlookChart(history: history, projected: projected, cycleStart: bill.cycleStart,
                              cycleEnd: bill.cycleEnd, now: now, timeZone: timeZone,
@@ -197,11 +221,13 @@ struct BillView: View {
 private enum BillSheet: Identifiable {
     case savings(BillSavingsMove, currency: String)
     case details(BillEstimateDetails)
+    case fixedRatePlan(TariffPeriodDTO?)
 
     var id: String {
         switch self {
         case .savings: "savings"
         case .details: "details"
+        case let .fixedRatePlan(period): "fixedRatePlan-\(period?.periodId ?? 0)"
         }
     }
 }

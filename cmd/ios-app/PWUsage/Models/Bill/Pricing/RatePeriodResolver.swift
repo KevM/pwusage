@@ -49,16 +49,33 @@ struct RatePeriodResolver: Sendable {
     }
 
     init?(timeline: SiteTariffsTimelineResponse) {
-        guard let timeZone = TimeZone(identifier: timeline.timezone) else { return nil }
-        self.periods = timeline.periods
-        self.holidayDates = Set(timeline.holidayDates ?? [])
+        self.init(
+            periods: timeline.periods,
+            timezone: timeline.timezone,
+            holidayDates: timeline.holidayDates
+        )
+    }
+
+    init?(referenceOf timeline: SiteTariffsTimelineResponse) {
+        guard !timeline.referencePeriods.isEmpty else { return nil }
+        self.init(
+            periods: timeline.referencePeriods,
+            timezone: timeline.timezone,
+            holidayDates: timeline.holidayDates
+        )
+    }
+
+    private init?(periods: [TariffPeriodDTO], timezone: String, holidayDates: [String]?) {
+        guard let timeZone = TimeZone(identifier: timezone) else { return nil }
+        self.periods = periods
+        self.holidayDates = Set(holidayDates ?? [])
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         self.calendar = calendar
     }
 
-    func period(at instant: Date) -> ResolvedRatePeriod {
-        guard let match = match(at: instant) else { return .unknown }
+    func period(at instant: Date, strict: Bool = false) -> ResolvedRatePeriod {
+        guard let match = scheduleMatch(at: instant, strict: strict) else { return .unknown }
         let planName = match.period.name.isEmpty ? "Unknown" : match.period.name
         return ResolvedRatePeriod(
             planName: planName,
@@ -73,14 +90,14 @@ struct RatePeriodResolver: Sendable {
         return ActiveTariffPeriodMatch(period: found.period, season: found.season, window: found.window)
     }
 
-    func scheduleMatch(at instant: Date) -> ScheduleMatch? {
+    func scheduleMatch(at instant: Date, strict: Bool = false) -> ScheduleMatch? {
         let comps = calendar.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: instant)
         guard let year = comps.year, let month = comps.month, let day = comps.day,
               let weekday = comps.weekday, let hour = comps.hour, let minute = comps.minute else {
             return nil
         }
         let today = String(format: "%04d-%02d-%02d", year, month, day)
-        guard let period = period(on: today) else { return nil }
+        guard let period = period(on: today, strict: strict) else { return nil }
         guard let seasonIndex = period.seasons.firstIndex(where: {
             Self.seasonMatches(month: month, day: day, season: $0)
         }) else {
@@ -120,12 +137,14 @@ struct RatePeriodResolver: Sendable {
 
     /// The plan the server prices `day` with: the one covering it, else (in a gap) the nearest
     /// earlier plan by end date, else (before every plan) the earliest. Mirrors `resolveTariffForDate`.
-    private func period(on day: String) -> TariffPeriodDTO? {
+    /// When `strict` is `true`, only a plan whose effective range covers `day` matches.
+    private func period(on day: String, strict: Bool) -> TariffPeriodDTO? {
         if let exact = periods.first(where: {
             $0.effectiveFrom <= day && ($0.effectiveTo == nil || day <= ($0.effectiveTo ?? ""))
         }) {
             return exact
         }
+        guard !strict else { return nil }
         if let earlier = periods.filter({ ($0.effectiveTo ?? "") != "" && ($0.effectiveTo ?? "") < day })
             .max(by: { ($0.effectiveTo ?? "") < ($1.effectiveTo ?? "") }) {
             return earlier

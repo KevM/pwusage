@@ -42,4 +42,21 @@ struct BillingCycleTests {
         #expect(underAuckland.start == expectedStart)
         #expect(underAuckland.end == expectedEnd)
     }
+
+    @Test
+    func cyclesSpanFromFirstDayThroughNow() throws {
+        let siteZone = try #require(TimeZone(identifier: "America/Chicago"))
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = siteZone
+        let from = try #require(cal.date(from: DateComponents(year: 2026, month: 1, day: 20)))
+        let through = try #require(cal.date(from: DateComponents(year: 2026, month: 4, day: 10)))
+
+        let cycles = BillingCycle.cycles(billingDay: 15, from: from, through: through, timeZone: siteZone)
+        #expect(cycles.count == 3)
+        #expect(cycles[0].start == cal.date(from: DateComponents(year: 2026, month: 1, day: 15)))
+        #expect(cycles[0].end == cal.date(from: DateComponents(year: 2026, month: 2, day: 15)))
+        #expect(cycles[1].start == cal.date(from: DateComponents(year: 2026, month: 2, day: 15)))
+        #expect(cycles[2].start == cal.date(from: DateComponents(year: 2026, month: 3, day: 15)))
+        #expect(cycles[2].end == cal.date(from: DateComponents(year: 2026, month: 4, day: 15)))
+    }
 }

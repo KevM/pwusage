@@ -14,6 +14,7 @@ import { SiteRepo } from './site-repo';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import type {
   ReattributionStatusDTO,
+  SiteBatteryDTO,
   SiteTariffsTimelineResponse,
   TariffPeriodDTO,
   TariffSeasonInput,
@@ -65,7 +66,9 @@ export interface BuildSiteTariffsTimelineInput {
   today: string;
   viewerUserId: string | null;
   periodRows: PeriodQueryRow[];
+  referencePeriodRows?: PeriodQueryRow[];
   tariffMap: Map<number, Tariff>;
+  battery?: SiteBatteryDTO | null;
   reattribution?: SiteTariffReattributionRow;
   latestTesla?: LatestTeslaTariffSummary;
 }
@@ -86,6 +89,49 @@ export function pickActivePeriodForDate<
   );
 }
 
+function mapPeriodRowToDTO(
+  r: PeriodQueryRow,
+  viewerUserId: string | null,
+  tariffMap: Map<number, Tariff>
+): TariffPeriodDTO {
+  const effectiveFrom = r.effective_from.slice(0, 10);
+  const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
+  const tariff = tariffMap.get(Number(r.tariff_id));
+  return {
+    periodId: Number(r.period_id),
+    tariffId: Number(r.tariff_id),
+    name: r.name || 'Rate Plan',
+    version: Number(r.version ?? 1),
+    source: r.source,
+    effectiveFrom,
+    effectiveTo,
+    isCurrentToday: false,
+    updatedBy: r.updated_by_user_id
+      ? {
+          email: r.updated_by_email ?? null,
+          isCurrentUser: viewerUserId !== null && r.updated_by_user_id === viewerUserId,
+        }
+      : null,
+    seasons: tariff ? decompileTariffToSeasons(tariff) : [],
+  };
+}
+
+function parseSiteBattery(row: {
+  nameplate_energy?: string | number | null;
+  nameplate_power?: string | number | null;
+  backup_reserve_percent?: string | number | null;
+}): SiteBatteryDTO | null {
+  const energy = Number(row.nameplate_energy);
+  if (!Number.isFinite(energy) || energy <= 0) return null;
+  const power = Number(row.nameplate_power);
+  const reserve = Number(row.backup_reserve_percent);
+  return {
+    nameplateEnergyWh: energy,
+    nameplatePowerW: Number.isFinite(power) && power > 0 ? power : 0,
+    backupReservePercent: Number.isFinite(reserve) ? reserve : 0,
+  };
+}
+
 /**
  * Pure DTO mapping from `TariffEffectivePeriod` + `Tariff` rows to
  * `SiteTariffsTimelineResponse` v2. Shared by `TariffTimelineRepo.getTimeline`
@@ -94,33 +140,29 @@ export function pickActivePeriodForDate<
 export function buildSiteTariffsTimelineResponse(
   input: BuildSiteTariffsTimelineInput
 ): SiteTariffsTimelineResponse {
-  const { siteId, timezone, currency, today, viewerUserId, periodRows, tariffMap, reattribution, latestTesla } = input;
+  const {
+    siteId,
+    timezone,
+    currency,
+    today,
+    viewerUserId,
+    periodRows,
+    referencePeriodRows = [],
+    tariffMap,
+    battery = null,
+    reattribution,
+    latestTesla,
+  } = input;
 
-  const periods: TariffPeriodDTO[] = periodRows.map(r => {
-    const effectiveFrom = r.effective_from.slice(0, 10);
-    const effectiveTo = r.effective_to ? r.effective_to.slice(0, 10) : null;
-    const tariff = tariffMap.get(Number(r.tariff_id));
-    return {
-      periodId: Number(r.period_id),
-      tariffId: Number(r.tariff_id),
-      name: r.name || 'Rate Plan',
-      version: Number(r.version ?? 1),
-      source: r.source,
-      effectiveFrom,
-      effectiveTo,
-      isCurrentToday: false,
-      updatedBy: r.updated_by_user_id
-        ? {
-            email: r.updated_by_email ?? null,
-            isCurrentUser: viewerUserId !== null && r.updated_by_user_id === viewerUserId,
-          }
-        : null,
-      seasons: tariff ? decompileTariffToSeasons(tariff) : [],
-    };
-  });
+  const periods: TariffPeriodDTO[] = periodRows.map(r => mapPeriodRowToDTO(r, viewerUserId, tariffMap));
+  const referencePeriods: TariffPeriodDTO[] = referencePeriodRows
+    .map(r => mapPeriodRowToDTO({ ...r, source: 'manual' }, viewerUserId, tariffMap))
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.periodId - b.periodId);
 
   const activeToday = pickActivePeriodForDate(periods, today);
   if (activeToday) activeToday.isCurrentToday = true;
+  const activeRefToday = pickActivePeriodForDate(referencePeriods, today);
+  if (activeRefToday) activeRefToday.isCurrentToday = true;
 
   const activeManualRow = periodRows.find(r => {
     const from = r.effective_from.slice(0, 10);
@@ -134,7 +176,7 @@ export function buildSiteTariffsTimelineResponse(
   const currentYear = Number(today.slice(0, 4));
   const startYear = Math.min(
     currentYear,
-    ...periods.map(p => Number(p.effectiveFrom.slice(0, 4))).filter(Number.isFinite)
+    ...[...periods, ...referencePeriods].map(p => Number(p.effectiveFrom.slice(0, 4))).filter(Number.isFinite)
   );
   const endYear = currentYear + 1;
   const holidayYears: number[] = [];
@@ -148,6 +190,8 @@ export function buildSiteTariffsTimelineResponse(
     timezone,
     currency,
     periods,
+    referencePeriods,
+    battery,
     reattribution: toReattributionDTO(reattribution),
     holidayDates: holidayYears.flatMap(y => observedHolidayDates(y)),
     teslaSync: {
@@ -184,8 +228,8 @@ export async function insertTariffGraph(
   contentHash = tariffContentHash(parsed)
 ): Promise<number> {
   const verRes = await client.query<{ next: number }>(
-    'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM "Tariff" WHERE site_id = $1',
-    [siteId]
+    'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM "Tariff" WHERE site_id = $1 AND name = $2',
+    [siteId, parsed.name]
   );
   const tariffId = (await client.query<{ id: number }>(
     `INSERT INTO "Tariff"(site_id, name, version, is_current, content_hash, source, created_by_user_id, updated)
@@ -469,8 +513,19 @@ async function hydrateTariffs(
 
 export class TariffTimelineRepo {
   async getTimeline(siteId: string, viewerUserId: string | null): Promise<SiteTariffsTimelineResponse> {
-    const siteRes = await pool.query<{ id: string; timezone: string; currency: string | null }>(
-      `SELECT id, timezone, COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency
+    const siteRes = await pool.query<{
+      id: string;
+      timezone: string;
+      currency: string | null;
+      nameplate_energy: string | number | null;
+      nameplate_power: string | number | null;
+      backup_reserve_percent: string | number | null;
+    }>(
+      `SELECT id, timezone,
+              COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
+              json ->> 'nameplate_energy' AS nameplate_energy,
+              json ->> 'nameplate_power' AS nameplate_power,
+              json ->> 'backup_reserve_percent' AS backup_reserve_percent
        FROM "Site" WHERE id = $1`,
       [siteId]
     );
@@ -479,6 +534,7 @@ export class TariffTimelineRepo {
     const timezone = siteRow.timezone || 'UTC';
     const currency = siteRow.currency || 'USD';
     const today = siteLocalDateString(new Date(), timezone);
+    const battery = parseSiteBattery(siteRow);
 
     const periodsRes = await pool.query<PeriodQueryRow>(
       `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
@@ -492,7 +548,22 @@ export class TariffTimelineRepo {
       [siteId]
     );
 
-    const tariffIds = [...new Set(periodsRes.rows.map(r => Number(r.tariff_id)))];
+    const referencePeriodsRes = await pool.query<PeriodQueryRow>(
+      `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
+              'manual'::text AS source, p.updated_by_user_id, u.email AS updated_by_email,
+              t.name, t.version, t.content_hash
+       FROM "TariffReferencePeriod" p
+       JOIN "Tariff" t ON t.id = p.tariff_id
+       LEFT JOIN "User" u ON u.id = p.updated_by_user_id
+       WHERE p.site_id = $1
+       ORDER BY p.effective_from ASC, p.id ASC`,
+      [siteId]
+    );
+
+    const tariffIds = [...new Set([
+      ...periodsRes.rows.map(r => Number(r.tariff_id)),
+      ...referencePeriodsRes.rows.map(r => Number(r.tariff_id)),
+    ])];
     const tariffMap = await hydrateTariffs(pool, tariffIds);
 
     const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
@@ -514,7 +585,9 @@ export class TariffTimelineRepo {
       today,
       viewerUserId,
       periodRows: periodsRes.rows,
+      referencePeriodRows: referencePeriodsRes.rows,
       tariffMap,
+      battery,
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
     });
@@ -861,4 +934,227 @@ export class TariffTimelineRepo {
     const schedules = tariff.seasons?.flatMap(s => s.schedules ?? []) ?? [];
     return { tariffs: [tariff], schedules };
   }
+
+  async createReferencePeriod(
+    siteId: string,
+    userId: string,
+    input: TariffPlanWriteInput
+  ): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    let createdPeriodId = 0;
+    let newTariffId = 0;
+    let validated: TariffPlanWriteInput;
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>(
+        'SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+      const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
+      validated = validateTariffPlanInput(input, today);
+
+      const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
+      newTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false);
+
+      const existing = await loadReferenceSpans(client, siteId);
+      const plan = computeSpanMutations(existing, {
+        tariffId: newTariffId,
+        source: 'manual',
+        effectiveFrom: validated.effectiveFrom,
+        effectiveTo: validated.effectiveTo,
+        updatedByUserId: userId,
+      });
+      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
+        throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
+      }
+      const inserted = await applyReferenceSpanMutationPlan(client, siteId, plan);
+      createdPeriodId = inserted.find(row => row.tariffId === newTariffId)?.id ?? inserted.at(-1)?.id ?? 0;
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    new SiteRepo().invalidateCache(siteId);
+    logEvent('info', 'tariff.reference_period.created', {
+      periodId: createdPeriodId,
+      tariffId: newTariffId,
+      effectiveFrom: validated.effectiveFrom,
+      effectiveTo: validated.effectiveTo,
+      seasonCount: validated.seasons.length,
+      accountId: accountFingerprint(userId),
+    });
+    return this.getTimeline(siteId, userId);
+  }
+
+  async updateReferencePeriod(
+    siteId: string,
+    userId: string,
+    periodId: number,
+    patch: Partial<TariffPlanWriteInput>
+  ): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    let targetTariffId = 0;
+    let nextFrom = '';
+    let nextTo: string | null = null;
+    let seasonCount = 0;
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>(
+        'SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+      const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
+
+      const existing = await loadReferenceSpans(client, siteId);
+      const target = existing.find(s => s.id === periodId);
+      if (!target) throw new TariffNotFoundError('Reference rate plan period not found');
+
+      nextFrom = patch.effectiveFrom ?? target.effectiveFrom;
+      nextTo = patch.effectiveTo !== undefined ? patch.effectiveTo : target.effectiveTo;
+
+      const tariffMap = await hydrateTariffs(client, [target.tariffId]);
+      const currentTariff = tariffMap.get(target.tariffId);
+      if (!currentTariff) throw new TariffNotFoundError('Tariff not found');
+      const currentSeasons: TariffSeasonInput[] = decompileTariffToSeasons(currentTariff);
+      const validated = validateTariffPlanInput({
+        name: patch.name ?? currentTariff.name ?? '',
+        effectiveFrom: nextFrom,
+        effectiveTo: nextTo,
+        seasons: patch.seasons ?? currentSeasons,
+      }, today);
+      seasonCount = validated.seasons.length;
+
+      const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
+      const newHash = tariffContentHash(parsed);
+      if (newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
+        targetTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false, newHash);
+      } else {
+        targetTariffId = target.tariffId;
+      }
+
+      const remaining = existing.filter(s => s.id !== periodId);
+      const mutationPlan = computeSpanMutations(remaining, {
+        tariffId: targetTariffId,
+        source: 'manual',
+        effectiveFrom: nextFrom,
+        effectiveTo: nextTo,
+        updatedByUserId: userId,
+      });
+      const plan: SpanMutationPlan = {
+        deleteIds: [periodId, ...mutationPlan.deleteIds],
+        inserts: mutationPlan.inserts,
+      };
+      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
+        throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
+      }
+      await applyReferenceSpanMutationPlan(client, siteId, plan);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    new SiteRepo().invalidateCache(siteId);
+    logEvent('info', 'tariff.reference_period.updated', {
+      periodId,
+      tariffId: targetTariffId,
+      effectiveFrom: nextFrom,
+      effectiveTo: nextTo,
+      seasonCount,
+      accountId: accountFingerprint(userId),
+    });
+    return this.getTimeline(siteId, userId);
+  }
+
+  async deleteReferencePeriod(
+    siteId: string,
+    periodId: number,
+    viewerUserId: string | null = null
+  ): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>(
+        'SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+
+      const delRes = await client.query<{ id: number }>(
+        'DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = $2 RETURNING id',
+        [siteId, periodId]
+      );
+      if (delRes.rowCount === 0) throw new TariffNotFoundError('Reference rate plan period not found');
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    new SiteRepo().invalidateCache(siteId);
+    logEvent('info', 'tariff.reference_period.deleted', {
+      periodId,
+      accountId: viewerUserId ? accountFingerprint(viewerUserId) : null,
+    });
+    return this.getTimeline(siteId, viewerUserId);
+  }
+}
+
+async function loadReferenceSpans(client: PoolClient, siteId: string): Promise<ExistingSpan[]> {
+  const res = await client.query<{
+    id: number;
+    tariff_id: number;
+    effective_from: string;
+    effective_to: string | null;
+    updated_by_user_id: string | null;
+  }>(
+    `SELECT id, tariff_id, effective_from::text, effective_to::text, updated_by_user_id
+     FROM "TariffReferencePeriod"
+     WHERE site_id = $1
+     ORDER BY effective_from ASC, id ASC`,
+    [siteId]
+  );
+  return res.rows.map(r => ({
+    id: Number(r.id),
+    tariffId: Number(r.tariff_id),
+    source: 'manual',
+    effectiveFrom: r.effective_from.slice(0, 10),
+    effectiveTo: r.effective_to ? r.effective_to.slice(0, 10) : null,
+    updatedByUserId: r.updated_by_user_id,
+  }));
+}
+
+async function applyReferenceSpanMutationPlan(
+  client: PoolClient,
+  siteId: string,
+  plan: SpanMutationPlan
+): Promise<Array<{ id: number; tariffId: number }>> {
+  if (plan.deleteIds.length > 0) {
+    await client.query(
+      'DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = ANY($2::int[])',
+      [siteId, plan.deleteIds]
+    );
+  }
+  const inserted: Array<{ id: number; tariffId: number }> = [];
+  for (const row of plan.inserts) {
+    const res = await client.query<{ id: number }>(
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
+       VALUES ($1, $2, $3::date, $4::date, $5)
+       RETURNING id`,
+      [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.updatedByUserId]
+    );
+    inserted.push({ id: Number(res.rows[0].id), tariffId: row.tariffId });
+  }
+  return inserted;
 }

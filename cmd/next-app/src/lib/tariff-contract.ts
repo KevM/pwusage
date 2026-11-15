@@ -53,12 +53,20 @@ export interface ReattributionStatusDTO {
   updatedAt: string;
 }
 
+export interface SiteBatteryDTO {
+  nameplateEnergyWh: number;
+  nameplatePowerW: number;
+  backupReservePercent: number;
+}
+
 export interface SiteTariffsTimelineResponse {
   version: 2;
   siteId: string;
   timezone: string;
   currency: string;
   periods: TariffPeriodDTO[];
+  referencePeriods: TariffPeriodDTO[];
+  battery: SiteBatteryDTO | null;
   reattribution: ReattributionStatusDTO | null;
   /** Observed holidays this year and next (site-local YYYY-MM-DD): holidays use the weekend schedule. */
   holidayDates: string[];
