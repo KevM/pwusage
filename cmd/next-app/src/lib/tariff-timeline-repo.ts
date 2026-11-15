@@ -228,8 +228,8 @@ export async function insertTariffGraph(
   contentHash = tariffContentHash(parsed)
 ): Promise<number> {
   const verRes = await client.query<{ next: number }>(
-    'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM "Tariff" WHERE site_id = $1',
-    [siteId]
+    'SELECT COALESCE(MAX(version), 0) + 1 AS next FROM "Tariff" WHERE site_id = $1 AND name = $2',
+    [siteId, parsed.name]
   );
   const tariffId = (await client.query<{ id: number }>(
     `INSERT INTO "Tariff"(site_id, name, version, is_current, content_hash, source, created_by_user_id, updated)
@@ -970,7 +970,7 @@ export class TariffTimelineRepo {
         throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
       }
       const inserted = await applyReferenceSpanMutationPlan(client, siteId, plan);
-      createdPeriodId = inserted.at(-1)?.id ?? 0;
+      createdPeriodId = inserted.find(row => row.tariffId === newTariffId)?.id ?? inserted.at(-1)?.id ?? 0;
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1139,14 +1139,14 @@ async function applyReferenceSpanMutationPlan(
   client: PoolClient,
   siteId: string,
   plan: SpanMutationPlan
-): Promise<Array<{ id: number }>> {
+): Promise<Array<{ id: number; tariffId: number }>> {
   if (plan.deleteIds.length > 0) {
     await client.query(
       'DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = ANY($2::int[])',
       [siteId, plan.deleteIds]
     );
   }
-  const inserted: Array<{ id: number }> = [];
+  const inserted: Array<{ id: number; tariffId: number }> = [];
   for (const row of plan.inserts) {
     const res = await client.query<{ id: number }>(
       `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
@@ -1154,7 +1154,7 @@ async function applyReferenceSpanMutationPlan(
        RETURNING id`,
       [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.updatedByUserId]
     );
-    inserted.push({ id: Number(res.rows[0].id) });
+    inserted.push({ id: Number(res.rows[0].id), tariffId: row.tariffId });
   }
   return inserted;
 }

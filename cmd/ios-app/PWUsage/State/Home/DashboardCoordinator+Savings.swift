@@ -54,7 +54,6 @@ extension DashboardCoordinator {
                 timeline = try await createReferenceRatePlan(request)
             }
             savingsTimeline = timeline
-            await refreshSavings(timeline: timeline)
             return nil
         } catch {
             return error.localizedDescription
@@ -66,7 +65,6 @@ extension DashboardCoordinator {
         do {
             let timeline = try await deleteReferenceRatePlan(periodID: periodID)
             savingsTimeline = timeline
-            await refreshSavings(timeline: timeline)
             return nil
         } catch {
             return error.localizedDescription

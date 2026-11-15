@@ -3,6 +3,7 @@ import SwiftUI
 /// Sheet for adding or editing the flat-rate reference plan used to compute savings.
 struct FixedRatePlanForm: View {
     let existing: TariffPeriodDTO?
+    let defaultStartDate: String?
     let timeZone: TimeZone
     let currency: String
     let onSave: (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?
@@ -18,12 +19,14 @@ struct FixedRatePlanForm: View {
 
     init(
         existing: TariffPeriodDTO? = nil,
+        defaultStartDate: String? = nil,
         timeZone: TimeZone,
         currency: String,
         onSave: @escaping (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?,
         onDelete: ((Int) async -> String?)? = nil
     ) {
         self.existing = existing
+        self.defaultStartDate = defaultStartDate
         self.timeZone = timeZone
         self.currency = currency
         self.onSave = onSave
@@ -33,7 +36,9 @@ struct FixedRatePlanForm: View {
         _name = State(initialValue: existing?.name ?? "Fixed Rate Plan")
         _buyRateText = State(initialValue: window.map { Self.formatRate($0.buyRate) } ?? "")
         _sellRateText = State(initialValue: window.map { Self.formatRate($0.sellRate) } ?? "0")
-        _startsOn = State(initialValue: Self.parseDate(existing?.effectiveFrom, timeZone: timeZone) ?? Date())
+        _startsOn = State(
+            initialValue: Self.parseDate(existing?.effectiveFrom ?? defaultStartDate, timeZone: timeZone) ?? Date()
+        )
     }
 
     var body: some View {
@@ -74,7 +79,7 @@ struct FixedRatePlanForm: View {
             DatePicker("Starts on", selection: $startsOn, displayedComponents: .date)
                 .environment(\.timeZone, timeZone)
         } footer: {
-            Text("This is the flat rate you would pay without Time-of-Use pricing or solar.")
+            Text("This is the flat rate you would pay without solar or your current rate plan.")
         }
     }
 

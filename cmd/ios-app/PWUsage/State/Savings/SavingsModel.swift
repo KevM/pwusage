@@ -100,23 +100,32 @@ final class SavingsModel {
         }
 
         let siteZone = TimeZone(identifier: timeline.timezone) ?? .current
-        let cacheKey = CacheKey(
-            scope: scope,
-            timelineFingerprint: LocalBillBuilder.timelineFingerprint(timeline),
-            flowsSignature: FlowsSignature(days: flowDays),
-            billingDay: billingDay,
-            siteLocalDate: SolarHistoryStore.dayString(now, timeZone: siteZone)
-        )
-        if cacheKey == lastCacheKey, case .ready = state {
-            return state
-        }
-
+        let timelineFingerprint = LocalBillBuilder.timelineFingerprint(timeline)
+        let siteLocalDate = SolarHistoryStore.dayString(now, timeZone: siteZone)
+        let existingCacheKey = lastCacheKey
+        let hasReadyState = if case .ready = state { true } else { false }
         let battery = timeline.battery
         let computeFn = computeReport
-        let report = await Task.detached(priority: .utility) {
+
+        let outcome: (CacheKey, SavingsReport)? = await Task.detached(priority: .utility) {
+            let cacheKey = CacheKey(
+                scope: scope,
+                timelineFingerprint: timelineFingerprint,
+                flowsSignature: FlowsSignature(days: flowDays),
+                billingDay: billingDay,
+                siteLocalDate: siteLocalDate
+            )
+            if hasReadyState, cacheKey == existingCacheKey {
+                return nil
+            }
             let scenarios = SavingsScenarioFlows.build(days: flowDays, battery: battery)
-            return computeFn(scenarios, actual, reference, billingDay, now)
+            let report = computeFn(scenarios, actual, reference, billingDay, now)
+            return (cacheKey, report)
         }.value
+
+        guard let (cacheKey, report) = outcome else {
+            return state
+        }
 
         lastCacheKey = cacheKey
         state = .ready(report)

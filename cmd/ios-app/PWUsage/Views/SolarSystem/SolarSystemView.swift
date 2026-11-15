@@ -78,6 +78,7 @@ struct SolarSystemView: View {
         .sheet(isPresented: $isEditingFixedRatePlan) {
             FixedRatePlanForm(
                 existing: coordinator.activeReferencePeriod,
+                defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
                 timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
                 currency: coordinator.bill.response?.currentBill.currency ?? "USD",
                 onSave: { request, editing in

@@ -86,6 +86,7 @@ struct BillView: View {
             case let .fixedRatePlan(existing):
                 FixedRatePlanForm(
                     existing: existing,
+                    defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
                     timeZone: TimeZone(identifier: timeZone) ?? .current,
                     currency: response?.currentBill.currency ?? "USD",
                     onSave: { request, editing in

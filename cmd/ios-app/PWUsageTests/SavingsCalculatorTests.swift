@@ -225,6 +225,62 @@ struct SavingsCalculatorTests {
         #expect(report.cycle.daysInPeriod == 9)
     }
 
+    @Test("Days before reference plan effectiveFrom are excluded from costs and daysWithData")
+    func excludesDaysBeforeReferenceEffectiveFrom() throws {
+        let beforePlan = try Self.makeDay("2025-06-05", solar: [0], load: [1_000], grid: [1_000])
+        let duringPlan = try Self.makeDay("2026-06-05", solar: [1_000], load: [1_000], grid: [0])
+        let timeline = Self.makeTimeline(
+            actualBuy: 0.20,
+            actualSell: 0.05,
+            refBuy: 0.30,
+            refSell: 0.05,
+            actualEffectiveFrom: "2025-01-01",
+            refEffectiveFrom: "2026-01-01"
+        )
+        let actual = try #require(RatePeriodResolver(timeline: timeline))
+        let reference = try #require(RatePeriodResolver(referenceOf: timeline))
+        let scenarios = SavingsScenarioFlows.build(days: [beforePlan, duringPlan], battery: nil)
+        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
+
+        let report = SavingsCalculator.compute(
+            scenarios: scenarios,
+            actual: actual,
+            reference: reference,
+            billingDay: 1,
+            now: now
+        )
+
+        // Only 2026-06-05 is covered by both plans: 1 kWh noSolar @ $0.30 vs $0 recorded = $0.30 savings.
+        #expect(report.lifetime.daysWithData == 1)
+        #expect(abs(report.lifetime.costs.recorded) < 1e-9)
+        #expect(abs(report.lifetime.costs.noSolar - 0.30) < 1e-9)
+        #expect(abs(report.lifetime.total - 0.30) < 1e-9)
+    }
+
+    @Test("Slots with grid data but nil home usage are skipped across all four scenarios")
+    func skipsSlotsWithNilHomeUsage() throws {
+        let missingLoadDay = try Self.makeDay("2026-06-04", solar: [0], load: [nil], grid: [1_000])
+        let validDay = try Self.makeDay("2026-06-05", solar: [1_000], load: [1_000], grid: [0])
+        let timeline = Self.makeTimeline(actualBuy: 0.20, actualSell: 0.05, refBuy: 0.30, refSell: 0.05)
+        let actual = try #require(RatePeriodResolver(timeline: timeline))
+        let reference = try #require(RatePeriodResolver(referenceOf: timeline))
+        let scenarios = SavingsScenarioFlows.build(days: [missingLoadDay, validDay], battery: nil)
+        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
+
+        let report = SavingsCalculator.compute(
+            scenarios: scenarios,
+            actual: actual,
+            reference: reference,
+            billingDay: 1,
+            now: now
+        )
+
+        #expect(report.lifetime.daysWithData == 1)
+        #expect(abs(report.lifetime.costs.recorded) < 1e-9)
+        #expect(abs(report.lifetime.costs.noSolar - 0.30) < 1e-9)
+        #expect(abs(report.lifetime.total - 0.30) < 1e-9)
+    }
+
     @Test("Three synthetic years compute under 2 seconds")
     func lifetimeThreeYearsBenchmark() throws {
         let oneDaySlots = 288
@@ -272,117 +328,5 @@ struct SavingsCalculatorTests {
         }
         print("SavingsCalculator 3-year benchmark: \(elapsed)")
         #expect(elapsed < .seconds(2))
-    }
-
-    private static func makeDay(
-        _ dayString: String,
-        solar: [Float?],
-        load: [Float?],
-        grid: [Float?],
-        battery: [Float?]? = nil
-    ) throws -> EnergyFlowDay {
-        let parts = dayString.split(separator: "-").compactMap { Int($0) }
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = try #require(TimeZone(identifier: "UTC"))
-        let start = try #require(cal.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])))
-        return EnergyFlowDay(
-            day: dayString,
-            dayStart: start,
-            solarWh: solar,
-            loadWh: load,
-            gridWh: grid,
-            batteryWh: battery ?? Array(repeating: Float?(0), count: grid.count),
-            batterySoc: Array(repeating: nil, count: grid.count)
-        )
-    }
-
-    private static func makeUTCDate(year: Int, month: Int, day: Int, hour: Int) throws -> Date {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = try #require(TimeZone(identifier: "UTC"))
-        return try #require(cal.date(from: DateComponents(year: year, month: month, day: day, hour: hour)))
-    }
-
-    private static func makeTimeline(
-        actualBuy: Double,
-        actualSell: Double,
-        refBuy: Double,
-        refSell: Double
-    ) -> SiteTariffsTimelineResponse {
-        let actualPeriod = makeFlatPeriod(id: 1, name: "Actual", buyRate: actualBuy, sellRate: actualSell)
-        let refPeriod = makeFlatPeriod(id: 2, name: "Reference", buyRate: refBuy, sellRate: refSell)
-        return SiteTariffsTimelineResponse(
-            version: 2,
-            siteId: "site-1",
-            timezone: "UTC",
-            currency: "USD",
-            periods: [actualPeriod],
-            referencePeriods: [refPeriod],
-            battery: nil,
-            reattribution: nil,
-            holidayDates: [],
-            teslaSync: TeslaSyncDTO(
-                latestTariffId: nil,
-                latestTariffName: nil,
-                latestUpdatedAt: nil,
-                activeManualUpdatedAt: nil,
-                differsFromActiveManual: false
-            )
-        )
-    }
-
-    private static func withReference(
-        timeline: SiteTariffsTimelineResponse,
-        buyRate: Double,
-        sellRate: Double
-    ) -> SiteTariffsTimelineResponse {
-        let refPeriod = makeFlatPeriod(id: 99, name: "Reference", buyRate: buyRate, sellRate: sellRate)
-        return SiteTariffsTimelineResponse(
-            version: timeline.version,
-            siteId: timeline.siteId,
-            timezone: timeline.timezone,
-            currency: timeline.currency,
-            periods: timeline.periods,
-            referencePeriods: [refPeriod],
-            battery: timeline.battery,
-            reattribution: timeline.reattribution,
-            holidayDates: timeline.holidayDates,
-            teslaSync: timeline.teslaSync
-        )
-    }
-
-    private static func makeFlatPeriod(
-        id: Int,
-        name: String,
-        buyRate: Double,
-        sellRate: Double
-    ) -> TariffPeriodDTO {
-        let window = TimePeriodWindowInput(
-            touName: .offPeak,
-            fromHour: 0,
-            fromMinute: 0,
-            toHour: 24,
-            toMinute: 0,
-            buyRate: buyRate,
-            sellRate: sellRate
-        )
-        let season = TariffSeasonInput(
-            name: "All Year",
-            fromMonth: 1,
-            toMonth: 12,
-            weekdayPeriods: [window],
-            weekendPeriods: [window]
-        )
-        return TariffPeriodDTO(
-            periodId: id,
-            tariffId: id * 10,
-            name: name,
-            version: 1,
-            source: .manual,
-            effectiveFrom: "2020-01-01",
-            effectiveTo: nil,
-            isCurrentToday: true,
-            updatedBy: nil,
-            seasons: [season]
-        )
     }
 }

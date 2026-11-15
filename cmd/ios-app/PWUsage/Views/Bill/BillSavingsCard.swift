@@ -50,7 +50,7 @@ struct BillSavingsCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("See what you’ve saved")
                 .font(.subheadline.weight(.semibold))
-            Text("Add the fixed rate plan you’d pay without solar or Time-of-Use pricing.")
+            Text("Add the fixed rate plan you’d pay without solar or your current rate plan.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button("Add Fixed Rate Plan", action: onAddFixedRatePlan)

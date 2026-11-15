@@ -176,20 +176,20 @@ enum SavingsCalculator {
                 let instant = day.dayStart.addingTimeInterval(TimeInterval(slotIndex) * 300)
                 guard instant >= cycle.start, instant < cycle.end else { continue }
 
+                let actualPeriod = context.actual.period(at: instant, strict: true)
+                let refPeriod = context.reference.period(at: instant, strict: true)
+                guard actualPeriod != .unknown,
+                      refPeriod != .unknown,
+                      let grid2 = dayBatteryFixed.gridWh[slotIndex],
+                      let grid3 = daySolarAlone.gridWh[slotIndex],
+                      let grid4 = dayNoSolar.gridWh[slotIndex] else { continue }
+
                 hasRecordedSlot = true
-                let actualPeriod = context.actual.period(at: instant)
-                let refPeriod = context.reference.period(at: instant)
 
                 recordedBuckets.add(resolved: actualPeriod, gridWh: Double(grid1))
-                if let grid2 = dayBatteryFixed.gridWh[slotIndex] {
-                    batteryFixedBuckets.add(resolved: refPeriod, gridWh: Double(grid2))
-                }
-                if let grid3 = daySolarAlone.gridWh[slotIndex] {
-                    solarAloneBuckets.add(resolved: refPeriod, gridWh: Double(grid3))
-                }
-                if let grid4 = dayNoSolar.gridWh[slotIndex] {
-                    noSolarBuckets.add(resolved: refPeriod, gridWh: Double(grid4))
-                }
+                batteryFixedBuckets.add(resolved: refPeriod, gridWh: Double(grid2))
+                solarAloneBuckets.add(resolved: refPeriod, gridWh: Double(grid3))
+                noSolarBuckets.add(resolved: refPeriod, gridWh: Double(grid4))
             }
             if hasRecordedSlot, day.dayStart <= context.now {
                 daysWithData += 1

@@ -15,7 +15,7 @@ struct SavingsPresentationTests {
         )
         #expect(
             SavingsPresentation.cycleHeadline(positive, currency: "USD", locale: Self.usLocale)
-                == "Your system saved about $142 this month"
+                == "Your system saved about $142 this cycle"
         )
 
         let negative = SavingsFigures(
@@ -25,7 +25,7 @@ struct SavingsPresentationTests {
         )
         #expect(
             SavingsPresentation.cycleHeadline(negative, currency: "USD", locale: Self.usLocale)
-                == "Your system cost about $14 this month"
+                == "Your system cost about $14 this cycle"
         )
     }
 

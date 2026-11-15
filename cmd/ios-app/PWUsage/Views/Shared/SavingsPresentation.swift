@@ -11,7 +11,7 @@ enum SavingsPresentation {
         "about \(wholeCurrency(abs(amount), currency: currency, locale: locale))"
     }
 
-    /// Headline for the current billing cycle card, e.g. `"Your system saved about $142 this month"`.
+    /// Headline for the current billing cycle card, e.g. `"Your system saved about $142 this cycle"`.
     static func cycleHeadline(
         _ figures: SavingsFigures,
         currency: String,
@@ -19,7 +19,7 @@ enum SavingsPresentation {
     ) -> String {
         let verb = figures.total >= 0 ? "saved" : "cost"
         let amount = aboutAmount(figures.total, currency: currency, locale: locale)
-        return "Your system \(verb) \(amount) this month"
+        return "Your system \(verb) \(amount) this cycle"
     }
 
     /// Headline for multi-cycle periods (Past Year / Lifetime), e.g. `"Your system saved about $1,680"`.
@@ -102,21 +102,6 @@ enum FixedRatePlanDraft {
             name: normalizedName(name),
             effectiveFrom: formatDate(startsOn, timeZone: timeZone),
             effectiveTo: nil,
-            seasons: makeSeasons(buyRate: buyRate, sellRate: sellRate)
-        )
-    }
-
-    static func makePatchRequest(
-        name: String,
-        buyRate: Double,
-        sellRate: Double,
-        startsOn: Date,
-        timeZone: TimeZone
-    ) -> TariffPlanPatchRequest {
-        TariffPlanPatchRequest(
-            name: normalizedName(name),
-            effectiveFrom: formatDate(startsOn, timeZone: timeZone),
-            effectiveTo: .set(nil),
             seasons: makeSeasons(buyRate: buyRate, sellRate: sellRate)
         )
     }
