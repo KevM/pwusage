@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { TariffV2 } from '../tesla-client';
+import { Season, TariffV2 } from '../tesla-client';
 
 export interface ParsedSchedule {
     name: string;
@@ -29,12 +29,23 @@ export interface ParsedTariff {
     seasons: ParsedSeason[];
 }
 
+/**
+ * Tesla can list a season it does not use as an empty object (seen as `"Winter": {}` beside a
+ * year-round `"Summer"`). It has no date range, so it can never match a day; storing it would
+ * write NULL months into "TariffSeason" and fail the whole tariff insert.
+ */
+function hasDateRange(season: Partial<Season> | null | undefined): season is Season {
+    return !!season && [season.fromMonth, season.fromDay, season.toMonth, season.toDay]
+        .every(value => Number.isInteger(value));
+}
+
 export function parseTariffContent(content: TariffV2, siteName: string): ParsedTariff {
     const tariffName = content.utility ?? siteName;
     const seasons: ParsedSeason[] = [];
 
     for (const seasonName in content.seasons) {
         const seasonData = content.seasons[seasonName];
+        if (!hasDateRange(seasonData)) continue;
 
         let fixedSeasonName = seasonName;
         const sFrom = seasonData.fromMonth;
