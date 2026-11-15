@@ -91,6 +91,19 @@ enum SavingsPresentation {
 
 /// Builds API payloads for a single-rate-all-day reference rate plan.
 enum FixedRatePlanDraft {
+    static func formatRate(_ rate: Double, locale: Locale = .current) -> String {
+        rate.formatted(.number.locale(locale).grouping(.never).precision(.fractionLength(0 ... 4)))
+    }
+
+    static func parseRate(_ raw: String, locale: Locale = .current) -> Double? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let value = try? Double(trimmed, format: .number.locale(locale)),
+              value.isFinite,
+              value >= 0 else { return nil }
+        return value
+    }
+
     static func makeWriteRequest(
         name: String,
         buyRate: Double,

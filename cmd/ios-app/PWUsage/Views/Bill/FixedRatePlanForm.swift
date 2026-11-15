@@ -34,8 +34,10 @@ struct FixedRatePlanForm: View {
 
         let window = existing?.seasons.first?.weekdayPeriods.first
         _name = State(initialValue: existing?.name ?? "Fixed Rate Plan")
-        _buyRateText = State(initialValue: window.map { Self.formatRate($0.buyRate) } ?? "")
-        _sellRateText = State(initialValue: window.map { Self.formatRate($0.sellRate) } ?? "0")
+        _buyRateText = State(initialValue: window.map { FixedRatePlanDraft.formatRate($0.buyRate) } ?? "")
+        _sellRateText = State(
+            initialValue: window.map { FixedRatePlanDraft.formatRate($0.sellRate) } ?? FixedRatePlanDraft.formatRate(0)
+        )
         _startsOn = State(
             initialValue: Self.parseDate(existing?.effectiveFrom ?? defaultStartDate, timeZone: timeZone) ?? Date()
         )
@@ -114,16 +116,13 @@ struct FixedRatePlanForm: View {
     }
 
     private var parsedBuyRate: Double? {
-        guard let value = Double(buyRateText.trimmingCharacters(in: .whitespaces)),
-              value.isFinite, value >= 0 else { return nil }
-        return value
+        FixedRatePlanDraft.parseRate(buyRateText)
     }
 
     private var parsedSellRate: Double? {
-        let trimmed = sellRateText.trimmingCharacters(in: .whitespaces)
+        let trimmed = sellRateText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return 0 }
-        guard let value = Double(trimmed), value.isFinite, value >= 0 else { return nil }
-        return value
+        return FixedRatePlanDraft.parseRate(trimmed)
     }
 
     private var canSave: Bool {
@@ -161,10 +160,6 @@ struct FixedRatePlanForm: View {
         } else {
             dismiss()
         }
-    }
-
-    private static func formatRate(_ rate: Double) -> String {
-        String(format: "%.4g", rate)
     }
 
     private static func parseDate(_ raw: String?, timeZone: TimeZone) -> Date? {

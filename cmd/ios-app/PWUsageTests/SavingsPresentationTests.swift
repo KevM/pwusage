@@ -100,4 +100,17 @@ struct SavingsPresentationTests {
         #expect(season.weekdayPeriods == [expectedWindow])
         #expect(season.weekendPeriods == [expectedWindow])
     }
+
+    @Test("FixedRatePlanDraft formats and parses rates using the given locale")
+    func fixedRatePlanDraftLocaleRates() {
+        let german = Locale(identifier: "de_DE")
+        #expect(FixedRatePlanDraft.formatRate(0.32, locale: german) == "0,32")
+        #expect(FixedRatePlanDraft.parseRate("0,32", locale: german) == 0.32)
+        #expect(FixedRatePlanDraft.parseRate("0,045", locale: german) == 0.045)
+        #expect(FixedRatePlanDraft.parseRate("-0,10", locale: german) == nil)
+        #expect(FixedRatePlanDraft.parseRate("", locale: german) == nil)
+
+        #expect(FixedRatePlanDraft.formatRate(0.32, locale: Self.usLocale) == "0.32")
+        #expect(FixedRatePlanDraft.parseRate("0.32", locale: Self.usLocale) == 0.32)
+    }
 }

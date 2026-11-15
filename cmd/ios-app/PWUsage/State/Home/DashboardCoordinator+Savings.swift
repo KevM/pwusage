@@ -23,7 +23,7 @@ extension DashboardCoordinator {
         if timeline == nil, canRequestAccountData {
             timeline = try? await revalidateTariffTimeline()
         }
-        guard siteGeneration == generation else { return }
+        guard !Task.isCancelled, siteGeneration == generation else { return }
         savingsTimeline = timeline
         let updated = await savingsModel.refresh(
             scope: scope,
@@ -31,7 +31,7 @@ extension DashboardCoordinator {
             billingDay: billingDay,
             now: now()
         )
-        guard siteGeneration == generation else { return }
+        guard !Task.isCancelled, siteGeneration == generation else { return }
         savings = updated
     }
 

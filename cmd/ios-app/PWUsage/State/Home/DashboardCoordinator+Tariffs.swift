@@ -131,8 +131,12 @@ extension DashboardCoordinator {
         scope: SolarForecastSiteScope?
     ) async {
         guard let scope else { return }
+        let generation = siteGeneration
         try? await ratePlanTimelines.save(timeline, etag: etag, scope: scope)
-        await repriceLocalBillIfTimelineChanged(timeline, scope: scope, generation: siteGeneration)
+        await repriceLocalBillIfTimelineChanged(timeline, scope: scope, generation: generation)
+        guard !Task.isCancelled,
+              siteGeneration == generation,
+              tariffScope(siteID: selectedSiteID) == scope else { return }
         await refreshSavings(timeline: timeline)
     }
 }
