@@ -80,7 +80,7 @@
   ```
 - Internals (private, decided here): `CycleResult` carries `dayStatuses: [String: DayStatus]` keyed by `EnergyFlowDay.day`, where `DayStatus` is `counted` or `uncounted(missingRatePlan: Bool, missingFixedRatePlan: Bool)`. In `priceCycle`, check scenario grid completeness **before** resolving periods; resolve each data slot's `actual` and `reference` period once (as now) and set the day's flags from the `.unknown` results. `makeFigures` merges the cycles' maps, walks every site-local day from `startDay` through `today` (format with `RatePlanTimelineFormatting.formatYMD(_:in:)` in the resolver's zone; a day absent from the map is no data), and builds the gaps. Keep `daysWithData` computed as today.
 
-- [ ] **Step 1: Write the failing tests** in `SavingsCoverageTests` (UTC timeline, `billingDay: 1`, flat plans from the helpers):
+- [x] **Step 1: Write the failing tests** in `SavingsCoverageTests` (UTC timeline, `billingDay: 1`, flat plans from the helpers):
   - `completeCoverageHasNoGaps`: plans from 2020-01-01, data every day of the cycle → `report.cycle.coverageGaps.isEmpty`.
   - `fixedRatePlanStartingLateIsNoFixedRatePlan`: data 2026-06-01…06-10, reference from `2026-06-05`, now 2026-06-10 12:00 → `cycle.gap(.noFixedRatePlan) == SavingsCoverageGap(cause: .noFixedRatePlan, days: 4, ranges: [.init(first: "2026-06-01", last: "2026-06-04")], fixedRatePlanStart: "2026-06-05")`; `gap(.noRatePlan) == nil`.
   - `missingRatePlanIsNoRatePlan`: actual from `2026-06-04`, reference from 2020 → `gap(.noRatePlan)?.days == 3`, ranges `[2026-06-01…2026-06-03]`, `fixedRatePlanStart == nil`.
@@ -92,10 +92,10 @@
   - `uncountedDaysPartitionThePeriod`: a fixture with all three causes and no day missing both plans (reference from 06-05, actual missing 06-07…06-08, no stored day 06-10, now 06-12) → for cycle, year and lifetime, `daysWithData + (noData + noFixedRatePlan + noRatePlan days) == daysInPeriod`.
   - `yearAndLifetimeGapsSpanCycles`: data across three billing cycles, reference starting in the middle cycle → `lifetime.gap(.noFixedRatePlan)` is one range crossing the first cycle boundary, `cycle.gap(.noFixedRatePlan) == nil`.
   - In the existing `SavingsCalculatorTests`, extend `excludesDaysBeforeReferenceEffectiveFrom` with `#expect(report.lifetime.gap(.noFixedRatePlan)?.fixedRatePlanStart == "2026-01-01")`.
-- [ ] **Step 2: Run** `./run-tests.sh --quick SavingsCoverageTests SavingsCalculatorTests`. Expected: FAIL (types not defined).
-- [ ] **Step 3: Implement** the types and the classification described in Interfaces. `fixedRatePlanStart` = `reference.earliestEffectiveFrom` when the gap's last day `<` it, else `nil`.
-- [ ] **Step 4: Run** the two suites, then `./run-tests.sh --quick SavingsModelTests SavingsPresentationTests` (they build `SavingsFigures`) and `./lint.sh`. Expected: PASS, benchmark still under budget.
-- [ ] **Step 5: Commit** `feat(savings): classify uncounted days by cause per period`.
+- [x] **Step 2: Run** `./run-tests.sh --quick SavingsCoverageTests SavingsCalculatorTests`. Expected: FAIL (types not defined).
+- [x] **Step 3: Implement** the types and the classification described in Interfaces. `fixedRatePlanStart` = `reference.earliestEffectiveFrom` when the gap's last day `<` it, else `nil`.
+- [x] **Step 4: Run** the two suites, then `./run-tests.sh --quick SavingsModelTests SavingsPresentationTests` (they build `SavingsFigures`) and `./lint.sh`. Expected: PASS, benchmark still under budget.
+- [x] **Step 5: Commit** `feat(savings): classify uncounted days by cause per period`.
 
 ### Task 2: Caveat copy in `SavingsPresentation`
 
@@ -124,21 +124,21 @@
   ```
 - Dates format with `RatePlanTimelineFormatting.displayDate` (en_US_POSIX, so copy is stable); the same-year short form drops the year from the first date using the same style without `.year()`.
 
-- [ ] **Step 1: Write the failing tests** (strings exactly as in Global Constraints):
+- [x] **Step 1: Write the failing tests** (strings exactly as in Global Constraints):
   - `fixedRatePlanStartCaveat`: gap with `fixedRatePlanStart: "2026-11-01"`, ranges `[2026-10-01…2026-10-31]` → `[SavingsCaveat(text: "Your fixed rate plan starts Nov 1, 2026, so earlier days aren’t counted.", action: .editFixedRatePlan(suggestedStart: "2026-10-01"))]`.
   - `ratePlanRangeCaveat`: ranges `[2024-03-02…2024-06-30]` → text `"We don’t have your rate plan for Mar 2 to Jun 30, 2024, so those days aren’t counted."`, action `.fixRatePlans`.
   - `fixedGapAfterPlanStartUsesRangeForm`: no `fixedRatePlanStart` → `"We don’t have your fixed rate plan for …"`, action `.editFixedRatePlan(suggestedStart: nil)`.
   - `dayRangesTextForms`: single day → `"Mar 2, 2024"`; across years → `"Dec 20, 2023 to Jan 4, 2024"`; two ranges → `"Mar 2 to Mar 5, 2024 and Jun 1 to Jun 30, 2024"`.
   - `threeOrMoreRangesSummarizeAsDayCount`: three ranges, `days: 41` → `"41 days between Mar 2, 2024 and Jun 30, 2025"`.
   - `caveatsOrderFixedThenRatePlan` and `noDataAloneGivesNoCaveats` and `completeCoverageGivesNoCaveats`.
-- [ ] **Step 2: Run** `./run-tests.sh --quick SavingsPresentationTests`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** the suite and `./lint.sh`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(savings): caveat copy for uncounted days`.
+- [x] **Step 2: Run** `./run-tests.sh --quick SavingsPresentationTests`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** the suite and `./lint.sh`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(savings): caveat copy for uncounted days`.
 
 ### Task 3: Mockups (gate for Task 4)
 
-- [ ] **Step 1:** Publish mockups as an Artifact (light and dark), using the copy from Task 2:
+- [x] **Step 1:** Publish mockups as an Artifact (light and dark), using the copy from Task 2:
   - Bill tab savings card, partial cycle: headline, breakdown, `Based on 14 of 31 days`, the fixed rate plan caveat with **Edit Fixed Rate Plan**.
   - Bill tab card with **zero counted days**: no `$` headline; title `See what you’ve saved`, then the caveat line(s) and button(s). (Proposed; owner to confirm.)
   - Solar System Savings section: Past Year and Lifetime blocks, both caveats under Lifetime only, each with its button.
