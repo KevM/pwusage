@@ -2,7 +2,7 @@ import Foundation
 @testable import PWUsage
 import Testing
 
-extension SavingsCalculatorTests {
+enum SavingsTestFixtures {
     static func makeDay(
         _ dayString: String,
         solar: [Float?],
@@ -53,13 +53,19 @@ extension SavingsCalculatorTests {
             sellRate: refSell,
             effectiveFrom: refEffectiveFrom
         )
-        return SiteTariffsTimelineResponse(
+        return makeTimeline(actual: [actualPeriod], reference: [refPeriod])
+    }
+
+    static func makeTimeline(
+        actual: [TariffPeriodDTO], reference: [TariffPeriodDTO], timezone: String = "UTC"
+    ) -> SiteTariffsTimelineResponse {
+        SiteTariffsTimelineResponse(
             version: 2,
             siteId: "site-1",
-            timezone: "UTC",
+            timezone: timezone,
             currency: "USD",
-            periods: [actualPeriod],
-            referencePeriods: [refPeriod],
+            periods: actual,
+            referencePeriods: reference,
             battery: nil,
             reattribution: nil,
             holidayDates: [],
@@ -98,7 +104,8 @@ extension SavingsCalculatorTests {
         name: String,
         buyRate: Double,
         sellRate: Double,
-        effectiveFrom: String = "2020-01-01"
+        effectiveFrom: String = "2020-01-01",
+        effectiveTo: String? = nil
     ) -> TariffPeriodDTO {
         let window = TimePeriodWindowInput(
             touName: .offPeak,
@@ -123,7 +130,7 @@ extension SavingsCalculatorTests {
             version: 1,
             source: .manual,
             effectiveFrom: effectiveFrom,
-            effectiveTo: nil,
+            effectiveTo: effectiveTo,
             isCurrentToday: true,
             updatedBy: nil,
             seasons: [season]
