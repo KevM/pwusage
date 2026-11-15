@@ -10,7 +10,7 @@
 
 **Spec:** Savings Phase 2 plan [`2026-11-14-savings-phase-2.md`](./2026-11-14-savings-phase-2.md) and its design spec [`../specs/2026-11-13-savings-and-roi-design.md`](../specs/2026-11-13-savings-and-roi-design.md) §6. Decisions below were made with the owner on 2026-11-15 and take precedence.
 
-**Base:** Stacked on PR #374 (`docs/savings-phase-2-plan`), which is still open. Rebase onto `main` once #374 merges.
+**Base:** `main` (PR #374 merged 2026-11-15).
 
 ## Decisions
 
