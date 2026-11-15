@@ -51,6 +51,30 @@ describe('parseTariffContent', () => {
         expect(parseTariffContent(t, 'My Site').name).toBe('My Site');
     });
 
+    it('skips a season Tesla lists as an empty object', () => {
+        const t = {
+            ...SIMPLE_TARIFF,
+            seasons: { ...SIMPLE_TARIFF.seasons, Winter: {} as TariffV2['seasons'][string] },
+        };
+        const result = parseTariffContent(t, 'My Site');
+        expect(result.seasons).toHaveLength(1);
+        expect(result.seasons[0].name).toBe('Summer');
+        for (const season of result.seasons) {
+            expect([season.from_month, season.from_day, season.to_month, season.to_day].every(Number.isInteger)).toBe(true);
+        }
+    });
+
+    it('skips a season with a partial date range', () => {
+        const t = {
+            ...SIMPLE_TARIFF,
+            seasons: {
+                ...SIMPLE_TARIFF.seasons,
+                Winter: { fromMonth: 10, fromDay: 1, tou_periods: {} } as unknown as TariffV2['seasons'][string],
+            },
+        };
+        expect(parseTariffContent(t, 'My Site').seasons.map(s => s.name)).toEqual(['Summer']);
+    });
+
     it('parses season date range', () => {
         const result = parseTariffContent(SIMPLE_TARIFF, 'My Site');
         expect(result.seasons[0]).toMatchObject({
