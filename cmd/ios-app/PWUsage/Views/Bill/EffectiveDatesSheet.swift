@@ -29,10 +29,10 @@ struct EffectiveDatesSheet: View {
             Form {
                 Section {
                     Text(period.name).font(.headline)
-                    DatePicker("Effective From", selection: $startDate, displayedComponents: .date)
+                    RatePlanDateField(title: "Effective From", date: $startDate, boundary: .first)
                     Toggle("Ongoing (no end date)", isOn: $isOngoing)
                     if !isOngoing {
-                        DatePicker("Effective To", selection: $endDate, displayedComponents: .date)
+                        RatePlanDateField(title: "Effective To", date: $endDate, boundary: .last)
                     }
                 } footer: {
                     Text("Historical energy days in this range will recalculate after saving.")
@@ -101,10 +101,7 @@ struct EffectiveDatesSheet: View {
     }
 
     private static func pickerDate(fromYMD ymd: String) -> Date? {
-        let parts = ymd.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        let comps = DateComponents(year: parts[0], month: parts[1], day: parts[2])
-        return Calendar.current.date(from: comps)
+        RatePlanTimelineFormatting.parseYMD(ymd, in: Calendar.current.timeZone)
     }
 
     private static func ymd(fromPickerDate date: Date) -> String {

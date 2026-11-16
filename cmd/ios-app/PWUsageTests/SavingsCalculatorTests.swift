@@ -31,7 +31,7 @@ struct SavingsCalculatorTests {
 
         let cycle = BillingCycle.current(billingDay: fixture.billingDay, now: fixture.now, timeZone: timeZone)
         let flowDays = try #require(try await store.flowDays(scope: scope, from: cycle.start, to: cycle.end))
-        let refTimeline = Self.withReference(timeline: fixture.timeline, buyRate: 0.14, sellRate: 0.04)
+        let refTimeline = SavingsTestFixtures.withReference(timeline: fixture.timeline, buyRate: 0.14, sellRate: 0.04)
         let actualResolver = try #require(RatePeriodResolver(timeline: fixture.timeline))
         let refResolver = try #require(RatePeriodResolver(referenceOf: refTimeline))
 
@@ -79,19 +79,19 @@ struct SavingsCalculatorTests {
 
     @Test("Solar and Powerwall/rate-plan breakdown sums to total savings")
     func breakdownSumsToTotal() throws {
-        let day = try Self.makeDay(
+        let day = try SavingsTestFixtures.makeDay(
             "2026-06-10",
             solar: [1_000, 0],
             load: [500, 1_000],
             grid: [-500, 500],
             battery: [0, -500]
         )
-        let timeline = Self.makeTimeline(actualBuy: 0.30, actualSell: 0.05, refBuy: 0.15, refSell: 0.03)
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.30, actualSell: 0.05, refBuy: 0.15, refSell: 0.03)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let battery = SiteBatteryDTO(nameplateEnergyWh: 13_500, nameplatePowerW: 5_000, backupReservePercent: 20)
         let scenarios = SavingsScenarioFlows.build(days: [day], battery: battery)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -109,24 +109,24 @@ struct SavingsCalculatorTests {
     @Test("Netting stays inside each billing cycle")
     func nettingStaysInsideEachCycle() throws {
         // Cycle 1 (May): net export 10 kWh -> credit -0.30 (at sellRate 0.03)
-        let mayDay = try Self.makeDay(
+        let mayDay = try SavingsTestFixtures.makeDay(
             "2026-05-10",
             solar: [10_000],
             load: [0],
             grid: [-10_000]
         )
         // Cycle 2 (June): net import 10 kWh -> cost +2.00 (at buyRate 0.20)
-        let juneDay = try Self.makeDay(
+        let juneDay = try SavingsTestFixtures.makeDay(
             "2026-06-10",
             solar: [0],
             load: [10_000],
             grid: [10_000]
         )
-        let timeline = Self.makeTimeline(actualBuy: 0.20, actualSell: 0.03, refBuy: 0.20, refSell: 0.03)
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.20, actualSell: 0.03, refBuy: 0.20, refSell: 0.03)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let scenarios = SavingsScenarioFlows.build(days: [mayDay, juneDay], battery: nil)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -148,18 +148,18 @@ struct SavingsCalculatorTests {
         for offset in 0 ..< 14 {
             let year = 2025 + (4 + offset) / 12
             let month = (4 + offset) % 12 + 1
-            days.append(try Self.makeDay(
+            days.append(try SavingsTestFixtures.makeDay(
                 String(format: "%04d-%02d-10", year, month),
                 solar: [0],
                 load: [10_000],
                 grid: [10_000]
             ))
         }
-        let timeline = Self.makeTimeline(actualBuy: 0.10, actualSell: 0.03, refBuy: 0.10, refSell: 0.03)
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.10, actualSell: 0.03, refBuy: 0.10, refSell: 0.03)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let scenarios = SavingsScenarioFlows.build(days: days, battery: nil)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -176,17 +176,17 @@ struct SavingsCalculatorTests {
 
     @Test("Savings can exceed no-solar cost when recorded bill is a net credit")
     func savingsCanExceedNoSolarCostWhenBillIsCredit() throws {
-        let day = try Self.makeDay(
+        let day = try SavingsTestFixtures.makeDay(
             "2026-06-10",
             solar: [20_000],
             load: [5_000],
             grid: [-15_000]
         )
-        let timeline = Self.makeTimeline(actualBuy: 0.15, actualSell: 0.10, refBuy: 0.15, refSell: 0.10)
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.15, actualSell: 0.10, refBuy: 0.15, refSell: 0.10)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let scenarios = SavingsScenarioFlows.build(days: [day], battery: nil)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 15, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -204,14 +204,14 @@ struct SavingsCalculatorTests {
 
     @Test("Coverage counts site-local days with recorded grid data and total days in period")
     func coverageCountsDaysWithData() throws {
-        let day1 = try Self.makeDay("2026-06-02", solar: [0], load: [100], grid: [100])
-        let day2 = try Self.makeDay("2026-06-05", solar: [0], load: [100], grid: [nil])
-        let day3 = try Self.makeDay("2026-06-08", solar: [0], load: [100], grid: [200])
-        let timeline = Self.makeTimeline(actualBuy: 0.15, actualSell: 0.05, refBuy: 0.15, refSell: 0.05)
+        let day1 = try SavingsTestFixtures.makeDay("2026-06-02", solar: [0], load: [100], grid: [100])
+        let day2 = try SavingsTestFixtures.makeDay("2026-06-05", solar: [0], load: [100], grid: [nil])
+        let day3 = try SavingsTestFixtures.makeDay("2026-06-08", solar: [0], load: [100], grid: [200])
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.15, actualSell: 0.05, refBuy: 0.15, refSell: 0.05)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let scenarios = SavingsScenarioFlows.build(days: [day1, day2, day3], battery: nil)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -227,9 +227,9 @@ struct SavingsCalculatorTests {
 
     @Test("Days before reference plan effectiveFrom are excluded from costs and daysWithData")
     func excludesDaysBeforeReferenceEffectiveFrom() throws {
-        let beforePlan = try Self.makeDay("2025-06-05", solar: [0], load: [1_000], grid: [1_000])
-        let duringPlan = try Self.makeDay("2026-06-05", solar: [1_000], load: [1_000], grid: [0])
-        let timeline = Self.makeTimeline(
+        let beforePlan = try SavingsTestFixtures.makeDay("2025-06-05", solar: [0], load: [1_000], grid: [1_000])
+        let duringPlan = try SavingsTestFixtures.makeDay("2026-06-05", solar: [1_000], load: [1_000], grid: [0])
+        let timeline = SavingsTestFixtures.makeTimeline(
             actualBuy: 0.20,
             actualSell: 0.05,
             refBuy: 0.30,
@@ -240,7 +240,7 @@ struct SavingsCalculatorTests {
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let scenarios = SavingsScenarioFlows.build(days: [beforePlan, duringPlan], battery: nil)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -252,6 +252,7 @@ struct SavingsCalculatorTests {
 
         // Only 2026-06-05 is covered by both plans: 1 kWh noSolar @ $0.30 vs $0 recorded = $0.30 savings.
         #expect(report.lifetime.daysWithData == 1)
+        #expect(report.lifetime.gap(.noFixedRatePlan)?.fixedRatePlanStart == "2026-01-01")
         #expect(abs(report.lifetime.costs.recorded) < 1e-9)
         #expect(abs(report.lifetime.costs.noSolar - 0.30) < 1e-9)
         #expect(abs(report.lifetime.total - 0.30) < 1e-9)
@@ -259,13 +260,13 @@ struct SavingsCalculatorTests {
 
     @Test("Slots with grid data but nil home usage are skipped across all four scenarios")
     func skipsSlotsWithNilHomeUsage() throws {
-        let missingLoadDay = try Self.makeDay("2026-06-04", solar: [0], load: [nil], grid: [1_000])
-        let validDay = try Self.makeDay("2026-06-05", solar: [1_000], load: [1_000], grid: [0])
-        let timeline = Self.makeTimeline(actualBuy: 0.20, actualSell: 0.05, refBuy: 0.30, refSell: 0.05)
+        let missingLoadDay = try SavingsTestFixtures.makeDay("2026-06-04", solar: [0], load: [nil], grid: [1_000])
+        let validDay = try SavingsTestFixtures.makeDay("2026-06-05", solar: [1_000], load: [1_000], grid: [0])
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.20, actualSell: 0.05, refBuy: 0.30, refSell: 0.05)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let scenarios = SavingsScenarioFlows.build(days: [missingLoadDay, validDay], battery: nil)
-        let now = try Self.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 10, hour: 12)
 
         let report = SavingsCalculator.compute(
             scenarios: scenarios,
@@ -308,7 +309,7 @@ struct SavingsCalculatorTests {
                 batterySoc: Array(repeating: nil, count: oneDaySlots)
             )
         }
-        let timeline = Self.makeTimeline(actualBuy: 0.30, actualSell: 0.05, refBuy: 0.14, refSell: 0.04)
+        let timeline = SavingsTestFixtures.makeTimeline(actualBuy: 0.30, actualSell: 0.05, refBuy: 0.14, refSell: 0.04)
         let actual = try #require(RatePeriodResolver(timeline: timeline))
         let reference = try #require(RatePeriodResolver(referenceOf: timeline))
         let batteryDTO = SiteBatteryDTO(nameplateEnergyWh: 13_500, nameplatePowerW: 5_000, backupReservePercent: 20)

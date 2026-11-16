@@ -118,21 +118,12 @@ struct SettingsView: View {
             case .ratePlans:
                 TariffSheet(
                     site: site,
-                    actions: TariffTimelineActions(
-                        load: { try await coordinator.fetchTariffTimeline() },
-                        refreshFromTesla: { try await coordinator.refreshTariffsFromTesla() },
-                        createPeriod: { body in try await coordinator.createTariffPeriod(body) },
-                        updatePeriod: { periodID, body in
-                            try await coordinator.updateTariffPeriod(periodID: periodID, body: body)
-                        },
-                        deletePeriod: { periodID in try await coordinator.deleteTariffPeriod(periodID: periodID) },
-                        retryReattribution: { try await coordinator.retryTariffReattribution() }
-                    )
+                    actions: .live(coordinator)
                 )
                 .id(site.id)
             case .solarSystem(.root(let startsAtLocation)):
                 SolarSystemView(
-                    coordinator: coordinator, status: siteHistory, debugActions: siteHistoryDebug,
+                    coordinator: coordinator, site: site, status: siteHistory, debugActions: siteHistoryDebug,
                     startsAtLocation: startsAtLocation, onLocationSaved: onLocationSaved,
                     onRevealSeen: onRevealSeen, deepHistory: deepHistory, solarHealth: solarHealth)
             case .billingDay:

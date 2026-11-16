@@ -7,6 +7,10 @@ extension DashboardCoordinator {
         return periods.first(where: \.isCurrentToday) ?? periods.last
     }
 
+    var earliestReferencePeriod: TariffPeriodDTO? {
+        savingsTimeline?.referencePeriods.min { $0.effectiveFrom < $1.effectiveFrom }
+    }
+
     /// Recomputes cached savings from `overrideTimeline` (if provided) or the stored rate-plan timeline.
     func refreshSavings(timeline overrideTimeline: SiteTariffsTimelineResponse? = nil) async {
         let siteID = selectedSiteID
@@ -43,12 +47,7 @@ extension DashboardCoordinator {
         do {
             let timeline: SiteTariffsTimelineResponse
             if let existing {
-                let patch = TariffPlanPatchRequest(
-                    name: request.name,
-                    effectiveFrom: request.effectiveFrom,
-                    effectiveTo: .set(request.effectiveTo),
-                    seasons: request.seasons
-                )
+                let patch = FixedRatePlanDraft.makePatchRequest(request)
                 timeline = try await updateReferenceRatePlan(periodID: existing.periodId, body: patch)
             } else {
                 timeline = try await createReferenceRatePlan(request)

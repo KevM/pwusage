@@ -44,6 +44,8 @@ struct RatePeriodResolver: Sendable {
     private let holidayDates: Set<String>
     private let calendar: Calendar
 
+    var earliestEffectiveFrom: String? { periods.map(\.effectiveFrom).min() }
+
     var siteTimeZone: TimeZone {
         calendar.timeZone
     }

@@ -163,10 +163,10 @@ private struct RatePlanSummaryScreen: View {
 
     private var datesSection: some View {
         Section("Effective Dates") {
-            DatePicker("Effective From", selection: fromDateBinding, displayedComponents: .date)
+            RatePlanDateField(title: "Effective From", date: fromDateBinding, boundary: .first)
             Toggle("Ongoing (no end date)", isOn: $state.draft.isOngoing)
             if !state.draft.isOngoing {
-                DatePicker("Effective To", selection: toDateBinding, displayedComponents: .date)
+                RatePlanDateField(title: "Effective To", date: toDateBinding, boundary: .last)
             }
         }
     }

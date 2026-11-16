@@ -101,6 +101,14 @@ struct SavingsPresentationTests {
         #expect(season.weekendPeriods == [expectedWindow])
     }
 
+    @Test("Editing a fixed plan leaves its end date unchanged")
+    func fixedPlanEditPreservesEndDate() {
+        let request = FixedRatePlanDraft.makeWriteRequest(
+            name: "Fixed", buyRate: 0.14, sellRate: 0.04, startsOn: .now, timeZone: .gmt
+        )
+        #expect(FixedRatePlanDraft.makePatchRequest(request).effectiveTo == .unchanged)
+    }
+
     @Test("FixedRatePlanDraft formats and parses rates using the given locale")
     func fixedRatePlanDraftLocaleRates() {
         let german = Locale(identifier: "de_DE")
@@ -112,5 +120,108 @@ struct SavingsPresentationTests {
 
         #expect(FixedRatePlanDraft.formatRate(0.32, locale: Self.usLocale) == "0.32")
         #expect(FixedRatePlanDraft.parseRate("0.32", locale: Self.usLocale) == 0.32)
+    }
+
+    @Test("Fixed plan start explains earlier uncounted days")
+    func fixedRatePlanStartCaveat() {
+        let gap = SavingsCoverageGap(
+            cause: .noFixedRatePlan, days: 31,
+            ranges: [.init(first: "2026-10-01", last: "2026-10-31")], fixedRatePlanStart: "2026-11-01"
+        )
+        #expect(SavingsPresentation.caveats(figures([gap])) == [
+            SavingsCaveat(
+                text: "Your fixed rate plan starts Nov 1, 2026, so earlier days aren’t counted.",
+                action: .editFixedRatePlan(suggestedStart: "2026-10-01")
+            )
+        ])
+    }
+
+    @Test("Rate plan gap describes the range")
+    func ratePlanRangeCaveat() {
+        let caveats = SavingsPresentation.caveats(figures([rateGap]))
+        #expect(caveats == [SavingsCaveat(
+            text: "We don’t have your rate plan for Mar 2 to Jun 30, 2024, so those days aren’t counted.",
+            action: .fixRatePlans
+        )])
+        #expect(caveats.first?.actionTitle == "Fix Rate Plans")
+        #expect(caveats.first?.id == "ratePlan")
+    }
+
+    @Test("Fixed gap after plan start uses range form")
+    func fixedGapAfterPlanStartUsesRangeForm() {
+        let gap = SavingsCoverageGap(
+            cause: .noFixedRatePlan, days: 121, ranges: rateGap.ranges, fixedRatePlanStart: nil
+        )
+        let caveats = SavingsPresentation.caveats(figures([gap]))
+        #expect(caveats == [SavingsCaveat(
+            text: "We don’t have your fixed rate plan for Mar 2 to Jun 30, 2024, so those days aren’t counted.",
+            action: .editFixedRatePlan(suggestedStart: nil)
+        )])
+        #expect(caveats.first?.actionTitle == "Edit Fixed Rate Plan")
+        #expect(caveats.first?.id == "fixed")
+    }
+
+    @Test("Day ranges use single-day, cross-year and two-range forms")
+    func dayRangesTextForms() {
+        #expect(SavingsPresentation.dayRangesText([.init(first: "2024-03-02", last: "2024-03-02")], days: 1)
+            == "Mar 2, 2024")
+        #expect(SavingsPresentation.dayRangesText([.init(first: "2023-12-20", last: "2024-01-04")], days: 16)
+            == "Dec 20, 2023 to Jan 4, 2024")
+        #expect(SavingsPresentation.dayRangesText([
+            .init(first: "2024-03-02", last: "2024-03-05"),
+            .init(first: "2024-06-01", last: "2024-06-30")
+        ], days: 34) == "Mar 2 to Mar 5, 2024 and Jun 1 to Jun 30, 2024")
+    }
+
+    @Test("Three or more ranges summarize by exact day count")
+    func threeOrMoreRangesSummarizeAsDayCount() {
+        #expect(SavingsPresentation.dayRangesText([
+            .init(first: "2024-03-02", last: "2024-03-05"),
+            .init(first: "2024-06-01", last: "2024-06-30"),
+            .init(first: "2025-06-24", last: "2025-06-30")
+        ], days: 41) == "41 days between Mar 2, 2024 and Jun 30, 2025")
+    }
+
+    @Test("Fixed plan caveat comes before rate plan caveat")
+    func caveatsOrderFixedThenRatePlan() {
+        let fixed = SavingsCoverageGap(
+            cause: .noFixedRatePlan, days: 1, ranges: rateGap.ranges, fixedRatePlanStart: nil
+        )
+        #expect(SavingsPresentation.caveats(figures([rateGap, fixed])).map(\.id) == ["fixed", "ratePlan"])
+    }
+
+    @Test("No data alone gives no caveats")
+    func noDataAloneGivesNoCaveats() {
+        let gap = SavingsCoverageGap(cause: .noData, days: 1, ranges: rateGap.ranges, fixedRatePlanStart: nil)
+        #expect(SavingsPresentation.caveats(figures([gap])).isEmpty)
+    }
+
+    @Test("Complete coverage gives no caveats")
+    func completeCoverageGivesNoCaveats() {
+        #expect(SavingsPresentation.caveats(figures([])).isEmpty)
+    }
+
+    @Test("Zero counted cycle shows fixable caveats, but not no-data alone")
+    func zeroCountedCycleShowsCaveatsWithoutHeadline() {
+        #expect(SavingsPresentation.showsCard(figures([rateGap])))
+        let noData = SavingsCoverageGap(cause: .noData, days: 1, ranges: rateGap.ranges, fixedRatePlanStart: nil)
+        #expect(!SavingsPresentation.showsCard(figures([noData])))
+    }
+
+    @Test("Counted days show the savings card")
+    func showsCardForCountedDays() {
+        let counted = SavingsFigures(costs: .zero, daysWithData: 1, daysInPeriod: 1)
+        #expect(SavingsPresentation.showsCard(counted))
+    }
+
+    private var rateGap: SavingsCoverageGap {
+        SavingsCoverageGap(
+            cause: .noRatePlan, days: 121,
+            ranges: [.init(first: "2024-03-02", last: "2024-06-30")], fixedRatePlanStart: nil
+        )
+    }
+
+    private func figures(_ gaps: [SavingsCoverageGap]) -> SavingsFigures {
+        SavingsFigures(costs: .zero, daysWithData: 0, daysInPeriod: 121, coverageGaps: gaps)
     }
 }

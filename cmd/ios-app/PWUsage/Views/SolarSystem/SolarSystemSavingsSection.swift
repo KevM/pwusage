@@ -7,6 +7,7 @@ struct SolarSystemSavingsSection: View {
     let hasReferencePlan: Bool
     let onAddFixedRatePlan: () -> Void
     let onEditFixedRatePlan: () -> Void
+    var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
 
     var body: some View {
         Section("Savings") {
@@ -39,15 +40,17 @@ struct SolarSystemSavingsSection: View {
         if report.year.daysWithData > 0 {
             periodBlock(title: "Past Year", figures: report.year, alwaysShowCoverage: false)
         }
-        if report.lifetime.daysWithData > 0 {
+        if SavingsPresentation.showsCard(report.lifetime) {
             periodBlock(title: "Lifetime", figures: report.lifetime, alwaysShowCoverage: true)
         }
-        if report.year.daysWithData == 0, report.lifetime.daysWithData == 0 {
+        if report.year.daysWithData == 0, !SavingsPresentation.showsCard(report.lifetime) {
             Text("No savings data for recorded days yet.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-        planActionButton
+        if !SavingsPresentation.caveats(report.lifetime).contains(where: { $0.id == "fixed" }) {
+            planActionButton
+        }
     }
 
     private func periodBlock(
@@ -59,18 +62,23 @@ struct SolarSystemSavingsSection: View {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Text(SavingsPresentation.periodHeadline(figures, currency: currency))
-                .font(.subheadline.weight(.semibold))
-            Text(SavingsPresentation.breakdownLine(figures, currency: currency))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(SavingsPresentation.fixedRateComparisonLine(figures, currency: currency))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if figures.daysWithData > 0 {
+                Text(SavingsPresentation.periodHeadline(figures, currency: currency))
+                    .font(.subheadline.weight(.semibold))
+                Text(SavingsPresentation.breakdownLine(figures, currency: currency))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(SavingsPresentation.fixedRateComparisonLine(figures, currency: currency))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if alwaysShowCoverage || figures.daysWithData < figures.daysInPeriod {
                 Text(SavingsPresentation.coverageLine(figures))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+            if alwaysShowCoverage {
+                SavingsCaveatRows(caveats: SavingsPresentation.caveats(figures), onAction: onCaveatAction)
             }
         }
         .padding(.vertical, 2)

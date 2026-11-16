@@ -6,6 +6,7 @@ import SwiftUI
 struct SolarSystemView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     /// Nil when the site has no history available; the screen then shows only what is stored.
+    let site: MobileSite
     let status: SiteHistoryStatus?
     var debugActions: SiteHistoryDebugActions?
     /// Opened from the banner's location prompt: go straight to the location step.
@@ -28,7 +29,7 @@ struct SolarSystemView: View {
     @State private var record: SolarLayoutRecord?
     @State private var isEditingLayout = false
     @State private var isShowingFindings = false
-    @State private var isEditingFixedRatePlan = false
+    @State private var savingsSheet: SolarSavingsSheet?
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -75,19 +76,27 @@ struct SolarSystemView: View {
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
         .task { await coordinator.refreshSavings() }
-        .sheet(isPresented: $isEditingFixedRatePlan) {
-            FixedRatePlanForm(
-                existing: coordinator.activeReferencePeriod,
-                defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
-                timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
-                currency: coordinator.bill.response?.currentBill.currency ?? "USD",
-                onSave: { request, editing in
-                    await coordinator.saveFixedRatePlan(request, editing: editing)
-                },
-                onDelete: { periodID in
-                    await coordinator.removeFixedRatePlan(periodID: periodID)
-                }
-            )
+        .sheet(item: $savingsSheet) { sheet in
+            switch sheet {
+            case .fixedRatePlan(let suggestion):
+                let existing = suggestion == nil
+                    ? coordinator.activeReferencePeriod : coordinator.earliestReferencePeriod
+                FixedRatePlanForm(
+                    existing: existing,
+                    defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
+                    suggestedStartDate: suggestion,
+                    timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
+                    currency: coordinator.bill.response?.currentBill.currency ?? "USD",
+                    onSave: { request, editing in
+                        await coordinator.saveFixedRatePlan(request, editing: editing)
+                    },
+                    onDelete: { periodID in
+                        await coordinator.removeFixedRatePlan(periodID: periodID)
+                    }
+                )
+            case .ratePlans:
+                RatePlansSheet(site: site, actions: .live(coordinator))
+            }
         }
     }
 
@@ -143,14 +152,22 @@ struct SolarSystemView: View {
                 state: coordinator.savings,
                 currency: coordinator.bill.response?.currentBill.currency ?? "USD",
                 hasReferencePlan: coordinator.activeReferencePeriod != nil,
-                onAddFixedRatePlan: { isEditingFixedRatePlan = true },
-                onEditFixedRatePlan: { isEditingFixedRatePlan = true }
+                onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
+                onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
+                onCaveatAction: routeCaveat
             )
             panelHealthSection
             if stored != nil || status != nil { locationSection }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    private func routeCaveat(_ action: SavingsCaveat.Action) {
+        switch action {
+        case .editFixedRatePlan(let suggestion): savingsSheet = .fixedRatePlan(suggestion)
+        case .fixRatePlans: savingsSheet = .ratePlans
         }
     }
 
@@ -270,6 +287,18 @@ struct SolarSystemView: View {
         case .none: "Add Location"
         case .estimated: "Use My Exact Home Location"
         case .exact: "Update Home Location"
+        }
+    }
+}
+
+private enum SolarSavingsSheet: Identifiable {
+    case fixedRatePlan(String?)
+    case ratePlans
+
+    var id: String {
+        switch self {
+        case .fixedRatePlan: "fixedRatePlan"
+        case .ratePlans: "ratePlans"
         }
     }
 }
