@@ -14,7 +14,7 @@ import type { TariffV2 } from '../tesla-client';
 import { layoutTimeline } from '../tariff-estimates';
 import * as client from './client';
 import { urdbRateToSeasons } from './convert';
-import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, walkSupersedes, type RevisionSpan } from './match';
+import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, urdbStartDate, walkSupersedes, type RevisionSpan } from './match';
 import { resolveUtility } from './utility-lookup';
 import type { UrdbRate } from './types';
 import type { TariffSeasonInput } from '../tariff-contract';
@@ -215,14 +215,14 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
         await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [preview.planBackfill.tariffId, siteId, preview.planBackfill.name, preview.planBackfill.code]);
       }
       for (const anchor of preview.anchors) {
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7)`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null]);
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date)`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
       }
       for (const item of [...preview.actual, ...preview.reference]) {
         const parsed = compileSeasonsToParsedTariff(item.name, item.seasons);
         const hash = tariffContentHash(parsed);
         const previous = old.rows.find(row => row.role === item.role && row.urdb_label === item.span.rate.label && row.content_hash === hash);
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb')`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo]);
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date)`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
       }
       const today = siteLocalDateString(now, (await write.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone ?? 'UTC');
       const beforeCoverage = current.rows[0].choice === 'skipped' ? [] : (await write.query<{ source: string; effective_from: string; effective_to: string | null; kind: string }>(`SELECT source, effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT source, effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;

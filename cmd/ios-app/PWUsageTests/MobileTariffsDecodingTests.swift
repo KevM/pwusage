@@ -48,7 +48,10 @@ struct MobileTariffsDecodingTests {
         "status": "ready",
         "utilityName": "We Energies",
         "teslaPlanOutOfDate": true,
-        "newerPlanName": "Residential Option A"
+        "newerPlanName": "Residential Option A",
+        "newerPlanStart": "2025-06-01",
+        "newestRevisionStart": "2025-06-01",
+        "mayBeOutdated": true
       }
     }
     """
@@ -129,6 +132,26 @@ struct MobileTariffsDecodingTests {
         #expect(decoded.estimates?.utilityName == "We Energies")
         #expect(decoded.estimates?.teslaPlanOutOfDate == true)
         #expect(decoded.estimates?.newerPlanName == "Residential Option A")
+        #expect(decoded.estimates?.newerPlanStart == "2025-06-01")
+        #expect(decoded.estimates?.newestRevisionStart == "2025-06-01")
+        #expect(decoded.estimates?.mayBeOutdated == true)
+    }
+
+    @Test("Decodes estimate freshness as null dates and not outdated when no estimate covers today")
+    func decodesEstimateFreshnessWithoutRevision() throws {
+        let json = Self.estimatedTimelineJSON.replacingOccurrences(
+            of: "\"newestRevisionStart\": \"2025-06-01\"",
+            with: "\"newestRevisionStart\": null"
+        ).replacingOccurrences(of: "\"mayBeOutdated\": true", with: "\"mayBeOutdated\": false")
+            .replacingOccurrences(of: "\"newerPlanStart\": \"2025-06-01\"", with: "\"newerPlanStart\": null")
+        let decoded = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(decoded.estimates?.newestRevisionStart == nil)
+        #expect(decoded.estimates?.mayBeOutdated == false)
+        #expect(decoded.estimates?.newerPlanStart == nil)
     }
 
     @Test("Decodes a timeline without the estimates block")

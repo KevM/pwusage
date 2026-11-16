@@ -7,6 +7,11 @@ struct TariffTimelineActions: Sendable {
     var updatePeriod: @MainActor (Int, TariffPlanPatchRequest) async throws -> SiteTariffsTimelineResponse
     var deletePeriod: @MainActor (Int) async throws -> SiteTariffsTimelineResponse
     var retryReattribution: @MainActor () async throws -> SiteTariffsTimelineResponse
+    var searchUtilities: @MainActor (String) async throws -> [String]
+    var setUtility: @MainActor (String) async throws -> Void
+    var skipUtility: @MainActor () async throws -> Void
+    var utilityPlans: @MainActor () async throws -> [UtilityPlanDTO]
+    var setUtilityPlan: @MainActor (String) async throws -> Void
 
     @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
         Self(
@@ -15,7 +20,12 @@ struct TariffTimelineActions: Sendable {
             createPeriod: { try await coordinator.createTariffPeriod($0) },
             updatePeriod: { try await coordinator.updateTariffPeriod(periodID: $0, body: $1) },
             deletePeriod: { try await coordinator.deleteTariffPeriod(periodID: $0) },
-            retryReattribution: { try await coordinator.retryTariffReattribution() }
+            retryReattribution: { try await coordinator.retryTariffReattribution() },
+            searchUtilities: { try await coordinator.searchUtilities(query: $0) },
+            setUtility: { _ = try await coordinator.setUtility(name: $0) },
+            skipUtility: { _ = try await coordinator.skipUtility() },
+            utilityPlans: { try await coordinator.utilityPlans() },
+            setUtilityPlan: { _ = try await coordinator.setUtilityPlan(label: $0) }
         )
     }
 }

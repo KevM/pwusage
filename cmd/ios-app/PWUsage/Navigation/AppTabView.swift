@@ -13,6 +13,7 @@ struct AppTabView: View {
     }
     /// The banner's motion outlives its content, which the tab bar recreates as it updates.
     @State private var bannerClocks = SolarSystemBannerClocks()
+    @State private var accessoryDismissals = RateEstimatesAccessoryDismissals()
 
     var body: some View {
         Group {
@@ -54,15 +55,30 @@ struct AppTabView: View {
                 $0.status.isLoading && !model.isDemo && !model.isShowingSolarSystem
                     ? SiteDeepHistoryPresentation(status: $0.status) : nil
             }
-            tabView.tabViewBottomAccessory(isEnabled: hold != nil || deep != nil || showsBanner) {
+            // Setup for estimated rate plans comes last: it yields to every history accessory.
+            let estimate = RateEstimatesAccessoryRule.prompt(
+                RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
+                selectedTab: model.selectedTab,
+                isDemo: model.isDemo,
+                isDismissed: accessoryDismissals.isDismissed(siteID: site.id),
+                yieldsTo: hold != nil || deep != nil || showsBanner
+            )
+            tabView.tabViewBottomAccessory(isEnabled: hold != nil || deep != nil || showsBanner || estimate != nil) {
                 if let hold {
                     BatteryHoldAccessory(model: hold) { coordinator.isBatteryHoldSheetPresented = true }
                 } else if let deep {
                     SiteDeepHistoryAccessory(presentation: deep) { model.openSolarSystem() }
-                } else {
+                } else if showsBanner {
                     SolarSystemBanner(model: banner, clocks: bannerClocks) {
                         model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
                     }
+                } else if let estimate {
+                    RateEstimatesAccessory(
+                        prompt: estimate,
+                        utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                        onOpen: { coordinator.presentedSheet = .rateEstimates(estimate) },
+                        onDismiss: { accessoryDismissals.dismiss(siteID: site.id) }
+                    )
                 }
             }
             .onChange(of: banner.days, initial: true) { bannerClocks.observe(days: banner.days, now: .now) }
@@ -90,6 +106,10 @@ struct AppTabView: View {
             switch sheet {
             case .batteryHold:
                 BatteryHoldSheet(coordinator: coordinator, site: site)
+            case .chooseUtility:
+                estimateSetupSheet(.pickUtility)
+            case .choosePlan:
+                estimateSetupSheet(.pickPlan)
             }
         }
         .sheet(isPresented: $model.isSitePickerPresented) {
@@ -150,6 +170,14 @@ struct AppTabView: View {
                              ? nil : (model.historyOnboarding?.solarHealth ?? model.demoSolarHealth),
                          trmnl: model.isDemo ? nil : TrmnlSettingsAccess(api: model.api))
         }
+    }
+
+    private func estimateSetupSheet(_ prompt: RateEstimatesPrompt) -> RateEstimatesSetupSheet {
+        RateEstimatesSetupSheet(
+            prompt: prompt,
+            utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+            actions: .live(coordinator)
+        )
     }
 
     /// A swipe down is the same as Not now: the sheet clears the prompt for this run.

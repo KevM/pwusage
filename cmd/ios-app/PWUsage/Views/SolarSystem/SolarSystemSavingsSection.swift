@@ -8,9 +8,22 @@ struct SolarSystemSavingsSection: View {
     let onAddFixedRatePlan: () -> Void
     let onEditFixedRatePlan: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
+    /// The estimate setup step still needed; its rows stay here even when the Home accessory is dismissed.
+    var estimatePrompt: RateEstimatesPrompt?
+    var estimateUtilityName: String?
+    var onChooseEstimateSetup: (RateEstimatesPrompt) -> Void = { _ in }
+    /// The may-be-outdated note for a fixed plan that covers today on estimated rates.
+    var fixedPlanNote: String?
 
     var body: some View {
         Section("Savings") {
+            if let estimatePrompt {
+                RateEstimatesSetupRows(
+                    prompt: estimatePrompt,
+                    utilityName: estimateUtilityName,
+                    onChoose: { onChooseEstimateSetup(estimatePrompt) }
+                )
+            }
             switch state {
             case .ready(let report):
                 readyRows(report)
@@ -71,6 +84,11 @@ struct SolarSystemSavingsSection: View {
                 Text(SavingsPresentation.fixedRateComparisonLine(figures, currency: currency))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let share = SavingsPresentation.estimatedShareLine(figures) {
+                    Text(share)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             if alwaysShowCoverage || figures.daysWithData < figures.daysInPeriod {
                 Text(SavingsPresentation.coverageLine(figures))
@@ -85,10 +103,17 @@ struct SolarSystemSavingsSection: View {
     }
 
     private var planActionButton: some View {
-        Button(
-            hasReferencePlan ? "Edit Fixed Rate Plan" : "Add Fixed Rate Plan",
-            action: hasReferencePlan ? onEditFixedRatePlan : onAddFixedRatePlan
-        )
+        VStack(alignment: .leading, spacing: 6) {
+            Button(
+                hasReferencePlan ? "Edit Fixed Rate Plan" : "Add Fixed Rate Plan",
+                action: hasReferencePlan ? onEditFixedRatePlan : onAddFixedRatePlan
+            )
+            if let fixedPlanNote {
+                Text(fixedPlanNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

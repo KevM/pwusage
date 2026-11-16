@@ -214,6 +214,38 @@ struct SavingsPresentationTests {
         #expect(SavingsPresentation.showsCard(counted))
     }
 
+    @Test("Estimated share line rounds the percent of counted days")
+    func estimatedShareLineRoundsPercent() {
+        #expect(SavingsPresentation.estimatedShareLine(estimated(12, of: 30))
+            == "About 40% of these days use estimated rates")
+        #expect(SavingsPresentation.estimatedShareLine(estimated(10, of: 30))
+            == "About 33% of these days use estimated rates")
+        #expect(SavingsPresentation.estimatedShareLine(estimated(29, of: 30))
+            == "About 97% of these days use estimated rates")
+        #expect(SavingsPresentation.estimatedShareLine(estimated(30, of: 30))
+            == "About 100% of these days use estimated rates")
+    }
+
+    @Test("Estimated share under one percent uses the some-days line")
+    func estimatedShareLineUnderOnePercent() {
+        #expect(SavingsPresentation.estimatedShareLine(estimated(1, of: 200))
+            == "Some of these days use estimated rates")
+        #expect(SavingsPresentation.estimatedShareLine(estimated(1, of: 2_914))
+            == "Some of these days use estimated rates")
+    }
+
+    @Test("No estimated share line without estimated days")
+    func noEstimatedShareLineWithoutEstimates() {
+        #expect(SavingsPresentation.estimatedShareLine(estimated(0, of: 30)) == nil)
+        #expect(SavingsPresentation.estimatedShareLine(estimated(0, of: 0)) == nil)
+    }
+
+    private func estimated(_ estimatedDays: Int, of daysWithData: Int) -> SavingsFigures {
+        SavingsFigures(
+            costs: .zero, daysWithData: daysWithData, daysInPeriod: daysWithData, estimatedDays: estimatedDays
+        )
+    }
+
     private var rateGap: SavingsCoverageGap {
         SavingsCoverageGap(
             cause: .noRatePlan, days: 121,

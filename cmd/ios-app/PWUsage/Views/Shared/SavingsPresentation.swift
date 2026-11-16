@@ -76,6 +76,15 @@ enum SavingsPresentation {
         return "Based on \(covered) of \(total) days"
     }
 
+    /// Share of counted days priced on estimated rates, e.g. `"About 40% of these days use estimated rates"`.
+    /// Shares under 1% read `"Some of these days use estimated rates"`; no estimated days gives nil.
+    static func estimatedShareLine(_ figures: SavingsFigures) -> String? {
+        guard figures.estimatedDays > 0, figures.daysWithData > 0 else { return nil }
+        let share = Double(figures.estimatedDays) * 100 / Double(figures.daysWithData)
+        guard share >= 1 else { return "Some of these days use estimated rates" }
+        return "About \(Int(share.rounded()))% of these days use estimated rates"
+    }
+
     private static func wholeCurrency(
         _ value: Double,
         currency: String,
