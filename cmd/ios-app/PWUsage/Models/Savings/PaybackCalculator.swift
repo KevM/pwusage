@@ -43,6 +43,7 @@ struct PaybackAssumptions: Equatable, Sendable {
 struct PaybackResult: Equatable, Sendable {
     let components: [ComponentPayback]
     /// Both components together. Nil unless both have a stream.
+    /// Its `component` is not meaningful; read only its numbers and `since`.
     let combined: ComponentPayback?
     let assumptions: PaybackAssumptions
     let coverage: SavingsFigures

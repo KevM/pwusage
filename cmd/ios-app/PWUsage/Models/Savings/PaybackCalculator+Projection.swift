@@ -10,7 +10,8 @@ extension PaybackContext {
     /// First future cycle whose paid-to-date plus projected savings reaches the net cost, within the horizon.
     func projectedMonth(_ streams: [PaybackStream], netCost: Double, paid: Double) -> Date? {
         let recent = report.recentCycles
-        guard !recent.isEmpty else { return nil }
+        guard !recent.isEmpty, let current = recent.last else { return nil }
+        let currentMonth = monthStart(of: current.end.addingTimeInterval(-1))
         let bases = streams.map { baseSavings(for: $0) }
         var cumulative = paid
         for index in 0 ..< PaybackCalculator.horizonCycles {
@@ -21,7 +22,8 @@ extension PaybackContext {
             }
             cumulative += cycleSavings
             if cumulative >= netCost {
-                return futureMonth(closing: recent[index % recent.count].end, yearsAhead: index / recent.count + 1)
+                // Cycle k closes k + 1 calendar months after the current cycle's month, whatever the history length.
+                return calendar.date(byAdding: .month, value: index + 1, to: currentMonth) ?? currentMonth
             }
         }
         return nil
@@ -60,13 +62,6 @@ extension PaybackContext {
     /// Share of nameplate energy left at an age, linear from Tesla's warranty: 70% at 10 years, never below 30%.
     func batteryCapacity(atAge years: Double) -> Double {
         max(0.3, 1 - PaybackCalculator.batteryFadePerYear * years)
-    }
-
-    /// The month of the base cycle's close, moved forward whole years.
-    private func futureMonth(closing end: Date, yearsAhead: Int) -> Date {
-        let lastSecond = end.addingTimeInterval(-1)
-        let shifted = calendar.date(byAdding: .year, value: yearsAhead, to: lastSecond) ?? lastSecond
-        return monthStart(of: shifted)
     }
 
     private func monthStart(of date: Date) -> Date {

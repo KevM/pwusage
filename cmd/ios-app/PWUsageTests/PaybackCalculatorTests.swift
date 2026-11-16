@@ -193,6 +193,65 @@ struct PaybackCalculatorTests {
         #expect(combined.since == "2025-12-15")
     }
 
+    @Test("Combined projection sums both streams per cycle, each fading on its own terms")
+    func combinedProjectionMatchesHandModel() throws {
+        let cycles = try makeMonthlyCycles { _ in Self.splitSavings(solar: 100, battery: 50) }
+        let result = try #require(try compute(
+            cycles: cycles,
+            solar: Self.cost(price: 3_000),
+            powerwall: Self.cost(price: 3_000, installDate: "2026-06-10"),
+            solarSince: "2026-06-10"
+        ))
+        // Hand model: solar stays at 100 a cycle; Powerwall starts at 50 and fades 3% a year from its age at now.
+        // Paid to date is 600 solar plus 300 Powerwall; net is 3,000 each.
+        let start = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 6, day: 10, hour: 0)
+        let now = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 11, day: 16, hour: 12)
+        let age = now.timeIntervalSince(start) / 86_400 / 365.25
+        func capacity(_ years: Double) -> Double { max(0.3, 1 - 0.03 * years) }
+        var cumulative = 900.0
+        var cycle = 0
+        while cumulative < 6_000 {
+            let years = Double(cycle + 1) / 12
+            cumulative += 100 + 50 * capacity(age + years) / capacity(age)
+            cycle += 1
+        }
+        let combined = try #require(result.combined)
+        let expected = try utcMonth(2026, 11)
+        let calendar = Calendar(identifier: .gregorian)
+        let month = try #require(calendar.date(byAdding: .month, value: cycle, to: expected))
+        #expect(combined.netCost == 6_000)
+        #expect(combined.paidToDate == 900)
+        #expect(combined.breakEven == .projected(month: month))
+    }
+
+    @Test("Combined payback counts a late-starting Powerwall from its own install cycle")
+    func combinedPaidOffCountsEachFromItsStart() throws {
+        // Fourteen cycles of history; the last twelve are the recent window. Powerwall starts in cycle 4.
+        let cycles = try makeMonthlyCycles(count: 14) { _ in Self.splitSavings(solar: 100, battery: 50) }
+        let result = try #require(try compute(
+            cycles: cycles,
+            solar: Self.cost(price: 1_000),
+            powerwall: Self.cost(price: 500, installDate: "2026-02-10"),
+            solarSince: "2025-10-10"
+        ))
+        // Solar: 14 x 100 = 1,400. Powerwall: cycles 4 to 13, 10 x 50 = 500. Combined crossing 1,500 is in
+        // cycle 11 (1,600 cumulative), which ends 1 Oct 2026 and so closes in September.
+        let combined = try #require(result.combined)
+        let expected = try utcMonth(2026, 9)
+        #expect(combined.paidToDate == 1_900)
+        #expect(combined.breakEven == .paidOff(month: expected))
+    }
+
+    @Test("A shorter history projects on calendar months from the current cycle")
+    func shortHistoryProjectsOnCalendarMonths() throws {
+        let cycles = try makeMonthlyCycles(count: 11) { _ in Self.savings(100) }
+        let result = try #require(try compute(cycles: cycles, solar: Self.cost(price: 3_000), solarSince: "2026-07-10"))
+        let solar = try #require(result.components.first)
+        #expect(solar.paidToDate == 500)
+        let expected = try utcMonth(2028, 12)
+        #expect(solar.breakEven == .projected(month: expected))
+    }
+
     // MARK: Helpers
 
     private static func savings(_ solar: Double) -> ScenarioCosts {
@@ -202,6 +261,11 @@ struct PaybackCalculatorTests {
     /// Solar savings of `value` and Powerwall savings of `value` in one cycle.
     private static func solarAndBatterySavings(_ value: Double) -> ScenarioCosts {
         ScenarioCosts(recorded: 0, batteryFixed: 0, solarAlone: value, noSolar: 2 * value)
+    }
+
+    /// Solar savings and Powerwall savings of different sizes in one cycle.
+    private static func splitSavings(solar: Double, battery: Double) -> ScenarioCosts {
+        ScenarioCosts(recorded: 0, batteryFixed: 0, solarAlone: battery, noSolar: solar + battery)
     }
 
     private static func cost(price: Double, installDate: String? = nil) -> SystemCostDTO {
@@ -223,16 +287,17 @@ struct PaybackCalculatorTests {
         case notProjected
     }
 
-    /// Twelve monthly cycles ending 1 Dec 2026, oldest first; the last is the current cycle.
+    /// Monthly cycles ending 1 Dec 2026, oldest first; the last is the current cycle.
     private func makeMonthlyCycles(
+        count: Int = 12,
         _ costs: (Int) -> ScenarioCosts,
         daysWithData: (Int) -> Int = { _ in 30 }
     ) throws -> [CycleSavings] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = Self.utc
         let lastEnd = try SavingsTestFixtures.makeUTCDate(year: 2026, month: 12, day: 1, hour: 0)
-        return try (0 ..< 12).map { index in
-            let end = try #require(calendar.date(byAdding: .month, value: index - 11, to: lastEnd))
+        return try (0 ..< count).map { index in
+            let end = try #require(calendar.date(byAdding: .month, value: index - (count - 1), to: lastEnd))
             let start = try #require(calendar.date(byAdding: .month, value: -1, to: end))
             return CycleSavings(
                 start: start, end: end, costs: costs(index), daysWithData: daysWithData(index), daysInCycle: 30
@@ -257,7 +322,7 @@ struct PaybackCalculatorTests {
             solarSinceInstall: figures,
             powerwallSinceInstall: nil,
             cycles: cycles,
-            recentCycles: cycles,
+            recentCycles: Array(cycles.suffix(12)),
             batteryStartDay: nil,
             rateGrowth: growth
         )
