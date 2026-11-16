@@ -188,6 +188,24 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         expect(await rows(`SELECT count(*)::int AS n FROM public."MobileLoginHandoff"`)).toEqual([{ n: 0 }]);
     });
 
+    it('parks rate estimate checks for every copied site except Harrison', async () => {
+        await target!.query(`${MARK_DEV}
+            INSERT INTO public."Site" (id) VALUES ('${PINNED_SITE}'), ('s-pending'), ('s-ready');
+            CREATE TABLE public."SiteUtility" (site_id text PRIMARY KEY REFERENCES public."Site"(id), choice text NOT NULL,
+                status text NOT NULL, next_check_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now());
+            INSERT INTO public."SiteUtility" (site_id, choice, status, next_check_at) VALUES
+                ('${PINNED_SITE}', 'auto', 'pending', NULL), ('s-pending', 'auto', 'running', NULL),
+                ('s-ready', 'owner', 'needs_plan', now());`);
+        expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
+        expect(await rows(`SELECT site_id, choice, status, next_check_at = 'infinity' AS parked FROM public."SiteUtility" ORDER BY site_id`)).toEqual([
+            { site_id: PINNED_SITE, choice: 'auto', status: 'pending', parked: null },
+            { site_id: 's-pending', choice: 'auto', status: 'ready', parked: true },
+            { site_id: 's-ready', choice: 'owner', status: 'needs_plan', parked: true },
+            { site_id: 's1', choice: 'auto', status: 'ready', parked: true },
+        ]);
+        expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
+    });
+
     it('skips rules for tables that do not exist yet', async () => {
         await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."User"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);

@@ -311,26 +311,30 @@ export async function applySpanMutationPlan(
   return inserted;
 }
 
+/**
+ * Lays estimates into the days owner and Tesla spans leave uncovered. `reference` scope is for
+ * reference plan edits: it leaves the actual timeline and `is_current` untouched.
+ */
 export async function applyEstimatesOnClient(
-  client: PoolClient, siteId: string, today: string
+  client: PoolClient, siteId: string, today: string, scope: 'all' | 'reference' = 'all'
 ): Promise<{ changed: Array<{ from: string; to: string | null }> }> {
   const sources = await client.query<{ tariff_id: number; role: string; start_date: string; end_date: string | null }>(
     `SELECT tariff_id, role, start_date::text, end_date::text FROM "TariffUrdbSource" WHERE site_id = $1 ORDER BY created_at DESC, tariff_id DESC`, [siteId]
   );
-  const actual = await loadExistingSpans(client, siteId);
   const referenceRows = await client.query<{ id: number; tariff_id: number; source: TariffSource; effective_from: string; effective_to: string | null; updated_by_user_id: string | null }>(
     `SELECT id, tariff_id, source, effective_from::text, effective_to::text, updated_by_user_id FROM "TariffReferencePeriod" WHERE site_id = $1 ORDER BY effective_from, id`, [siteId]
   );
   const reference: ExistingSpan[] = referenceRows.rows.map(row => ({ id: Number(row.id), tariffId: Number(row.tariff_id), source: row.source, effectiveFrom: row.effective_from, effectiveTo: row.effective_to, updatedByUserId: row.updated_by_user_id }));
   const desired = (role: string) => sources.rows.filter(row => row.role === role).map(row => ({ tariffId: Number(row.tariff_id), effectiveFrom: row.start_date, effectiveTo: row.end_date }));
   const anchors = sources.rows.filter(row => row.role === 'tesla_anchor').map(row => ({ tariffId: Number(row.tariff_id), startDate: row.start_date }));
-  const actualLayout = layoutTimeline(actual, anchors, desired('estimated_actual'));
   const referenceLayout = layoutTimeline(reference, [], desired('estimated_reference'));
-  await applySpanMutationPlan(client, siteId, actualLayout);
   if (referenceLayout.deleteIds.length) await client.query('DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = ANY($2::int[])', [siteId, referenceLayout.deleteIds]);
   for (const row of referenceLayout.inserts) {
     await client.query(`INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id) VALUES ($1, $2, $3::date, $4::date, $5, $6)`, [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.source, row.updatedByUserId]);
   }
+  if (scope === 'reference') return { changed: [] };
+  const actualLayout = layoutTimeline(await loadExistingSpans(client, siteId), anchors, desired('estimated_actual'));
+  await applySpanMutationPlan(client, siteId, actualLayout);
   await recomputeIsCurrentTariff(client, siteId, today);
   return { changed: actualLayout.changed };
 }
@@ -443,12 +447,12 @@ async function healVacatedIntervalWithTesla(
 }
 
 /** Rate plan names are unique per site (ignoring case and edge spaces) so they never get confused. */
-async function assertPlanNameAvailable(
+async function planNameTaken(
   client: PoolClient,
   siteId: string,
   name: string,
   exceptTariffId: number | null
-): Promise<void> {
+): Promise<boolean> {
   const clash = await client.query(
     `SELECT 1 FROM "TariffEffectivePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id
      WHERE p.site_id = $1 AND p.source <> 'estimated' AND lower(btrim(t.name)) = lower(btrim($2))
@@ -456,8 +460,33 @@ async function assertPlanNameAvailable(
      LIMIT 1`,
     [siteId, name, exceptTariffId]
   );
-  if ((clash.rowCount ?? 0) > 0) {
+  return (clash.rowCount ?? 0) > 0;
+}
+
+async function assertPlanNameAvailable(
+  client: PoolClient,
+  siteId: string,
+  name: string,
+  exceptTariffId: number | null
+): Promise<void> {
+  if (await planNameTaken(client, siteId, name, exceptTariffId)) {
     throw new TariffValidationError(`A rate plan named "${name.trim()}" already exists. Choose a different name.`);
+  }
+}
+
+/**
+ * Revisions of one public plan share its name, so converting a second one (often a dates-only
+ * edit with no name field) would clash with the first. Keep the name, adding the start year.
+ */
+async function availableEstimateName(client: PoolClient, siteId: string, name: string, effectiveFrom: string): Promise<string> {
+  const base = name.trim();
+  const candidates = [base, `${base} (${effectiveFrom.slice(0, 4)})`, `${base} (${effectiveFrom})`];
+  for (const candidate of candidates) {
+    if (!(await planNameTaken(client, siteId, candidate, null))) return candidate;
+  }
+  for (let suffix = 2; ; suffix++) {
+    const candidate = `${base} (${effectiveFrom}, ${suffix})`;
+    if (!(await planNameTaken(client, siteId, candidate, null))) return candidate;
   }
 }
 
@@ -557,6 +586,8 @@ export class TariffTimelineRepo {
 
   async setSiteUtility(siteId: string, userId: string, input: { name: string } | { skipped: true }): Promise<SiteTariffsTimelineResponse> {
     const client = await pool.connect();
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
     try {
       await client.query('BEGIN');
       const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
@@ -565,8 +596,27 @@ export class TariffTimelineRepo {
       await client.query(`INSERT INTO "SiteUtility" (site_id, urdb_utility, choice, status, updated_by_user_id)
         VALUES ($1, $2, $3, 'pending', $4) ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`,
       [siteId, skipped ? null : input.name, skipped ? 'skipped' : 'owner', userId]);
+      if (skipped) {
+        // Removing estimates needs no OpenEI call, so do it now rather than on the next cron run.
+        const timezone = (await client.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone || 'UTC';
+        await client.query('DELETE FROM "TariffUrdbSource" WHERE site_id = $1', [siteId]);
+        const { changed } = await applyEstimatesOnClient(client, siteId, siteLocalDateString(new Date(), timezone));
+        if (changed.length) {
+          reattribution = {
+            siteId,
+            fromDate: changed.reduce((min, range) => minDate(min, range.from), changed[0].from),
+            toDate: changed.reduce<string | null>((max, range) => maxEnd(max, range.to), changed[0].to),
+            requestedByUserId: userId,
+            trigger: 'estimate',
+          };
+          queued = await enqueueReattributionOnClient(client, reattribution);
+        }
+        await client.query(`UPDATE "SiteUtility" SET status = 'ready', checked_at = now(), next_check_at = now() + interval '7 days', updated_at = clock_timestamp() WHERE site_id = $1`, [siteId]);
+      }
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    new SiteRepo().invalidateCache(siteId);
+    if (reattribution && queued) logReattributionEnqueued(reattribution, queued);
     return this.getTimeline(siteId, userId);
   }
 
@@ -650,7 +700,7 @@ export class TariffTimelineRepo {
     );
 
     const utilityRes = await pool.query<{ status: string; choice: string; urdb_utility: string | null; newer_urdb_name: string | null }>(
-      `SELECT u.status, u.choice, u.urdb_utility, (SELECT newer_urdb_name FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL ORDER BY start_date DESC LIMIT 1) AS newer_urdb_name FROM "SiteUtility" u WHERE u.site_id = $1`, [siteId]
+      `SELECT u.status, u.choice, u.urdb_utility, (SELECT newer_urdb_name FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL AND tariff_id = (SELECT id FROM "Tariff" WHERE site_id = u.site_id AND source = 'tesla' ORDER BY id DESC LIMIT 1)) AS newer_urdb_name FROM "SiteUtility" u WHERE u.site_id = $1`, [siteId]
     );
     const utility = utilityRes.rows[0];
     const timeline = buildSiteTariffsTimelineResponse({
@@ -711,6 +761,8 @@ export class TariffTimelineRepo {
       const inserted = await applySpanMutationPlan(client, siteId, plan);
       createdPeriodId = inserted.at(-1)?.id ?? 0;
       const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
+      // The site now has a rate plan: rerun the estimate job so the actual timeline is built from it.
+      await client.query(`UPDATE "SiteUtility" SET status = 'pending', next_check_at = NULL, updated_at = clock_timestamp() WHERE site_id = $1 AND status = 'needs_plan'`, [siteId]);
       reattribution = {
         siteId, fromDate: validated.effectiveFrom, toDate: validated.effectiveTo, requestedByUserId: userId, trigger: 'create',
       };
@@ -790,8 +842,10 @@ export class TariffTimelineRepo {
         const currentTariff = tariffMap.get(target.tariffId);
         if (!currentTariff) throw new TariffNotFoundError('Tariff not found');
         const currentSeasons: TariffSeasonInput[] = decompileTariffToSeasons(currentTariff);
+        const keepsEstimateName = target.source === 'estimated' &&
+          (patch.name ?? currentTariff.name ?? '').trim().toLowerCase() === (currentTariff.name ?? '').trim().toLowerCase();
         const validated = validateTariffPlanInput({
-          name: patch.name ?? currentTariff.name ?? '',
+          name: keepsEstimateName ? await availableEstimateName(client, siteId, currentTariff.name ?? '', nextFrom) : patch.name ?? currentTariff.name ?? '',
           effectiveFrom: nextFrom,
           effectiveTo: nextTo,
           seasons: patch.seasons ?? currentSeasons,
@@ -1061,7 +1115,7 @@ export class TariffTimelineRepo {
       }
       const inserted = await applyReferenceSpanMutationPlan(client, siteId, plan);
       createdPeriodId = inserted.find(row => row.tariffId === newTariffId)?.id ?? inserted.at(-1)?.id ?? 0;
-      await applyEstimatesOnClient(client, siteId, today);
+      await applyEstimatesOnClient(client, siteId, today, 'reference');
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1146,7 +1200,7 @@ export class TariffTimelineRepo {
         throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
       }
       await applyReferenceSpanMutationPlan(client, siteId, plan);
-      await applyEstimatesOnClient(client, siteId, today);
+      await applyEstimatesOnClient(client, siteId, today, 'reference');
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1188,7 +1242,7 @@ export class TariffTimelineRepo {
         [siteId, periodId]
       );
       if (delRes.rowCount === 0) throw new TariffNotFoundError('Reference rate plan period not found');
-      await applyEstimatesOnClient(client, siteId, siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC'));
+      await applyEstimatesOnClient(client, siteId, siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC'), 'reference');
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');

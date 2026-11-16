@@ -247,6 +247,21 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
         #expect(RatePlanEditorMode.add.takenNames(among: periods).contains("Residential"))
     }
 
+    @Test("Estimated plans do not reserve their names")
+    func estimatedPlansDoNotReserveNames() throws {
+        let timeline = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+        let residential = try #require(timeline.periods.first { $0.name == "Residential" })
+        let estimate = TariffPeriodDTO(
+            periodId: 10, tariffId: 100, name: "Residential Rg 1", version: 1, source: .estimated,
+            effectiveFrom: "2022-01-01", effectiveTo: "2022-12-31", isCurrentToday: false,
+            updatedBy: nil, seasons: residential.seasons
+        )
+        #expect(!RatePlanEditorMode.add.takenNames(among: timeline.periods + [estimate]).contains("Residential Rg 1"))
+    }
+
     @Test("A season that starts mid-month is matched by day, not just month")
     func midMonthSeasonsMatchByDay() throws {
         let timeline = try MobileContractDecoder.make().decode(

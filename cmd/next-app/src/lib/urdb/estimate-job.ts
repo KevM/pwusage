@@ -9,7 +9,8 @@ import { logEvent } from '../observability';
 import { enqueueReattributionOnClient } from '../tariff-reattribution-queue';
 import { applyEstimatesOnClient, hydrateTariffs, insertTariffGraph, loadExistingSpans, pickActivePeriodForDate } from '../tariff-timeline-repo';
 import { addCalendarDays, compileSeasonsToParsedTariff, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
-import { buildDefaultTariff, tariffContentHash } from '../importer/tariff-parser';
+import { buildDefaultTariff, parseTariffContent, tariffContentHash, type ParsedTariff } from '../importer/tariff-parser';
+import type { TariffV2 } from '../tesla-client';
 import { layoutTimeline } from '../tariff-estimates';
 import * as client from './client';
 import { urdbRateToSeasons } from './convert';
@@ -19,13 +20,14 @@ import type { UrdbRate } from './types';
 import type { TariffSeasonInput } from '../tariff-contract';
 
 export interface UrdbApi { ratesEffectiveOn: typeof client.ratesEffectiveOn; rateByLabel: typeof client.rateByLabel; defaultRates: typeof client.defaultRates; utilityNames: typeof client.utilityNames }
-type Snapshot = { site: { id: string; utility: string | null; timezone: string; history_start: string | null }; utility: SiteUtilityRow | undefined; spans: Awaited<ReturnType<typeof loadExistingSpans>>; tariffs: Tariff[]; allTariffs: Tariff[]; sources: Array<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null }> };
+type Snapshot = { site: { id: string; utility: string | null; timezone: string; history_start: string | null; tariff_content: TariffV2 | null; site_name: string | null }; utility: SiteUtilityRow | undefined; spans: Awaited<ReturnType<typeof loadExistingSpans>>; tariffs: Tariff[]; allTariffs: Tariff[]; sources: Array<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null }> };
 type Anchor = { tariffId: number; startDate: string; startSource: string; label: string | null; newer: UrdbRate | null };
 type Converted = { span: RevisionSpan; seasons: TariffSeasonInput[]; name: string; role: 'estimated_actual' | 'estimated_reference' };
-type Preview = { matchOutcomes: Array<'matched' | 'no_match' | 'unconvertible' | 'no_utility'>; fallbackTariffIds: number[]; ownerPicked: boolean; status: SiteUtilityStatus; utilityName: string | null; anchors: Anchor[]; actual: Converted[]; reference: Converted[]; changed: Array<{ from: string; to: string | null }> };
+type PlanBackfill = { tariffId: number; name: string | null; code: string | null };
+type Preview = { planBackfill: PlanBackfill | null; matchOutcomes: Array<'matched' | 'no_match' | 'unconvertible' | 'no_utility'>; fallbackTariffIds: number[]; ownerPicked: boolean; status: SiteUtilityStatus; utilityName: string | null; anchors: Anchor[]; actual: Converted[]; reference: Converted[]; changed: Array<{ from: string; to: string | null }> };
 const MAX_REVISIONS = 80;
 async function snapshot(siteId: string): Promise<Snapshot> {
-  const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, COALESCE(s.timezone, 'UTC') AS timezone, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
+  const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, COALESCE(s.timezone, 'UTC') AS timezone, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
   const utility = (await pool.query<SiteUtilityRow>('SELECT * FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
   const connection = await pool.connect();
@@ -41,6 +43,19 @@ async function snapshot(siteId: string): Promise<Snapshot> {
 function averageSell(tariff: Tariff | undefined): number {
   const rates = tariff?.seasons?.flatMap(season => season.schedules?.map(schedule => schedule.sell_rate ?? season.sell_rate) ?? [season.sell_rate]) ?? [];
   return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+}
+// Rows stored before content hashes existed hash their hydrated graph; nulls there are absent fields in a parse.
+function storedTariffHash(tariff: Tariff): string {
+  return tariff.content_hash ?? tariffContentHash(JSON.parse(JSON.stringify({ name: tariff.name, seasons: tariff.seasons ?? [] }, (_key, value) => value === null ? undefined : value)) as ParsedTariff);
+}
+// Tesla's plan name and code exist only for the current plan in Site.json, so fill them on the
+// latest Tesla version when it is that plan (versions synced before the columns existed have none).
+function planBackfillFor(latest: Tariff | undefined, site: Snapshot['site']): PlanBackfill | null {
+  const content = site.tariff_content;
+  if (!latest || latest.plan_name != null || latest.plan_code != null || !content || (!content.name && !content.code)) return null;
+  let parsedHash: string;
+  try { parsedHash = tariffContentHash(parseTariffContent(content, site.site_name ?? 'Utility Tariff')); } catch { return null; }
+  return storedTariffHash(latest) === parsedHash ? { tariffId: latest.id, name: content.name ?? null, code: content.code ?? null } : null;
 }
 async function monthlyUsage(siteId: string, timezone: string, now: Date): Promise<number | null> {
   // History with incomplete tariff attribution cannot provide a trustworthy aggregate yet.
@@ -58,8 +73,10 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const { site, utility, spans, allTariffs, sources } = snapshotData;
   const fallbackHash = tariffContentHash(buildDefaultTariff('Default Rate'));
   const fallbackTariffIds = snapshotData.tariffs.filter(tariff => tariff.content_hash === fallbackHash).map(tariff => tariff.id);
-  const tariffs = snapshotData.tariffs.filter(tariff => tariff.content_hash !== fallbackHash);
-  const empty = (status: SiteUtilityStatus, utilityName: string | null): Preview => ({ status, utilityName, anchors: [], actual: [], reference: [], changed: [], fallbackTariffIds, ownerPicked: false, matchOutcomes: tariffs.map(() => 'no_utility') });
+  const unfilled = snapshotData.tariffs.filter(tariff => tariff.content_hash !== fallbackHash);
+  const planBackfill = planBackfillFor(unfilled.at(-1), site);
+  const tariffs = planBackfill ? unfilled.map(tariff => tariff.id === planBackfill.tariffId ? { ...tariff, plan_name: planBackfill.name, plan_code: planBackfill.code } : tariff) : unfilled;
+  const empty = (status: SiteUtilityStatus, utilityName: string | null): Preview => ({ planBackfill, status, utilityName, anchors: [], actual: [], reference: [], changed: [], fallbackTariffIds, ownerPicked: false, matchOutcomes: tariffs.map(() => 'no_utility') });
   if (utility?.choice === 'skipped') return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
   const names = await api.utilityNames(); checkIoDeadline();
   const utilityName = utility?.choice === 'owner' ? utility.urdb_utility : resolveUtility(site.utility, names);
@@ -67,13 +84,17 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const today = siteLocalDateString(now, site.timezone);
   const matches: Array<UrdbRate | null> = [];
   const anchors: Anchor[] = [];
+  // Earlier versions can own no span (the historic backfill spanned only the current version, and
+  // owner plans can replace a version entirely). They still price days, so match them all, and treat
+  // the first version that owns a span as the first version.
+  const firstSpanned = tariffs.findIndex(tariff => spans.some(span => span.tariffId === tariff.id));
   for (const [index, tariff] of tariffs.entries()) {
-    const ownedSpan = spans.find(span => span.tariffId === tariff.id);
-    if (!ownedSpan) { matches.push(null); continue; }
     const firstSeen = siteLocalDateString(new Date(tariff.updated), site.timezone);
     const matched = pickTeslaMatch(tariff, await api.ratesEffectiveOn(utilityName, firstSeen, site.timezone));
     matches.push(matched);
-    const anchor = anchorStart({ matched, firstSeen, isFirstVersion: index === 0, currentSpanStart: ownedSpan.effectiveFrom, ownerDated: ownedSpan.updatedByUserId !== null, timeZone: site.timezone });
+    const ownedSpan = spans.find(span => span.tariffId === tariff.id);
+    if (!ownedSpan) continue;
+    const anchor = anchorStart({ matched, firstSeen, isFirstVersion: index === firstSpanned, currentSpanStart: ownedSpan.effectiveFrom, ownerDated: ownedSpan.updatedByUserId !== null, timeZone: site.timezone });
     if (anchor) anchors.push({ tariffId: tariff.id, ...anchor, label: matched?.label ?? null, newer: null });
   }
   if (matches.at(-1)) {
@@ -82,12 +103,15 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     const anchor = anchors.find(item => item.tariffId === tariffs.at(-1)?.id);
     if (anchor) anchor.newer = newer;
   }
-  let start = matches[0] ?? null;
+  const startIndex = matches.findIndex(Boolean);
+  let start = startIndex >= 0 ? matches[startIndex] : null;
   if (!tariffs.length && !spans.some(span => span.source === 'manual') && utility?.urdb_plan_label) {
     const selected = await api.rateByLabel(utility.urdb_plan_label);
     if (selected?.utility === utilityName) start = selected;
   }
-  let actualSpans = start ? await walkSupersedes(start, api.rateByLabel, { endBefore: tariffs.length ? (start.startdate === undefined ? anchors.find(item => item.tariffId === tariffs[0]?.id)?.startDate ?? null : new Date(start.startdate * 1000).toISOString().slice(0, 10)) : null, maxSteps: MAX_REVISIONS, timeZone: site.timezone }) : [];
+  // Keep the matched revision itself open-ended: the Tesla span cannot always move back to its start
+  // (owner-dated, or a manual plan in between), and layout gives Tesla and manual spans precedence.
+  let actualSpans = start ? await walkSupersedes(start, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone }) : [];
   if (site.history_start) actualSpans = actualSpans.filter(span => span.effectiveTo === null || span.effectiveTo >= site.history_start!).map(span => ({ ...span, effectiveFrom: span.effectiveFrom < site.history_start! ? site.history_start! : span.effectiveFrom }));
   const defaults = referenceSpans(await api.defaultRates(utilityName), site.timezone).slice(-MAX_REVISIONS);
   const usage = await monthlyUsage(site.id, site.timezone, now);
@@ -100,7 +124,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   }
   // Stop at an unconvertible revision so the chain does not imply prices beyond it.
   const actual: Converted[] = [];
-  for (const span of [...actualSpans].reverse()) { const value = convert(span, 'estimated_actual', averageSell(tariffs[0])); if (!value) break; actual.unshift(value); }
+  for (const span of [...actualSpans].reverse()) { const value = convert(span, 'estimated_actual', averageSell(tariffs[startIndex] ?? tariffs[0])); if (!value) break; actual.unshift(value); }
   const desired = actual.map((value, index) => {
     const hash = tariffContentHash(compileSeasonsToParsedTariff(value.name, value.seasons));
     const previous = sources.find(source => source.role === value.role && source.urdb_label === value.span.rate.label && source.content_hash === hash);
@@ -140,7 +164,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const changed = layout.changed;
   const status = !tariffs.length && !spans.some(span => span.source === 'manual') && !start ? 'needs_plan' : 'ready';
   const matchOutcomes = matches.map((match, index) => !match ? 'no_match' as const : convert({ rate: match, effectiveFrom: today, effectiveTo: null }, 'estimated_actual', averageSell(tariffs[index])) ? 'matched' as const : 'unconvertible' as const);
-  return { status, utilityName, anchors, actual, reference, changed, fallbackTariffIds, ownerPicked, matchOutcomes };
+  return { planBackfill, status, utilityName, anchors, actual, reference, changed, fallbackTariffIds, ownerPicked, matchOutcomes };
 }
 export async function previewUrdbEstimatesForSite(siteId: string, api: UrdbApi, now: Date): Promise<Preview> {
   return buildPreview(await snapshot(siteId), api, now);
@@ -185,6 +209,9 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       checkIoDeadline();
       const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1`, [siteId]);
       await write.query('DELETE FROM "TariffUrdbSource" WHERE site_id = $1', [siteId]);
+      if (preview.planBackfill) {
+        await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [preview.planBackfill.tariffId, siteId, preview.planBackfill.name, preview.planBackfill.code]);
+      }
       for (const anchor of preview.anchors) {
         await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7)`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null]);
       }

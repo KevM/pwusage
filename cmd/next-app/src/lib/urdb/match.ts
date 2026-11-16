@@ -4,8 +4,14 @@ import { addCalendarDays } from '../tariff-timeline';
 import { isFixedRate, urdbBuyRateAt } from './convert';
 import type { UrdbRate } from './types';
 export interface RevisionSpan { rate: UrdbRate; effectiveFrom: string; effectiveTo: string | null }
-// URDB records store effective calendar dates at midnight UTC, not local instants.
-const dateOf = (rate: UrdbRate): string | null => rate.startdate === undefined ? null : new Date(rate.startdate * 1000).toISOString().slice(0, 10);
+// URDB start dates are calendar days, but records store them anywhere from an hour before
+// UTC midnight (23:00Z) to a US local midnight (up to 08:00Z). Shift 3 hours, then take the UTC day.
+export function urdbStartDate(rate: UrdbRate): string | null {
+  if (rate.startdate === undefined || !Number.isFinite(rate.startdate)) return null;
+  const date = new Date((rate.startdate + 10_800) * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
+}
+const dateOf = urdbStartDate;
 export function teslaMatchesUrdb(tesla: Tariff, rate: UrdbRate): boolean {
   const schedule = new Schedule([tesla], 'UTC');
   return [true, false].some(withAdj => {
@@ -23,8 +29,10 @@ function overlapScore(tesla: Tariff, rate: UrdbRate): number {
   const wanted = tokens(`${tesla.plan_name ?? ''} ${tesla.plan_code ?? ''}`);
   return [...tokens(rate.name)].filter(token => wanted.has(token)).length;
 }
+// Same-priced single- and three-phase revisions are common; residential services are single-phase.
+const threePhase = (rate: UrdbRate) => Number(/three[- ]phase|3[- ]phase/i.test(rate.name));
 export function pickTeslaMatch(tesla: Tariff, candidates: UrdbRate[]): UrdbRate | null {
-  return candidates.filter(rate => teslaMatchesUrdb(tesla, rate)).sort((a, b) => overlapScore(tesla, b) - overlapScore(tesla, a) || (b.startdate ?? 0) - (a.startdate ?? 0) || b.label.localeCompare(a.label))[0] ?? null;
+  return candidates.filter(rate => teslaMatchesUrdb(tesla, rate)).sort((a, b) => overlapScore(tesla, b) - overlapScore(tesla, a) || threePhase(a) - threePhase(b) || (b.startdate ?? 0) - (a.startdate ?? 0) || b.label.localeCompare(a.label))[0] ?? null;
 }
 function spans(rates: UrdbRate[], endBefore: string | null): RevisionSpan[] {
   const byDate = new Map<string, UrdbRate>();

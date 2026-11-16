@@ -433,6 +433,8 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(insertTariff?.params?.[3]).toBe(false); // is_current = false
     const versionQuery = clientQueries.find(q => q.sql.includes('COALESCE(MAX(version), 0) + 1'));
     expect(versionQuery?.params).toEqual(['s1', 'Standard Fixed']);
+    expect(clientQueries.some(q => q.sql.includes('UPDATE "Tariff" SET is_current'))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('"TariffEffectivePeriod"'))).toBe(false);
     expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
     expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffReferencePeriod"'))).toBe(true);
   });

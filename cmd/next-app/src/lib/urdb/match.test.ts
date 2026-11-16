@@ -75,4 +75,25 @@ describe('URDB revision history', () => {
     expect(spans[0]?.effectiveFrom).toBe('2014-01-01');
     expect(spans.at(-1)).toMatchObject({ effectiveFrom: '2025-06-01', effectiveTo: null });
   });
+  it('reads URDB start dates stored a few hours either side of UTC midnight as that calendar day', () => {
+    const at = (iso: string): UrdbRate => ({ ...rate(iso, '2020-01-01'), startdate: Date.parse(iso) / 1000 });
+    // Recorded fixtures store June 1, 2025 as 2025-05-31T23:00Z and local midnights as 01:00Z or 06:00Z.
+    expect(referenceSpans([at('2025-05-31T23:00:00Z')], 'UTC')[0]?.effectiveFrom).toBe('2025-06-01');
+    expect(referenceSpans([at('2025-06-01T06:00:00Z')], 'UTC')[0]?.effectiveFrom).toBe('2025-06-01');
+    expect(anchorStart({ matched: at('2024-09-30T23:00:00Z'), firstSeen: '2025-01-01', isFirstVersion: true, currentSpanStart: '2023-01-01', ownerDated: false, timeZone: 'UTC' }))
+      .toEqual({ startDate: '2024-10-01', startSource: 'urdb' });
+    expect(anchorStart({ matched: { ...at('2020-01-01T00:00:00Z'), startdate: 1e20 }, firstSeen: '2025-01-01', isFirstVersion: false, currentSpanStart: '2023-01-01', ownerDated: false, timeZone: 'UTC' }))
+      .toEqual({ startDate: '2025-01-01', startSource: 'tesla_first_seen' });
+  });
+  it('prefers the single-phase plan when single- and three-phase revisions price the same', () => {
+    const optionA = weEnergiesEffective.find(item => item.label === '6859a6a4417690873a01fd68') as UrdbRate;
+    const converted = urdbRateToSeasons(optionA, { medianMonthlyKwh: null, fallbackSellRate: 0 });
+    if (!converted.ok) throw new Error('fixture must convert');
+    const parsed = compileSeasonsToParsedTariff(converted.name, converted.seasons);
+    const tesla: Tariff = {
+      id: 3, site_id: 'site-1', updated: new Date('2025-06-01T12:00:00Z'), name: optionA.utility, plan_name: null, plan_code: null,
+      seasons: parsed.seasons as unknown as Tariff['seasons'],
+    };
+    expect(pickTeslaMatch(tesla, weEnergiesEffective as UrdbRate[])?.label).toBe('6859a6a4417690873a01fd68');
+  });
 });

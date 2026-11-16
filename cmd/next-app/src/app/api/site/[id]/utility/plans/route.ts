@@ -6,6 +6,7 @@ import { siteLocalDateString, TariffValidationError } from '@/lib/tariff-timelin
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import { ratesEffectiveOn, UrdbUnavailableError } from '@/lib/urdb/client';
 import { urdbRateToSeasons } from '@/lib/urdb/convert';
+import { urdbStartDate } from '@/lib/urdb/match';
 
 export const dynamic = 'force-dynamic';
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
@@ -24,12 +25,11 @@ export function GET(req: NextRequest, context: { params: Promise<{ id: string }>
       if (!utility) return json({ error: 'Choose a utility first.' }, 409);
       const today = siteLocalDateString(new Date(), site.timezone);
       const rates = await withIoDeadline(30_000, () => ratesEffectiveOn(utility, today, site.timezone));
-      const plans = rates.filter(rate => rate.startdate !== undefined && Number.isFinite(rate.startdate) &&
-        Number.isFinite(new Date(rate.startdate * 1000).getTime()) &&
+      const plans = rates.filter(rate => urdbStartDate(rate) !== null &&
         urdbRateToSeasons(rate, { medianMonthlyKwh: null, fallbackSellRate: 0 }).ok);
       return json({ plans: plans.map(rate => ({
         label: rate.label, name: rate.name,
-        startDate: rate.startdate === undefined ? '' : new Date(rate.startdate * 1000).toISOString().slice(0, 10),
+        startDate: urdbStartDate(rate) ?? '',
       })).sort((a, b) => a.name.localeCompare(b.name)) });
     } catch (error) {
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
