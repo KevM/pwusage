@@ -4,6 +4,7 @@ import SwiftUI
 struct FixedRatePlanForm: View {
     let existing: TariffPeriodDTO?
     let defaultStartDate: String?
+    let suggestedStartDate: String?
     let timeZone: TimeZone
     let currency: String
     let onSave: (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?
@@ -20,6 +21,7 @@ struct FixedRatePlanForm: View {
     init(
         existing: TariffPeriodDTO? = nil,
         defaultStartDate: String? = nil,
+        suggestedStartDate: String? = nil,
         timeZone: TimeZone,
         currency: String,
         onSave: @escaping (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?,
@@ -27,6 +29,7 @@ struct FixedRatePlanForm: View {
     ) {
         self.existing = existing
         self.defaultStartDate = defaultStartDate
+        self.suggestedStartDate = suggestedStartDate
         self.timeZone = timeZone
         self.currency = currency
         self.onSave = onSave
@@ -80,6 +83,9 @@ struct FixedRatePlanForm: View {
                 .textInputAutocapitalization(.words)
             DatePicker("Starts on", selection: $startsOn, displayedComponents: .date)
                 .environment(\.timeZone, timeZone)
+            if let suggestedStartDate, let date = Self.parseDate(suggestedStartDate, timeZone: timeZone) {
+                Button("Start on \(RatePlanTimelineFormatting.displayDate(suggestedStartDate))") { startsOn = date }
+            }
         } footer: {
             Text("This is the flat rate you would pay without solar or your current rate plan.")
         }

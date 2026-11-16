@@ -88,6 +88,10 @@ enum SavingsPresentation {
         )
     }
 
+    static func showsCard(_ figures: SavingsFigures) -> Bool {
+        figures.daysWithData > 0 || !caveats(figures).isEmpty
+    }
+
     static func caveats(_ figures: SavingsFigures) -> [SavingsCaveat] {
         var result: [SavingsCaveat] = []
         if let gap = figures.gap(.noFixedRatePlan) {
@@ -189,6 +193,15 @@ enum FixedRatePlanDraft {
             effectiveFrom: formatDate(startsOn, timeZone: timeZone),
             effectiveTo: nil,
             seasons: makeSeasons(buyRate: buyRate, sellRate: sellRate)
+        )
+    }
+
+    static func makePatchRequest(_ request: TariffPlanWriteRequest) -> TariffPlanPatchRequest {
+        TariffPlanPatchRequest(
+            name: request.name,
+            effectiveFrom: request.effectiveFrom,
+            effectiveTo: .unchanged,
+            seasons: request.seasons
         )
     }
 

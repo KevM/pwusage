@@ -101,6 +101,14 @@ struct SavingsPresentationTests {
         #expect(season.weekendPeriods == [expectedWindow])
     }
 
+    @Test("Editing a fixed plan leaves its end date unchanged")
+    func fixedPlanEditPreservesEndDate() {
+        let request = FixedRatePlanDraft.makeWriteRequest(
+            name: "Fixed", buyRate: 0.14, sellRate: 0.04, startsOn: .now, timeZone: .gmt
+        )
+        #expect(FixedRatePlanDraft.makePatchRequest(request).effectiveTo == .unchanged)
+    }
+
     @Test("FixedRatePlanDraft formats and parses rates using the given locale")
     func fixedRatePlanDraftLocaleRates() {
         let german = Locale(identifier: "de_DE")
@@ -191,6 +199,19 @@ struct SavingsPresentationTests {
     @Test("Complete coverage gives no caveats")
     func completeCoverageGivesNoCaveats() {
         #expect(SavingsPresentation.caveats(figures([])).isEmpty)
+    }
+
+    @Test("Zero counted cycle shows fixable caveats, but not no-data alone")
+    func zeroCountedCycleShowsCaveatsWithoutHeadline() {
+        #expect(SavingsPresentation.showsCard(figures([rateGap])))
+        let noData = SavingsCoverageGap(cause: .noData, days: 1, ranges: rateGap.ranges, fixedRatePlanStart: nil)
+        #expect(!SavingsPresentation.showsCard(figures([noData])))
+    }
+
+    @Test("Counted days show the savings card")
+    func showsCardForCountedDays() {
+        let counted = SavingsFigures(costs: .zero, daysWithData: 1, daysInPeriod: 1)
+        #expect(SavingsPresentation.showsCard(counted))
     }
 
     private var rateGap: SavingsCoverageGap {

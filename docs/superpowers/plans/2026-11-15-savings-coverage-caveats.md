@@ -144,7 +144,7 @@
   - Solar System Savings section: Past Year and Lifetime blocks, both caveats under Lifetime only, each with its button.
   - `FixedRatePlanForm` opened from the caveat: Starts on row showing the current start, and a button under it `Start on Oct 1, 2026` that sets the date (proposed; owner to confirm, or open the date picker directly instead).
   - Rate Plans screen presented as a sheet from the Bill tab with a **Done** button.
-- [ ] **Step 2:** The owner approves or edits. **Task 4 does not start until they approve.** Record the approved layout and any copy changes in this plan (and in Task 2's tests if copy changed) before Task 4.
+- [x] **Step 2:** The owner approved the light and dark mockups on 2026-11-15. The Bill card keeps its estimate, breakdown and coverage when days count. With zero counted days, it shows “See what you’ve saved,” the coverage and any caveats. Solar System puts caveats under Lifetime. The fixed rate plan editor offers a “Start on Oct 1, 2026” button for the example date, and the Rate Plans sheet has a Done button. The Task 2 copy stays as approved.
 
 ### Task 4: Render caveats and route the actions
 
@@ -162,9 +162,9 @@
   - `DashboardCoordinator.earliestReferencePeriod: TariffPeriodDTO?` = reference period with the smallest `effectiveFrom`.
   - Routing: `.editFixedRatePlan(suggestedStart: s)` opens `FixedRatePlanForm(existing: s == nil ? activeReferencePeriod : earliestReferencePeriod, suggestedStartDate: s, …)`; `.fixRatePlans` presents `RatePlansSheet`. Call `coordinator.refreshSavings()` in the sheet's `onDismiss` for the Rate Plans sheet only if Task 4 Step 4 shows the card stale after an edit (saves already refresh it).
 
-- [ ] **Step 1: Write the failing tests:** `zeroCountedCycleShowsCaveatsWithoutHeadline` (`showsCard` true for `daysWithData: 0` with a `.noRatePlan` gap; false with only `.noData`), `showsCardForCountedDays`.
-- [ ] **Step 2: Run** `./run-tests.sh --quick SavingsPresentationTests`. Expected: FAIL.
-- [ ] **Step 3: Implement** `showsCard`, then the views and routing per the approved mockups. Views call only `SavingsPresentation`; no gap logic in views.
-- [ ] **Step 4: Verify in the simulator** (iPhone 17, demo or a dev site): set the fixed rate plan start after the first history day → caveat appears on the Bill card and under Lifetime; tap **Edit Fixed Rate Plan**, use the suggested start, save → caveat disappears and `Based on` counts rise. Delete a rate plan span in Rate Plans → **Fix Rate Plans** line appears and opens the Rate Plans sheet. Check light and dark mode and the largest Dynamic Type size.
-- [ ] **Step 5: Run** `./generate.sh`, `./run-tests.sh` (full) and `./lint.sh`. Expected: PASS, zero warnings.
-- [ ] **Step 6: Commit** `feat(ios): explain partial savings and link to the rate plan fix`.
+- [x] **Step 1: Write the failing tests:** `zeroCountedCycleShowsCaveatsWithoutHeadline` (`showsCard` true for `daysWithData: 0` with a `.noRatePlan` gap; false with only `.noData`), `showsCardForCountedDays`.
+- [x] **Step 2: Run** `./run-tests.sh --quick SavingsPresentationTests`. Expected: FAIL.
+- [x] **Step 3: Implement** `showsCard`, then the views and routing per the approved mockups. Views call only `SavingsPresentation`; no gap logic in views.
+- [x] **Step 4: Verify in the simulator** (iPhone 17, demo or a dev site): set the fixed rate plan start after the first history day → caveat appears on the Bill card and under Lifetime; tap **Edit Fixed Rate Plan**, use the suggested start, save → caveat disappears and `Based on` counts rise. Delete a rate plan span in Rate Plans → **Fix Rate Plans** line appears and opens the Rate Plans sheet. Check light and dark mode and the largest Dynamic Type size.
+- [x] **Step 5: Run** `./generate.sh`, `./run-tests.sh` (full) and `./lint.sh`. Expected: PASS, zero warnings.
+- [x] **Step 6: Commit** `feat(ios): explain partial savings and link to the rate plan fix`.

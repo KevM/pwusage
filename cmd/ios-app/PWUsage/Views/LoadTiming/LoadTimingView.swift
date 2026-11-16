@@ -160,7 +160,7 @@ struct LoadTimingView: View {
             CarQuickEditSheet(store: profileStore, selectedID: selectedProfile?.id, onSelect: selectJob)
         }
         .sheet(isPresented: $isSolarForecastSheetPresented) {
-            SolarForecastSettingsSheet(coordinator: coordinator)
+            SolarForecastSettingsSheet(coordinator: coordinator, site: site)
         }
         .sheet(item: $detailsSnapshot) { snapshot in
             SmartShiftDetailsView(snapshot: snapshot, solarForecast: { await coordinator.solarForecastDiagnostics() })

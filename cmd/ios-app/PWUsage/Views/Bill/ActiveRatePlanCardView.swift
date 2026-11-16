@@ -7,6 +7,17 @@ struct TariffTimelineActions: Sendable {
     var updatePeriod: @MainActor (Int, TariffPlanPatchRequest) async throws -> SiteTariffsTimelineResponse
     var deletePeriod: @MainActor (Int) async throws -> SiteTariffsTimelineResponse
     var retryReattribution: @MainActor () async throws -> SiteTariffsTimelineResponse
+
+    @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
+        Self(
+            load: { try await coordinator.fetchTariffTimeline() },
+            refreshFromTesla: { try await coordinator.refreshTariffsFromTesla() },
+            createPeriod: { try await coordinator.createTariffPeriod($0) },
+            updatePeriod: { try await coordinator.updateTariffPeriod(periodID: $0, body: $1) },
+            deletePeriod: { try await coordinator.deleteTariffPeriod(periodID: $0) },
+            retryReattribution: { try await coordinator.retryTariffReattribution() }
+        )
+    }
 }
 
 enum RatePlanEditorMode: Identifiable, Equatable {
