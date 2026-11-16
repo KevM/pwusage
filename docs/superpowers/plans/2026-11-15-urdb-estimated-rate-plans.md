@@ -55,7 +55,7 @@ Quota: ~60 bytes per provenance row, one estimated `Tariff` graph (~1–3 KB) pe
 - `TariffSource = 'tesla' | 'manual' | 'estimated'`.
 - `TariffPeriodDTO.startSource: 'urdb' | 'tesla_first_seen' | 'assumed_jan_1' | 'history_start' | null`: for `estimated` periods `'urdb'`; for `tesla` periods the version's anchor source when the span's `effectiveFrom` equals the anchor's `start_date`, else `null`; for `manual` `null`.
 - `referencePeriods[].source: 'manual' | 'estimated'`.
-- `SiteTariffsTimelineResponse.estimates: { status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed'; utilityName: string | null; teslaPlanOutOfDate: boolean; newerPlanName: string | null } | null` (`null` when the site has no `SiteUtility` row yet). Response stays `version: 2`; Swift decodes `estimates` with `decodeIfPresent`, `startSource` likewise.
+- `SiteTariffsTimelineResponse.estimates: { status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed'; utilityName: string | null; teslaPlanOutOfDate: boolean; newerPlanName: string | null; newerPlanStart: string | null; newestRevisionStart: string | null; mayBeOutdated: boolean } | null` (`null` when the site has no `SiteUtility` row yet). The three added fields: `newerPlanStart` is the YYYY-MM-DD start of the newer URDB revision behind `teslaPlanOutOfDate` (null when unknown); `newestRevisionStart` is the YYYY-MM-DD start of the newest URDB revision behind the estimate covering today; `mayBeOutdated` is true when that newest revision may have missed a rate change. Response stays `version: 2`; Swift decodes `estimates` with `decodeIfPresent`, `startSource` likewise.
 
 ## Global Constraints
 
