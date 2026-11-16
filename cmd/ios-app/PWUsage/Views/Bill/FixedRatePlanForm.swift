@@ -81,9 +81,13 @@ struct FixedRatePlanForm: View {
         Section {
             TextField("Plan name", text: $name)
                 .textInputAutocapitalization(.words)
-            DatePicker("Starts on", selection: $startsOn, displayedComponents: .date)
-                .environment(\.timeZone, timeZone)
-            if let suggestedStartDate, let date = Self.parseDate(suggestedStartDate, timeZone: timeZone) {
+            RatePlanDateField(
+                title: "Starts on", date: $startsOn,
+                boundary: suggestedStartDate == nil ? .first : nil, timeZone: timeZone
+            )
+            if let suggestedStartDate,
+               let date = Self.parseDate(suggestedStartDate, timeZone: timeZone),
+               RatePlanTimelineFormatting.formatYMD(startsOn, in: timeZone) != suggestedStartDate {
                 Button("Start on \(RatePlanTimelineFormatting.displayDate(suggestedStartDate))") { startsOn = date }
             }
         } footer: {

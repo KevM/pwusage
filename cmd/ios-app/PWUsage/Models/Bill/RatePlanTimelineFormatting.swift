@@ -1,6 +1,23 @@
 import Foundation
 
 enum RatePlanTimelineFormatting {
+    enum MonthBoundary {
+        case first
+        case last
+
+        func date(inMonthOf date: Date, timeZone: TimeZone) -> Date? {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            guard let month = calendar.dateInterval(of: .month, for: date) else { return nil }
+            switch self {
+            case .first:
+                return month.start
+            case .last:
+                return calendar.date(byAdding: .day, value: -1, to: month.end)
+            }
+        }
+    }
+
     private static func utcCalendar() -> Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
