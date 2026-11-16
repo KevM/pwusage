@@ -39,6 +39,8 @@ struct SavingsReport: Equatable, Sendable {
     let solarSinceInstall: SavingsFigures
     /// Savings from the Powerwall install cycle onward. Nil when there is no Powerwall start.
     let powerwallSinceInstall: SavingsFigures?
+    /// Every priced billing cycle since the first stored day, oldest first. Payback reads history from it.
+    let cycles: [CycleSavings]
     /// The last 12 billing cycles, oldest first. These are the same cycles `year` sums.
     let recentCycles: [CycleSavings]
     /// The YYYY-MM-DD day the scenarios used as the Powerwall start, after any owner override.

@@ -176,17 +176,22 @@ enum SavingsCalculator {
             cycleStart: currentCycle.start,
             solarSinceInstall: figures(resultsSince(starts.solar, in: cycleResults)),
             powerwallSinceInstall: starts.powerwall.map { figures(resultsSince($0, in: cycleResults)) },
-            recentCycles: yearResults.map { result in
-                CycleSavings(
-                    start: result.start,
-                    end: result.end,
-                    costs: result.costs,
-                    daysWithData: result.daysWithData,
-                    daysInCycle: calendar.dateComponents([.day], from: result.start, to: result.end).day ?? 0
-                )
-            },
+            cycles: cycleResults.map { cycleSavings($0, in: timeZone) },
+            recentCycles: yearResults.map { cycleSavings($0, in: timeZone) },
             batteryStartDay: scenarios.batteryStartDay,
             rateGrowth: rateGrowth(actual: actual, firstStoredDay: firstStoredDay, now: now)
+        )
+    }
+
+    private static func cycleSavings(_ result: CycleResult, in timeZone: TimeZone) -> CycleSavings {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return CycleSavings(
+            start: result.start,
+            end: result.end,
+            costs: result.costs,
+            daysWithData: result.daysWithData,
+            daysInCycle: calendar.dateComponents([.day], from: result.start, to: result.end).day ?? 0
         )
     }
 

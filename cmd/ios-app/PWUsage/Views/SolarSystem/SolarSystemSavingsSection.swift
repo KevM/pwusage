@@ -137,6 +137,7 @@ struct SolarSystemSavingsSection: View {
                 cycleStart: .now,
                 solarSinceInstall: life,
                 powerwallSinceInstall: nil,
+                cycles: [],
                 recentCycles: [],
                 batteryStartDay: nil,
                 rateGrowth: .typical
