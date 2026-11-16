@@ -693,12 +693,12 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(queued.rows).toEqual([{ status: 'pending' }]);
   });
 
-  it('gives a converted estimate a distinct name when an earlier revision of the same plan was already converted', async () => {
-    const siteId = 's-convert-chain';
+  /** Two estimated revisions of one public plan, converted one after the other by dates-only edits. */
+  const convertEstimateChain = async (siteId: string, name: string) => {
     await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
     for (const [from, to, buy] of [['2023-01-01', '2023-12-31', 0.15], ['2024-01-01', null, 0.16]] as const) {
       const id = (await local.database.query<{ id: number }>(
-        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Residential Rg 1', $2, FALSE, 'estimated') RETURNING id`, [siteId, from.slice(0, 4)]
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, $3, $2, FALSE, 'estimated') RETURNING id`, [siteId, from.slice(0, 4), name]
       )).rows[0]!.id;
       const season = (await local.database.query<{ id: number }>(
         `INSERT INTO "TariffSeason"(tariff_id, name, from_month, from_day, to_month, to_day, buy_rate, sell_rate) VALUES ($1, 'All Year', 1, 1, 12, 31, 0, 0) RETURNING id`, [id]
@@ -711,8 +711,13 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const [first, second] = (await repo.getTimeline(siteId, 'u1')).periods.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
     await repo.updatePeriod(siteId, first!.periodId, 'u1', { effectiveTo: '2023-12-31' });
     await repo.updatePeriod(siteId, second!.periodId, 'u1', { effectiveFrom: '2024-01-01' });
+    return (await repo.getTimeline(siteId, 'u1')).periods.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).map(period => [period.source, period.name]);
+  };
 
-    const names = (await repo.getTimeline(siteId, 'u1')).periods.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).map(period => [period.source, period.name]);
+  it('gives a converted estimate a distinct name when an earlier revision of the same plan was already converted', async () => {
+    const siteId = 's-convert-chain';
+    const names = await convertEstimateChain(siteId, 'Residential Rg 1');
+    const repo = new TariffTimelineRepo();
     expect(names).toEqual([['manual', 'Residential Rg 1'], ['manual', 'Residential Rg 1 (2024)']]);
     await expect(repo.createManualPeriod(siteId, 'u1', {
       name: 'residential rg 1', effectiveFrom: '2022-01-01', effectiveTo: '2022-12-31',
@@ -720,6 +725,12 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
         weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }] }],
     })).rejects.toThrow('already exists');
+  });
+
+  it('shortens a 64-character plan name to fit the year it adds', async () => {
+    const name = `Residential Time-of-Use (Single-Phase, Option A) Rg 2 Extended`.padEnd(64, 'x');
+    const names = await convertEstimateChain('s-convert-long-name', name);
+    expect(names).toEqual([['manual', name], ['manual', `${name.slice(0, 57)} (2024)`]]);
   });
 
   it('reports an out-of-date Tesla plan only from the latest Tesla version', async () => {

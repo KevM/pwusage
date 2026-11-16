@@ -26,6 +26,7 @@ import {
   computeSpanMutations,
   decompileTariffToSeasons,
   MAX_EFFECTIVE_PERIODS_PER_SITE,
+  MAX_PLAN_NAME_LENGTH,
   siteLocalDateString,
   TariffValidationError,
   validateEffectiveDates,
@@ -480,12 +481,14 @@ async function assertPlanNameAvailable(
  */
 async function availableEstimateName(client: PoolClient, siteId: string, name: string, effectiveFrom: string): Promise<string> {
   const base = name.trim();
-  const candidates = [base, `${base} (${effectiveFrom.slice(0, 4)})`, `${base} (${effectiveFrom})`];
+  // URDB names are already cut to the 64-character limit, so shorten the base to fit the suffix.
+  const withSuffix = (suffix: string) => `${base.slice(0, MAX_PLAN_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+  const candidates = [base, withSuffix(` (${effectiveFrom.slice(0, 4)})`), withSuffix(` (${effectiveFrom})`)];
   for (const candidate of candidates) {
     if (!(await planNameTaken(client, siteId, candidate, null))) return candidate;
   }
   for (let suffix = 2; ; suffix++) {
-    const candidate = `${base} (${effectiveFrom}, ${suffix})`;
+    const candidate = withSuffix(` (${effectiveFrom}, ${suffix})`);
     if (!(await planNameTaken(client, siteId, candidate, null))) return candidate;
   }
 }

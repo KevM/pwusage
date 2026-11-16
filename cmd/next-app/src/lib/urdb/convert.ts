@@ -1,4 +1,5 @@
 import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from '../tariff-contract';
+import { MAX_PLAN_NAME_LENGTH } from '../tariff-timeline';
 import type { UrdbRate, UrdbTier } from './types';
 export interface ConvertContext { medianMonthlyKwh: number | null; fallbackSellRate: number }
 export type ConvertResult = { ok: true; name: string; seasons: TariffSeasonInput[] } | { ok: false; reason: 'no_schedule' | 'too_many_seasons' | 'too_many_periods' | 'unsupported_tier_unit' };
@@ -84,5 +85,5 @@ export function urdbRateToSeasons(rate: UrdbRate, ctx: ConvertContext): ConvertR
     const containsJuly = start <= finish ? start <= 6 && finish >= 6 : start <= 6 || finish >= 6;
     seasons.push({ name: starts.length === 2 ? (containsJuly ? 'Summer' : 'Winter') : `Season ${seasons.length + 1}`, fromMonth: start + 1, toMonth: finish + 1, weekdayPeriods: windows(weekdays[start]), weekendPeriods: windows(weekends[start]) });
   }
-  return { ok: true, name: rate.name.slice(0, 64), seasons };
+  return { ok: true, name: rate.name.slice(0, MAX_PLAN_NAME_LENGTH), seasons };
 }
