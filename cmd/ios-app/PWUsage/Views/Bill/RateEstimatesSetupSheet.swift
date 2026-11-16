@@ -38,7 +38,7 @@ struct RateEstimatesSetupSheet: View {
             UtilityPickerView(model: utilityModel)
         case .pickPlan:
             UtilityPlanPickerView(
-                utilityName: utilityName ?? "utility",
+                utilityName: RateEstimatesPresentation.planPickerUtilityName(utilityName),
                 model: planModel,
                 onChangeUtility: { prompt = .pickUtility }
             )

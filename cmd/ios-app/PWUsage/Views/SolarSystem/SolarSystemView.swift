@@ -157,7 +157,12 @@ struct SolarSystemView: View {
                 onCaveatAction: routeCaveat,
                 estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
                 estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
-                onChooseEstimateSetup: { coordinator.presentedSheet = .rateEstimates($0) }
+                onChooseEstimateSetup: { coordinator.presentedSheet = .rateEstimates($0) },
+                fixedPlanNote: RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+                    coordinator.savingsTimeline?.estimates,
+                    referencePeriods: coordinator.savingsTimeline?.referencePeriods ?? [],
+                    periods: coordinator.savingsTimeline?.periods ?? []
+                )
             )
             panelHealthSection
             if stored != nil || status != nil { locationSection }

@@ -91,6 +91,24 @@ enum RateEstimatesPresentation {
         }
     }
 
+    /// The utility named in the plan picker's copy; `utility` when no name is known.
+    static func planPickerUtilityName(_ name: String?) -> String {
+        nonEmpty(name) ?? "utility"
+    }
+
+    /// The may-be-outdated note for the fixed (reference) plan. Shown only when the reference estimate
+    /// covers today and no estimated rate plan does, since Rate Plans already shows that note otherwise.
+    static func fixedPlanMayBeOutdatedNote(
+        _ estimates: SiteRateEstimatesDTO?,
+        referencePeriods: [TariffPeriodDTO],
+        periods: [TariffPeriodDTO]
+    ) -> String? {
+        let referenceCoversToday = referencePeriods.contains { $0.isCurrentToday && $0.source == .estimated }
+        let actualCoversToday = periods.contains { $0.isCurrentToday && $0.source == .estimated }
+        guard referenceCoversToday, !actualCoversToday else { return nil }
+        return mayBeOutdatedNote(estimates)
+    }
+
     static let addRatePlanButtonTitle = "Add Rate Plan"
     static let notNowLabel = "Not now"
 

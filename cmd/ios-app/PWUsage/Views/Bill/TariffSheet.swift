@@ -31,6 +31,7 @@ struct TariffSheet: View {
     @State private var activeModal: TariffSheetModal?
     @State private var pendingDeletion: TariffPeriodDTO?
     @State private var minuteTick = Date()
+    @State private var didOpenStartingAddForm = false
 
     var body: some View {
         contentView
@@ -42,7 +43,7 @@ struct TariffSheet: View {
             .task(id: site.id) { await initialLoad() }
             .task(id: pollingKey) { await pollReattributionWhileActive() }
             .task(id: scenePhase) { await refreshAndTickMinute() }
-            .onAppear { if startsAddingPlan { activeModal = .editor(.add) } }
+            .onChange(of: timeline != nil, initial: true) { _, loaded in openStartingAddFormIfNeeded(loaded) }
             .sheet(item: $activeModal, onDismiss: reloadTimeline) { modalView(for: $0) }
             .confirmationDialog(
                 "Delete Rate Plan?",
@@ -231,6 +232,16 @@ struct TariffSheet: View {
                 }
             )
         }
+    }
+
+    private func openStartingAddFormIfNeeded(_ timelineLoaded: Bool) {
+        guard RatePlanAddFormRule.shouldOpen(
+            startsAddingPlan: startsAddingPlan,
+            timelineLoaded: timelineLoaded,
+            alreadyOpened: didOpenStartingAddForm
+        ) else { return }
+        didOpenStartingAddForm = true
+        activeModal = .editor(.add)
     }
 
     /// Estimate and editor sheets can change the plans they show, so reload when one closes.

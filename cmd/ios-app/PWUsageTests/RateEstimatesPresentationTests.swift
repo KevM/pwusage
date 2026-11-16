@@ -151,4 +151,47 @@ struct RateEstimatesPresentationTests {
         #expect(RateEstimatesPresentation.notNowLabel == "Not now")
         #expect(RateEstimatesPresentation.addRatePlanButtonTitle == "Add Rate Plan")
     }
+
+    // MARK: Fixed-plan may-be-outdated note and plan picker utility name
+
+    @Test func planPickerUtilityNameFallsBackWithoutAName() {
+        #expect(RateEstimatesPresentation.planPickerUtilityName("PG&E") == "PG&E")
+        #expect(RateEstimatesPresentation.planPickerUtilityName(nil) == "utility")
+        #expect(RateEstimatesPresentation.planPickerUtilityName("") == "utility")
+    }
+
+    @Test func fixedPlanNoteShowsWhenOnlyTheReferenceCoversToday() {
+        let outdated = Self.estimates(newestRevisionStart: "2026-01-01", mayBeOutdated: true)
+        let note = RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+            outdated,
+            referencePeriods: [Self.period(source: .estimated)],
+            periods: []
+        )
+        #expect(note == RateEstimatesPresentation.mayBeOutdatedNote(outdated))
+        #expect(note != nil)
+    }
+
+    @Test func fixedPlanNoteStaysHiddenWhenAnActualEstimateCoversToday() {
+        let outdated = Self.estimates(newestRevisionStart: "2026-01-01", mayBeOutdated: true)
+        let note = RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+            outdated,
+            referencePeriods: [Self.period(source: .estimated)],
+            periods: [Self.period(source: .estimated)]
+        )
+        #expect(note == nil)
+    }
+
+    @Test func fixedPlanNoteNeedsAnEstimatedReferenceCoveringToday() {
+        let outdated = Self.estimates(newestRevisionStart: "2026-01-01", mayBeOutdated: true)
+        #expect(RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+            outdated, referencePeriods: [], periods: []) == nil)
+        #expect(RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+            outdated, referencePeriods: [Self.period(source: .manual)], periods: []) == nil)
+    }
+
+    @Test func fixedPlanNoteNeedsTheEstimateToBeMayBeOutdated() {
+        let current = Self.estimates(newestRevisionStart: "2026-01-01", mayBeOutdated: false)
+        #expect(RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+            current, referencePeriods: [Self.period(source: .estimated)], periods: []) == nil)
+    }
 }

@@ -12,6 +12,8 @@ struct SolarSystemSavingsSection: View {
     var estimatePrompt: RateEstimatesPrompt?
     var estimateUtilityName: String?
     var onChooseEstimateSetup: (RateEstimatesPrompt) -> Void = { _ in }
+    /// The may-be-outdated note for a fixed plan that covers today on estimated rates.
+    var fixedPlanNote: String?
 
     var body: some View {
         Section("Savings") {
@@ -101,10 +103,17 @@ struct SolarSystemSavingsSection: View {
     }
 
     private var planActionButton: some View {
-        Button(
-            hasReferencePlan ? "Edit Fixed Rate Plan" : "Add Fixed Rate Plan",
-            action: hasReferencePlan ? onEditFixedRatePlan : onAddFixedRatePlan
-        )
+        VStack(alignment: .leading, spacing: 6) {
+            Button(
+                hasReferencePlan ? "Edit Fixed Rate Plan" : "Add Fixed Rate Plan",
+                action: hasReferencePlan ? onEditFixedRatePlan : onAddFixedRatePlan
+            )
+            if let fixedPlanNote {
+                Text(fixedPlanNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
