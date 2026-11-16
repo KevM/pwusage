@@ -213,6 +213,9 @@ describe('closeness to the Tesla plan', () => {
     const season = (name: string, fromMonth: number, toMonth: number, price: number): TariffSeasonInput => ({ ...flatSeason(price), name, fromMonth, toMonth });
     expect(teslaShape(teslaFrom([season('Summer', 6, 9, 0.2), season('Winter', 10, 5, 0.15)]))).toBe('fixed');
   });
+  it('teslaShapeTimeOfUseWhenOnlyWeekendsDiffer', () => {
+    expect(teslaShape(teslaFrom([{ ...flatSeason(0.2), weekendPeriods: [window('OFF_PEAK', 0, 24, 0.15)] }]))).toBe('time_of_use');
+  });
   it('teslaShapeNullWithoutPlan', () => {
     expect(teslaShape(null)).toBeNull();
   });

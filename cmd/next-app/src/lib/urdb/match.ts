@@ -40,7 +40,7 @@ export function buyRateDistance(tesla: Tariff, rate: UrdbRate): number | null {
   }).filter((mean): mean is number => mean !== null);
   return means.length ? Math.min(...means) : null;
 }
-// Like isFixedRate: time of use only when some month and day type has more than one buy price across its hours.
+// Mirrors isFixedRate: time of use when any month has more than one buy price across its 48 weekday and weekend cells.
 export function teslaShape(tesla: Tariff | null): RatePlanKind | null {
   if (!tesla) return null;
   const cells = teslaCells(tesla);
@@ -48,7 +48,7 @@ export function teslaShape(tesla: Tariff | null): RatePlanKind | null {
   const prices = new Map<string, Set<number>>();
   for (const cell of cells) {
     if (cell.tesla === null) continue;
-    const key = `${cell.month}-${cell.weekend}`;
+    const key = String(cell.month);
     const set = prices.get(key) ?? new Set<number>();
     set.add(Math.round(cell.tesla * 1e5));
     prices.set(key, set);
