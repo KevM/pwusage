@@ -105,7 +105,9 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   }
   const startIndex = matches.findIndex(Boolean);
   let start = startIndex >= 0 ? matches[startIndex] : null;
-  if (!tariffs.length && !spans.some(span => span.source === 'manual') && utility?.urdb_plan_label) {
+  // Owner plans added after a pick only take their own days: layout keeps them and the picked
+  // chain still fills the rest, so the pick applies whether or not manual plans exist.
+  if (!tariffs.length && utility?.urdb_plan_label) {
     const selected = await api.rateByLabel(utility.urdb_plan_label);
     if (selected?.utility === utilityName) start = selected;
   }

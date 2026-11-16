@@ -641,6 +641,30 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(anchor.rows).toEqual([{ tariff_id: ids[1], start_source: 'urdb' }]);
   });
 
+  it('keeps filling around a finite owner plan added after the owner picked a public plan', async () => {
+    const siteId = 's-picked-then-manual';
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
+    const api = chainApi([flatRate('picked', '2025-01-01', 0.2)]);
+    const now = new Date('2026-11-16T12:00:00Z');
+    await runUrdbEstimatesForSite(siteId, api, now);
+    await new TariffTimelineRepo().createManualPeriod(siteId, 'u1', {
+      name: 'March Bill', effectiveFrom: '2025-03-01', effectiveTo: '2025-03-31',
+      seasons: [{ name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.25, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.25, sellRate: 0.03 }] }],
+    });
+
+    const result = await runUrdbEstimatesForSite(siteId, api, now);
+
+    expect(result.status).toBe('ready');
+    expect((await actualSpans(siteId)).map(({ source, effective_from, effective_to }) => [source, effective_from, effective_to])).toEqual([
+      ['estimated', '2025-01-01', '2025-02-28'],
+      ['manual', '2025-03-01', '2025-03-31'],
+      ['estimated', '2025-04-01', null],
+    ]);
+  });
+
   it('fills the days between the matched revision start and an owner-dated Tesla span with that revision', async () => {
     const siteId = 's-owner-dated-gap';
     await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
