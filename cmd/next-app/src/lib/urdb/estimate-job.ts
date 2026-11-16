@@ -209,8 +209,8 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       const current = await write.query<{ claim: string; choice: string }>('SELECT updated_at::text AS claim, choice FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE', [siteId]);
       if (current.rows[0]?.claim !== claim) { await write.query('ROLLBACK'); return { status: 'pending', changedDays: 0 }; }
       checkIoDeadline();
-      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1`, [siteId]);
-      await write.query('DELETE FROM "TariffUrdbSource" WHERE site_id = $1', [siteId]);
+      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
+      await write.query(`DELETE FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
       if (preview.planBackfill) {
         await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [preview.planBackfill.tariffId, siteId, preview.planBackfill.name, preview.planBackfill.code]);
       }

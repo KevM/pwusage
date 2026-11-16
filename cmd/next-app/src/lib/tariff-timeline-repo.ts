@@ -13,6 +13,7 @@ import { tariffContentHash, type ParsedTariff } from './importer/tariff-parser';
 import { accountFingerprint, logEvent } from './observability';
 import { observedHolidayDates } from './holidays';
 import { SiteRepo } from './site-repo';
+import { loadHistoryWindow } from './urdb/history-window';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import type {
   ReattributionStatusDTO,
@@ -55,6 +56,7 @@ export interface PeriodQueryRow {
   updated_by_user_id: string | null;
   updated_by_email: string | null;
   start_source?: import('./db-types').TariffStartSource | null;
+  owner_history?: boolean;
   anchor_start?: string | null;
   name: string | null;
   version: number;
@@ -112,7 +114,7 @@ function mapPeriodRowToDTO(
     name: r.name || 'Rate Plan',
     version: Number(r.version ?? 1),
     source: r.source,
-    startSource: r.source === 'estimated' ? 'urdb' : r.source === 'tesla' && !r.updated_by_user_id && r.anchor_start?.slice(0, 10) === effectiveFrom ? r.start_source ?? null : null,
+    startSource: r.source === 'estimated' || (r.source === 'manual' && r.owner_history) ? 'urdb' : r.source === 'tesla' && !r.updated_by_user_id && r.anchor_start?.slice(0, 10) === effectiveFrom ? r.start_source ?? null : null,
     effectiveFrom,
     effectiveTo,
     isCurrentToday: false,
@@ -663,7 +665,8 @@ export class TariffTimelineRepo {
     const periodsRes = await pool.query<PeriodQueryRow>(
       `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
               p.source, p.updated_by_user_id, u.email AS updated_by_email,
-              t.name, t.version, t.content_hash, us.start_source, us.start_date::text AS anchor_start
+              t.name, t.version, t.content_hash, us.start_source, us.start_date::text AS anchor_start,
+              EXISTS (SELECT 1 FROM "TariffUrdbSource" oh WHERE oh.tariff_id = p.tariff_id AND oh.role = 'owner_history') AS owner_history
        FROM "TariffEffectivePeriod" p
        JOIN "Tariff" t ON t.id = p.tariff_id
        LEFT JOIN "TariffUrdbSource" us ON us.tariff_id = p.tariff_id AND us.role = 'tesla_anchor'
@@ -739,7 +742,12 @@ export class TariffTimelineRepo {
         newerPlanName: skipped ? null : utility.newer_urdb_name,
         newerPlanStart: skipped ? null : utility.newer_urdb_start,
         ...freshness,
+        historyGuide: null,
       };
+      if (!skipped && (utility.status === 'ready' || utility.status === 'needs_plan')) {
+        const window = await loadHistoryWindow(pool, siteId, today);
+        if (window) timeline.estimates.historyGuide = { historyStart: window.historyStart, fillThrough: window.fillThrough, unconfirmedDays: window.unconfirmedDays };
+      }
     }
     return timeline;
   }

@@ -71,6 +71,8 @@ export interface EstimatesStatusDTO {
   newestRevisionStart: string | null;
   /** True when that newest revision is old enough that URDB may have missed a change. */
   mayBeOutdated: boolean;
+  /** Offer to walk the owner through past rate plans; null when there is nothing to fill. */
+  historyGuide: { historyStart: string; fillThrough: string | null; unconfirmedDays: number } | null;
 }
 
 export interface SiteTariffsTimelineResponse {

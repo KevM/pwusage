@@ -20,6 +20,8 @@ import { parseTariffContent } from './importer/tariff-parser';
 import { STORED_TARIFF_CANDIDATES_SQL } from './importer/stored-tariff-backfill';
 import { TariffRepo } from './tariff-repo';
 import { recomputeIsCurrentTariff, TariffTimelineRepo } from './tariff-timeline-repo';
+import type { TariffPlanWriteInput } from './tariff-timeline';
+import { siteLocalDateString, addCalendarDays } from './tariff-timeline';
 import { runUrdbEstimatesForSite } from './urdb/estimate-job';
 import type { UrdbApi } from './urdb/estimate-job';
 import type { UrdbRate } from './urdb/types';
@@ -57,7 +59,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     await local.database.query(`
       CREATE TABLE "User" (id TEXT PRIMARY KEY, email TEXT);
-      CREATE TABLE "Site" (id TEXT PRIMARY KEY, user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL, timezone TEXT NOT NULL, json JSONB);
+      CREATE TABLE "Site" (id TEXT PRIMARY KEY, user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL, timezone TEXT NOT NULL, json JSONB, installed TIMESTAMPTZ);
       CREATE TABLE "Tariff" (
         id SERIAL PRIMARY KEY, site_id TEXT NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
         updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, name TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
@@ -95,6 +97,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const revisionStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_revision_start.sql'));
     if (!revisionStartMigration) throw new Error('URDB revision start migration missing');
     await local.database.query(await readFile(`db-migrations/${revisionStartMigration}`, 'utf8'));
+    const ownerHistoryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_owner_history.sql'));
+    if (!ownerHistoryMigration) throw new Error('URDB owner history migration missing');
+    await local.database.query(await readFile(`db-migrations/${ownerHistoryMigration}`, 'utf8'));
 
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion('s1', {
@@ -386,6 +391,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const revisionStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_revision_start.sql'));
     if (!revisionStartMigration) throw new Error('URDB revision start migration missing');
     await local.database.query(await readFile(`db-migrations/${revisionStartMigration}`, 'utf8'));
+    const ownerHistoryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_owner_history.sql'));
+    if (!ownerHistoryMigration) throw new Error('URDB owner history migration missing');
+    await local.database.query(await readFile(`db-migrations/${ownerHistoryMigration}`, 'utf8'));
     const tariff = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
        VALUES ('s-estimated-source', 'Estimated', 1, FALSE, 'estimated') RETURNING id`
@@ -929,5 +937,83 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(timeline.estimates?.status).toBe('pending');
     const row = await local.database.query(`SELECT status FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
     expect(row.rows).toEqual([{ status: 'pending' }]);
+  });
+
+  async function ownerHistoryTariff(siteId: string, name: string): Promise<number> {
+    const id = (await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, $2, 1, FALSE, 'manual') RETURNING id`, [siteId, name]
+    )).rows[0]!.id;
+    await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source) VALUES ($1, $2, 'owner_history', 'label-x', '2024-01-01', 'urdb')`, [id, siteId]);
+    return Number(id);
+  }
+
+  it('estimateRerunKeepsOwnerHistoryRows', async () => {
+    const siteId = 's-owner-history-rerun';
+    const schedule = Array.from({ length: 12 }, () => Array(24).fill(0));
+    const defaultRate: UrdbRate = {
+      label: 'default-label', name: 'Fixed Residential', utility: 'Wisconsin Electric Power Co',
+      startdate: 1_704_067_200, is_default: true,
+      energyratestructure: [[{ rate: 0.18 }]], energyweekdayschedule: schedule, energyweekendschedule: schedule,
+    };
+    const api: UrdbApi = {
+      utilityNames: async () => ['Wisconsin Electric Power Co'],
+      ratesEffectiveOn: async () => [],
+      rateByLabel: async () => null,
+      defaultRates: async () => [defaultRate],
+    };
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    const tariffId = await ownerHistoryTariff(siteId, 'Owner History Plan');
+
+    await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+    await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+
+    const rows = await local.database.query(`SELECT tariff_id, role FROM "TariffUrdbSource" WHERE site_id = $1 AND role = 'owner_history'`, [siteId]);
+    expect(rows.rows).toEqual([{ tariff_id: tariffId, role: 'owner_history' }]);
+  });
+
+  it('manualPeriodWithOwnerHistoryReportsUrdbStartSource', async () => {
+    const siteId = 's-owner-history-start';
+    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    const repo = new TariffTimelineRepo();
+    const flat = (name: string): TariffPlanWriteInput => ({
+      name, effectiveFrom: name === 'Plain' ? '2023-01-01' : '2024-01-01', effectiveTo: name === 'Plain' ? '2023-12-31' : '2024-12-31',
+      seasons: [{ name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }] }],
+    });
+    await repo.createManualPeriod(siteId, 'u1', flat('Plain'));
+    const timeline = await repo.createManualPeriod(siteId, 'u1', flat('From History'));
+    const historyTariff = timeline.periods.find(period => period.name === 'From History')!.tariffId;
+    await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source) VALUES ($1, $2, 'owner_history', 'label-x', '2024-01-01', 'urdb')`, [historyTariff, siteId]);
+
+    const after = await repo.getTimeline(siteId, 'u1');
+
+    expect(after.periods.find(period => period.name === 'From History')?.startSource).toBe('urdb');
+    expect(after.periods.find(period => period.name === 'Plain')?.startSource).toBeNull();
+  });
+
+  it('timelineCarriesHistoryGuide', async () => {
+    const siteId = 's-history-guide';
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+    await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
+    await local.database.query(`UPDATE "SiteUtility" SET status = 'ready', urdb_utility = 'Wisconsin Electric Power Co' WHERE site_id = $1`, [siteId]);
+    const today = siteLocalDateString(new Date(), 'America/Chicago');
+
+    const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
+
+    const through = addCalendarDays(today, -1);
+    const days = (Date.parse(`${through}T00:00:00Z`) - Date.parse('2023-11-14T00:00:00Z')) / 86_400_000 + 1;
+    expect(timeline.estimates?.historyGuide).toEqual({ historyStart: '2023-11-14', fillThrough: through, unconfirmedDays: days });
+  });
+
+  it('skippedUtilityHasNoHistoryGuide', async () => {
+    const siteId = 's-history-guide-skipped';
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+    await local.database.query(`INSERT INTO "SiteUtility"(site_id, choice, status) VALUES ($1, 'skipped', 'ready')`, [siteId]);
+
+    const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
+
+    expect(timeline.estimates?.status).toBe('skipped');
+    expect(timeline.estimates?.historyGuide).toBeNull();
   });
 });
