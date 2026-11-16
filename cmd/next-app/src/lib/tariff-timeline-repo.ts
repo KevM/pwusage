@@ -9,11 +9,11 @@ import type {
   TariffSeason,
   TariffSource,
 } from './db-types';
-import { tariffContentHash, type ParsedTariff } from './importer/tariff-parser';
+import { buildDefaultTariff, tariffContentHash, type ParsedTariff } from './importer/tariff-parser';
 import { accountFingerprint, logEvent } from './observability';
 import { observedHolidayDates } from './holidays';
 import { SiteRepo } from './site-repo';
-import { loadHistoryWindow } from './urdb/history-window';
+import { loadHistoryWindow, type HistoryWindow } from './urdb/history-window';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import type {
   ReattributionStatusDTO,
@@ -583,6 +583,15 @@ export class TariffTimelineRepo {
   async getSiteUtilityContext(siteId: string): Promise<{ name: string | null; timezone: string } | null> {
     const result = await pool.query<{ name: string | null; timezone: string }>(`SELECT u.urdb_utility AS name, s.timezone FROM "Site" s LEFT JOIN "SiteUtility" u ON u.site_id = s.id WHERE s.id = $1`, [siteId]);
     return result.rows[0] ?? null;
+  }
+
+  /** The fill window (null when nothing is left to fill) and the newest real Tesla version, for the history guide. */
+  async getRatePlanHistoryInputs(siteId: string, today: string): Promise<{ window: HistoryWindow | null; tesla: Tariff | null }> {
+    const window = await loadHistoryWindow(pool, siteId, today);
+    const fallbackHash = tariffContentHash(buildDefaultTariff('Default Rate'));
+    const latest = (await pool.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla' AND content_hash IS DISTINCT FROM $2 ORDER BY updated DESC, id DESC LIMIT 1`, [siteId, fallbackHash])).rows[0];
+    const tesla = latest ? (await hydrateTariffs(pool, [Number(latest.id)])).get(Number(latest.id)) ?? null : null;
+    return { window, tesla };
   }
 
   async getSiteUtility(siteId: string): Promise<string | null> {

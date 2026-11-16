@@ -62,6 +62,32 @@ export interface SiteBatteryDTO {
 
 export type RatePlanKind = 'fixed' | 'time_of_use';
 
+export interface RatePlanPeakWindow { label: string; fromHour: number; toHour: number }
+export interface RatePlanHistoryPlan {
+  name: string;
+  startDate: string;
+  kind: RatePlanKind;
+  isDefault: boolean;
+  closest: boolean;
+  lowRate: number;
+  highRate: number;
+  peakWindows: RatePlanPeakWindow[];
+  /** Label of the window closest to the Tesla plan (Time of Use only). */
+  closestWindow: string | null;
+  /** Fixed plans: the URDB label to save. */
+  fixedLabel: string | null;
+}
+export interface RatePlanHistoryYear { year: number; askDate: string; plans: RatePlanHistoryPlan[] }
+export interface RatePlanHistoryResponse {
+  utilityName: string;
+  historyStart: string;
+  fillThrough: string | null;
+  teslaShape: RatePlanKind | null;
+  current: RatePlanHistoryPlan[];
+  /** Newest first. */
+  years: RatePlanHistoryYear[];
+}
+
 export interface EstimatesStatusDTO {
   status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
   utilityName: string | null;
