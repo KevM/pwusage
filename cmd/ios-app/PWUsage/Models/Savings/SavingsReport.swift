@@ -43,4 +43,6 @@ struct SavingsReport: Equatable, Sendable {
     let recentCycles: [CycleSavings]
     /// The YYYY-MM-DD day the scenarios used as the Powerwall start, after any owner override.
     let batteryStartDay: String?
+    /// The yearly rise in the actual rate plans, used to project savings forward.
+    let rateGrowth: RateGrowth
 }

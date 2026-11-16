@@ -108,7 +108,8 @@ struct BillSavingsCard: View {
         solarSinceInstall: figures,
         powerwallSinceInstall: nil,
         recentCycles: [],
-        batteryStartDay: nil
+        batteryStartDay: nil,
+        rateGrowth: .typical
     )
     return BillSavingsCard(
         state: .ready(report),

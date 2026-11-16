@@ -138,7 +138,8 @@ struct SolarSystemSavingsSection: View {
                 solarSinceInstall: life,
                 powerwallSinceInstall: nil,
                 recentCycles: [],
-                batteryStartDay: nil
+                batteryStartDay: nil,
+                rateGrowth: .typical
             )),
             currency: "USD",
             hasReferencePlan: true,

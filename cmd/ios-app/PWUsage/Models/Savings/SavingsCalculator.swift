@@ -185,8 +185,15 @@ enum SavingsCalculator {
                     daysInCycle: calendar.dateComponents([.day], from: result.start, to: result.end).day ?? 0
                 )
             },
-            batteryStartDay: scenarios.batteryStartDay
+            batteryStartDay: scenarios.batteryStartDay,
+            rateGrowth: rateGrowth(actual: actual, firstStoredDay: firstStoredDay, now: now)
         )
+    }
+
+    /// Measured from the first stored day; `.typical` when no day is stored.
+    private static func rateGrowth(actual: RatePeriodResolver, firstStoredDay: Date?, now: Date) -> RateGrowth {
+        guard let firstStoredDay else { return .typical }
+        return RateGrowth.measure(actual: actual, firstDay: firstStoredDay, now: now)
     }
 
     /// Cycles from the one containing `start` onward, that cycle counted in full. All cycles when `start` is nil.
