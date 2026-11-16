@@ -43,10 +43,22 @@ function uncoveredDays(from: string, to: string, spans: HistoryWindowInput['manu
   return end - start + 1 - covered;
 }
 
+/** The first day a non-owner source is known to be right: null without Tesla versions. */
+function trustedStart(earliestTesla: HistoryWindowInput['earliestTesla']): string | null {
+  return earliestTesla ? (earliestTesla.anchorSource === 'urdb' && earliestTesla.anchorStart ? earliestTesla.anchorStart : earliestTesla.firstSeen) : null;
+}
+
+/** The fill window's bounds with no offer thresholds: what a save may write. */
+export function fillWindowBounds(input: HistoryWindowInput): { historyStart: string; fillThrough: string | null } | null {
+  if (!input.historyStart) return null;
+  const trusted = trustedStart(input.earliestTesla);
+  return { historyStart: input.historyStart, fillThrough: trusted ? addCalendarDays(trusted, -1) : null };
+}
+
 export function historyWindow(input: HistoryWindowInput): HistoryWindow | null {
   const { today, historyStart, earliestTesla, manualSpans } = input;
   if (!historyStart || dayNumber(today) - dayNumber(historyStart) < HISTORY_GUIDE_MIN_DAYS) return null;
-  const trusted = earliestTesla ? (earliestTesla.anchorSource === 'urdb' && earliestTesla.anchorStart ? earliestTesla.anchorStart : earliestTesla.firstSeen) : null;
+  const trusted = trustedStart(earliestTesla);
   const fillThrough = trusted ? addCalendarDays(trusted, -1) : null;
   const end = fillThrough ?? today;
   if (end < historyStart) return null;
@@ -71,6 +83,11 @@ export function askDate(year: number, window: HistoryWindow, today: string): str
 }
 
 export async function loadHistoryWindow(client: Queryable, siteId: string, today: string): Promise<HistoryWindow | null> {
+  const input = await loadHistoryWindowInput(client, siteId, today);
+  return input && historyWindow(input);
+}
+
+export async function loadHistoryWindowInput(client: Queryable, siteId: string, today: string): Promise<HistoryWindowInput | null> {
   const fallbackHash = tariffContentHash(buildDefaultTariff('Default Rate'));
   const start = (await client.query(
     `SELECT COALESCE((SELECT min(day_start AT TIME ZONE tz)::date FROM "EnergyDayArchive" WHERE site_id = s.id), (s.installed AT TIME ZONE tz)::date)::text AS history_start
@@ -83,10 +100,26 @@ export async function loadHistoryWindow(client: Queryable, siteId: string, today
      WHERE t.site_id = $1 AND t.source = 'tesla' AND t.content_hash IS DISTINCT FROM $2
      ORDER BY t.updated, t.id LIMIT 1`, [siteId, fallbackHash])).rows[0];
   const manual = (await client.query(`SELECT effective_from::text AS "from", effective_to::text AS "to" FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source = 'manual'`, [siteId])).rows;
-  return historyWindow({
+  return {
     today,
     historyStart: start.history_start,
     earliestTesla: tesla ? { firstSeen: tesla.first_seen, anchorStart: tesla.anchor_start, anchorSource: tesla.anchor_source } : null,
     manualSpans: manual,
-  });
+  };
+}
+
+/** The parts of [from, to] not covered by any manual span, oldest first. */
+export function uncoveredPieces(from: string, to: string, spans: HistoryWindowInput['manualSpans']): Array<{ from: string; to: string }> {
+  const pieces: Array<{ from: string; to: string }> = [];
+  let cursor = from;
+  for (const span of [...spans].sort((a, b) => a.from.localeCompare(b.from))) {
+    if (cursor > to) break;
+    if (span.to !== null && span.to < cursor) continue;
+    if (span.from > to) break;
+    if (span.from > cursor) pieces.push({ from: cursor, to: addCalendarDays(span.from, -1) });
+    if (span.to === null) return pieces;
+    cursor = addCalendarDays(span.to, 1);
+  }
+  if (cursor <= to) pieces.push({ from: cursor, to });
+  return pieces;
 }

@@ -13,7 +13,8 @@ import { buildDefaultTariff, tariffContentHash, type ParsedTariff } from './impo
 import { accountFingerprint, logEvent } from './observability';
 import { observedHolidayDates } from './holidays';
 import { SiteRepo } from './site-repo';
-import { loadHistoryWindow, type HistoryWindow } from './urdb/history-window';
+import { fillWindowBounds, loadHistoryWindow, loadHistoryWindowInput, uncoveredPieces, type HistoryWindow } from './urdb/history-window';
+import type { ExpandedRevision } from './urdb/history-expand';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import type {
   ReattributionStatusDTO,
@@ -482,7 +483,7 @@ async function assertPlanNameAvailable(
  * Revisions of one public plan share its name, so converting a second one (often a dates-only
  * edit with no name field) would clash with the first. Keep the name, adding the start year.
  */
-async function availableEstimateName(client: PoolClient, siteId: string, name: string, effectiveFrom: string): Promise<string> {
+export async function availableEstimateName(client: PoolClient, siteId: string, name: string, effectiveFrom: string): Promise<string> {
   const base = name.trim();
   // URDB names are already cut to the 64-character limit, so shorten the base to fit the suffix.
   const withSuffix = (suffix: string) => `${base.slice(0, MAX_PLAN_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
@@ -494,6 +495,12 @@ async function availableEstimateName(client: PoolClient, siteId: string, name: s
     const candidate = withSuffix(` (${effectiveFrom}, ${suffix})`);
     if (!(await planNameTaken(client, siteId, candidate, null))) return candidate;
   }
+}
+
+/** The owner's public plan pick for the current period; false when the utility changed or was skipped. */
+async function setPlanLabelOnClient(client: PoolClient, siteId: string, userId: string, label: string, expectedUtility: string): Promise<boolean> {
+  const updated = await client.query(`UPDATE "SiteUtility" SET urdb_plan_label = $2, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $3, updated_at = now() WHERE site_id = $1 AND urdb_utility = $4 AND choice <> 'skipped'`, [siteId, label, userId, expectedUtility]);
+  return (updated.rowCount ?? 0) > 0;
 }
 
 export async function hydrateTariffs(
@@ -641,10 +648,80 @@ export class TariffTimelineRepo {
       await client.query('BEGIN');
       const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
       if (!site.rowCount) throw new TariffNotFoundError('Site not found');
-      const updated = await client.query(`UPDATE "SiteUtility" SET urdb_plan_label = $2, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $3, updated_at = now() WHERE site_id = $1 AND urdb_utility = $4 AND choice <> 'skipped'`, [siteId, label, userId, expectedUtility]);
-      if (!updated.rowCount) throw new UtilityChangedError('Utility changed. Choose a rate plan again.');
+      if (!(await setPlanLabelOnClient(client, siteId, userId, label, expectedUtility))) throw new UtilityChangedError('Utility changed. Choose a rate plan again.');
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    return this.getTimeline(siteId, userId);
+  }
+
+  /**
+   * Saves the owner's answers from the rate plan history guide in one transaction: each public
+   * rate revision becomes an owner (`manual`) plan, clipped to the fill window minus the owner's
+   * own plans, and `openLabel` (only without Tesla versions) becomes the site's plan pick.
+   */
+  async saveRatePlanHistory(siteId: string, userId: string, expectedUtility: string, revisions: ExpandedRevision[], openLabel: string | null): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
+    let savedCount = 0;
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+      const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
+      const utility = await client.query(`SELECT 1 FROM "SiteUtility" WHERE site_id = $1 AND urdb_utility = $2 AND choice <> 'skipped'`, [siteId, expectedUtility]);
+      if (!utility.rowCount) throw new UtilityChangedError('Utility changed. Start again.');
+      const input = await loadHistoryWindowInput(client, siteId, today);
+      const bounds = input && fillWindowBounds(input);
+      if (!input || !bounds) throw new TariffValidationError('Your rate plan history is already filled.');
+      if (openLabel !== null && bounds.fillThrough !== null) throw new TariffValidationError('Your rate plans changed. Start again.');
+      const windowEnd = bounds.fillThrough ?? today;
+      const saved: Array<{ from: string; to: string }> = [];
+      for (const revision of revisions) {
+        const from = revision.from > bounds.historyStart ? revision.from : bounds.historyStart;
+        const to = revision.to !== null && revision.to < windowEnd ? revision.to : windowEnd;
+        if (from > to) continue;
+        for (const piece of uncoveredPieces(from, to, input.manualSpans)) {
+          const name = await availableEstimateName(client, siteId, revision.name, piece.from);
+          const validated = validateTariffPlanInput({ name, effectiveFrom: piece.from, effectiveTo: piece.to, seasons: revision.seasons }, today);
+          const tariffId = await insertTariffGraph(client, siteId, compileSeasonsToParsedTariff(validated.name, validated.seasons), 'manual', userId, false);
+          await applySpanMutationPlan(client, siteId, computeSpanMutations(await loadExistingSpans(client, siteId), {
+            tariffId, source: 'manual', effectiveFrom: piece.from, effectiveTo: piece.to, updatedByUserId: userId,
+          }));
+          await client.query(
+            `INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start) VALUES ($1, $2, 'owner_history', $3, $4::date, $5::date, 'urdb', $6::date)`,
+            [tariffId, siteId, revision.label, piece.from, piece.to, revision.revisionStart]
+          );
+          saved.push(piece);
+        }
+      }
+      const kept = await client.query<{ count: number }>(`SELECT count(*)::int AS count FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source <> 'estimated'`, [siteId]);
+      if (Number(kept.rows[0]?.count ?? 0) > MAX_EFFECTIVE_PERIODS_PER_SITE) {
+        throw new TariffValidationError('That’s more rate plan changes than we can save. Add the older ones in Rate Plans.');
+      }
+      if (openLabel !== null) {
+        if (!(await setPlanLabelOnClient(client, siteId, userId, openLabel, expectedUtility))) throw new UtilityChangedError('Utility changed. Start again.');
+      } else if (saved.length) {
+        // The site now has a rate plan: rerun the estimate job so the actual timeline is built from it.
+        await client.query(`UPDATE "SiteUtility" SET status = 'pending', next_check_at = NULL, updated_at = clock_timestamp() WHERE site_id = $1 AND status = 'needs_plan'`, [siteId]);
+      }
+      const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
+      savedCount = saved.length;
+      const changed: Array<{ from: string; to: string | null }> = [...saved, ...estimateChanges];
+      if (changed.length) {
+        const params: EnqueueReattributionParams = { siteId, fromDate: changed[0].from, toDate: changed[0].to, requestedByUserId: userId, trigger: 'create' };
+        for (const range of changed) {
+          params.fromDate = minDate(params.fromDate, range.from);
+          params.toDate = maxEnd(params.toDate, range.to);
+        }
+        reattribution = params;
+        queued = await enqueueReattributionOnClient(client, params);
+      }
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    new SiteRepo().invalidateCache(siteId);
+    if (reattribution && queued) logReattributionEnqueued(reattribution, queued);
+    logEvent('info', 'tariff.history.saved', { revisionCount: revisions.length, savedPeriodCount: savedCount, openPlan: openLabel !== null });
     return this.getTimeline(siteId, userId);
   }
   async getTimeline(siteId: string, viewerUserId: string | null): Promise<SiteTariffsTimelineResponse> {

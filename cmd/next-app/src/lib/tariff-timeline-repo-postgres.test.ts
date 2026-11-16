@@ -1,5 +1,5 @@
 import { effectiveTariffIdSql } from './effective-tariff-sql';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import { readdir, readFile } from 'node:fs/promises';
 import {
@@ -16,12 +16,14 @@ vi.mock('./db', () => ({
   },
 }));
 
-import { parseTariffContent } from './importer/tariff-parser';
+import { buildDefaultTariff, parseTariffContent } from './importer/tariff-parser';
 import { STORED_TARIFF_CANDIDATES_SQL } from './importer/stored-tariff-backfill';
 import { TariffRepo } from './tariff-repo';
-import { recomputeIsCurrentTariff, TariffTimelineRepo } from './tariff-timeline-repo';
+import { recomputeIsCurrentTariff, TariffTimelineRepo, UtilityChangedError } from './tariff-timeline-repo';
+import type { TariffSeasonInput } from './tariff-contract';
+import type { ExpandedRevision } from './urdb/history-expand';
 import type { TariffPlanWriteInput } from './tariff-timeline';
-import { siteLocalDateString, addCalendarDays } from './tariff-timeline';
+import { siteLocalDateString, addCalendarDays, TariffValidationError } from './tariff-timeline';
 import { runUrdbEstimatesForSite } from './urdb/estimate-job';
 import type { UrdbApi } from './urdb/estimate-job';
 import type { UrdbRate } from './urdb/types';
@@ -1015,5 +1017,186 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     expect(timeline.estimates?.status).toBe('skipped');
     expect(timeline.estimates?.historyGuide).toBeNull();
+  });
+
+  describe('saveRatePlanHistory', () => {
+    const UTILITY = 'Wisconsin Electric Power Co';
+    const seasons = (buy: number): TariffSeasonInput[] => [{ name: 'All Year', fromMonth: 1, toMonth: 12,
+      weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: 0.03 }],
+      weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: 0.03 }] }];
+    const revision = (label: string, from: string, to: string | null, name = `Plan ${label}`, buy = 0.15): ExpandedRevision =>
+      ({ label, revisionStart: from, from, to, name, seasons: seasons(buy) });
+    type SpanRow = { source: string; effective_from: string; effective_to: string | null; name: string };
+    const spans = async (siteId: string) => (await local.database.query<SpanRow>(
+      `SELECT p.source, p.effective_from::text, p.effective_to::text, t.name FROM "TariffEffectivePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id WHERE p.site_id = $1 ORDER BY p.effective_from`, [siteId])).rows;
+    const ownerHistory = async (siteId: string) => (await local.database.query(
+      `SELECT u.urdb_label, u.start_date::text, u.end_date::text, u.start_source, u.revision_start::text, t.source, t.created_by_user_id FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role = 'owner_history' ORDER BY u.start_date`, [siteId])).rows;
+
+    /** Harrison: history from 2023-11-14, Tesla first seen 2026-04-28 and backfilled to the history start. */
+    async function harrisonSite(siteId: string, tesla: 'real' | 'default' | 'none' = 'real') {
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+      await local.database.query(`INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status) VALUES ($1, '2023-11-14T06:00:00Z', gen_random_uuid(), 'complete')`, [siteId]);
+      if (tesla !== 'none') {
+        await new TariffRepo().addTariffVersion(siteId, tesla === 'real' ? flatTesla('Tesla Plan', 0.2) : buildDefaultTariff('Default Rate'));
+        await local.database.query(`UPDATE "Tariff" SET updated = '2026-04-28 17:00:00' WHERE site_id = $1 AND source = 'tesla'`, [siteId]);
+      }
+      await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status) VALUES ($1, $2, 'owner', 'ready')
+        ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = 'owner', status = 'ready'`, [siteId, UTILITY]);
+    }
+
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-16T18:00:00Z') }); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('saveWritesManualSpansForHarrisonWindow', async () => {
+      const siteId = 's-save-harrison';
+      await harrisonSite(siteId);
+
+      const timeline = await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [
+        revision('a', '2023-11-14', '2023-12-31'), revision('b', '2024-01-01', '2025-05-31'), revision('c', '2025-06-01', '2026-04-27'),
+      ], null);
+
+      expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([
+        ['manual', '2023-11-14', '2023-12-31'], ['manual', '2024-01-01', '2025-05-31'], ['manual', '2025-06-01', '2026-04-27'], ['tesla', '2026-04-28', null],
+      ]);
+      expect(await ownerHistory(siteId)).toEqual([
+        { urdb_label: 'a', start_date: '2023-11-14', end_date: '2023-12-31', start_source: 'urdb', revision_start: '2023-11-14', source: 'manual', created_by_user_id: 'u1' },
+        { urdb_label: 'b', start_date: '2024-01-01', end_date: '2025-05-31', start_source: 'urdb', revision_start: '2024-01-01', source: 'manual', created_by_user_id: 'u1' },
+        { urdb_label: 'c', start_date: '2025-06-01', end_date: '2026-04-27', start_source: 'urdb', revision_start: '2025-06-01', source: 'manual', created_by_user_id: 'u1' },
+      ]);
+      const current = timeline.periods.find(period => period.isCurrentToday);
+      expect(current).toMatchObject({ source: 'tesla', effectiveFrom: '2026-04-28', effectiveTo: null });
+      expect(timeline.periods.filter(period => period.source === 'manual').every(period => period.startSource === 'urdb')).toBe(true);
+      expect(timeline.estimates?.historyGuide).toBeNull();
+    });
+
+    it('saveNamesRevisionsWithYears', async () => {
+      const siteId = 's-save-names';
+      await harrisonSite(siteId);
+
+      await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [
+        revision('a', '2023-11-14', '2023-12-31', 'Residential Rg 2'), revision('b', '2024-01-01', '2026-04-27', 'Residential Rg 2'),
+      ], null);
+
+      expect((await spans(siteId)).filter(row => row.source === 'manual').map(row => row.name)).toEqual(['Residential Rg 2', 'Residential Rg 2 (2024)']);
+    });
+
+    it('saveSkipsDaysCoveredByManualPlans', async () => {
+      const siteId = 's-save-skips-manual';
+      await harrisonSite(siteId);
+      const repo = new TariffTimelineRepo();
+      await repo.createManualPeriod(siteId, 'u1', { name: 'Owner Spring', effectiveFrom: '2024-03-01', effectiveTo: '2024-06-30', seasons: seasons(0.11) });
+
+      await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2023-01-01', '2024-12-31', 'Residential Rg 1')], null);
+
+      expect((await spans(siteId)).filter(row => row.source === 'manual').map(row => [row.name, row.effective_from, row.effective_to])).toEqual([
+        ['Residential Rg 1', '2023-11-14', '2024-02-29'], ['Owner Spring', '2024-03-01', '2024-06-30'], ['Residential Rg 1 (2024)', '2024-07-01', '2024-12-31'],
+      ]);
+    });
+
+    it('saveNeverTouchesTeslaFromTrustedStart', async () => {
+      const siteId = 's-save-trusted-start';
+      await harrisonSite(siteId);
+
+      await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2025-01-01', '2026-10-31')], null);
+
+      expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([
+        ['tesla', '2023-11-14', '2024-12-31'], ['manual', '2025-01-01', '2026-04-27'], ['tesla', '2026-04-28', null],
+      ]);
+    });
+
+    it('saveClipsToAUrdbDatedTeslaAnchor', async () => {
+      const siteId = 's-save-urdb-anchor';
+      await harrisonSite(siteId);
+      const teslaId = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`, [siteId])).rows[0]!.id;
+      await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source) VALUES ($1, $2, 'tesla_anchor', 'anchor', '2026-01-10', 'urdb')`, [teslaId, siteId]);
+
+      await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2025-01-01', '2026-04-27')], null);
+
+      expect((await spans(siteId)).filter(row => row.source === 'manual').map(row => [row.effective_from, row.effective_to])).toEqual([['2025-01-01', '2026-01-09']]);
+    });
+
+    it('saveQueuesOneReattribution', async () => {
+      const siteId = 's-save-reattribution';
+      await harrisonSite(siteId);
+      await local.database.query(`DELETE FROM "SiteTariffReattribution" WHERE site_id = $1`, [siteId]);
+
+      await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [
+        revision('a', '2023-11-14', '2023-12-31'), revision('b', '2024-01-01', '2025-05-31'), revision('c', '2025-06-01', '2026-04-27'),
+      ], null);
+
+      // One enqueue: the first generation. (The queue carries an earliest span's range back to the history floor.)
+      const jobs = await local.database.query(`SELECT status, generation, requested_by_user_id FROM "SiteTariffReattribution" WHERE site_id = $1`, [siteId]);
+      expect(jobs.rows).toEqual([{ status: 'pending', generation: 1, requested_by_user_id: 'u1' }]);
+    });
+
+    it('saveRejectsOverTheSpanCap', async () => {
+      const siteId = 's-save-cap';
+      await harrisonSite(siteId);
+      const days = Array.from({ length: 50 }, (_, index) => addCalendarDays('2024-01-01', index));
+
+      await expect(new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, days.map(day => revision(day, day, day, `Plan ${day}`)), null))
+        .rejects.toThrow('That’s more rate plan changes than we can save. Add the older ones in Rate Plans.');
+
+      expect((await spans(siteId)).map(row => row.source)).toEqual(['tesla']);
+      expect(await ownerHistory(siteId)).toEqual([]);
+      expect((await local.database.query(`SELECT 1 FROM "Tariff" WHERE site_id = $1 AND source = 'manual'`, [siteId])).rowCount).toBe(0);
+    });
+
+    it('openPeriodBecomesThePlanPick', async () => {
+      const siteId = 's-save-open-period';
+      await harrisonSite(siteId, 'none');
+
+      const timeline = await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('old', '2023-11-14', '2025-05-31')], 'open-label');
+
+      const utility = await local.database.query(`SELECT urdb_plan_label, status, updated_by_user_id FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+      expect(utility.rows).toEqual([{ urdb_plan_label: 'open-label', status: 'pending', updated_by_user_id: 'u1' }]);
+      expect(timeline.estimates?.status).toBe('pending');
+      expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([['manual', '2023-11-14', '2025-05-31']]);
+    });
+
+    it('defaultRateFallbackIsNotATeslaVersion', async () => {
+      const siteId = 's-save-default-rate';
+      await harrisonSite(siteId, 'default');
+
+      await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('old', '2023-11-14', '2025-05-31')], 'open-label');
+
+      const utility = await local.database.query(`SELECT urdb_plan_label FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+      expect(utility.rows).toEqual([{ urdb_plan_label: 'open-label' }]);
+    });
+
+    it('openPeriodWithTeslaIsRejected', async () => {
+      const siteId = 's-save-open-with-tesla';
+      await harrisonSite(siteId);
+
+      await expect(new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], 'open-label'))
+        .rejects.toThrow(TariffValidationError);
+      expect(await ownerHistory(siteId)).toEqual([]);
+    });
+
+    it('utilityChangedIsRejected', async () => {
+      const siteId = 's-save-utility-changed';
+      await harrisonSite(siteId);
+
+      await expect(new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', 'Madison Gas & Electric Co', [revision('a', '2024-01-01', '2024-12-31')], null))
+        .rejects.toThrow(UtilityChangedError);
+      expect(await ownerHistory(siteId)).toEqual([]);
+      expect((await spans(siteId)).map(row => row.source)).toEqual(['tesla']);
+    });
+
+    it('savedSpansAreEditableOwnerPlans', async () => {
+      const siteId = 's-save-editable';
+      await harrisonSite(siteId);
+      const repo = new TariffTimelineRepo();
+      const saved = await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31', 'Residential Rg 1')], null);
+      const period = saved.periods.find(row => row.name === 'Residential Rg 1')!;
+      expect(period.updatedBy).toEqual({ email: 'owner@example.com', isCurrentUser: true });
+
+      const { timeline } = await repo.updatePeriod(siteId, period.periodId, 'u1', { effectiveTo: '2024-11-30' });
+      const edited = timeline.periods.find(row => row.name === 'Residential Rg 1')!;
+      expect(edited.effectiveTo).toBe('2024-11-30');
+      await repo.deleteManualPeriod(siteId, edited.periodId, 'u1');
+
+      expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([['tesla', '2023-11-14', null]]);
+    });
   });
 });
