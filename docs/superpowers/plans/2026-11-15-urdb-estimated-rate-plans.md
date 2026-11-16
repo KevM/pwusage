@@ -282,6 +282,8 @@ Branch from `main` after PR 1 merges.
 - [ ] **Step 1:** Publish mockups as an Artifact: Rate Plans screen with an estimated plan (badge, `Estimated from public utility rates. Add your rate plan for a better figure.`), each start-date source label under the dates (`From public utility rates`, `First seen in Tesla`, `Assumed January 1`, and a proposed label for `history_start`, e.g. `Assumed from your first day of data`), the out-of-date notice (proposed: `Your Tesla rate plan looks out of date. Newer rates took effect <date>. Update it in the Tesla app or add your rate plan here.`), the utility picker (search, `My Utility Isn’t Listed`), the plan picker for sites without a Tesla plan, the `needs_utility`/`needs_plan` prompts on Bill and Solar System, and the savings line `About 40% of these days use estimated rates`.
 - [ ] **Step 2:** The owner approves or edits. **Tasks 12–13 don't start until then.** Record the approved copy here.
 
+**Mockup revision (2026-11-16):** Use the existing tab bar accessory on Home when missing utility or plan setup prevents current pricing. Offer one choice at a time, starting with the utility. Dismissal applies to the current site and keeps setup available in Bill and Solar System. Existing history accessories keep precedence.
+
 ### Task 11: Estimated share in savings
 
 **Files:**
