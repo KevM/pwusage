@@ -116,10 +116,19 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     }
 
     /// Oldest first, contiguous; the newest `to` is `fillThrough` (nil = open).
+    /// Adjacent spans with one label (split only by `assumed`, which the review shows) are one period,
+    /// so the server saves each public rate change once.
     func periods() -> [RatePlanHistoryPeriod] {
-        spans.reversed()
-            .filter { span in span.endDate.map { span.from <= $0 } ?? true }
-            .map { RatePlanHistoryPeriod(label: $0.label, from: $0.from, to: $0.endDate) }
+        var result: [RatePlanHistoryPeriod] = []
+        let filled = spans.reversed().filter { span in span.endDate.map { span.from <= $0 } ?? true }
+        for span in filled {
+            if let older = result.last, older.label == span.label {
+                result[result.count - 1] = RatePlanHistoryPeriod(label: span.label, from: older.from, to: span.endDate)
+            } else {
+                result.append(RatePlanHistoryPeriod(label: span.label, from: span.from, to: span.endDate))
+            }
+        }
+        return result
     }
 
     // MARK: - Answers

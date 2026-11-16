@@ -243,8 +243,19 @@ struct RatePlanHistoryFlowTests {
         flow.stillNotSure()
         #expect(flow.step == .review)
         #expect(flow.periods() == [
-            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2025-12-31"),
-            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2026-01-01", to: "2026-04-27")
+            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
+        ])
+    }
+
+    @Test func alternatingYesAndNotSureSendsOnePeriod() {
+        var flow = Self.onOptionB()
+        flow.stillNotSure()
+        flow.answerStillOn(true)
+        flow.stillNotSure()
+        #expect(flow.step == .review)
+        #expect(flow.spans.map(\.assumed) == [false, true, false, true])
+        #expect(flow.periods() == [
+            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
         ])
     }
 
