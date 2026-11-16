@@ -309,9 +309,9 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 - `estimates.newestRevisionStart: string | null`: the URDB start date of the newest revision behind an estimate that covers today (actual, else reference).
 - `estimates.mayBeOutdated: boolean`: true when today is more than `min(15 months, 1.5 × the median gap between that plan's URDB revisions)` after `newestRevisionStart`. 15 months means the newest revision has missed a January, when most changes take effect. The median comes from the walked `supersedes` chain (reference: the default chain); with fewer than 3 revisions use 15 months.
 
-- [ ] **Step 1: Write failing tests:** `mayBeOutdatedAfterFifteenMonths`, `mayBeOutdatedSoonerForFrequentChangers`, `notOutdatedWithoutEstimateToday`, `fewRevisionsUseFifteenMonths`; Harrison-like fixture (newest 2025-06-01, today 2026-11-16) → `true`.
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; web lint/typecheck; iOS `./lint.sh`.
-- [ ] **Step 5: Commit** `feat: flag estimated rates that may be out of date`.
+- [x] **Step 1: Write failing tests:** `mayBeOutdatedAfterFifteenMonths`, `mayBeOutdatedSoonerForFrequentChangers`, `notOutdatedWithoutEstimateToday`, `fewRevisionsUseFifteenMonths`; Harrison-like fixture (newest 2025-06-01, today 2026-11-16) → `true`.
+- [x] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; web lint/typecheck; iOS `./lint.sh`.
+- [x] **Step 5: Commit** `feat: flag estimated rates that may be out of date`.
 
 ### Task 11: Estimated share in savings
 
@@ -319,11 +319,11 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 - Modify: `cmd/ios-app/PWUsage/Models/Bill/Pricing/RatePeriodResolver.swift` (`isEstimated(at: Date) -> Bool`, from the period's `source`), `cmd/ios-app/PWUsage/Models/Savings/SavingsCalculator.swift` (`SavingsFigures.estimatedDays: Int = 0`: counted days with at least one priced slot whose actual *or* reference plan is estimated), `cmd/ios-app/PWUsage/Views/Shared/SavingsPresentation.swift` (`estimatedShareLine(_:) -> String?`: `nil` at 0; percentage = `estimatedDays * 100 / daysWithData` rounded, `<1%` shown as `Some of these days use estimated rates`)
 - Test: `cmd/ios-app/PWUsageTests/SavingsCoverageTests.swift`, `cmd/ios-app/PWUsageTests/SavingsPresentationTests.swift`
 
-- [ ] **Step 1: Write failing tests:** `estimatedDaysCountReferenceAndActualEstimates`, `estimatedPlansCountAsCoveredDays` (a gap filled by an estimate is no longer a caveat), `estimatedShareLineRoundsPercent`, `noEstimatedShareLineWithoutEstimates`; the three-year benchmark still passes.
-- [ ] **Step 2: Run** `./run-tests.sh --quick SavingsCoverageTests SavingsPresentationTests SavingsCalculatorTests` — FAIL.
-- [ ] **Step 3: Implement** (track per day in the existing `priceCycle` loop; no extra resolver calls per slot beyond one `isEstimated` per resolved period change).
-- [ ] **Step 4: Run** — PASS; `./lint.sh`.
-- [ ] **Step 5: Commit** `feat(ios): show how much of a savings figure uses estimated rates`.
+- [x] **Step 1: Write failing tests:** `estimatedDaysCountReferenceAndActualEstimates`, `estimatedPlansCountAsCoveredDays` (a gap filled by an estimate is no longer a caveat), `estimatedShareLineRoundsPercent`, `noEstimatedShareLineWithoutEstimates`; the three-year benchmark still passes.
+- [x] **Step 2: Run** `./run-tests.sh --quick SavingsCoverageTests SavingsPresentationTests SavingsCalculatorTests` — FAIL.
+- [x] **Step 3: Implement** (track per day in the existing `priceCycle` loop; no extra resolver calls per slot beyond one `isEstimated` per resolved period change).
+- [x] **Step 4: Run** — PASS; `./lint.sh`.
+- [x] **Step 5: Commit** `feat(ios): show how much of a savings figure uses estimated rates`.
 
 ### Task 12: Presentation of sources, estimates and status
 
@@ -334,9 +334,9 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 **Interfaces:**
 - Produces: `static func startSourceLabel(_ source: TariffStartSource?) -> String?`, `static func estimateNote(for period: TariffPeriodDTO) -> String?`, `static func outOfDateNotice(_ estimates: SiteRateEstimatesDTO?) -> String?`, `static func mayBeOutdatedNote(_ estimates: SiteRateEstimatesDTO?) -> String?` (only when `mayBeOutdated`; never phrased as certain), `static func prompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt?` with `enum RateEstimatesPrompt { case pickUtility, pickPlan }` (`needs_utility` → `.pickUtility`; `needs_plan` → `.pickPlan`; others `nil`). Copy exactly as approved in Task 10.
 
-- [ ] **Step 1: Write failing tests** for every source label, the estimate note (estimated only), the out-of-date notice (shown only when `teslaPlanOutOfDate`), the may-be-outdated note (shown only when `mayBeOutdated`, with the formatted start date), and each status → prompt.
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; `./lint.sh`.
-- [ ] **Step 5: Commit** `feat(ios): copy for rate plan start-date sources and estimates`.
+- [x] **Step 1: Write failing tests** for every source label, the estimate note (estimated only), the out-of-date notice (shown only when `teslaPlanOutOfDate`), the may-be-outdated note (shown only when `mayBeOutdated`, with the formatted start date), and each status → prompt.
+- [x] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; `./lint.sh`.
+- [x] **Step 5: Commit** `feat(ios): copy for rate plan start-date sources and estimates`.
 
 ### Task 13: Utility and plan pickers, wired into Rate Plans, Bill and Solar System
 
@@ -345,10 +345,12 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 - Modify: `cmd/ios-app/PWUsage/State/Home/DashboardCoordinator+Tariffs.swift` (calls from Task 9; save the returned timeline and refresh savings like existing mutations), `cmd/ios-app/PWUsage/Views/Bill/TariffSheet.swift` / `RatePlansSheet`, `TariffPeriodCardView.swift` (source label, estimate note), `BillView.swift`, `SolarSystemView.swift` (prompt and out-of-date notice)
 - Test: `cmd/ios-app/PWUsageTests/UtilityPickerModelTests.swift` (debounced search: 300 ms, ≥ 2 characters, cancels stale queries; selecting saves and dismisses; `My Utility Isn’t Listed` calls `skipUtility`)
 
-- [ ] **Step 1: Write failing tests** for the picker model.
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement** per mockups.
-- [ ] **Step 4: Run** `./run-tests.sh` (full) and `./lint.sh` — PASS, zero warnings. Check light/dark and the largest Dynamic Type in the simulator; screenshot the estimated Rate Plans screen.
-- [ ] **Step 5: Commit** `feat(ios): pick a utility and rate plan for estimated rate plans`; push; draft PR. The wrap-up gives the worktree path and `open <worktree>/cmd/ios-app/PWUsage.xcodeproj` for on-device checks.
+- [x] **Step 1: Write failing tests** for the picker model.
+- [x] **Step 2: Run** — FAIL. **Step 3: Implement** per mockups.
+- [x] **Step 4: Run** `./run-tests.sh` (full) and `./lint.sh` — PASS, zero warnings. Check light/dark and the largest Dynamic Type in the simulator; screenshot the estimated Rate Plans screen.
+- [x] **Step 5: Commit** `feat(ios): pick a utility and rate plan for estimated rate plans`; push; draft PR. The wrap-up gives the worktree path and `open <worktree>/cmd/ios-app/PWUsage.xcodeproj` for on-device checks.
+
+**As built (PR #378, 2026-11-16):** Task 13 ran as 13a (picker models, views and coordinator calls) and 13b (Rate Plans, Bill, Solar System and the Home accessory). Additions from review and device testing: Solar System opens the setup pickers from its own sheet, so they work when Solar System is shown inside Smart Shift; utility search shows failures and empty results; duplicate utility names are dropped; a tapped utility or plan shows a spinner, then a check, before the picker closes. Task 10b also added `estimates.newerPlanStart` (`TariffUrdbSource.newer_urdb_start`) for the dated out-of-date notice. When the fixed (reference) estimate is the one covering today, the may-be-outdated note shows under Edit Fixed Rate Plan in Solar System.
 
 ## Follow-ups (not this plan)
 
