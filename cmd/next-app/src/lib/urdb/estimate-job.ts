@@ -222,7 +222,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
         const hash = tariffContentHash(parsed);
         const previous = old.rows.find(row => row.role === item.role && row.urdb_label === item.span.rate.label && row.content_hash === hash);
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb')`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo]);
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date)`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
       }
       const today = siteLocalDateString(now, (await write.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone ?? 'UTC');
       const beforeCoverage = current.rows[0].choice === 'skipped' ? [] : (await write.query<{ source: string; effective_from: string; effective_to: string | null; kind: string }>(`SELECT source, effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT source, effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;

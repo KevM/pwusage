@@ -707,8 +707,8 @@ export class TariffTimelineRepo {
       `SELECT u.status, u.choice, u.urdb_utility, (SELECT newer_urdb_name FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL AND tariff_id = (SELECT id FROM "Tariff" WHERE site_id = u.site_id AND source = 'tesla' ORDER BY id DESC LIMIT 1)) AS newer_urdb_name, (SELECT newer_urdb_start::text FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL AND tariff_id = (SELECT id FROM "Tariff" WHERE site_id = u.site_id AND source = 'tesla' ORDER BY id DESC LIMIT 1)) AS newer_urdb_start FROM "SiteUtility" u WHERE u.site_id = $1`, [siteId]
     );
     const utility = utilityRes.rows[0];
-    const estimateSourceRes = await pool.query<{ tariff_id: number; role: string; start_date: string }>(
-      `SELECT tariff_id, role, start_date::text FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('estimated_actual', 'estimated_reference')`,
+    const estimateSourceRes = await pool.query<{ tariff_id: number; role: string; start_date: string; revision_start: string | null }>(
+      `SELECT tariff_id, role, start_date::text, revision_start::text FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('estimated_actual', 'estimated_reference')`,
       [siteId]
     );
     const timeline = buildSiteTariffsTimelineResponse({
@@ -730,7 +730,7 @@ export class TariffTimelineRepo {
         today,
         periodRows: periodsRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), source: row.source, effective_from: row.effective_from, effective_to: row.effective_to })),
         referencePeriodRows: referencePeriodsRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), source: row.source, effective_from: row.effective_from, effective_to: row.effective_to })),
-        sources: estimateSourceRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), role: row.role, start_date: row.start_date })),
+        sources: estimateSourceRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), role: row.role, start_date: row.start_date, revision_start: row.revision_start })),
       });
       timeline.estimates = {
         status: skipped ? 'skipped' : utility.status === 'running' ? 'pending' : utility.status as Exclude<import('./tariff-contract').EstimatesStatusDTO['status'], 'skipped'>,

@@ -115,7 +115,8 @@ export function estimateMayBeOutdated(input: { today: string; newestRevisionStar
   return input.today > (sooner < cap ? sooner : cap);
 }
 export interface FreshnessPeriod { tariff_id: number; source: string; effective_from: string; effective_to: string | null }
-export interface FreshnessSource { tariff_id: number; role: string; start_date: string }
+// start_date is the span clipped to the site's history; revision_start is the URDB revision's own date.
+export interface FreshnessSource { tariff_id: number; role: string; start_date: string; revision_start?: string | null }
 // The estimate covering today on the actual timeline, else on the reference timeline, supplies the
 // newest revision (its provenance start) and the chain of revision starts for the staleness rule.
 export function estimateFreshness(input: { today: string; periodRows: FreshnessPeriod[]; referencePeriodRows: FreshnessPeriod[]; sources: FreshnessSource[] }): { newestRevisionStart: string | null; mayBeOutdated: boolean } {
@@ -127,6 +128,8 @@ export function estimateFreshness(input: { today: string; periodRows: FreshnessP
   const role = actual ? 'estimated_actual' : 'estimated_reference';
   const provenance = input.sources.find(row => row.role === role && row.tariff_id === covering.tariff_id);
   if (!provenance) return { newestRevisionStart: null, mayBeOutdated: false };
-  const revisionStarts = input.sources.filter(row => row.role === role).map(row => row.start_date);
-  return { newestRevisionStart: provenance.start_date, mayBeOutdated: estimateMayBeOutdated({ today: input.today, newestRevisionStart: provenance.start_date, revisionStarts }) };
+  const revisionStart = (row: FreshnessSource) => row.revision_start ?? row.start_date;
+  const revisionStarts = input.sources.filter(row => row.role === role).map(revisionStart);
+  const newestRevisionStart = revisionStart(provenance);
+  return { newestRevisionStart, mayBeOutdated: estimateMayBeOutdated({ today: input.today, newestRevisionStart, revisionStarts }) };
 }

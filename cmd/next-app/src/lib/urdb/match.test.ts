@@ -142,6 +142,13 @@ describe('estimate freshness', () => {
     expect(estimateFreshness({ today: '2026-11-16', periodRows: [], referencePeriodRows: reference, sources }))
       .toEqual({ newestRevisionStart: '2026-10-01', mayBeOutdated: false });
   });
+  it('uses the URDB revision date, not the start clipped to the site history', () => {
+    // History starts 2026-11-01, so the stored span starts there; the rates themselves date from 2025-06-01.
+    const sources = [{ tariff_id: 4, role: 'estimated_actual', start_date: '2026-11-01', revision_start: '2025-06-01' }];
+    const periods = [{ tariff_id: 4, source: 'estimated', effective_from: '2026-11-01', effective_to: null }];
+    expect(estimateFreshness({ today: '2026-11-16', periodRows: periods, referencePeriodRows: [], sources }))
+      .toEqual({ newestRevisionStart: '2025-06-01', mayBeOutdated: true });
+  });
   it('reports no revision when no estimate covers today or manual plans cover it', () => {
     const sources = [{ tariff_id: 1, role: 'estimated_actual', start_date: '2023-01-01' }];
     const periods = [

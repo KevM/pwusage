@@ -91,6 +91,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const newerStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_newer_plan_start.sql'));
     if (!newerStartMigration) throw new Error('URDB newer plan start migration missing');
     await local.database.query(await readFile(`db-migrations/${newerStartMigration}`, 'utf8'));
+    const revisionStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_revision_start.sql'));
+    if (!revisionStartMigration) throw new Error('URDB revision start migration missing');
+    await local.database.query(await readFile(`db-migrations/${revisionStartMigration}`, 'utf8'));
 
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion('s1', {
@@ -379,6 +382,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const newerStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_newer_plan_start.sql'));
     if (!newerStartMigration) throw new Error('URDB newer plan start migration missing');
     await local.database.query(await readFile(`db-migrations/${newerStartMigration}`, 'utf8'));
+    const revisionStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_revision_start.sql'));
+    if (!revisionStartMigration) throw new Error('URDB revision start migration missing');
+    await local.database.query(await readFile(`db-migrations/${revisionStartMigration}`, 'utf8'));
     const tariff = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
        VALUES ('s-estimated-source', 'Estimated', 1, FALSE, 'estimated') RETURNING id`
@@ -799,6 +805,22 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
 
     expect(timeline.estimates).toMatchObject({ newerPlanStart: '2025-06-01', newestRevisionStart: '2025-06-01', mayBeOutdated: true });
+  });
+
+  it('dates estimate freshness from the URDB revision, not the span clipped to the site history', async () => {
+    const siteId = 's-estimate-freshness-clipped';
+    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility) VALUES ($1, 'auto', 'ready', 'Wisconsin Electric Power Co')`, [siteId]);
+    const id = (await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Residential', 1, TRUE, 'estimated') RETURNING id`, [siteId]
+    )).rows[0]!.id;
+    // History starts 2026-11-01, so the stored span starts there; the rates date from 2025-06-01.
+    await local.database.query(`INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source) VALUES ($1, $2, '2026-11-01', NULL, 'estimated')`, [siteId, id]);
+    await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source, revision_start) VALUES ($1, $2, 'estimated_actual', 'rev-2025', '2026-11-01', 'urdb', '2025-06-01')`, [id, siteId]);
+
+    const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
+
+    expect(timeline.estimates).toMatchObject({ newestRevisionStart: '2025-06-01', mayBeOutdated: true });
   });
 
   it('clears needs_plan once the owner adds a rate plan', async () => {
