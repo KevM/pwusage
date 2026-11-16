@@ -261,7 +261,7 @@ enum DemoFixtures {
         )
     }
 
-    static func tariffs(asOf _: Date) -> SiteTariffsTimelineResponse {
+    static func tariffs(asOf: Date) -> SiteTariffsTimelineResponse {
         SiteTariffsTimelineResponse(
             version: 2,
             siteId: site.id,
@@ -275,6 +275,20 @@ enum DemoFixtures {
                 latestUpdatedAt: "2025-01-01T00:00:00Z",
                 activeManualUpdatedAt: nil,
                 differsFromActiveManual: false
+            ),
+            estimates: SiteRateEstimatesDTO(
+                status: .ready,
+                utilityName: demoUtilityName,
+                teslaPlanOutOfDate: false,
+                newerPlanName: nil,
+                newerPlanStart: nil,
+                newestRevisionStart: nil,
+                mayBeOutdated: false,
+                historyGuide: RatePlanHistoryGuideDTO(
+                    historyStart: isoDay(yearsAgo: 3, asOf: asOf),
+                    fillThrough: nil,
+                    unconfirmedDays: 3 * 365
+                )
             )
         )
     }
