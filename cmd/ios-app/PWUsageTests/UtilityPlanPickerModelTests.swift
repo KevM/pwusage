@@ -21,8 +21,9 @@ private final class PlanStub {
         selected.append(label)
     }
 
-    func model() -> UtilityPlanPickerModel {
+    func model(confirmationHold: Duration = .zero) -> UtilityPlanPickerModel {
         UtilityPlanPickerModel(
+            confirmationHold: confirmationHold,
             loadPlans: { [self] in try await loadPlans() },
             selectPlan: { [self] label in try await selectPlan(label) }
         )
@@ -83,6 +84,26 @@ struct UtilityPlanPickerModelTests {
         await model.select(residential)
         #expect(!model.isDone)
         #expect(model.errorMessage != nil)
+    }
+
+    @Test("The chosen plan shows as saved for a moment before the picker finishes")
+    func chosenPlanIsShownBeforeFinishing() async throws {
+        let stub = PlanStub()
+        let model = stub.model(confirmationHold: .milliseconds(300))
+        let saving = Task { await model.select(residential) }
+        try await eventually { model.choice == .saved("rs-plan-2026") }
+        #expect(!model.isDone)
+        await saving.value
+        #expect(model.isDone)
+    }
+
+    @Test("A failed plan save clears the choice")
+    func failedPlanSaveClearsChoice() async {
+        let stub = PlanStub()
+        stub.selectFailure = PlanStubFailure()
+        let model = stub.model()
+        await model.select(residential)
+        #expect(model.choice == nil)
     }
 
     @Test("Each plan reads Since with its start date in display form")

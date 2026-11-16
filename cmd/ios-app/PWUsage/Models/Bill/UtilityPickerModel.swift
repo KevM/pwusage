@@ -26,11 +26,14 @@ final class UtilityPickerModel {
     }
 
     private(set) var searchState: SearchState = .idle
+    /// The utility being saved or just saved; nil while nothing is chosen.
+    private(set) var choice: PickerChoice?
     private(set) var isSaving = false
     private(set) var errorMessage: String?
     private(set) var isDone = false
 
     @ObservationIgnored private let debounce: Duration
+    @ObservationIgnored private let confirmationHold: Duration
     @ObservationIgnored private let searchUtilities: (String) async throws -> [String]
     @ObservationIgnored private let setUtility: (String) async throws -> Void
     @ObservationIgnored private let skipUtility: () async throws -> Void
@@ -39,22 +42,24 @@ final class UtilityPickerModel {
 
     init(
         debounce: Duration = .milliseconds(300),
+        confirmationHold: Duration = PickerChoice.defaultConfirmationHold,
         search: @escaping (String) async throws -> [String],
         setUtility: @escaping (String) async throws -> Void,
         skipUtility: @escaping () async throws -> Void
     ) {
         self.debounce = debounce
+        self.confirmationHold = confirmationHold
         searchUtilities = search
         self.setUtility = setUtility
         self.skipUtility = skipUtility
     }
 
     func select(_ name: String) async {
-        await finish { try await setUtility(name) }
+        await finish(choosing: name) { try await setUtility(name) }
     }
 
     func skip() async {
-        await finish { try await skipUtility() }
+        await finish(choosing: nil) { try await skipUtility() }
     }
 
     /// Drops any in-flight or pending search, so a late answer cannot land after the sheet goes away.
@@ -90,15 +95,22 @@ final class UtilityPickerModel {
         }
     }
 
-    private func finish(_ save: () async throws -> Void) async {
+    /// Saves, then holds a chosen row checked for a moment so the owner sees what they picked.
+    private func finish(choosing name: String?, _ save: () async throws -> Void) async {
         guard !isSaving else { return }
         isSaving = true
         errorMessage = nil
+        choice = name.map(PickerChoice.saving)
         defer { isSaving = false }
         do {
             try await save()
+            if let name {
+                choice = .saved(name)
+                try? await Task.sleep(for: confirmationHold)
+            }
             isDone = true
         } catch {
+            choice = nil
             errorMessage = Self.saveFailureMessage
         }
     }

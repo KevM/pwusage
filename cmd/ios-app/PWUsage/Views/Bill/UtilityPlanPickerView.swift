@@ -28,7 +28,8 @@ struct UtilityPlanPickerView: View {
                     Button("Change Utility", action: onChangeUtility)
                 }
             }
-            .disabled(model.isSaving)
+            // Blocks taps without dimming, so the chosen row's spinner and check stay readable.
+            .allowsHitTesting(!model.isSaving)
             .navigationTitle("Your Rate Plan")
             .task { await model.load() }
             .toolbar {
@@ -71,13 +72,18 @@ struct UtilityPlanPickerView: View {
                 Button {
                     Task { await model.select(plan) }
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(plan.name)
-                        Text(UtilityPlanPickerModel.sinceLabel(for: plan))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(plan.name)
+                            Text(UtilityPlanPickerModel.sinceLabel(for: plan))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        PickerChoiceMark(choice: model.choice, id: plan.label)
                     }
                 }
+                .accessibilityAddTraits(model.choice?.id == plan.label ? .isSelected : [])
             }
         }
     }

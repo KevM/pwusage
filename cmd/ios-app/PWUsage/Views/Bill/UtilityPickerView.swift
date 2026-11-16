@@ -18,7 +18,8 @@ struct UtilityPickerView: View {
                 resultsSection
                 skipSection
             }
-            .disabled(model.isSaving)
+            // Blocks taps without dimming, so the chosen row's spinner and check stay readable.
+            .allowsHitTesting(!model.isSaving)
             .navigationTitle("Your Utility")
             .searchable(text: $model.query, prompt: "Search utilities")
             .toolbar {
@@ -51,9 +52,16 @@ struct UtilityPickerView: View {
             EmptyView()
         case .results(let names):
             ForEach(names, id: \.self) { name in
-                Button(name) {
+                Button {
                     Task { await model.select(name) }
+                } label: {
+                    HStack {
+                        Text(name)
+                        Spacer(minLength: 8)
+                        PickerChoiceMark(choice: model.choice, id: name)
+                    }
                 }
+                .accessibilityAddTraits(model.choice?.id == name ? .isSelected : [])
             }
         case .empty(let query):
             Text("No utilities match “\(query)”.")

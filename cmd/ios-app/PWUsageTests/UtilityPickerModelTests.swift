@@ -29,9 +29,13 @@ private final class UtilityStub {
         skipCount += 1
     }
 
-    func model(debounce: Duration = .milliseconds(5)) -> UtilityPickerModel {
+    func model(
+        debounce: Duration = .milliseconds(5),
+        confirmationHold: Duration = .zero
+    ) -> UtilityPickerModel {
         UtilityPickerModel(
             debounce: debounce,
+            confirmationHold: confirmationHold,
             search: { [self] term in try await search(term) },
             setUtility: { [self] name in try await setUtility(name) },
             skipUtility: { [self] in try await skipUtility() }
@@ -165,6 +169,19 @@ struct UtilityPickerModelTests {
         await model.select("Pacific Gas & Electric")
         #expect(!model.isDone)
         #expect(model.errorMessage != nil)
+        #expect(model.choice == nil)
+    }
+
+    @Test("The chosen utility shows as saved for a moment before the picker finishes")
+    func chosenUtilityIsShownBeforeFinishing() async throws {
+        let stub = UtilityStub()
+        let model = stub.model(confirmationHold: .milliseconds(300))
+        let saving = Task { await model.select("Pacific Gas & Electric") }
+        try await eventually { model.choice == .saved("Pacific Gas & Electric") }
+        #expect(!model.isDone)
+        #expect(model.isSaving)
+        await saving.value
+        #expect(model.isDone)
     }
 
     @Test("Not listed skips the utility and finishes")
