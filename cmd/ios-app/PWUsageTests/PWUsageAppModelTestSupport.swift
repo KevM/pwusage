@@ -40,6 +40,7 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
     var holdSites = false
     private var sitesContinuations: [CheckedContinuation<[MobileSite], Error>] = []
     var holdLive = false
+    var liveError: Error?
     var holdLogout = false
     private(set) var logoutStarted = false
     private var logoutContinuation: CheckedContinuation<Void, Never>?
@@ -79,6 +80,7 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
 
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         liveSiteIDs.append(siteID)
+        if let liveError { throw liveError }
         if holdLive {
             return try await withCheckedThrowingContinuation { liveContinuations.append((siteID, $0)) }
         }
