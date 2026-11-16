@@ -22,10 +22,15 @@ export interface StoredTariffSite {
 }
 
 export interface StoredTariffDeps {
-  addTariffVersion(siteId: string, parsed: ParsedTariff, metadata?: { name: string | null; code: string | null }): Promise<void>;
+  addTariffVersion(
+    siteId: string,
+    parsed: ParsedTariff,
+    metadata: { name: string | null; code: string | null },
+    options: { requireNoTariff: boolean }
+  ): Promise<boolean>;
 }
 
-export type StoredTariffOutcome = 'would_store' | 'stored' | 'no_plan' | 'no_usable_season' | 'failed';
+export type StoredTariffOutcome = 'would_store' | 'stored' | 'already_has_tariff' | 'no_plan' | 'no_usable_season' | 'failed';
 
 export interface StoredTariffResult {
   siteId: string;
@@ -65,8 +70,9 @@ export async function backfillStoredTariffs(
       continue;
     }
     try {
-      await deps.addTariffVersion(site.id, parsed, metadata);
-      results.push({ siteId: site.id, outcome: 'stored', ...summary });
+      // The candidate query ran without a lock; the repo rechecks "no tariff yet" under the site lock.
+      const stored = await deps.addTariffVersion(site.id, parsed, metadata, { requireNoTariff: true });
+      results.push({ siteId: site.id, outcome: stored ? 'stored' : 'already_has_tariff', ...summary });
     } catch (error: unknown) {
       results.push({ siteId: site.id, outcome: 'failed', ...summary, error: error instanceof Error ? error.message : String(error) });
     }

@@ -62,9 +62,15 @@ export class TariffRepo {
   /**
    * Append a new Tesla tariff version (Tariff + seasons + schedules) without
    * deleting prior versions or overwriting active manual effective-date spans.
-   * Deduplicates against the latest source = 'tesla' version.
+   * Deduplicates against the latest source = 'tesla' version. Returns whether a version was stored.
+   * `requireNoTariff` stores nothing when the site already has any tariff (checked under the lock).
    */
-  async addTariffVersion(siteId: string, parsed: ParsedTariff, metadata?: { name: string | null; code: string | null }): Promise<void> {
+  async addTariffVersion(
+    siteId: string,
+    parsed: ParsedTariff,
+    metadata?: { name: string | null; code: string | null },
+    options: { requireNoTariff?: boolean } = {}
+  ): Promise<boolean> {
     const newHash = tariffContentHash(parsed);
     const client = await pool.connect();
     let changed = false;
@@ -75,6 +81,16 @@ export class TariffRepo {
 
       // Acquire write lock on the parent Site row to serialize concurrent tariff updates for this site.
       await client.query('SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+
+      // A backfill of the plan saved in Site.json is stale once any tariff exists: a Tesla sync may
+      // have stored a newer plan since the caller chose this site. Checked under the site lock.
+      if (options.requireNoTariff) {
+        const existing = await client.query('SELECT 1 FROM "Tariff" WHERE site_id = $1 LIMIT 1', [siteId]);
+        if (existing.rowCount) {
+          await client.query('COMMIT');
+          return false;
+        }
+      }
 
       // Deduplicate against the latest 'tesla' tariff so an active manual plan
       // does not cause repeated Tesla syncs to insert duplicate versions.
@@ -88,7 +104,7 @@ export class TariffRepo {
           if (updated.rowCount) await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = clock_timestamp()`, [siteId]);
         }
         await client.query('COMMIT');
-        return;
+        return false;
       }
 
       const newTariffId = await insertTariffGraph(client, siteId, parsed, 'tesla', null, false, newHash);
@@ -148,5 +164,6 @@ export class TariffRepo {
       new SiteRepo().invalidateCache(siteId);
       if (reattribution && queued) logReattributionEnqueued(reattribution, queued);
     }
+    return changed;
   }
 }

@@ -32,17 +32,17 @@ describe('backfillStoredTariffs', () => {
   });
 
   it('stores the plan exactly as the importer would, with its Tesla name and code', async () => {
-    const addTariffVersion = vi.fn<(siteId: string, parsed: ParsedTariff, metadata?: { name: string | null; code: string | null }) => Promise<void>>()
-      .mockResolvedValue();
+    const addTariffVersion = vi.fn<(siteId: string, parsed: ParsedTariff, metadata?: { name: string | null; code: string | null }, options?: { requireNoTariff?: boolean }) => Promise<boolean>>()
+      .mockResolvedValue(true);
 
     const result = await backfillStoredTariffs([site()], { addTariffVersion }, { apply: true });
 
-    expect(addTariffVersion).toHaveBeenCalledWith('site-1', parseTariffContent(content, 'Home'), { name: 'EV2-A', code: 'EV2A' });
+    expect(addTariffVersion).toHaveBeenCalledWith('site-1', parseTariffContent(content, 'Home'), { name: 'EV2-A', code: 'EV2A' }, { requireNoTariff: true });
     expect(result[0]).toMatchObject({ siteId: 'site-1', outcome: 'stored' });
   });
 
   it('falls back to the importer default site name when Tesla gave none', async () => {
-    const addTariffVersion = vi.fn().mockResolvedValue(undefined);
+    const addTariffVersion = vi.fn().mockResolvedValue(true);
     const noUtility = { ...content, utility: undefined } as unknown as TariffV2;
 
     await backfillStoredTariffs([site({ json: { tariff_content_v2: noUtility } })], { addTariffVersion }, { apply: true });
@@ -64,10 +64,19 @@ describe('backfillStoredTariffs', () => {
     expect(result.map(r => [r.siteId, r.outcome])).toEqual([['empty', 'no_usable_season'], ['none', 'no_plan'], ['null-json', 'no_plan']]);
   });
 
+  it('asks the repo to recheck under its lock and reports a site that gained a tariff meanwhile', async () => {
+    const addTariffVersion = vi.fn().mockResolvedValue(false);
+
+    const result = await backfillStoredTariffs([site()], { addTariffVersion }, { apply: true });
+
+    expect(addTariffVersion.mock.calls[0][3]).toEqual({ requireNoTariff: true });
+    expect(result[0].outcome).toBe('already_has_tariff');
+  });
+
   it('keeps going after one site fails and reports the failure', async () => {
     const addTariffVersion = vi.fn()
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(true);
 
     const result = await backfillStoredTariffs([site({ id: 'a' }), site({ id: 'b' })], { addTariffVersion }, { apply: true });
 

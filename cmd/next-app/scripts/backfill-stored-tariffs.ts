@@ -63,7 +63,7 @@ async function main() {
 
   const repo = new TariffRepo();
   const results = await backfillStoredTariffs(sites, {
-    addTariffVersion: (siteId, parsed, metadata) => repo.addTariffVersion(siteId, parsed, metadata),
+    addTariffVersion: (siteId, parsed, metadata, options) => repo.addTariffVersion(siteId, parsed, metadata, options),
   }, { apply: args.apply });
 
   const counts: Record<string, number> = {};

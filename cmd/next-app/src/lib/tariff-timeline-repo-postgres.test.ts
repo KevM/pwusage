@@ -815,6 +815,27 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(spans.rows.map(row => row.effective_from)).toEqual(['2024-03-05', today]);
   });
 
+  it('skips a backfill write when the site gained a tariff after the candidate query', async () => {
+    const siteId = 's-backfill-race';
+    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    const flat = (name: string, rate: number) => ({
+      name,
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: rate, sell_rate: 0.03,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: rate, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+    const repo = new TariffRepo();
+    // A Tesla sync stores the newer plan first.
+    expect(await repo.addTariffVersion(siteId, flat('Newer From Tesla', 0.3))).toBe(true);
+
+    const stored = await repo.addTariffVersion(siteId, flat('Older Saved Plan', 0.2), undefined, { requireNoTariff: true });
+
+    expect(stored).toBe(false);
+    const names = await local.database.query(`SELECT name FROM "Tariff" WHERE site_id = $1`, [siteId]);
+    expect(names.rows).toEqual([{ name: 'Newer From Tesla' }]);
+  });
+
   it('clears needs_plan once the owner adds a rate plan', async () => {
     const siteId = 's-needs-plan-cleared';
     await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
