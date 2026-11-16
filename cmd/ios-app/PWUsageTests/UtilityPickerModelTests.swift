@@ -62,6 +62,15 @@ struct UtilityPickerModelTests {
         #expect(stub.searched == ["pac"])
     }
 
+    @Test("Duplicate utility names from the server show once, in their original order")
+    func duplicateNamesAreDropped() async throws {
+        let stub = UtilityStub()
+        stub.immediate["pac"] = ["PacifiCorp", "Pacific Power", "PacifiCorp"]
+        let model = stub.model()
+        model.query = "pac"
+        try await eventually { model.searchState == .results(["PacifiCorp", "Pacific Power"]) }
+    }
+
     @Test("Typing quickly coalesces into one search for the latest query")
     func rapidTypingCoalesces() async throws {
         let stub = UtilityStub()

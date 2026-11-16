@@ -65,6 +65,12 @@ final class UtilityPickerModel {
         searchState = .idle
     }
 
+    /// Server names in their order, without repeats, so each row has a distinct identity.
+    static func uniqueNames(_ names: [String]) -> [String] {
+        var seen: Set<String> = []
+        return names.filter { seen.insert($0).inserted }
+    }
+
     private func scheduleSearch() {
         cancelSearch()
         let generation = searchGeneration
@@ -75,7 +81,8 @@ final class UtilityPickerModel {
                 try await Task.sleep(for: debounce)
                 let found = try await searchUtilities(term)
                 guard generation == searchGeneration else { return }
-                searchState = found.isEmpty ? .empty(query: term) : .results(found)
+                let names = Self.uniqueNames(found)
+                searchState = names.isEmpty ? .empty(query: term) : .results(names)
             } catch {
                 guard generation == searchGeneration, !(error is CancellationError) else { return }
                 searchState = .failed
