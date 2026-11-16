@@ -91,6 +91,14 @@ enum RateEstimatesPresentation {
         }
     }
 
+    static let addRatePlanButtonTitle = "Add Rate Plan"
+    static let notNowLabel = "Not now"
+
+    /// The Utility row in Rate Plans; `Not Set` until a utility is chosen or skipped.
+    static func utilityRowValue(_ name: String?) -> String {
+        nonEmpty(name) ?? "Not Set"
+    }
+
     private static func utilityPhrase(_ name: String?) -> String {
         nonEmpty(name) ?? "Your utility"
     }

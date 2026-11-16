@@ -8,9 +8,20 @@ struct SolarSystemSavingsSection: View {
     let onAddFixedRatePlan: () -> Void
     let onEditFixedRatePlan: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
+    /// The estimate setup step still needed; its rows stay here even when the Home accessory is dismissed.
+    var estimatePrompt: RateEstimatesPrompt?
+    var estimateUtilityName: String?
+    var onChooseEstimateSetup: (RateEstimatesPrompt) -> Void = { _ in }
 
     var body: some View {
         Section("Savings") {
+            if let estimatePrompt {
+                RateEstimatesSetupRows(
+                    prompt: estimatePrompt,
+                    utilityName: estimateUtilityName,
+                    onChoose: { onChooseEstimateSetup(estimatePrompt) }
+                )
+            }
             switch state {
             case .ready(let report):
                 readyRows(report)
@@ -71,6 +82,11 @@ struct SolarSystemSavingsSection: View {
                 Text(SavingsPresentation.fixedRateComparisonLine(figures, currency: currency))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let share = SavingsPresentation.estimatedShareLine(figures) {
+                    Text(share)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             if alwaysShowCoverage || figures.daysWithData < figures.daysInPeriod {
                 Text(SavingsPresentation.coverageLine(figures))

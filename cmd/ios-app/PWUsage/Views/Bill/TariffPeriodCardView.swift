@@ -47,6 +47,7 @@ struct DayStripBarView: View {
 struct TariffPeriodCardView: View {
     let period: TariffPeriodDTO
     let currency: String
+    var estimates: SiteRateEstimatesDTO?
     let onEditPlan: () -> Void
     let onCopyPlan: () -> Void
     let onEditDates: () -> Void
@@ -56,6 +57,8 @@ struct TariffPeriodCardView: View {
         CardContainer(padding: 15, cornerRadius: 16, spacing: 10) {
             headerRow
             metadataRow
+            startSourceRow
+            estimateNotes
             Divider()
             ForEach(Array(period.seasons.enumerated()), id: \.offset) { _, season in
                 seasonSummary(season)
@@ -105,6 +108,28 @@ struct TariffPeriodCardView: View {
         Text(metadataLine)
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var startSourceRow: some View {
+        if let label = RateEstimatesPresentation.startSourceLabel(period.startSource) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var estimateNotes: some View {
+        if let note = RateEstimatesPresentation.estimateNote(for: period) {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if period.isCurrentToday, let note = RateEstimatesPresentation.mayBeOutdatedNote(estimates),
+           period.source == .estimated {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var metadataLine: String {

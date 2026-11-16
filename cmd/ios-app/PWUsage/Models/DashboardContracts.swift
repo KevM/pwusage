@@ -136,6 +136,9 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
 /// Rate Plans and About are pages pushed from Settings, not sheets.
 enum DashboardSheet: String, Identifiable, CaseIterable {
     case batteryHold
+    /// Estimate setup: the utility, or the rate plan on the chosen utility.
+    case chooseUtility
+    case choosePlan
 
     var id: String { rawValue }
 }

@@ -138,4 +138,17 @@ struct RateEstimatesPresentationTests {
         #expect(RateEstimatesPresentation.cardMessage(prompt, utilityName: nil)
             == "Your plan’s public rates can estimate days without a rate plan.")
     }
+
+    // MARK: Rate Plans and accessory copy
+
+    @Test func utilityRowShowsTheNameOrNotSet() {
+        #expect(RateEstimatesPresentation.utilityRowValue("Pacific Gas & Electric") == "Pacific Gas & Electric")
+        #expect(RateEstimatesPresentation.utilityRowValue(nil) == "Not Set")
+        #expect(RateEstimatesPresentation.utilityRowValue("") == "Not Set")
+    }
+
+    @Test func accessoryDismissAndAddRatePlanLabels() {
+        #expect(RateEstimatesPresentation.notNowLabel == "Not now")
+        #expect(RateEstimatesPresentation.addRatePlanButtonTitle == "Add Rate Plan")
+    }
 }

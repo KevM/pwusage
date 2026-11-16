@@ -154,7 +154,10 @@ struct SolarSystemView: View {
                 hasReferencePlan: coordinator.activeReferencePeriod != nil,
                 onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
                 onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
-                onCaveatAction: routeCaveat
+                onCaveatAction: routeCaveat,
+                estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
+                estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                onChooseEstimateSetup: { coordinator.presentedSheet = .rateEstimates($0) }
             )
             panelHealthSection
             if stored != nil || status != nil { locationSection }

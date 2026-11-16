@@ -3,11 +3,13 @@ import SwiftUI
 private enum TariffSheetModal: Identifiable, Equatable {
     case effectiveDates(TariffPeriodDTO)
     case editor(RatePlanEditorMode)
+    case estimates(RateEstimatesPrompt)
 
     var id: String {
         switch self {
         case .effectiveDates(let period): "dates-\(period.periodId)"
         case .editor(let mode): "editor-\(mode.id)"
+        case .estimates(let prompt): "estimates-\(prompt)"
         }
     }
 }
@@ -15,6 +17,8 @@ private enum TariffSheetModal: Identifiable, Equatable {
 struct TariffSheet: View {
     let site: MobileSite
     let actions: TariffTimelineActions
+    /// Opened from Bill's setup card: start on the add-plan form.
+    var startsAddingPlan = false
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var timeline: SiteTariffsTimelineResponse?
@@ -38,7 +42,8 @@ struct TariffSheet: View {
             .task(id: site.id) { await initialLoad() }
             .task(id: pollingKey) { await pollReattributionWhileActive() }
             .task(id: scenePhase) { await refreshAndTickMinute() }
-            .sheet(item: $activeModal) { modalView(for: $0) }
+            .onAppear { if startsAddingPlan { activeModal = .editor(.add) } }
+            .sheet(item: $activeModal, onDismiss: reloadTimeline) { modalView(for: $0) }
             .confirmationDialog(
                 "Delete Rate Plan?",
                 isPresented: isDeletingBinding,
@@ -102,6 +107,12 @@ struct TariffSheet: View {
 
     @ViewBuilder
     private func headerBannerSection(_ data: SiteTariffsTimelineResponse) -> some View {
+        RateEstimatesRatePlanSection(
+            estimates: data.estimates,
+            onAddRatePlan: { activeModal = .editor(.add) },
+            onChooseUtility: { activeModal = .estimates(.pickUtility) },
+            onChoosePlan: { activeModal = .estimates(.pickPlan) }
+        )
         if let actionError {
             errorBanner(actionError)
         }
@@ -151,6 +162,7 @@ struct TariffSheet: View {
                 TariffPeriodCardView(
                     period: period,
                     currency: data.currency,
+                    estimates: data.estimates,
                     onEditPlan: { activeModal = .editor(.edit(period)) },
                     onCopyPlan: { activeModal = .editor(.copy(period)) },
                     onEditDates: { activeModal = .effectiveDates(period) },
@@ -158,25 +170,6 @@ struct TariffSheet: View {
                 )
             }
         }
-    }
-
-    private func timelineGapRow(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .foregroundStyle(.secondary.opacity(0.4))
-        )
     }
 
     private func teslaDivergenceBanner(_ sync: TeslaSyncDTO) -> some View {
@@ -201,17 +194,6 @@ struct TariffSheet: View {
         .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-            Text(message).font(.caption).foregroundStyle(.red)
-            Spacer()
-        }
-        .padding(12)
-        .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
     private var addPlanButton: some View {
         Button {
             activeModal = .editor(.add)
@@ -233,6 +215,8 @@ struct TariffSheet: View {
                 let updated = try await actions.updatePeriod(periodID, patch)
                 timeline = updated
             }
+        case .estimates(let prompt):
+            RateEstimatesSetupSheet(prompt: prompt, utilityName: timeline?.estimates?.utilityName, actions: actions)
         case .editor(let mode):
             RatePlanEditorFlow(
                 mode: mode,
@@ -247,6 +231,11 @@ struct TariffSheet: View {
                 }
             )
         }
+    }
+
+    /// Estimate and editor sheets can change the plans they show, so reload when one closes.
+    private func reloadTimeline() {
+        Task { await performLoad(showSpinner: false) }
     }
 
     private var isDeletingBinding: Binding<Bool> {
