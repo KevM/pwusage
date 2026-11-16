@@ -13,7 +13,7 @@ enum TariffStartSource: String, Codable, Equatable, Sendable {
     case historyStart = "history_start"
 }
 
-struct UtilityPlanDTO: Decodable, Sendable, Identifiable {
+struct UtilityPlanDTO: Decodable, Equatable, Sendable, Identifiable {
     let label: String
     let name: String
     let startDate: String
