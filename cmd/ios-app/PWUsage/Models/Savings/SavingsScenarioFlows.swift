@@ -48,13 +48,20 @@ enum SavingsScenarioFlows {
     static func build(
         days: [EnergyFlowDay],
         battery: SiteBatteryDTO?,
+        batteryStartOverride: String? = nil,
         roundTripEfficiency: Double = 0.9
     ) -> SavingsScenarioDays {
         let sortedDays = days.sorted { $0.dayStart < $1.dayStart }
-        let batteryStartIndex = sortedDays.firstIndex { day in
-            day.batteryWh.contains { value in
-                guard let value else { return false }
-                return abs(Double(value)) > batteryThresholdWh
+        let batteryStartIndex = if let batteryStartOverride {
+            // The owner's Powerwall install day starts the battery on the first stored day at or after it.
+            // An override before the first stored day starts the battery on that first day.
+            sortedDays.firstIndex { $0.day >= batteryStartOverride }
+        } else {
+            sortedDays.firstIndex { day in
+                day.batteryWh.contains { value in
+                    guard let value else { return false }
+                    return abs(Double(value)) > batteryThresholdWh
+                }
             }
         }
         let batteryStartDay = batteryStartIndex.map { sortedDays[$0].day }
