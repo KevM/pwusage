@@ -289,9 +289,13 @@ enum DemoFixtures {
                     fillThrough: nil,
                     unconfirmedDays: 3 * 365
                 )
-            )
+            ),
+            systemCosts: SystemCostsDTO(siteInstalled: siteInstalled, solar: nil, powerwall: nil)
         )
     }
+
+    /// The demo site's install date, the same one the server would report for `Site.installed`.
+    static let siteInstalled = "2024-02-14"
 
     private static func demoCurrentPeriod() -> TariffPeriodDTO {
         let peakWindow = demoWindow(.onPeak, startHour: 8, endHour: 20, buy: onPeak.buy, sell: onPeak.sell)

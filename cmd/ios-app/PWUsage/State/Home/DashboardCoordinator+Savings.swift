@@ -69,6 +69,17 @@ extension DashboardCoordinator {
         }
     }
 
+    /// Saves the system costs and recomputes savings from the returned timeline; returns an error message on failure.
+    func saveSystemCosts(_ request: SystemCostsWriteRequest) async -> String? {
+        do {
+            let timeline = try await putSystemCosts(request)
+            await refreshSavings(timeline: timeline)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     /// Deletes a fixed-rate reference plan period, returning an error message on failure.
     func removeFixedRatePlan(periodID: Int) async -> String? {
         do {

@@ -114,7 +114,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             currency: current.currency,
             periods: periods,
             reattribution: current.reattribution,
-            teslaSync: current.teslaSync
+            teslaSync: current.teslaSync,
+            systemCosts: current.systemCosts
         )
         demoTimeline = current
         return current
@@ -152,7 +153,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             currency: current.currency,
             periods: updatedPeriods.sorted { $0.effectiveFrom > $1.effectiveFrom },
             reattribution: current.reattribution,
-            teslaSync: current.teslaSync
+            teslaSync: current.teslaSync,
+            systemCosts: current.systemCosts
         )
         demoTimeline = next
         return next
@@ -168,7 +170,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             currency: current.currency,
             periods: remaining,
             reattribution: current.reattribution,
-            teslaSync: current.teslaSync
+            teslaSync: current.teslaSync,
+            systemCosts: current.systemCosts
         )
         demoTimeline = next
         return next
@@ -240,6 +243,30 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         return next
     }
 
+    func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        let costs = SystemCostsDTO(
+            siteInstalled: current.systemCosts?.siteInstalled ?? DemoFixtures.siteInstalled,
+            solar: body.solar,
+            powerwall: body.powerwall
+        )
+        let next = SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: current.siteId,
+            timezone: current.timezone,
+            currency: current.currency,
+            periods: current.periods,
+            referencePeriods: current.referencePeriods,
+            battery: current.battery,
+            reattribution: current.reattribution,
+            holidayDates: current.holidayDates,
+            teslaSync: current.teslaSync,
+            systemCosts: costs
+        )
+        demoTimeline = next
+        return next
+    }
+
     private func replacingReferencePeriods(
         in timeline: SiteTariffsTimelineResponse,
         with referencePeriods: [TariffPeriodDTO]
@@ -254,7 +281,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             battery: timeline.battery,
             reattribution: timeline.reattribution,
             holidayDates: timeline.holidayDates,
-            teslaSync: timeline.teslaSync
+            teslaSync: timeline.teslaSync,
+            systemCosts: timeline.systemCosts
         )
     }
 

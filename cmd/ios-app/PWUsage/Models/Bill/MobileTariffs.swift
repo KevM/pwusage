@@ -158,6 +158,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
     var holidayDates: [String]?
     let teslaSync: TeslaSyncDTO
     var estimates: SiteRateEstimatesDTO?
+    var systemCosts: SystemCostsDTO?
 
     private enum CodingKeys: String, CodingKey {
         case version
@@ -171,6 +172,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         case holidayDates
         case teslaSync
         case estimates
+        case systemCosts
     }
 
     init(
@@ -184,7 +186,8 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         reattribution: ReattributionStatusDTO?,
         holidayDates: [String]? = nil,
         teslaSync: TeslaSyncDTO,
-        estimates: SiteRateEstimatesDTO? = nil
+        estimates: SiteRateEstimatesDTO? = nil,
+        systemCosts: SystemCostsDTO? = nil
     ) {
         self.version = version
         self.siteId = siteId
@@ -197,6 +200,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         self.holidayDates = holidayDates
         self.teslaSync = teslaSync
         self.estimates = estimates
+        self.systemCosts = systemCosts
     }
 
     init(from decoder: Decoder) throws {
@@ -212,6 +216,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         holidayDates = try container.decodeIfPresent([String].self, forKey: .holidayDates)
         teslaSync = try container.decode(TeslaSyncDTO.self, forKey: .teslaSync)
         estimates = try container.decodeIfPresent(SiteRateEstimatesDTO.self, forKey: .estimates)
+        systemCosts = try container.decodeIfPresent(SystemCostsDTO.self, forKey: .systemCosts)
     }
 
     func validating(siteID: String) throws -> Self {
@@ -344,6 +349,7 @@ protocol MobileTariffDataAPI: Sendable {
         body: TariffPlanPatchRequest
     ) async throws -> SiteTariffsTimelineResponse
     func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
+    func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse
 }
 
 extension MobileTariffDataAPI {
@@ -387,6 +393,13 @@ extension MobileTariffDataAPI {
     }
 
     func deleteReferenceRatePlan(siteID _: String, periodID _: Int) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func saveSystemCosts(
+        siteID _: String,
+        body _: SystemCostsWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
         throw PWUsageAPIError.invalidResponse
     }
 }

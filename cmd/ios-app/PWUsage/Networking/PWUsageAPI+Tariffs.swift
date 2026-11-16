@@ -157,6 +157,10 @@ extension PWUsageAPI {
         try await deleteTariff(siteID: siteID, suffix: "tariffs/reference/\(periodID)")
     }
 
+    func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(siteID: siteID, suffix: "system-costs", method: "PUT", body: body)
+    }
+
     private func deleteTariff(siteID: String, suffix: String) async throws -> SiteTariffsTimelineResponse {
         var req = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: suffix))
         req.httpMethod = "DELETE"

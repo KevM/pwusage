@@ -293,4 +293,28 @@ struct LocalBillBuilderTests {
         )
         #expect(LocalBillBuilder.timelineFingerprint(withRef) != baseline)
     }
+
+    @Test("timelineFingerprint changes when system costs change")
+    func fingerprintChangesWhenSystemCostsChange() throws {
+        let fixture = try BillPricingFixture.load("single-plan-cycle")
+        let baseline = LocalBillBuilder.timelineFingerprint(fixture.timeline)
+        let withCosts = SiteTariffsTimelineResponse(
+            version: fixture.timeline.version,
+            siteId: fixture.timeline.siteId,
+            timezone: fixture.timeline.timezone,
+            currency: fixture.timeline.currency,
+            periods: fixture.timeline.periods,
+            referencePeriods: fixture.timeline.referencePeriods,
+            battery: fixture.timeline.battery,
+            reattribution: fixture.timeline.reattribution,
+            holidayDates: fixture.timeline.holidayDates,
+            teslaSync: fixture.timeline.teslaSync,
+            systemCosts: SystemCostsDTO(
+                siteInstalled: "2026-06-10",
+                solar: SystemCostDTO(installDate: nil, price: 16_100, taxCreditPercent: 30, incentives: 0),
+                powerwall: nil
+            )
+        )
+        #expect(LocalBillBuilder.timelineFingerprint(withCosts) != baseline)
+    }
 }
