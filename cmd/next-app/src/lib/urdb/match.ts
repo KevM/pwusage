@@ -2,6 +2,7 @@ import type { Tariff, TariffStartSource } from '../db-types';
 import { Schedule } from '../schedule';
 import { addCalendarDays } from '../tariff-timeline';
 import { isFixedRate, urdbBuyRateAt } from './convert';
+import type { RatePlanKind } from '../tariff-contract';
 import type { UrdbRate } from './types';
 export interface RevisionSpan { rate: UrdbRate; effectiveFrom: string; effectiveTo: string | null }
 // URDB start dates are calendar days, but records store them anywhere from an hour before
@@ -12,17 +13,36 @@ export function urdbStartDate(rate: UrdbRate): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
 }
 const dateOf = urdbStartDate;
-export function teslaMatchesUrdb(tesla: Tariff, rate: UrdbRate): boolean {
+// Every month x weekday/weekend x hour cell, Tesla evaluated on the 15th at hh:30.
+const CELL_COUNT = 12 * 2 * 24;
+function teslaBuyCells(tesla: Tariff, rate: UrdbRate, withAdj: boolean): Array<{ tesla: number | null; urdb: number | null }> {
   const schedule = new Schedule([tesla], 'UTC');
-  return [true, false].some(withAdj => {
-    for (let month = 1; month <= 12; month++) for (const weekend of [false, true]) for (let hour = 0; hour < 24; hour++) {
-      const period = schedule.getTariffPeriodByComponents(month, 15, hour, weekend ? 6 : 1, undefined, undefined, 30);
-      const teslaRate = period?.schedule.buy_rate ?? period?.season.buy_rate;
-      const urdbRate = urdbBuyRateAt(rate, month, weekend, hour, withAdj);
-      if (teslaRate == null || urdbRate === null || Math.abs(teslaRate - urdbRate) > 0.005 + 1e-10) return false;
-    }
-    return true;
-  });
+  const cells: Array<{ tesla: number | null; urdb: number | null }> = [];
+  for (let month = 1; month <= 12; month++) for (const weekend of [false, true]) for (let hour = 0; hour < 24; hour++) {
+    const period = schedule.getTariffPeriodByComponents(month, 15, hour, weekend ? 6 : 1, undefined, undefined, 30);
+    cells.push({ tesla: period?.schedule.buy_rate ?? period?.season.buy_rate ?? null, urdb: urdbBuyRateAt(rate, month, weekend, hour, withAdj) });
+  }
+  return cells;
+}
+export function teslaMatchesUrdb(tesla: Tariff, rate: UrdbRate): boolean {
+  return [true, false].some(withAdj => teslaBuyCells(tesla, rate, withAdj).every(cell => cell.tesla != null && cell.urdb !== null && Math.abs(cell.tesla - cell.urdb) <= 0.005 + 1e-10));
+}
+// Mean absolute buy-rate difference over the 576 cells, the smaller of with and without adj; null when a cell has no rate.
+export function buyRateDistance(tesla: Tariff, rate: UrdbRate): number | null {
+  const means = [true, false].map(withAdj => {
+    const cells = teslaBuyCells(tesla, rate, withAdj);
+    if (cells.some(cell => cell.tesla == null || cell.urdb === null)) return null;
+    return cells.reduce((sum, cell) => sum + Math.abs((cell.tesla as number) - (cell.urdb as number)), 0) / CELL_COUNT;
+  }).filter((mean): mean is number => mean !== null);
+  return means.length ? Math.min(...means) : null;
+}
+export function teslaShape(tesla: Tariff | null): RatePlanKind | null {
+  if (!tesla) return null;
+  const prices = new Set(teslaBuyCells(tesla, { label: '', name: '', utility: '' } as UrdbRate, false).map(cell => cell.tesla).filter((value): value is number => value !== null).map(value => Math.round(value * 1e5)));
+  return prices.size > 1 ? 'time_of_use' : 'fixed';
+}
+export function planKind(rate: UrdbRate): RatePlanKind {
+  return isFixedRate(rate) ? 'fixed' : 'time_of_use';
 }
 function overlapScore(tesla: Tariff, rate: UrdbRate): number {
   const tokens = (value: string) => new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));

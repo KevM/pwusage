@@ -60,6 +60,8 @@ export interface SiteBatteryDTO {
   backupReservePercent: number;
 }
 
+export type RatePlanKind = 'fixed' | 'time_of_use';
+
 export interface EstimatesStatusDTO {
   status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
   utilityName: string | null;

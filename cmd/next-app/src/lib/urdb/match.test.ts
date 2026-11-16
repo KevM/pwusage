@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { anchorStart, estimateFreshness, estimateMayBeOutdated, pickTeslaMatch, referenceSpans, teslaMatchesUrdb, walkSupersedes } from './match';
+import { anchorStart, buyRateDistance, estimateFreshness, estimateMayBeOutdated, pickTeslaMatch, planKind, referenceSpans, teslaMatchesUrdb, teslaShape, walkSupersedes } from './match';
 import { compileSeasonsToParsedTariff } from '../tariff-timeline';
+import type { TariffSeasonInput, TimePeriodWindowInput } from '../tariff-contract';
 import { urdbRateToSeasons } from './convert';
 import type { UrdbRate } from './types';
 import type { Tariff } from '../db-types';
@@ -157,5 +158,62 @@ describe('estimate freshness', () => {
     ];
     expect(estimateFreshness({ today: '2026-11-16', periodRows: periods, referencePeriodRows: [], sources }))
       .toEqual({ newestRevisionStart: null, mayBeOutdated: false });
+  });
+});
+
+describe('closeness to the Tesla plan', () => {
+  const byLabel = (label: string) => weEnergiesEffective.find(item => item.label === label) as UrdbRate;
+  const optionA = byLabel('6859a6a4417690873a01fd68');
+  const optionB = byLabel('685a177d100bd6b82a005dc0');
+  const rg1 = byLabel('6859a625ee417fe3fa0cb0df');
+  const window = (touName: TimePeriodWindowInput['touName'], fromHour: number, toHour: number, buyRate: number): TimePeriodWindowInput => ({ touName, fromHour, fromMinute: 0, toHour, toMinute: 0, buyRate, sellRate: 0 });
+  const teslaFrom = (seasons: TariffSeasonInput[]): Tariff => ({
+    id: 9, site_id: 'site-1', updated: new Date('2025-06-01T12:00:00Z'), name: 'U',
+    seasons: compileSeasonsToParsedTariff('Plan', seasons).seasons as unknown as Tariff['seasons'],
+  });
+  const touSeason = (name: string, fromMonth: number, toMonth: number, peak: number): TariffSeasonInput => ({
+    name, fromMonth, toMonth,
+    weekdayPeriods: [window('OFF_PEAK', 0, 8, 0.1), window('ON_PEAK', 8, 20, peak), window('OFF_PEAK', 20, 24, 0.1)],
+    weekendPeriods: [window('OFF_PEAK', 0, 24, 0.1)],
+  });
+  const harrison = teslaFrom([touSeason('Summer', 6, 9, 0.3), touSeason('Winter', 10, 5, 0.31)]);
+  const flatSeason = (rateValue: number): TariffSeasonInput => ({ name: 'All', fromMonth: 1, toMonth: 12, weekdayPeriods: [window('OFF_PEAK', 0, 24, rateValue)], weekendPeriods: [window('OFF_PEAK', 0, 24, rateValue)] });
+  const flatRate = (rateValue: number, adj: number): UrdbRate => ({ ...rate('flat', '2020-01-01'), energyratestructure: [[{ rate: rateValue, adj }]] });
+
+  it('distanceIsZeroForTheSameRevision', () => {
+    const converted = urdbRateToSeasons(optionA, { medianMonthlyKwh: null, fallbackSellRate: 0 });
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+    const tesla = teslaFrom(converted.seasons);
+    expect(buyRateDistance(tesla, optionA)).toBeLessThan(0.0001);
+  });
+  it('harrisonPlanIsClosestToOptionB', () => {
+    const options = weEnergiesEffective.filter(item => /Single-Phase, Option [A-D]\) Rg 2/.test(item.name)) as UrdbRate[];
+    expect(options).toHaveLength(4);
+    const ranked = options.map(item => ({ name: item.name, distance: buyRateDistance(harrison, item) as number })).sort((a, b) => a.distance - b.distance);
+    expect(ranked[0].name).toContain('Option B');
+    expect(ranked[0].distance).toBeLessThan(ranked[1].distance);
+    expect(buyRateDistance(harrison, optionB)).toBeLessThan(0.03);
+  });
+  it('distanceUsesTheSmallerOfWithAndWithoutAdj', () => {
+    expect(buyRateDistance(teslaFrom([flatSeason(0.1)]), flatRate(0.1, 0.01))).toBeCloseTo(0, 10);
+    expect(buyRateDistance(teslaFrom([flatSeason(0.11)]), flatRate(0.1, 0.01))).toBeCloseTo(0, 10);
+    expect(buyRateDistance(teslaFrom([flatSeason(0.105)]), flatRate(0.1, 0.01))).toBeCloseTo(0.005, 10);
+  });
+  it('distanceIsNullWhenACellHasNoRate', () => {
+    expect(buyRateDistance(harrison, { ...flatRate(0.1, 0), energyratestructure: [[{}]] })).toBeNull();
+  });
+  it('teslaShapeTimeOfUseWithTwoPrices', () => {
+    expect(teslaShape(teslaFrom([touSeason('Summer', 6, 9, 0.3), touSeason('Winter', 10, 5, 0.3)]))).toBe('time_of_use');
+  });
+  it('teslaShapeFixedWithOnePrice', () => {
+    expect(teslaShape(teslaFrom([flatSeason(0.2)]))).toBe('fixed');
+  });
+  it('teslaShapeNullWithoutPlan', () => {
+    expect(teslaShape(null)).toBeNull();
+  });
+  it('planKindFromIsFixedRate', () => {
+    expect(planKind(rg1)).toBe('fixed');
+    expect(planKind(optionA)).toBe('time_of_use');
   });
 });
