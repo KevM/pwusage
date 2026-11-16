@@ -211,7 +211,6 @@ enum SavingsCalculator {
         context: CyclePricingContext
     ) -> CycleResult {
         let buckets = CycleBuckets()
-        var estimates = EstimatedPeriodTracker(actual: context.actual, reference: context.reference)
         var daysWithData = 0
         var estimatedDays = 0
         var dayStatuses: [String: DayStatus] = [:]
@@ -220,9 +219,7 @@ enum SavingsCalculator {
             let day = context.scenarios.recorded[dayIndex]
             if day.dayStart >= cycle.end { break }
             guard day.dayStart >= cycle.start else { continue }
-            let tally = priceDay(
-                dayIndex, cycle: cycle, context: context, buckets: buckets, estimates: &estimates
-            )
+            let tally = priceDay(dayIndex, cycle: cycle, context: context, buckets: buckets)
             if tally.hasRecordedSlot, day.dayStart <= context.now {
                 daysWithData += 1
                 if tally.usesEstimate { estimatedDays += 1 }
@@ -249,8 +246,7 @@ enum SavingsCalculator {
         _ dayIndex: Int,
         cycle: (start: Date, end: Date),
         context: CyclePricingContext,
-        buckets: CycleBuckets,
-        estimates: inout EstimatedPeriodTracker
+        buckets: CycleBuckets
     ) -> DayTally {
         let day = context.scenarios.recorded[dayIndex]
         let dayBatteryFixed = context.scenarios.batteryFixed[dayIndex]
@@ -266,17 +262,16 @@ enum SavingsCalculator {
             guard let grid2 = dayBatteryFixed.gridWh[slotIndex],
                   let grid3 = daySolarAlone.gridWh[slotIndex],
                   let grid4 = dayNoSolar.gridWh[slotIndex] else { continue }
-            let actualPeriod = context.actual.period(at: instant, strict: true)
-            let refPeriod = context.reference.period(at: instant, strict: true)
+            let actual = context.actual.matchedPeriod(at: instant, strict: true)
+            let reference = context.reference.matchedPeriod(at: instant, strict: true)
+            let actualPeriod = actual.resolved
+            let refPeriod = reference.resolved
             tally.missingRatePlan = tally.missingRatePlan || actualPeriod == .unknown
             tally.missingFixedRatePlan = tally.missingFixedRatePlan || refPeriod == .unknown
             guard actualPeriod != .unknown, refPeriod != .unknown else { continue }
 
             tally.hasRecordedSlot = true
-            let slotIsEstimated = estimates.usesEstimate(
-                at: instant, actualPeriod: actualPeriod, referencePeriod: refPeriod
-            )
-            tally.usesEstimate = tally.usesEstimate || slotIsEstimated
+            tally.usesEstimate = tally.usesEstimate || actual.isEstimated || reference.isEstimated
 
             buckets.recorded.add(resolved: actualPeriod, gridWh: Double(grid1))
             buckets.batteryFixed.add(resolved: refPeriod, gridWh: Double(grid2))

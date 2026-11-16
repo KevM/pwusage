@@ -156,6 +156,36 @@ struct SavingsCoverageTests {
         #expect(cycle.estimatedDays == 6)
     }
 
+    @Test func sameNamedEstimatedThenManualSpansCountByPeriod() throws {
+        let actual = [
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 1, name: "Same", buyRate: 0.2, sellRate: 0.05,
+                effectiveFrom: "2020-01-01", effectiveTo: "2026-06-04", source: .estimated
+            ),
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 3, name: "Same", buyRate: 0.2, sellRate: 0.05, effectiveFrom: "2026-06-05"
+            )
+        ]
+        let cycle = try report(days: juneDays(10), actual: actual).cycle
+        #expect(cycle.estimatedDays == 4)
+        #expect(cycle.daysWithData == 10)
+    }
+
+    @Test func sameNamedManualThenEstimatedSpansCountByPeriod() throws {
+        let actual = [
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 1, name: "Same", buyRate: 0.2, sellRate: 0.05,
+                effectiveFrom: "2020-01-01", effectiveTo: "2026-06-04"
+            ),
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 3, name: "Same", buyRate: 0.2, sellRate: 0.05, effectiveFrom: "2026-06-05", source: .estimated
+            )
+        ]
+        let cycle = try report(days: juneDays(10), actual: actual).cycle
+        #expect(cycle.estimatedDays == 6)
+        #expect(cycle.daysWithData == 10)
+    }
+
     @Test func manualPlansCountNoEstimatedDays() throws {
         #expect(try report(days: juneDays(10)).cycle.estimatedDays == 0)
     }

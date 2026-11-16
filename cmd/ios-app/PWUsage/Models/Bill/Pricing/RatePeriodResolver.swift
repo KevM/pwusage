@@ -14,6 +14,14 @@ struct ResolvedRatePeriod: Equatable, Sendable {
     )
 }
 
+/// A slot resolved from the plan that matched it: the bucket identity, and whether that plan is an estimate.
+struct MatchedRatePeriod: Equatable, Sendable {
+    let resolved: ResolvedRatePeriod
+    let isEstimated: Bool
+
+    static let unknown = MatchedRatePeriod(resolved: .unknown, isEstimated: false)
+}
+
 struct RatePeriodResolver: Sendable {
     struct ScheduleMatch: Equatable, Sendable {
         let period: TariffPeriodDTO
@@ -77,19 +85,23 @@ struct RatePeriodResolver: Sendable {
     }
 
     func period(at instant: Date, strict: Bool = false) -> ResolvedRatePeriod {
-        guard let match = scheduleMatch(at: instant, strict: strict) else { return .unknown }
-        let planName = match.period.name.isEmpty ? "Unknown" : match.period.name
-        return ResolvedRatePeriod(
-            planName: planName,
-            periodName: match.window.touName.rawValue,
-            buyRate: match.window.buyRate,
-            sellRate: match.window.sellRate
-        )
+        matchedPeriod(at: instant, strict: strict).resolved
     }
 
-    /// Whether the plan that strictly covers `instant` is an estimate from public utility rates.
-    func isEstimated(at instant: Date) -> Bool {
-        scheduleMatch(at: instant, strict: true)?.period.source == .estimated
+    /// Resolves `instant` like `period(at:strict:)` and also reports whether the matched plan is an estimate,
+    /// from the same schedule match, so callers need no second lookup.
+    func matchedPeriod(at instant: Date, strict: Bool = false) -> MatchedRatePeriod {
+        guard let match = scheduleMatch(at: instant, strict: strict) else { return .unknown }
+        let planName = match.period.name.isEmpty ? "Unknown" : match.period.name
+        return MatchedRatePeriod(
+            resolved: ResolvedRatePeriod(
+                planName: planName,
+                periodName: match.window.touName.rawValue,
+                buyRate: match.window.buyRate,
+                sellRate: match.window.sellRate
+            ),
+            isEstimated: match.period.source == .estimated
+        )
     }
 
     func match(at instant: Date) -> ActiveTariffPeriodMatch? {
