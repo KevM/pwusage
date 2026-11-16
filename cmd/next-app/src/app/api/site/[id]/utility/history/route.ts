@@ -5,32 +5,12 @@ import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
 import { siteLocalDateString, TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import * as urdb from '@/lib/urdb/client';
+import { memoisedApi } from '@/lib/urdb/memoised-api';
 import { buildRatePlanHistory } from '@/lib/urdb/history-candidates';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
-
-// Memoised per request: each date and label is fetched at most once.
-function memoisedApi() {
-  const effective = new Map<string, Promise<Awaited<ReturnType<typeof urdb.ratesEffectiveOn>>>>();
-  const labels = new Map<string, Promise<Awaited<ReturnType<typeof urdb.rateByLabel>>>>();
-  return {
-    ratesEffectiveOn: (utility: string, date: string, zone: string) => {
-      const key = JSON.stringify([utility, date, zone]);
-      let value = effective.get(key);
-      if (!value) { value = urdb.ratesEffectiveOn(utility, date, zone); effective.set(key, value); }
-      return value;
-    },
-    rateByLabel: (label: string) => {
-      let value = labels.get(label);
-      if (!value) { value = urdb.rateByLabel(label); labels.set(label, value); }
-      return value;
-    },
-    defaultRates: (utility: string) => urdb.defaultRates(utility),
-    utilityNames: () => urdb.utilityNames(),
-  };
-}
 
 export function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   return observeRoute('/api/site/[id]/utility/history', async () => {

@@ -40,7 +40,7 @@ async function snapshot(siteId: string): Promise<Snapshot> {
     return { site, utility, spans, tariffs: versions.flatMap(version => { const tariff = map.get(Number(version.id)); return tariff ? [{ ...tariff, updated: version.updated }] : []; }), allTariffs: [...map.values()], sources };
   } finally { connection.release(); }
 }
-function averageSell(tariff: Tariff | undefined): number {
+export function averageSell(tariff: Tariff | undefined): number {
   const rates = tariff?.seasons?.flatMap(season => season.schedules?.map(schedule => schedule.sell_rate ?? season.sell_rate) ?? [season.sell_rate]) ?? [];
   return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
 }
@@ -57,7 +57,7 @@ function planBackfillFor(latest: Tariff | undefined, site: Snapshot['site']): Pl
   try { parsedHash = tariffContentHash(parseTariffContent(content, site.site_name ?? 'Utility Tariff')); } catch { return null; }
   return storedTariffHash(latest) === parsedHash ? { tariffId: latest.id, name: content.name ?? null, code: content.code ?? null } : null;
 }
-async function monthlyUsage(siteId: string, timezone: string, now: Date): Promise<number | null> {
+export async function monthlyUsage(siteId: string, timezone: string, now: Date): Promise<number | null> {
   // History with incomplete tariff attribution cannot provide a trustworthy aggregate yet.
   let rows;
   try { rows = await createEnergyRepo(timezone).getCycleAggregates(siteId, new Date(now.getTime() - 365 * 86400000), now, timezone); }

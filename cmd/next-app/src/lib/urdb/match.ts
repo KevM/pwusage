@@ -68,7 +68,7 @@ const threePhase = (rate: UrdbRate) => Number(/three[- ]phase|3[- ]phase/i.test(
 export function pickTeslaMatch(tesla: Tariff, candidates: UrdbRate[]): UrdbRate | null {
   return candidates.filter(rate => teslaMatchesUrdb(tesla, rate)).sort((a, b) => overlapScore(tesla, b) - overlapScore(tesla, a) || threePhase(a) - threePhase(b) || (b.startdate ?? 0) - (a.startdate ?? 0) || b.label.localeCompare(a.label))[0] ?? null;
 }
-function spans(rates: UrdbRate[], endBefore: string | null): RevisionSpan[] {
+export function revisionSpans(rates: UrdbRate[], endBefore: string | null): RevisionSpan[] {
   const byDate = new Map<string, UrdbRate>();
   // Input order is newest-chain-first: prefer that item for duplicate dates.
   for (const rate of rates) {
@@ -86,7 +86,7 @@ export async function walkSupersedes(start: UrdbRate, fetchByLabel: (label: stri
     seen.add(rate.label); rates.push(rate);
     rate = rate.supersedes && rates.length < opts.maxSteps ? await fetchByLabel(rate.supersedes) : null;
   }
-  return spans(rates, opts.endBefore);
+  return revisionSpans(rates, opts.endBefore);
 }
 export function referenceSpans(defaults: UrdbRate[], timeZone: string): RevisionSpan[] {
   void timeZone;
@@ -100,7 +100,7 @@ export function referenceSpans(defaults: UrdbRate[], timeZone: string): Revision
     current = current.supersedes ? byLabel.get(current.supersedes) : undefined;
   }
   const sorted = ordered.sort((a, b) => Number(lineage.has(b.label)) - Number(lineage.has(a.label)) || b.label.localeCompare(a.label));
-  return spans(sorted, null);
+  return revisionSpans(sorted, null);
 }
 export async function newerRevision(matched: UrdbRate, today: UrdbRate[], fetchByLabel: (label: string) => Promise<UrdbRate | null>): Promise<UrdbRate | null> {
   for (const candidate of [...today].sort((a, b) => (b.startdate ?? 0) - (a.startdate ?? 0))) {
