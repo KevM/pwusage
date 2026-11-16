@@ -1,4 +1,5 @@
 import { layoutTimeline } from './tariff-estimates';
+import { estimateFreshness } from './urdb/match';
 import type { PoolClient } from 'pg';
 import { pool } from './db';
 import type {
@@ -702,10 +703,14 @@ export class TariffTimelineRepo {
       [siteId]
     );
 
-    const utilityRes = await pool.query<{ status: string; choice: string; urdb_utility: string | null; newer_urdb_name: string | null }>(
-      `SELECT u.status, u.choice, u.urdb_utility, (SELECT newer_urdb_name FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL AND tariff_id = (SELECT id FROM "Tariff" WHERE site_id = u.site_id AND source = 'tesla' ORDER BY id DESC LIMIT 1)) AS newer_urdb_name FROM "SiteUtility" u WHERE u.site_id = $1`, [siteId]
+    const utilityRes = await pool.query<{ status: string; choice: string; urdb_utility: string | null; newer_urdb_name: string | null; newer_urdb_start: string | null }>(
+      `SELECT u.status, u.choice, u.urdb_utility, (SELECT newer_urdb_name FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL AND tariff_id = (SELECT id FROM "Tariff" WHERE site_id = u.site_id AND source = 'tesla' ORDER BY id DESC LIMIT 1)) AS newer_urdb_name, (SELECT newer_urdb_start::text FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL AND tariff_id = (SELECT id FROM "Tariff" WHERE site_id = u.site_id AND source = 'tesla' ORDER BY id DESC LIMIT 1)) AS newer_urdb_start FROM "SiteUtility" u WHERE u.site_id = $1`, [siteId]
     );
     const utility = utilityRes.rows[0];
+    const estimateSourceRes = await pool.query<{ tariff_id: number; role: string; start_date: string; revision_start: string | null }>(
+      `SELECT tariff_id, role, start_date::text, revision_start::text FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('estimated_actual', 'estimated_reference')`,
+      [siteId]
+    );
     const timeline = buildSiteTariffsTimelineResponse({
       siteId,
       timezone,
@@ -719,7 +724,23 @@ export class TariffTimelineRepo {
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
     });
-    if (utility) timeline.estimates = { status: utility.choice === 'skipped' ? 'skipped' : utility.status === 'running' ? 'pending' : utility.status as Exclude<import('./tariff-contract').EstimatesStatusDTO['status'], 'skipped'>, utilityName: utility.urdb_utility, teslaPlanOutOfDate: utility.choice !== 'skipped' && utility.newer_urdb_name !== null, newerPlanName: utility.choice === 'skipped' ? null : utility.newer_urdb_name };
+    if (utility) {
+      const skipped = utility.choice === 'skipped';
+      const freshness = skipped ? { newestRevisionStart: null, mayBeOutdated: false } : estimateFreshness({
+        today,
+        periodRows: periodsRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), source: row.source, effective_from: row.effective_from, effective_to: row.effective_to })),
+        referencePeriodRows: referencePeriodsRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), source: row.source, effective_from: row.effective_from, effective_to: row.effective_to })),
+        sources: estimateSourceRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), role: row.role, start_date: row.start_date, revision_start: row.revision_start })),
+      });
+      timeline.estimates = {
+        status: skipped ? 'skipped' : utility.status === 'running' ? 'pending' : utility.status as Exclude<import('./tariff-contract').EstimatesStatusDTO['status'], 'skipped'>,
+        utilityName: utility.urdb_utility,
+        teslaPlanOutOfDate: !skipped && utility.newer_urdb_name !== null,
+        newerPlanName: skipped ? null : utility.newer_urdb_name,
+        newerPlanStart: skipped ? null : utility.newer_urdb_start,
+        ...freshness,
+      };
+    }
     return timeline;
   }
 

@@ -55,7 +55,7 @@ Quota: ~60 bytes per provenance row, one estimated `Tariff` graph (~1–3 KB) pe
 - `TariffSource = 'tesla' | 'manual' | 'estimated'`.
 - `TariffPeriodDTO.startSource: 'urdb' | 'tesla_first_seen' | 'assumed_jan_1' | 'history_start' | null`: for `estimated` periods `'urdb'`; for `tesla` periods the version's anchor source when the span's `effectiveFrom` equals the anchor's `start_date`, else `null`; for `manual` `null`.
 - `referencePeriods[].source: 'manual' | 'estimated'`.
-- `SiteTariffsTimelineResponse.estimates: { status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed'; utilityName: string | null; teslaPlanOutOfDate: boolean; newerPlanName: string | null } | null` (`null` when the site has no `SiteUtility` row yet). Response stays `version: 2`; Swift decodes `estimates` with `decodeIfPresent`, `startSource` likewise.
+- `SiteTariffsTimelineResponse.estimates: { status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed'; utilityName: string | null; teslaPlanOutOfDate: boolean; newerPlanName: string | null; newerPlanStart: string | null; newestRevisionStart: string | null; mayBeOutdated: boolean } | null` (`null` when the site has no `SiteUtility` row yet). The three added fields: `newerPlanStart` is the YYYY-MM-DD start of the newer URDB revision behind `teslaPlanOutOfDate` (null when unknown); `newestRevisionStart` is the YYYY-MM-DD start of the newest URDB revision behind the estimate covering today; `mayBeOutdated` is true when that newest revision may have missed a rate change. Response stays `version: 2`; Swift decodes `estimates` with `decodeIfPresent`, `startSource` likewise.
 
 ## Global Constraints
 
@@ -279,10 +279,23 @@ Branch from `main` after PR 1 merges.
 
 ### Task 10: Mockups (gate for Tasks 12–13)
 
-- [ ] **Step 1:** Publish mockups as an Artifact: Rate Plans screen with an estimated plan (badge, `Estimated from public utility rates. Add your rate plan for a better figure.`), each start-date source label under the dates (`From public utility rates`, `First seen in Tesla`, `Assumed January 1`, and a proposed label for `history_start`, e.g. `Assumed from your first day of data`), the out-of-date notice (proposed: `Your Tesla rate plan looks out of date. Newer rates took effect <date>. Update it in the Tesla app or add your rate plan here.`), the utility picker (search, `My Utility Isn’t Listed`), the possibly-outdated note (proposed: `These estimated rates started <date> and may be out of date. Add your rate plan for a better figure.`), the plan picker for sites without a Tesla plan, the `needs_utility`/`needs_plan` prompts on Bill and Solar System, and the savings line `About 40% of these days use estimated rates`.
-- [ ] **Step 2:** The owner approves or edits. **Tasks 12–13 don't start until then.** Record the approved copy here.
+- [x] **Step 1:** Publish mockups as an Artifact: Rate Plans screen with an estimated plan (badge, `Estimated from public utility rates. Add your rate plan for a better figure.`), each start-date source label under the dates (`From public utility rates`, `First seen in Tesla`, `Assumed January 1`, and a proposed label for `history_start`, e.g. `Assumed from your first day of data`), the out-of-date notice (proposed: `Your Tesla rate plan looks out of date. Newer rates took effect <date>. Update it in the Tesla app or add your rate plan here.`), the utility picker (search, `My Utility Isn’t Listed`), the possibly-outdated note (proposed: `These estimated rates started <date> and may be out of date. Add your rate plan for a better figure.`), the plan picker for sites without a Tesla plan, the `needs_utility`/`needs_plan` prompts on Bill and Solar System, and the savings line `About 40% of these days use estimated rates`.
+- [x] **Step 2:** The owner approves or edits. **Tasks 12–13 don't start until then.** Record the approved copy here.
 
 **Mockup revision (2026-11-16):** Use the existing tab bar accessory on Home when missing utility or plan setup prevents current pricing. Offer one choice at a time, starting with the utility. Dismissal applies to the current site and keeps setup available in Bill and Solar System. Existing history accessories keep precedence.
+
+**Approved copy (owner, 2026-11-16, mockups: https://claude.ai/artifact/9pHvzifhU753vU8YczWgkP):**
+
+- Start-date labels (caption under the date range): `urdb` → `From public utility rates`; `tesla_first_seen` → `First seen in Tesla`; `assumed_jan_1` → `Assumed January 1`; `history_start` → `From your first day of data`; `null` → no label.
+- Estimated plan card note: `Estimated from public utility rates. Add your rate plan for a better figure.`
+- Out-of-date notice (Rate Plans, top; only when `teslaPlanOutOfDate`): `Your Tesla rate plan looks out of date. Newer rates took effect <date>. Update it in the Tesla app or add your rate plan here.` with an `Add Rate Plan` button. `<date>` is the newer revision's start (`Jan 1, 2026`); without a date: `Your Tesla rate plan looks out of date. Update it in the Tesla app or add your rate plan here.`
+- May-be-outdated note (on the estimated card covering today; only when `mayBeOutdated`): `These estimated rates started <date> and may be out of date. Add your rate plan for a better figure.`
+- Rate Plans utility row: `Utility` · utility name (or `Not Set`), opens the utility picker.
+- Utility picker: title `Your Utility`, search prompt `Search utilities`, header `Your utility’s public rates fill days without a rate plan, so bills and savings can be estimated.`, button `My Utility Isn’t Listed` with footer `Rate plans stay as they are. You can choose a utility later in Rate Plans.`, footer `Utility names and rates come from the OpenEI Utility Rate Database. Only the utility name is used; never your location.`
+- Plan picker (no Tesla plan): title `Your Rate Plan`, header `Choose the plan on your <utility> bill. Its public rates price days without a rate plan, through today.`, section `Residential plans`, rows plan name + `Since <date>`, footer `Not sure? The plan name is on your bill. Adding your rate plan in Rate Plans gives a better figure.`, button `Change Utility`.
+- Home tab bar accessory (one step at a time, per-site `Not now` dismiss, history accessories keep precedence): `.pickUtility` → `Choose your utility` / `To estimate rates for days without a plan`; `.pickPlan` → `Choose your rate plan` / `<utility> · prices days without a plan`. Inline placement shows the title only.
+- Bill card and Solar System Savings rows: `.pickUtility` → `Choose your utility` / `Your utility’s public rates can estimate days without a rate plan.` / button `Choose Utility` (Bill also offers `Add Rate Plan`); `.pickPlan` → `Choose your rate plan` / `Your <utility> plan’s public rates can estimate days without a rate plan.` / button `Choose Rate Plan`.
+- Savings share line: `About 40% of these days use estimated rates`; under 1% → `Some of these days use estimated rates`; none → no line.
 
 ### Task 10b: Flag estimates whose URDB revision may be outdated
 
@@ -296,9 +309,9 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 - `estimates.newestRevisionStart: string | null`: the URDB start date of the newest revision behind an estimate that covers today (actual, else reference).
 - `estimates.mayBeOutdated: boolean`: true when today is more than `min(15 months, 1.5 × the median gap between that plan's URDB revisions)` after `newestRevisionStart`. 15 months means the newest revision has missed a January, when most changes take effect. The median comes from the walked `supersedes` chain (reference: the default chain); with fewer than 3 revisions use 15 months.
 
-- [ ] **Step 1: Write failing tests:** `mayBeOutdatedAfterFifteenMonths`, `mayBeOutdatedSoonerForFrequentChangers`, `notOutdatedWithoutEstimateToday`, `fewRevisionsUseFifteenMonths`; Harrison-like fixture (newest 2025-06-01, today 2026-11-16) → `true`.
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; web lint/typecheck; iOS `./lint.sh`.
-- [ ] **Step 5: Commit** `feat: flag estimated rates that may be out of date`.
+- [x] **Step 1: Write failing tests:** `mayBeOutdatedAfterFifteenMonths`, `mayBeOutdatedSoonerForFrequentChangers`, `notOutdatedWithoutEstimateToday`, `fewRevisionsUseFifteenMonths`; Harrison-like fixture (newest 2025-06-01, today 2026-11-16) → `true`.
+- [x] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; web lint/typecheck; iOS `./lint.sh`.
+- [x] **Step 5: Commit** `feat: flag estimated rates that may be out of date`.
 
 ### Task 11: Estimated share in savings
 
@@ -306,11 +319,11 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 - Modify: `cmd/ios-app/PWUsage/Models/Bill/Pricing/RatePeriodResolver.swift` (`isEstimated(at: Date) -> Bool`, from the period's `source`), `cmd/ios-app/PWUsage/Models/Savings/SavingsCalculator.swift` (`SavingsFigures.estimatedDays: Int = 0`: counted days with at least one priced slot whose actual *or* reference plan is estimated), `cmd/ios-app/PWUsage/Views/Shared/SavingsPresentation.swift` (`estimatedShareLine(_:) -> String?`: `nil` at 0; percentage = `estimatedDays * 100 / daysWithData` rounded, `<1%` shown as `Some of these days use estimated rates`)
 - Test: `cmd/ios-app/PWUsageTests/SavingsCoverageTests.swift`, `cmd/ios-app/PWUsageTests/SavingsPresentationTests.swift`
 
-- [ ] **Step 1: Write failing tests:** `estimatedDaysCountReferenceAndActualEstimates`, `estimatedPlansCountAsCoveredDays` (a gap filled by an estimate is no longer a caveat), `estimatedShareLineRoundsPercent`, `noEstimatedShareLineWithoutEstimates`; the three-year benchmark still passes.
-- [ ] **Step 2: Run** `./run-tests.sh --quick SavingsCoverageTests SavingsPresentationTests SavingsCalculatorTests` — FAIL.
-- [ ] **Step 3: Implement** (track per day in the existing `priceCycle` loop; no extra resolver calls per slot beyond one `isEstimated` per resolved period change).
-- [ ] **Step 4: Run** — PASS; `./lint.sh`.
-- [ ] **Step 5: Commit** `feat(ios): show how much of a savings figure uses estimated rates`.
+- [x] **Step 1: Write failing tests:** `estimatedDaysCountReferenceAndActualEstimates`, `estimatedPlansCountAsCoveredDays` (a gap filled by an estimate is no longer a caveat), `estimatedShareLineRoundsPercent`, `noEstimatedShareLineWithoutEstimates`; the three-year benchmark still passes.
+- [x] **Step 2: Run** `./run-tests.sh --quick SavingsCoverageTests SavingsPresentationTests SavingsCalculatorTests` — FAIL.
+- [x] **Step 3: Implement** (track per day in the existing `priceCycle` loop; no extra resolver calls per slot beyond one `isEstimated` per resolved period change).
+- [x] **Step 4: Run** — PASS; `./lint.sh`.
+- [x] **Step 5: Commit** `feat(ios): show how much of a savings figure uses estimated rates`.
 
 ### Task 12: Presentation of sources, estimates and status
 
@@ -321,9 +334,9 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 **Interfaces:**
 - Produces: `static func startSourceLabel(_ source: TariffStartSource?) -> String?`, `static func estimateNote(for period: TariffPeriodDTO) -> String?`, `static func outOfDateNotice(_ estimates: SiteRateEstimatesDTO?) -> String?`, `static func mayBeOutdatedNote(_ estimates: SiteRateEstimatesDTO?) -> String?` (only when `mayBeOutdated`; never phrased as certain), `static func prompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt?` with `enum RateEstimatesPrompt { case pickUtility, pickPlan }` (`needs_utility` → `.pickUtility`; `needs_plan` → `.pickPlan`; others `nil`). Copy exactly as approved in Task 10.
 
-- [ ] **Step 1: Write failing tests** for every source label, the estimate note (estimated only), the out-of-date notice (shown only when `teslaPlanOutOfDate`), the may-be-outdated note (shown only when `mayBeOutdated`, with the formatted start date), and each status → prompt.
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; `./lint.sh`.
-- [ ] **Step 5: Commit** `feat(ios): copy for rate plan start-date sources and estimates`.
+- [x] **Step 1: Write failing tests** for every source label, the estimate note (estimated only), the out-of-date notice (shown only when `teslaPlanOutOfDate`), the may-be-outdated note (shown only when `mayBeOutdated`, with the formatted start date), and each status → prompt.
+- [x] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; `./lint.sh`.
+- [x] **Step 5: Commit** `feat(ios): copy for rate plan start-date sources and estimates`.
 
 ### Task 13: Utility and plan pickers, wired into Rate Plans, Bill and Solar System
 
@@ -332,10 +345,12 @@ URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest 
 - Modify: `cmd/ios-app/PWUsage/State/Home/DashboardCoordinator+Tariffs.swift` (calls from Task 9; save the returned timeline and refresh savings like existing mutations), `cmd/ios-app/PWUsage/Views/Bill/TariffSheet.swift` / `RatePlansSheet`, `TariffPeriodCardView.swift` (source label, estimate note), `BillView.swift`, `SolarSystemView.swift` (prompt and out-of-date notice)
 - Test: `cmd/ios-app/PWUsageTests/UtilityPickerModelTests.swift` (debounced search: 300 ms, ≥ 2 characters, cancels stale queries; selecting saves and dismisses; `My Utility Isn’t Listed` calls `skipUtility`)
 
-- [ ] **Step 1: Write failing tests** for the picker model.
-- [ ] **Step 2: Run** — FAIL. **Step 3: Implement** per mockups.
-- [ ] **Step 4: Run** `./run-tests.sh` (full) and `./lint.sh` — PASS, zero warnings. Check light/dark and the largest Dynamic Type in the simulator; screenshot the estimated Rate Plans screen.
-- [ ] **Step 5: Commit** `feat(ios): pick a utility and rate plan for estimated rate plans`; push; draft PR. The wrap-up gives the worktree path and `open <worktree>/cmd/ios-app/PWUsage.xcodeproj` for on-device checks.
+- [x] **Step 1: Write failing tests** for the picker model.
+- [x] **Step 2: Run** — FAIL. **Step 3: Implement** per mockups.
+- [x] **Step 4: Run** `./run-tests.sh` (full) and `./lint.sh` — PASS, zero warnings. Check light/dark and the largest Dynamic Type in the simulator; screenshot the estimated Rate Plans screen.
+- [x] **Step 5: Commit** `feat(ios): pick a utility and rate plan for estimated rate plans`; push; draft PR. The wrap-up gives the worktree path and `open <worktree>/cmd/ios-app/PWUsage.xcodeproj` for on-device checks.
+
+**As built (PR #378, 2026-11-16):** Task 13 ran as 13a (picker models, views and coordinator calls) and 13b (Rate Plans, Bill, Solar System and the Home accessory). Additions from review and device testing: Solar System opens the setup pickers from its own sheet, so they work when Solar System is shown inside Smart Shift; utility search shows failures and empty results; duplicate utility names are dropped; a tapped utility or plan shows a spinner, then a check, before the picker closes. Task 10b also added `estimates.newerPlanStart` (`TariffUrdbSource.newer_urdb_start`) for the dated out-of-date notice. When the fixed (reference) estimate is the one covering today, the may-be-outdated note shows under Edit Fixed Rate Plan in Solar System.
 
 ## Follow-ups (not this plan)
 

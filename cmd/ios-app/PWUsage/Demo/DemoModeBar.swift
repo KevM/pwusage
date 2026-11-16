@@ -12,6 +12,10 @@ struct DemoModeBar: View {
         Button(action: onTap) {
             Text("In Demo Mode")
                 .font(.footnote.weight(.semibold))
+                // Bar chrome, like tab bar labels: capped so the label still fits the bottom inset at
+                // accessibility sizes instead of thickening the bar.
+                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                .lineLimit(1)
                 .foregroundStyle(Color.onEmphasis)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)

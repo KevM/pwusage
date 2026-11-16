@@ -89,3 +89,47 @@ export function anchorStart(input: { matched: UrdbRate | null; firstSeen: string
   const jan = `${input.firstSeen.slice(0, 4)}-01-01`;
   return input.currentSpanStart < jan ? { startDate: input.currentSpanStart, startSource: 'history_start' } : { startDate: jan, startSource: 'assumed_jan_1' };
 }
+// URDB lags tariff changes and has no end date for the newest revision, so an estimate can only be
+// flagged as possibly out of date. Frequent changers are flagged sooner: 1.5 x their median gap, capped
+// at 15 months (which spans a January, when most changes take effect). Fewer than 3 revisions give no
+// reliable median, so they use the 15-month cap.
+const OUTDATED_CAP_MONTHS = 15;
+const MIN_REVISIONS_FOR_MEDIAN = 3;
+function addMonths(yyyyMmDd: string, months: number): string {
+  const [y, m, d] = yyyyMmDd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + months, d)).toISOString().slice(0, 10);
+}
+export function medianRevisionGapDays(revisionStarts: string[]): number | null {
+  const sorted = [...revisionStarts].sort();
+  const gaps = sorted.slice(1).map((start, index) => (Date.parse(`${start}T00:00:00Z`) - Date.parse(`${sorted[index]}T00:00:00Z`)) / 86400000).sort((a, b) => a - b);
+  if (!gaps.length) return null;
+  const mid = Math.floor(gaps.length / 2);
+  return gaps.length % 2 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+}
+export function estimateMayBeOutdated(input: { today: string; newestRevisionStart: string | null; revisionStarts: string[] }): boolean {
+  if (input.newestRevisionStart === null) return false;
+  const cap = addMonths(input.newestRevisionStart, OUTDATED_CAP_MONTHS);
+  const median = input.revisionStarts.length < MIN_REVISIONS_FOR_MEDIAN ? null : medianRevisionGapDays(input.revisionStarts);
+  if (median === null) return input.today > cap;
+  const sooner = addCalendarDays(input.newestRevisionStart, Math.round(1.5 * median));
+  return input.today > (sooner < cap ? sooner : cap);
+}
+export interface FreshnessPeriod { tariff_id: number; source: string; effective_from: string; effective_to: string | null }
+// start_date is the span clipped to the site's history; revision_start is the URDB revision's own date.
+export interface FreshnessSource { tariff_id: number; role: string; start_date: string; revision_start?: string | null }
+// The estimate covering today on the actual timeline, else on the reference timeline, supplies the
+// newest revision (its provenance start) and the chain of revision starts for the staleness rule.
+export function estimateFreshness(input: { today: string; periodRows: FreshnessPeriod[]; referencePeriodRows: FreshnessPeriod[]; sources: FreshnessSource[] }): { newestRevisionStart: string | null; mayBeOutdated: boolean } {
+  const covers = (row: FreshnessPeriod) => row.source === 'estimated' && row.effective_from <= input.today && (row.effective_to === null || row.effective_to >= input.today);
+  const actual = input.periodRows.find(covers);
+  const reference = actual ? undefined : input.referencePeriodRows.find(covers);
+  const covering = actual ?? reference;
+  if (!covering) return { newestRevisionStart: null, mayBeOutdated: false };
+  const role = actual ? 'estimated_actual' : 'estimated_reference';
+  const provenance = input.sources.find(row => row.role === role && row.tariff_id === covering.tariff_id);
+  if (!provenance) return { newestRevisionStart: null, mayBeOutdated: false };
+  const revisionStart = (row: FreshnessSource) => row.revision_start ?? row.start_date;
+  const revisionStarts = input.sources.filter(row => row.role === role).map(revisionStart);
+  const newestRevisionStart = revisionStart(provenance);
+  return { newestRevisionStart, mayBeOutdated: estimateMayBeOutdated({ today: input.today, newestRevisionStart, revisionStarts }) };
+}

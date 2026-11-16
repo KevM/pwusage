@@ -97,8 +97,8 @@ struct BillView: View {
                         await coordinator.removeFixedRatePlan(periodID: periodID)
                     }
                 )
-            case .ratePlans:
-                RatePlansSheet(site: site, actions: .live(coordinator))
+            case let .ratePlans(startsAdding):
+                RatePlansSheet(site: site, actions: .live(coordinator), startsAddingPlan: startsAdding)
             }
         }
         .navigationTitle("Current Bill")
@@ -148,6 +148,14 @@ struct BillView: View {
                 sheet = .savings(move, currency: bill.currency)
             }
         }
+        if let prompt = RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates) {
+            RateEstimatesSetupCard(
+                prompt: prompt,
+                utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                onChoose: { coordinator.presentedSheet = .rateEstimates(prompt) },
+                onAddRatePlan: prompt == .pickUtility ? { sheet = .ratePlans(startsAdding: true) } : nil
+            )
+        }
         BillSavingsCard(
             state: coordinator.savings,
             currency: bill.currency,
@@ -176,7 +184,7 @@ struct BillView: View {
             let period = suggestion == nil ? coordinator.activeReferencePeriod : coordinator.earliestReferencePeriod
             sheet = .fixedRatePlan(period, suggestion: suggestion)
         case .fixRatePlans:
-            sheet = .ratePlans
+            sheet = .ratePlans(startsAdding: false)
         }
     }
 
@@ -236,7 +244,7 @@ private enum BillSheet: Identifiable {
     case savings(BillSavingsMove, currency: String)
     case details(BillEstimateDetails)
     case fixedRatePlan(TariffPeriodDTO?, suggestion: String?)
-    case ratePlans
+    case ratePlans(startsAdding: Bool)
 
     var id: String {
         switch self {

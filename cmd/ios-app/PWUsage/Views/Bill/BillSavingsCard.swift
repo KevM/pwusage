@@ -49,6 +49,11 @@ struct BillSavingsCard: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+            if let share = SavingsPresentation.estimatedShareLine(figures) {
+                Text(share)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
             SavingsCaveatRows(caveats: SavingsPresentation.caveats(figures), onAction: onCaveatAction)
         }
         .padding(14)
