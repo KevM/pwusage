@@ -39,21 +39,41 @@ function hasDateRange(season: Partial<Season> | null | undefined): season is Sea
         .every(value => Number.isInteger(value));
 }
 
+/**
+ * Season names to store, one per dated season. Tesla sometimes labels a season the wrong way round,
+ * so a "Summer" starting Oct–Feb becomes "Winter" and a "Winter" starting May–Sep becomes "Summer".
+ * Renaming only one of a swapped pair (seen: "Summer" Nov–Mar beside "Winter" Apr–Oct) would give two
+ * "Winter" seasons, which TariffSeason's UNIQUE (tariff_id, name) rejects and the import rolls back.
+ * Then Tesla's labels are swapped, so both are swapped; if names still collide, Tesla's own names
+ * (unique object keys) are kept.
+ */
+function uniqueSeasonNames(seasons: Array<[string, Season]>): string[] {
+    const unique = (names: string[]) => new Set(names).size === names.length;
+    const corrected = seasons.map(([name, season]) => {
+        const from = season.fromMonth;
+        if (name.toLowerCase() === 'summer' && (from >= 10 || from <= 2)) return 'Winter';
+        if (name.toLowerCase() === 'winter' && from >= 5 && from <= 9) return 'Summer';
+        return name;
+    });
+    if (unique(corrected)) return corrected;
+    const swapped = seasons.map(([name]) => {
+        if (name.toLowerCase() === 'summer') return 'Winter';
+        if (name.toLowerCase() === 'winter') return 'Summer';
+        return name;
+    });
+    if (unique(swapped)) return swapped;
+    return seasons.map(([name]) => name);
+}
+
 export function parseTariffContent(content: TariffV2, siteName: string): ParsedTariff {
     const tariffName = content.utility ?? siteName;
     const seasons: ParsedSeason[] = [];
+    const datedSeasons = Object.entries(content.seasons ?? {})
+        .filter((entry): entry is [string, Season] => hasDateRange(entry[1]));
+    const seasonNames = uniqueSeasonNames(datedSeasons);
 
-    for (const seasonName in content.seasons) {
-        const seasonData = content.seasons[seasonName];
-        if (!hasDateRange(seasonData)) continue;
-
-        let fixedSeasonName = seasonName;
-        const sFrom = seasonData.fromMonth;
-        if (seasonName.toLowerCase() === 'summer' && (sFrom >= 10 || sFrom <= 2)) {
-            fixedSeasonName = 'Winter';
-        } else if (seasonName.toLowerCase() === 'winter' && (sFrom >= 5 && sFrom <= 9)) {
-            fixedSeasonName = 'Summer';
-        }
+    for (const [index, [seasonName, seasonData]] of datedSeasons.entries()) {
+        const fixedSeasonName = seasonNames[index];
 
         const buyRates = content.energy_charges?.[seasonName]?.rates ?? {};
         const sellRates = content.sell_tariff?.energy_charges?.[seasonName]?.rates ?? {};
