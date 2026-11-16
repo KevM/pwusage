@@ -41,7 +41,7 @@ struct TariffSheet: View {
         #endif
             .toolbar { toolbarContent }
             .task(id: site.id) { await initialLoad() }
-            .task(id: pollingKey) { await pollReattributionWhileActive() }
+            .task(id: pollingKey) { await pollWhileServerIsWorking() }
             .task(id: scenePhase) { await refreshAndTickMinute() }
             .onChange(of: timeline != nil, initial: true) { _, loaded in openStartingAddFormIfNeeded(loaded) }
             .sheet(item: $activeModal, onDismiss: reloadTimeline) { modalView(for: $0) }
@@ -276,14 +276,18 @@ struct TariffSheet: View {
 
     private var isPresentingEditor: Bool { activeModal != nil }
 
-    private var shouldPollReattribution: Bool {
-        guard let status = timeline?.reattribution?.status else { return false }
-        return status == .pending || status == .running
+    /// Re-pricing or a pending estimate job still running on the server; nil once both settle.
+    private var pollInterval: Duration? {
+        RatePlansPolling.interval(
+            reattribution: timeline?.reattribution?.status,
+            estimates: timeline?.estimates?.status
+        )
     }
 
     private var pollingKey: String {
         let token = timeline?.reattribution?.updatedAt ?? "none"
-        return "\(site.id)-\(isPresentingEditor)-\(shouldPollReattribution)-\(token)"
+        let estimates = timeline?.estimates?.status.rawValue ?? "none"
+        return "\(site.id)-\(isPresentingEditor)-\(pollInterval != nil)-\(token)-\(estimates)"
     }
 
     private func initialLoad() async {
@@ -308,11 +312,10 @@ struct TariffSheet: View {
         }
     }
 
-    private func pollReattributionWhileActive() async {
-        guard !isPresentingEditor, shouldPollReattribution else { return }
-        while !Task.isCancelled && !isPresentingEditor && shouldPollReattribution {
+    private func pollWhileServerIsWorking() async {
+        while !Task.isCancelled && !isPresentingEditor, let interval = pollInterval {
             do {
-                try await Task.sleep(for: .seconds(3))
+                try await Task.sleep(for: interval)
                 guard !Task.isCancelled, !isPresentingEditor else { return }
                 timeline = try await actions.load()
             } catch is CancellationError {
