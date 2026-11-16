@@ -233,4 +233,57 @@ extension PWUsageAppModelTests {
         }
         #expect(!model.isSigningIn)
     }
+
+    @Test("Reconnect keeps connecting until a reading settles Tesla, so its button is not offered early",
+          arguments: [true, false])
+    func reconnectWaitsForConfirmingReading(teslaConfirms: Bool) async throws {
+        let api = ApplicationAPISpy(sites: [Self.site("site-1")])
+        let session = AppAuthWebSession()
+        let model = PWUsageAppModel(
+            configuration: try Self.makeConfiguration(),
+            api: api,
+            userDefaults: makeDefaults(),
+            authService: MobileAuthService(
+                configuration: try Self.makeConfiguration(),
+                api: api,
+                sessionFactory: { url, _, completion in
+                    session.loginURL = url
+                    session.completion = completion
+                    return session
+                }
+            )
+        )
+        await model.bootstrap()
+        model.scenePhaseChanged(isActive: true)
+        let coordinator = try #require(model.coordinator)
+        api.liveError = PWUsageAPIError.requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED")
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.requiresTeslaReconnect)
+        api.liveError = nil
+        api.holdLive = true
+        let liveRequests = api.liveSiteIDs.count
+
+        let reconnect = Task { await model.reconnectTesla() }
+        try await waitUntil { session.completion != nil }
+        let url = try #require(session.loginURL)
+        let state = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "mobile_state" })?.value)
+        let callback = try #require(URL(string:
+            "pwusage://auth/callback?code=opaque&attempt=9b47b05a-3f0b-498e-b604-9e43fa7df015&state=\(state)"))
+        session.completion?(callback, nil)
+        try await waitUntil { api.liveSiteIDs.count > liveRequests }
+        // The auth sheet is gone but Tesla is unconfirmed: still connecting, never the reconnect button.
+        try await staysTrue { coordinator.requiresTeslaReconnect && model.isSigningIn }
+
+        if !teslaConfirms {
+            api.liveError = PWUsageAPIError.requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED")
+        }
+        api.resumeLiveRequests()
+        await reconnect.value
+        // A rejected reading brings the button back; a good one lands on the dashboard.
+        #expect(coordinator.requiresTeslaReconnect == !teslaConfirms)
+        #expect(!model.isSigningIn)
+        // One poll confirms the reconnect; recovery joins it instead of sending a second.
+        #expect(api.liveSiteIDs.count == liveRequests + 1)
+    }
 }

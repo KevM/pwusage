@@ -40,6 +40,33 @@ extension DashboardCoordinatorTests {
         coordinator.authenticationRestored()
         try await eventually { api.liveSiteIDs.count > attempts && !coordinator.requiresTeslaReconnect }
     }
+    @Test("Confirming a reconnect is the app asking: one live request, without forcing a history import")
+    func reconnectConfirmationJoinsRestoredPoll() async throws {
+        let clock = DashboardTestClock()
+        let api = FastDashboardAPISpy(now: { clock.now })
+        api.summary.liveError = PWUsageAPIError.requestRejected(statusCode: 409, message: "TESLA_CONNECTION_REQUIRED")
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, clock: clock, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshAll(trigger: .userGesture)
+        #expect(coordinator.requiresTeslaReconnect)
+        api.summary.liveError = nil
+        api.holdPower = true
+        let liveRequests = api.summary.liveSiteIDs.count
+        let powerRequests = api.powerSiteIDs.count
+
+        // Both the restored poll and the reconnect's confirmation park on the same power request.
+        coordinator.authenticationRestored()
+        let confirm = Task { await coordinator.refreshAll(trigger: .automaticRecovery) }
+        try await eventually { api.powerSiteIDs.count > powerRequests }
+        for _ in 0 ..< 5 { await Task.yield() }
+        api.resumePower()
+        await confirm.value
+
+        #expect(!coordinator.requiresTeslaReconnect)
+        try await staysTrue { api.summary.liveSiteIDs.count == liveRequests + 1 }
+        #expect(api.summary.liveRefreshes.dropFirst(liveRequests).allSatisfy { !$0 })
+    }
+
     @Test("Successful readings do not hide a missing Tesla command permission")
     func commandPermissionRequiresReconnect() async {
         let api = DashboardAPISpy()
