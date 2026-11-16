@@ -8,8 +8,6 @@ struct UtilityPickerView: View {
     var body: some View {
         NavigationStack {
             List {
-                resultsSection
-                skipSection
                 if let errorMessage = model.errorMessage {
                     Section {
                         Text(errorMessage)
@@ -17,6 +15,8 @@ struct UtilityPickerView: View {
                             .foregroundStyle(.red)
                     }
                 }
+                resultsSection
+                skipSection
             }
             .disabled(model.isSaving)
             .navigationTitle("Your Utility")
@@ -29,21 +29,38 @@ struct UtilityPickerView: View {
             .onChange(of: model.isDone) { _, isDone in
                 if isDone { dismiss() }
             }
+            .onDisappear { model.cancelSearch() }
         }
     }
 
     private var resultsSection: some View {
         Section {
-            ForEach(model.results, id: \.self) { name in
-                Button(name) {
-                    Task { await model.select(name) }
-                }
-            }
+            resultRows
         } header: {
             Text("Your utility’s public rates fill days without a rate plan, so bills and savings can be estimated.")
         } footer: {
             Text("Utility names and rates come from the OpenEI Utility Rate Database. "
                 + "Only the utility name is used; never your location.")
+        }
+    }
+
+    @ViewBuilder
+    private var resultRows: some View {
+        switch model.searchState {
+        case .idle:
+            EmptyView()
+        case .results(let names):
+            ForEach(names, id: \.self) { name in
+                Button(name) {
+                    Task { await model.select(name) }
+                }
+            }
+        case .empty(let query):
+            Text("No utilities match “\(query)”.")
+                .foregroundStyle(.secondary)
+        case .failed:
+            Text(UtilityPickerModel.searchFailureMessage)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -68,12 +85,13 @@ struct UtilityPickerView: View {
     return UtilityPickerView(model: model)
 }
 
-#Preview("Empty") {
-    UtilityPickerView(
-        model: UtilityPickerModel(
-            search: { _ in [] },
-            setUtility: { _ in },
-            skipUtility: {}
-        )
+#Preview("No matches") {
+    let model = UtilityPickerModel(
+        debounce: .milliseconds(1),
+        search: { _ in [] },
+        setUtility: { _ in },
+        skipUtility: {}
     )
+    model.query = "zzz"
+    return UtilityPickerView(model: model)
 }

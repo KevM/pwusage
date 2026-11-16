@@ -49,7 +49,7 @@ struct UtilityPickerModelTests {
         let stub = UtilityStub()
         let model = stub.model()
         model.query = " a "
-        try await staysTrue(for: .milliseconds(40)) { stub.searched.isEmpty && model.results.isEmpty }
+        try await staysTrue(for: .milliseconds(40)) { stub.searched.isEmpty && model.searchState == .idle }
     }
 
     @Test("A query of two or more characters shows the debounced results")
@@ -58,7 +58,7 @@ struct UtilityPickerModelTests {
         stub.immediate["pac"] = ["Pacific Gas & Electric"]
         let model = stub.model()
         model.query = "pac"
-        try await eventually { model.results == ["Pacific Gas & Electric"] }
+        try await eventually { model.searchState == .results(["Pacific Gas & Electric"]) }
         #expect(stub.searched == ["pac"])
     }
 
@@ -69,7 +69,7 @@ struct UtilityPickerModelTests {
         let model = stub.model(debounce: .milliseconds(30))
         model.query = "ab"
         model.query = "abc"
-        try await eventually { model.results == ["ABC Power"] }
+        try await eventually { model.searchState == .results(["ABC Power"]) }
         #expect(stub.searched == ["abc"])
     }
 
@@ -81,9 +81,9 @@ struct UtilityPickerModelTests {
         model.query = "ab"
         try await eventually { stub.searched == ["ab"] }
         model.query = "abc"
-        try await eventually { model.results == ["Newer"] }
+        try await eventually { model.searchState == .results(["Newer"]) }
         stub.pending["ab"]?.resume(returning: ["Older"])
-        try await staysTrue(for: .milliseconds(40)) { model.results == ["Newer"] }
+        try await staysTrue(for: .milliseconds(40)) { model.searchState == .results(["Newer"]) }
     }
 
     @Test("Clearing the query below two characters clears the results at once")
@@ -92,9 +92,50 @@ struct UtilityPickerModelTests {
         stub.immediate["pac"] = ["Pacific Gas & Electric"]
         let model = stub.model()
         model.query = "pac"
-        try await eventually { !model.results.isEmpty }
+        try await eventually { model.searchState != .idle }
         model.query = "p"
-        #expect(model.results.isEmpty)
+        #expect(model.searchState == .idle)
+    }
+
+    @Test("A late result after the query drops below two characters never lands")
+    func lateResultAfterShortQueryIsDropped() async throws {
+        let stub = UtilityStub()
+        let model = stub.model()
+        model.query = "ab"
+        try await eventually { stub.searched == ["ab"] }
+        model.query = "a"
+        stub.pending["ab"]?.resume(returning: ["Late"])
+        try await staysTrue(for: .milliseconds(40)) { model.searchState == .idle }
+    }
+
+    @Test("A query with no matches says so with the query in curly quotes")
+    func emptyResultNamesTheQuery() async throws {
+        let stub = UtilityStub()
+        stub.immediate["zzz"] = []
+        let model = stub.model()
+        model.query = "zzz"
+        try await eventually { model.searchState == .empty(query: "zzz") }
+    }
+
+    @Test("A failed search is reported, not shown as an empty list")
+    func failedSearchIsReported() async throws {
+        let stub = UtilityStub()
+        let model = stub.model()
+        model.query = "pac"
+        try await eventually { stub.searched == ["pac"] }
+        stub.pending["pac"]?.resume(throwing: StubFailure())
+        try await eventually { model.searchState == .failed }
+    }
+
+    @Test("Cancelling the search drops an in-flight answer")
+    func cancelSearchDropsLateAnswer() async throws {
+        let stub = UtilityStub()
+        let model = stub.model()
+        model.query = "pac"
+        try await eventually { stub.searched == ["pac"] }
+        model.cancelSearch()
+        stub.pending["pac"]?.resume(returning: ["Pacific Gas & Electric"])
+        try await staysTrue(for: .milliseconds(40)) { model.searchState == .idle }
     }
 
     @Test("Choosing a utility saves it and marks the picker done")

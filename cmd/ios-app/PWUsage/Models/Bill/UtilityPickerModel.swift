@@ -6,8 +6,17 @@ import Observation
 @MainActor
 @Observable
 final class UtilityPickerModel {
+    /// What the list shows for the current query.
+    enum SearchState: Equatable {
+        case idle
+        case results([String])
+        case empty(query: String)
+        case failed
+    }
+
     static let minimumQueryLength = 2
     static let saveFailureMessage = "Couldn’t save your utility. Check your connection and try again."
+    static let searchFailureMessage = "Couldn’t search utilities. Check your connection and try again."
 
     var query = "" {
         didSet {
@@ -16,7 +25,7 @@ final class UtilityPickerModel {
         }
     }
 
-    private(set) var results: [String] = []
+    private(set) var searchState: SearchState = .idle
     private(set) var isSaving = false
     private(set) var errorMessage: String?
     private(set) var isDone = false
@@ -48,25 +57,28 @@ final class UtilityPickerModel {
         await finish { try await skipUtility() }
     }
 
-    private func scheduleSearch() {
+    /// Drops any in-flight or pending search, so a late answer cannot land after the sheet goes away.
+    func cancelSearch() {
         searchGeneration += 1
-        let generation = searchGeneration
         searchTask?.cancel()
         searchTask = nil
+        searchState = .idle
+    }
+
+    private func scheduleSearch() {
+        cancelSearch()
+        let generation = searchGeneration
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard term.count >= Self.minimumQueryLength else {
-            results = []
-            return
-        }
+        guard term.count >= Self.minimumQueryLength else { return }
         searchTask = Task {
             do {
                 try await Task.sleep(for: debounce)
                 let found = try await searchUtilities(term)
                 guard generation == searchGeneration else { return }
-                results = found
+                searchState = found.isEmpty ? .empty(query: term) : .results(found)
             } catch {
                 guard generation == searchGeneration, !(error is CancellationError) else { return }
-                results = []
+                searchState = .failed
             }
         }
     }

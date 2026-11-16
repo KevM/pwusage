@@ -11,6 +11,13 @@ struct UtilityPlanPickerView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let errorMessage = model.errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
                 Section {
                     Text("Choose the plan on your \(utilityName) bill. "
                         + "Its public rates price days without a rate plan, through today.")
@@ -19,13 +26,6 @@ struct UtilityPlanPickerView: View {
                 planSection
                 Section {
                     Button("Change Utility", action: onChangeUtility)
-                }
-                if let errorMessage = model.errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
                 }
             }
             .disabled(model.isSaving)
