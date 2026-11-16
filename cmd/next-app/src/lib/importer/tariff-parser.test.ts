@@ -119,6 +119,31 @@ describe('parseTariffContent', () => {
         expect(parseTariffContent(t, 'Site').seasons[0].name).toBe('Summer');
     });
 
+    it('swaps both names when Tesla swapped Summer and Winter, so season names stay unique', () => {
+        // Seen on a stored plan: "Summer" runs Nov–Mar and "Winter" Apr–Oct. Renaming only Summer
+        // produced two "Winter" seasons, which TariffSeason's UNIQUE (tariff_id, name) rejected.
+        const t: TariffV2 = {
+            ...SIMPLE_TARIFF,
+            seasons: {
+                Summer: { fromMonth: 11, fromDay: 1, toMonth: 3, toDay: 31, tou_periods: {} },
+                Winter: { fromMonth: 4, fromDay: 1, toMonth: 10, toDay: 31, tou_periods: {} },
+            },
+        };
+        expect(parseTariffContent(t, 'Site').seasons.map(s => [s.name, s.from_month])).toEqual([['Winter', 11], ['Summer', 4]]);
+    });
+
+    it('keeps Tesla season names when a rename would still collide', () => {
+        const t: TariffV2 = {
+            ...SIMPLE_TARIFF,
+            seasons: {
+                Summer: { fromMonth: 11, fromDay: 1, toMonth: 2, toDay: 28, tou_periods: {} },
+                Winter: { fromMonth: 3, fromDay: 1, toMonth: 5, toDay: 31, tou_periods: {} },
+                winter: { fromMonth: 6, fromDay: 1, toMonth: 10, toDay: 31, tou_periods: {} },
+            },
+        };
+        expect(parseTariffContent(t, 'Site').seasons.map(s => s.name)).toEqual(['Summer', 'Winter', 'winter']);
+    });
+
     it('defaults buy/sell rates to 0 when energy_charges missing for season', () => {
         const t: TariffV2 = { ...SIMPLE_TARIFF, energy_charges: {} };
         const result = parseTariffContent(t, 'Site');
