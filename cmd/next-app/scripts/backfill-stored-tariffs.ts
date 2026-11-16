@@ -1,6 +1,6 @@
 /**
  * Store the Tesla rate plan already saved in Site.json -> tariff_content_v2 for sites that have no
- * Tariff rows. Makes no Tesla calls. Dry run by default.
+ * Tesla or manual Tariff rows (URDB estimates don't count). Makes no Tesla calls. Dry run by default.
  *
  *   npx tsx scripts/backfill-stored-tariffs.ts                       # dry run, every candidate site
  *   npx tsx scripts/backfill-stored-tariffs.ts --site <id> --apply   # write one site (Dev DB)
