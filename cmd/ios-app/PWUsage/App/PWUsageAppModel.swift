@@ -284,8 +284,9 @@ final class PWUsageAppModel: ObservableObject {
         await reloadSitesAfterSignIn()
         // Only a fresh reading clears the reconnect screen. Stay "Connecting…" until it
         // lands, or the screen offers its button again after the auth sheet closes.
+        // The app is asking, not the person: recovery joins the restored poll and imports no history.
         if let coordinator, coordinator.requiresTeslaReconnect, coordinator.canRequestAccountData {
-            await coordinator.refreshAll(trigger: .userGesture)
+            await coordinator.refreshAll(trigger: .automaticRecovery)
         }
     }
 

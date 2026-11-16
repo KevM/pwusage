@@ -80,10 +80,10 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
 
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         liveSiteIDs.append(siteID)
-        if let liveError { throw liveError }
         if holdLive {
             return try await withCheckedThrowingContinuation { liveContinuations.append((siteID, $0)) }
         }
+        if let liveError { throw liveError }
         return try Self.liveResponse(siteID: siteID)
     }
 
@@ -92,6 +92,10 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         let pending = liveContinuations
         liveContinuations.removeAll()
         for (siteID, continuation) in pending {
+            if let liveError {
+                continuation.resume(throwing: liveError)
+                continue
+            }
             do {
                 continuation.resume(returning: try Self.liveResponse(siteID: siteID))
             } catch {
