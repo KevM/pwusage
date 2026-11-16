@@ -3,16 +3,19 @@ import { parseTariffContent, type ParsedTariff } from './tariff-parser';
 
 /**
  * Stores the Tesla rate plan already saved in `Site.json.tariff_content_v2` for sites that have no
- * `Tariff` rows (a first import that failed, e.g. on the empty-season bug fixed in #373), without
+ * Tesla or manual `Tariff` rows (a first import that failed, e.g. on the empty-season bug fixed in #373), without
  * calling Tesla. Parsing and metadata mirror `Importer.ensureSite`, so the next Tesla sync with the
  * same content dedupes against the stored version instead of adding another.
  */
 
-/** Sites with no `Tariff` row at all and a non-null stored Tesla plan. */
+/**
+ * Sites with no Tesla or manual `Tariff` row and a non-null stored Tesla plan. URDB `estimated` rows
+ * don't count: the estimate job gives a site with no plan reference estimates, which are no plan.
+ */
 export const STORED_TARIFF_CANDIDATES_SQL = `
   SELECT s.id, s.json
   FROM "Site" s
-  WHERE NOT EXISTS (SELECT 1 FROM "Tariff" t WHERE t.site_id = s.id)
+  WHERE NOT EXISTS (SELECT 1 FROM "Tariff" t WHERE t.site_id = s.id AND t.source <> 'estimated')
     AND jsonb_typeof(s.json -> 'tariff_content_v2') = 'object'
   ORDER BY s.id`;
 

@@ -63,7 +63,8 @@ export class TariffRepo {
    * Append a new Tesla tariff version (Tariff + seasons + schedules) without
    * deleting prior versions or overwriting active manual effective-date spans.
    * Deduplicates against the latest source = 'tesla' version. Returns whether a version was stored.
-   * `requireNoTariff` stores nothing when the site already has any tariff (checked under the lock).
+   * `requireNoTariff` stores nothing when the site already has a Tesla or manual tariff (checked
+   * under the lock); URDB estimates don't count.
    */
   async addTariffVersion(
     siteId: string,
@@ -82,10 +83,10 @@ export class TariffRepo {
       // Acquire write lock on the parent Site row to serialize concurrent tariff updates for this site.
       await client.query('SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
 
-      // A backfill of the plan saved in Site.json is stale once any tariff exists: a Tesla sync may
+      // A backfill of the plan saved in Site.json is stale once a Tesla or manual tariff exists: a sync may
       // have stored a newer plan since the caller chose this site. Checked under the site lock.
       if (options.requireNoTariff) {
-        const existing = await client.query('SELECT 1 FROM "Tariff" WHERE site_id = $1 LIMIT 1', [siteId]);
+        const existing = await client.query(`SELECT 1 FROM "Tariff" WHERE site_id = $1 AND source <> 'estimated' LIMIT 1`, [siteId]);
         if (existing.rowCount) {
           await client.query('COMMIT');
           return false;

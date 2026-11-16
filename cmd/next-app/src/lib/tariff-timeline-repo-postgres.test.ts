@@ -17,6 +17,7 @@ vi.mock('./db', () => ({
 }));
 
 import { parseTariffContent } from './importer/tariff-parser';
+import { STORED_TARIFF_CANDIDATES_SQL } from './importer/stored-tariff-backfill';
 import { TariffRepo } from './tariff-repo';
 import { recomputeIsCurrentTariff, TariffTimelineRepo } from './tariff-timeline-repo';
 import { runUrdbEstimatesForSite } from './urdb/estimate-job';
@@ -884,6 +885,33 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(stored).toBe(false);
     const names = await local.database.query(`SELECT name FROM "Tariff" WHERE site_id = $1`, [siteId]);
     expect(names.rows).toEqual([{ name: 'Newer From Tesla' }]);
+  });
+
+  it('backfills a site whose only rate plans are URDB estimates', async () => {
+    // Seen on Prod: the estimate job gave sites with no stored Tesla plan `estimated` reference rows,
+    // which hid them from the backfill even though Site.json holds their Tesla plan.
+    const siteId = 's-estimated-only';
+    await local.database.query(
+      `INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', $2)`,
+      [siteId, JSON.stringify({ tariff_content_v2: { utility: 'Utility', seasons: {} } })]
+    );
+    await local.database.query(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Estimated Reference', 1, false, 'estimated')`, [siteId]
+    );
+    const candidates = await local.database.query<{ id: string }>(STORED_TARIFF_CANDIDATES_SQL);
+    expect(candidates.rows.map(row => row.id)).toContain(siteId);
+
+    const stored = await new TariffRepo().addTariffVersion(siteId, {
+      name: 'Saved Tesla Plan',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.2, sell_rate: 0.03,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.2, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    }, undefined, { requireNoTariff: true });
+
+    expect(stored).toBe(true);
+    const after = await local.database.query<{ id: string }>(STORED_TARIFF_CANDIDATES_SQL);
+    expect(after.rows.map(row => row.id)).not.toContain(siteId);
   });
 
   it('clears needs_plan once the owner adds a rate plan', async () => {
