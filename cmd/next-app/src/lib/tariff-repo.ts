@@ -5,10 +5,10 @@ import { SiteRepo } from './site-repo';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import { addCalendarDays, computeSpanMutations, siteLocalDateString } from './tariff-timeline';
 import {
+  applyEstimatesOnClient,
   applySpanMutationPlan,
   insertTariffGraph,
   loadExistingSpans,
-  recomputeIsCurrentTariff,
 } from './tariff-timeline-repo';
 
 export class TariffRepo {
@@ -53,7 +53,7 @@ export class TariffRepo {
    * deleting prior versions or overwriting active manual effective-date spans.
    * Deduplicates against the latest source = 'tesla' version.
    */
-  async addTariffVersion(siteId: string, parsed: ParsedTariff): Promise<void> {
+  async addTariffVersion(siteId: string, parsed: ParsedTariff, metadata?: { name: string | null; code: string | null }): Promise<void> {
     const newHash = tariffContentHash(parsed);
     const client = await pool.connect();
     let changed = false;
@@ -72,11 +72,17 @@ export class TariffRepo {
         [siteId]
       )).rows[0];
       if (latestTesla?.content_hash === newHash) {
+        if (metadata) {
+          const updated = await client.query(`UPDATE "Tariff" SET plan_name = $2, plan_code = $3 WHERE id = $1 AND (plan_name IS DISTINCT FROM $2 OR plan_code IS DISTINCT FROM $3)`, [latestTesla.id, metadata.name, metadata.code]);
+          if (updated.rowCount) await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = clock_timestamp()`, [siteId]);
+        }
         await client.query('COMMIT');
         return;
       }
 
       const newTariffId = await insertTariffGraph(client, siteId, parsed, 'tesla', null, false, newHash);
+      if (metadata) await client.query('UPDATE "Tariff" SET plan_name = $2, plan_code = $3 WHERE id = $1', [newTariffId, metadata.name, metadata.code]);
+      await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = now()`, [siteId]);
       const siteTz = (await client.query<{ timezone: string }>(
         'SELECT timezone FROM "Site" WHERE id = $1',
         [siteId]
@@ -101,13 +107,20 @@ export class TariffRepo {
           effectiveTo,
           updatedByUserId: null,
         }));
-        await recomputeIsCurrentTariff(client, siteId, today);
         // Today's samples may already be priced under the previous plan, and when the new span is
         // now the earliest it also reprices the days before it. The cron runner picks the job up.
         reattribution = { siteId, fromDate: today, toDate: effectiveTo, requestedByUserId: null, trigger: 'tesla_sync' };
-        queued = await enqueueReattributionOnClient(client, reattribution);
       }
 
+      const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
+      for (const range of estimateChanges) {
+        if (!reattribution) reattribution = { siteId, fromDate: range.from, toDate: range.to, requestedByUserId: null, trigger: 'tesla_sync' };
+        else {
+          if (range.from < reattribution.fromDate) reattribution.fromDate = range.from;
+          if (reattribution.toDate !== null && (range.to === null || range.to > reattribution.toDate)) reattribution.toDate = range.to;
+        }
+      }
+      if (reattribution) queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
       changed = true;
     } catch (e) {

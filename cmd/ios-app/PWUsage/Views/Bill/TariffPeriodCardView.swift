@@ -72,7 +72,11 @@ struct TariffPeriodCardView: View {
             if period.isCurrentToday {
                 badge("Current", tint: .green)
             }
-            badge(period.source == .manual ? "Custom" : "Tesla", tint: period.source == .manual ? .blue : .secondary)
+            switch period.source {
+            case .manual: badge("Custom", tint: .blue)
+            case .tesla: badge("Tesla", tint: .secondary)
+            case .estimated: badge("Estimated", tint: .orange)
+            }
             actionsMenu
         }
     }

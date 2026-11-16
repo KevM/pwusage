@@ -14,6 +14,7 @@
         "name": "Holiday TOU",
         "version": 1,
         "source": "tesla",
+        "startSource": null,
         "effectiveFrom": "2024-01-01",
         "effectiveTo": null,
         "isCurrentToday": true,
@@ -70,6 +71,7 @@
       }
     ],
     "referencePeriods": [],
+    "estimates": null,
     "battery": null,
     "reattribution": null,
     "holidayDates": [

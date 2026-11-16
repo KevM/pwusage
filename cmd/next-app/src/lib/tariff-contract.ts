@@ -1,4 +1,4 @@
-import type { TariffReattributionStatus, TariffSource } from './db-types';
+import type { TariffReattributionStatus, TariffSource, TariffStartSource } from './db-types';
 
 export type TariffPeriodName = 'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK';
 
@@ -35,6 +35,7 @@ export interface TariffPeriodDTO {
   name: string;
   version: number;
   source: TariffSource;
+  startSource: TariffStartSource | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   isCurrentToday: boolean;
@@ -59,6 +60,13 @@ export interface SiteBatteryDTO {
   backupReservePercent: number;
 }
 
+export interface EstimatesStatusDTO {
+  status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
+  utilityName: string | null;
+  teslaPlanOutOfDate: boolean;
+  newerPlanName: string | null;
+}
+
 export interface SiteTariffsTimelineResponse {
   version: 2;
   siteId: string;
@@ -66,6 +74,7 @@ export interface SiteTariffsTimelineResponse {
   currency: string;
   periods: TariffPeriodDTO[];
   referencePeriods: TariffPeriodDTO[];
+  estimates: EstimatesStatusDTO | null;
   battery: SiteBatteryDTO | null;
   reattribution: ReattributionStatusDTO | null;
   /** Observed holidays this year and next (site-local YYYY-MM-DD): holidays use the weekend schedule. */

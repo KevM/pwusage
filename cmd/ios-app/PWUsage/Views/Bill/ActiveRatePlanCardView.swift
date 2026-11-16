@@ -34,14 +34,15 @@ enum RatePlanEditorMode: Identifiable, Equatable {
     }
 
     /// Names a plan saved in this mode must not reuse. An edited plan keeps its own name, which its
-    /// other date ranges (separate tariff versions) share, as the server allows.
+    /// other date ranges (separate tariff versions) share, as the server allows. Estimated plans
+    /// never reserve a name: the server ignores them when checking names.
     func takenNames(among periods: [TariffPeriodDTO]) -> [String] {
         func normalized(_ name: String) -> String {
             name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
         var ownName: String?
         if case .edit(let period) = self { ownName = normalized(period.name) }
-        return periods.map(\.name).filter { normalized($0) != ownName }
+        return periods.filter { $0.source != .estimated }.map(\.name).filter { normalized($0) != ownName }
     }
 }
 

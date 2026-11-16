@@ -52,5 +52,14 @@ BEGIN
     IF to_regclass('public."SiteTariffReattribution"') IS NOT NULL THEN
         EXECUTE 'UPDATE public."SiteTariffReattribution" SET status = ''idle'', cursor_day_start = NULL WHERE status IN (''pending'', ''running'')';
     END IF;
+    -- Park OpenEI rate estimate checks for every copied site except Harrison, the one site
+    -- live checks use, so the dev cron does not rerun prod's estimates (and queue
+    -- re-attribution) across the whole copy. A site without a row would be due at once.
+    IF to_regclass('public."SiteUtility"') IS NOT NULL THEN
+        EXECUTE 'INSERT INTO public."SiteUtility" (site_id, choice, status, next_check_at)
+            SELECT id, ''auto'', ''ready'', ''infinity'' FROM public."Site" WHERE id <> ''2252268092126997''
+            ON CONFLICT (site_id) DO UPDATE SET next_check_at = ''infinity'',
+                status = CASE WHEN public."SiteUtility".status IN (''pending'', ''running'') THEN ''ready'' ELSE public."SiteUtility".status END';
+    END IF;
 END
 $$;

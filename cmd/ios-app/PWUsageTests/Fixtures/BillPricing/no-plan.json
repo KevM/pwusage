@@ -9,6 +9,7 @@
     "currency": "USD",
     "periods": [],
     "referencePeriods": [],
+    "estimates": null,
     "battery": null,
     "reattribution": null,
     "holidayDates": [
