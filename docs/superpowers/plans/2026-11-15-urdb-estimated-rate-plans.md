@@ -279,10 +279,26 @@ Branch from `main` after PR 1 merges.
 
 ### Task 10: Mockups (gate for Tasks 12–13)
 
-- [ ] **Step 1:** Publish mockups as an Artifact: Rate Plans screen with an estimated plan (badge, `Estimated from public utility rates. Add your rate plan for a better figure.`), each start-date source label under the dates (`From public utility rates`, `First seen in Tesla`, `Assumed January 1`, and a proposed label for `history_start`, e.g. `Assumed from your first day of data`), the out-of-date notice (proposed: `Your Tesla rate plan looks out of date. Newer rates took effect <date>. Update it in the Tesla app or add your rate plan here.`), the utility picker (search, `My Utility Isn’t Listed`), the plan picker for sites without a Tesla plan, the `needs_utility`/`needs_plan` prompts on Bill and Solar System, and the savings line `About 40% of these days use estimated rates`.
+- [ ] **Step 1:** Publish mockups as an Artifact: Rate Plans screen with an estimated plan (badge, `Estimated from public utility rates. Add your rate plan for a better figure.`), each start-date source label under the dates (`From public utility rates`, `First seen in Tesla`, `Assumed January 1`, and a proposed label for `history_start`, e.g. `Assumed from your first day of data`), the out-of-date notice (proposed: `Your Tesla rate plan looks out of date. Newer rates took effect <date>. Update it in the Tesla app or add your rate plan here.`), the utility picker (search, `My Utility Isn’t Listed`), the possibly-outdated note (proposed: `These estimated rates started <date> and may be out of date. Add your rate plan for a better figure.`), the plan picker for sites without a Tesla plan, the `needs_utility`/`needs_plan` prompts on Bill and Solar System, and the savings line `About 40% of these days use estimated rates`.
 - [ ] **Step 2:** The owner approves or edits. **Tasks 12–13 don't start until then.** Record the approved copy here.
 
 **Mockup revision (2026-11-16):** Use the existing tab bar accessory on Home when missing utility or plan setup prevents current pricing. Offer one choice at a time, starting with the utility. Dismissal applies to the current site and keeps setup available in Bill and Solar System. Existing history accessories keep precedence.
+
+### Task 10b: Flag estimates whose URDB revision may be outdated
+
+URDB lags tariff changes (We Energies Rg 2 changed on 2026-01-01; URDB's newest Option B still starts 2025-06-01, see PR #376 "Known limits"). A revision with no `enddate` stays current as far as URDB knows, so the app can only say an estimate *may* be out of date, never that it is.
+
+**Files:**
+- Modify: `cmd/next-app/src/lib/tariff-contract.ts` and `cmd/ios-app/PWUsage/Models/Bill/MobileTariffs.swift` (same PR), `cmd/next-app/src/lib/urdb/estimate-job.ts`, `cmd/next-app/src/lib/tariff-timeline-repo.ts` (`getTimeline`), plus storage for the newest revision date and the utility's typical gap (a `SiteUtility` column pair, or derived from `TariffUrdbSource`)
+- Test: `cmd/next-app/src/lib/urdb/match.test.ts` (rule), `cmd/next-app/src/lib/tariff-timeline-repo-postgres.test.ts` (wire), `cmd/ios-app/PWUsageTests/MobileTariffsDecodingTests.swift`
+
+**Interfaces:**
+- `estimates.newestRevisionStart: string | null`: the URDB start date of the newest revision behind an estimate that covers today (actual, else reference).
+- `estimates.mayBeOutdated: boolean`: true when today is more than `min(15 months, 1.5 × the median gap between that plan's URDB revisions)` after `newestRevisionStart`. 15 months means the newest revision has missed a January, when most changes take effect. The median comes from the walked `supersedes` chain (reference: the default chain); with fewer than 3 revisions use 15 months.
+
+- [ ] **Step 1: Write failing tests:** `mayBeOutdatedAfterFifteenMonths`, `mayBeOutdatedSoonerForFrequentChangers`, `notOutdatedWithoutEstimateToday`, `fewRevisionsUseFifteenMonths`; Harrison-like fixture (newest 2025-06-01, today 2026-11-16) → `true`.
+- [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; web lint/typecheck; iOS `./lint.sh`.
+- [ ] **Step 5: Commit** `feat: flag estimated rates that may be out of date`.
 
 ### Task 11: Estimated share in savings
 
@@ -303,9 +319,9 @@ Branch from `main` after PR 1 merges.
 - Test: `cmd/ios-app/PWUsageTests/RateEstimatesPresentationTests.swift`
 
 **Interfaces:**
-- Produces: `static func startSourceLabel(_ source: TariffStartSource?) -> String?`, `static func estimateNote(for period: TariffPeriodDTO) -> String?`, `static func outOfDateNotice(_ estimates: SiteRateEstimatesDTO?) -> String?`, `static func prompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt?` with `enum RateEstimatesPrompt { case pickUtility, pickPlan }` (`needs_utility` → `.pickUtility`; `needs_plan` → `.pickPlan`; others `nil`). Copy exactly as approved in Task 10.
+- Produces: `static func startSourceLabel(_ source: TariffStartSource?) -> String?`, `static func estimateNote(for period: TariffPeriodDTO) -> String?`, `static func outOfDateNotice(_ estimates: SiteRateEstimatesDTO?) -> String?`, `static func mayBeOutdatedNote(_ estimates: SiteRateEstimatesDTO?) -> String?` (only when `mayBeOutdated`; never phrased as certain), `static func prompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt?` with `enum RateEstimatesPrompt { case pickUtility, pickPlan }` (`needs_utility` → `.pickUtility`; `needs_plan` → `.pickPlan`; others `nil`). Copy exactly as approved in Task 10.
 
-- [ ] **Step 1: Write failing tests** for every source label, the estimate note (estimated only), the out-of-date notice (shown only when `teslaPlanOutOfDate`), and each status → prompt.
+- [ ] **Step 1: Write failing tests** for every source label, the estimate note (estimated only), the out-of-date notice (shown only when `teslaPlanOutOfDate`), the may-be-outdated note (shown only when `mayBeOutdated`, with the formatted start date), and each status → prompt.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** — PASS; `./lint.sh`.
 - [ ] **Step 5: Commit** `feat(ios): copy for rate plan start-date sources and estimates`.
 
