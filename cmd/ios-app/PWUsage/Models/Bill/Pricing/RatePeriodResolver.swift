@@ -87,6 +87,11 @@ struct RatePeriodResolver: Sendable {
         )
     }
 
+    /// Whether the plan that strictly covers `instant` is an estimate from public utility rates.
+    func isEstimated(at instant: Date) -> Bool {
+        scheduleMatch(at: instant, strict: true)?.period.source == .estimated
+    }
+
     func match(at instant: Date) -> ActiveTariffPeriodMatch? {
         guard let found = scheduleMatch(at: instant) else { return nil }
         return ActiveTariffPeriodMatch(period: found.period, season: found.season, window: found.window)

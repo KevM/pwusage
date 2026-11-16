@@ -105,7 +105,8 @@ enum SavingsTestFixtures {
         buyRate: Double,
         sellRate: Double,
         effectiveFrom: String = "2020-01-01",
-        effectiveTo: String? = nil
+        effectiveTo: String? = nil,
+        source: TariffSource = .manual
     ) -> TariffPeriodDTO {
         let window = TimePeriodWindowInput(
             touName: .offPeak,
@@ -128,7 +129,7 @@ enum SavingsTestFixtures {
             tariffId: id * 10,
             name: name,
             version: 1,
-            source: .manual,
+            source: source,
             effectiveFrom: effectiveFrom,
             effectiveTo: effectiveTo,
             isCurrentToday: true,

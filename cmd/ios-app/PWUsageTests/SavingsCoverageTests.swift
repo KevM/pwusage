@@ -127,6 +127,39 @@ struct SavingsCoverageTests {
         #expect(result.cycle.gap(.noData)?.days == 1)
     }
 
+    @Test func estimatedDaysCountReferenceAndActualEstimates() throws {
+        let actual = [
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 1, name: "Estimate", buyRate: 0.2, sellRate: 0.05,
+                effectiveFrom: "2020-01-01", effectiveTo: "2026-06-04", source: .estimated
+            ),
+            period(3, from: "2026-06-05")
+        ]
+        let estimatedReference = SavingsTestFixtures.makeFlatPeriod(
+            id: 2, name: "Reference", buyRate: 0.2, sellRate: 0.05,
+            effectiveFrom: "2026-06-08", source: .estimated
+        )
+        let reference = [period(4, to: "2026-06-07"), estimatedReference]
+        let cycle = try report(days: juneDays(10), actual: actual, reference: reference).cycle
+        #expect(cycle.estimatedDays == 7)
+        #expect(cycle.daysWithData == 10)
+    }
+
+    @Test func estimatedPlansCountAsCoveredDays() throws {
+        let estimate = SavingsTestFixtures.makeFlatPeriod(
+            id: 3, name: "Estimate", buyRate: 0.2, sellRate: 0.05,
+            effectiveFrom: "2026-06-05", source: .estimated
+        )
+        let cycle = try report(days: juneDays(10), actual: [period(1, to: "2026-06-04"), estimate]).cycle
+        #expect(cycle.gap(.noRatePlan) == nil)
+        #expect(cycle.daysWithData == 10)
+        #expect(cycle.estimatedDays == 6)
+    }
+
+    @Test func manualPlansCountNoEstimatedDays() throws {
+        #expect(try report(days: juneDays(10)).cycle.estimatedDays == 0)
+    }
+
     @Test func yearAndLifetimeGapsSpanCycles() throws {
         let days = ["2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-31", "2026-06-01"]
         let result = try report(days: days, reference: [period(2, from: "2026-05-02")], now: "2026-06-01")
