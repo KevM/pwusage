@@ -65,6 +65,12 @@ export interface EstimatesStatusDTO {
   utilityName: string | null;
   teslaPlanOutOfDate: boolean;
   newerPlanName: string | null;
+  /** YYYY-MM-DD start of the newer URDB revision behind teslaPlanOutOfDate. */
+  newerPlanStart: string | null;
+  /** YYYY-MM-DD start of the newest URDB revision behind the estimate covering today. */
+  newestRevisionStart: string | null;
+  /** True when that newest revision is old enough that URDB may have missed a change. */
+  mayBeOutdated: boolean;
 }
 
 export interface SiteTariffsTimelineResponse {

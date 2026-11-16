@@ -96,6 +96,12 @@ struct SolarSystemView: View {
                 )
             case .ratePlans:
                 RatePlansSheet(site: site, actions: .live(coordinator))
+            case .rateEstimates(let prompt):
+                RateEstimatesSetupSheet(
+                    prompt: prompt,
+                    utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                    actions: .live(coordinator)
+                )
             }
         }
     }
@@ -154,7 +160,15 @@ struct SolarSystemView: View {
                 hasReferencePlan: coordinator.activeReferencePeriod != nil,
                 onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
                 onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
-                onCaveatAction: routeCaveat
+                onCaveatAction: routeCaveat,
+                estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
+                estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                onChooseEstimateSetup: { savingsSheet = .rateEstimates($0) },
+                fixedPlanNote: RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+                    coordinator.savingsTimeline?.estimates,
+                    referencePeriods: coordinator.savingsTimeline?.referencePeriods ?? [],
+                    periods: coordinator.savingsTimeline?.periods ?? []
+                )
             )
             panelHealthSection
             if stored != nil || status != nil { locationSection }
@@ -294,11 +308,13 @@ struct SolarSystemView: View {
 private enum SolarSavingsSheet: Identifiable {
     case fixedRatePlan(String?)
     case ratePlans
+    case rateEstimates(RateEstimatesPrompt)
 
     var id: String {
         switch self {
         case .fixedRatePlan: "fixedRatePlan"
         case .ratePlans: "ratePlans"
+        case .rateEstimates(let prompt): "rateEstimates-\(prompt)"
         }
     }
 }

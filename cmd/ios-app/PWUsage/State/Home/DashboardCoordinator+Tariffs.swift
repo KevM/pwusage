@@ -61,6 +61,26 @@ extension DashboardCoordinator {
         }
     }
 
+    func searchUtilities(query: String) async throws -> [String] {
+        try await runTariffQuery { api, siteID in try await api.searchUtilities(siteID: siteID, query: query) }
+    }
+
+    func setUtility(name: String) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in try await api.setUtility(siteID: siteID, name: name) }
+    }
+
+    func skipUtility() async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in try await api.skipUtility(siteID: siteID) }
+    }
+
+    func utilityPlans() async throws -> [UtilityPlanDTO] {
+        try await runTariffQuery { api, siteID in try await api.utilityPlans(siteID: siteID) }
+    }
+
+    func setUtilityPlan(label: String) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in try await api.setUtilityPlan(siteID: siteID, label: label) }
+    }
+
     private func runTariffFetch(knownETag: String?) async throws -> SiteTariffsTimelineResponse? {
         guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
@@ -102,6 +122,26 @@ extension DashboardCoordinator {
             let validated = try response.validating(siteID: siteID)
             await saveTimeline(validated, etag: nil, scope: scope)
             return validated
+        } catch {
+            handleTariffError(error, generation: generation)
+            throw error
+        }
+    }
+
+    /// Reads from the utility endpoints, which return their own values rather than a timeline.
+    private func runTariffQuery<Value>(
+        _ action: (any MobileTariffDataAPI, String) async throws -> Value
+    ) async throws -> Value {
+        guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
+        guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
+        let generation = siteGeneration
+        let siteID = selectedSiteID
+        do {
+            let value = try await action(tariffAPI, siteID)
+            guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return value
         } catch {
             handleTariffError(error, generation: generation)
             throw error

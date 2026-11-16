@@ -325,7 +325,8 @@ enum DemoFixtures {
                     weekdayPeriods: [priorWindow],
                     weekendPeriods: [priorWindow]
                 )
-            ]
+            ],
+            startSource: .urdb
         )
     }
 

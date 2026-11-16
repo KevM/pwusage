@@ -44,6 +44,8 @@ struct SavingsFigures: Equatable, Sendable {
     let daysWithData: Int
     let daysInPeriod: Int
     var coverageGaps: [SavingsCoverageGap] = []
+    /// Counted days with at least one slot priced on an estimated actual or reference plan.
+    var estimatedDays: Int = 0
 
     func gap(_ cause: SavingsGapCause) -> SavingsCoverageGap? {
         coverageGaps.first { $0.cause == cause }
@@ -75,7 +77,22 @@ enum SavingsCalculator {
         let end: Date
         let costs: ScenarioCosts
         let daysWithData: Int
+        let estimatedDays: Int
         let dayStatuses: [String: DayStatus]
+    }
+
+    private struct CycleBuckets {
+        let recorded = BucketMap()
+        let batteryFixed = BucketMap()
+        let solarAlone = BucketMap()
+        let noSolar = BucketMap()
+    }
+
+    private struct DayTally {
+        var hasRecordedSlot = false
+        var missingRatePlan = false
+        var missingFixedRatePlan = false
+        var usesEstimate = false
     }
 
     private struct CyclePricingContext {
@@ -142,6 +159,7 @@ enum SavingsCalculator {
             end: currentCycle.end,
             costs: .zero,
             daysWithData: 0,
+            estimatedDays: 0,
             dayStatuses: [:]
         )
 
@@ -192,51 +210,23 @@ enum SavingsCalculator {
         startIndex: Int,
         context: CyclePricingContext
     ) -> CycleResult {
-        let recordedBuckets = BucketMap()
-        let batteryFixedBuckets = BucketMap()
-        let solarAloneBuckets = BucketMap()
-        let noSolarBuckets = BucketMap()
+        let buckets = CycleBuckets()
         var daysWithData = 0
+        var estimatedDays = 0
         var dayStatuses: [String: DayStatus] = [:]
 
         for dayIndex in startIndex ..< context.scenarios.recorded.count {
             let day = context.scenarios.recorded[dayIndex]
             if day.dayStart >= cycle.end { break }
             guard day.dayStart >= cycle.start else { continue }
-            let dayBatteryFixed = context.scenarios.batteryFixed[dayIndex]
-            let daySolarAlone = context.scenarios.solarAlone[dayIndex]
-            let dayNoSolar = context.scenarios.noSolar[dayIndex]
-
-            var hasRecordedSlot = false
-            var missingRatePlan = false
-            var missingFixedRatePlan = false
-            for (slotIndex, maybeGrid) in day.gridWh.enumerated() {
-                guard let grid1 = maybeGrid else { continue }
-                let instant = day.dayStart.addingTimeInterval(TimeInterval(slotIndex) * 300)
-                guard instant >= cycle.start, instant < cycle.end else { continue }
-
-                guard let grid2 = dayBatteryFixed.gridWh[slotIndex],
-                      let grid3 = daySolarAlone.gridWh[slotIndex],
-                      let grid4 = dayNoSolar.gridWh[slotIndex] else { continue }
-                let actualPeriod = context.actual.period(at: instant, strict: true)
-                let refPeriod = context.reference.period(at: instant, strict: true)
-                missingRatePlan = missingRatePlan || actualPeriod == .unknown
-                missingFixedRatePlan = missingFixedRatePlan || refPeriod == .unknown
-                guard actualPeriod != .unknown, refPeriod != .unknown else { continue }
-
-                hasRecordedSlot = true
-
-                recordedBuckets.add(resolved: actualPeriod, gridWh: Double(grid1))
-                batteryFixedBuckets.add(resolved: refPeriod, gridWh: Double(grid2))
-                solarAloneBuckets.add(resolved: refPeriod, gridWh: Double(grid3))
-                noSolarBuckets.add(resolved: refPeriod, gridWh: Double(grid4))
-            }
-            if hasRecordedSlot, day.dayStart <= context.now {
+            let tally = priceDay(dayIndex, cycle: cycle, context: context, buckets: buckets)
+            if tally.hasRecordedSlot, day.dayStart <= context.now {
                 daysWithData += 1
+                if tally.usesEstimate { estimatedDays += 1 }
                 dayStatuses[day.day] = .counted
             } else {
                 dayStatuses[day.day] = .uncounted(
-                    missingRatePlan: missingRatePlan, missingFixedRatePlan: missingFixedRatePlan
+                    missingRatePlan: tally.missingRatePlan, missingFixedRatePlan: tally.missingFixedRatePlan
                 )
             }
         }
@@ -244,17 +234,57 @@ enum SavingsCalculator {
         return CycleResult(
             start: cycle.start,
             end: cycle.end,
-            costs: costs(recordedBuckets, batteryFixedBuckets, solarAloneBuckets, noSolarBuckets),
+            costs: costs(buckets),
             daysWithData: daysWithData,
+            estimatedDays: estimatedDays,
             dayStatuses: dayStatuses
         )
     }
 
-    private static func costs(_ recorded: BucketMap, _ battery: BucketMap, _ solar: BucketMap, _ none: BucketMap)
-        -> ScenarioCosts {
+    /// Prices the slots of one stored day that fall inside `cycle` into `buckets`.
+    private static func priceDay(
+        _ dayIndex: Int,
+        cycle: (start: Date, end: Date),
+        context: CyclePricingContext,
+        buckets: CycleBuckets
+    ) -> DayTally {
+        let day = context.scenarios.recorded[dayIndex]
+        let dayBatteryFixed = context.scenarios.batteryFixed[dayIndex]
+        let daySolarAlone = context.scenarios.solarAlone[dayIndex]
+        let dayNoSolar = context.scenarios.noSolar[dayIndex]
+        var tally = DayTally()
+
+        for (slotIndex, maybeGrid) in day.gridWh.enumerated() {
+            guard let grid1 = maybeGrid else { continue }
+            let instant = day.dayStart.addingTimeInterval(TimeInterval(slotIndex) * 300)
+            guard instant >= cycle.start, instant < cycle.end else { continue }
+
+            guard let grid2 = dayBatteryFixed.gridWh[slotIndex],
+                  let grid3 = daySolarAlone.gridWh[slotIndex],
+                  let grid4 = dayNoSolar.gridWh[slotIndex] else { continue }
+            let actual = context.actual.matchedPeriod(at: instant, strict: true)
+            let reference = context.reference.matchedPeriod(at: instant, strict: true)
+            let actualPeriod = actual.resolved
+            let refPeriod = reference.resolved
+            tally.missingRatePlan = tally.missingRatePlan || actualPeriod == .unknown
+            tally.missingFixedRatePlan = tally.missingFixedRatePlan || refPeriod == .unknown
+            guard actualPeriod != .unknown, refPeriod != .unknown else { continue }
+
+            tally.hasRecordedSlot = true
+            tally.usesEstimate = tally.usesEstimate || actual.isEstimated || reference.isEstimated
+
+            buckets.recorded.add(resolved: actualPeriod, gridWh: Double(grid1))
+            buckets.batteryFixed.add(resolved: refPeriod, gridWh: Double(grid2))
+            buckets.solarAlone.add(resolved: refPeriod, gridWh: Double(grid3))
+            buckets.noSolar.add(resolved: refPeriod, gridWh: Double(grid4))
+        }
+        return tally
+    }
+
+    private static func costs(_ buckets: CycleBuckets) -> ScenarioCosts {
         ScenarioCosts(
-            recorded: recorded.totalCost(), batteryFixed: battery.totalCost(),
-            solarAlone: solar.totalCost(), noSolar: none.totalCost()
+            recorded: buckets.recorded.totalCost(), batteryFixed: buckets.batteryFixed.totalCost(),
+            solarAlone: buckets.solarAlone.totalCost(), noSolar: buckets.noSolar.totalCost()
         )
     }
 
@@ -267,6 +297,7 @@ enum SavingsCalculator {
     ) -> SavingsFigures {
         let totalCosts = results.reduce(.zero) { $0 + $1.costs }
         let daysWithData = results.reduce(0) { $0 + $1.daysWithData }
+        let estimatedDays = results.reduce(0) { $0 + $1.estimatedDays }
         let periodStart = results.first?.start ?? now
         let effectiveStart = firstStoredDay.map { max(periodStart, $0) } ?? periodStart
         let startDay = calendar.startOfDay(for: effectiveStart)
@@ -279,7 +310,8 @@ enum SavingsCalculator {
             costs: totalCosts,
             daysWithData: daysWithData,
             daysInPeriod: coverage.daysInPeriod,
-            coverageGaps: coverage.gaps
+            coverageGaps: coverage.gaps,
+            estimatedDays: estimatedDays
         )
     }
 
