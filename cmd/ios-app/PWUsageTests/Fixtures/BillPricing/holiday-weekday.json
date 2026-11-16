@@ -73,6 +73,11 @@
     "referencePeriods": [],
     "estimates": null,
     "battery": null,
+    "systemCosts": {
+      "siteInstalled": "2024-07-06",
+      "solar": null,
+      "powerwall": null
+    },
     "reattribution": null,
     "holidayDates": [
       "2024-01-01",

@@ -209,6 +209,7 @@ export function buildBillPricingFixture(def: BillPricingFixtureCaseDef): BillPri
         viewerUserId: null,
         periodRows,
         tariffMap,
+        siteInstalled: today,
     });
 
     const cycleStart = getCurrentCycleStart(billingDay, now, timezone);

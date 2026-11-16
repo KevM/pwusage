@@ -12,6 +12,7 @@ import type {
 import { buildDefaultTariff, tariffContentHash, type ParsedTariff } from './importer/tariff-parser';
 import { accountFingerprint, logEvent } from './observability';
 import { observedHolidayDates } from './holidays';
+import { mapSystemCostRows, SYSTEM_COST_COMPONENTS, type SystemCostRow, type SystemCostsInput } from './system-costs';
 import { SiteRepo } from './site-repo';
 import { fillWindowBounds, loadHistoryWindow, loadHistoryWindowInput, uncoveredPieces, type HistoryWindow } from './urdb/history-window';
 import type { ExpandedRevision } from './urdb/history-expand';
@@ -80,7 +81,10 @@ export interface BuildSiteTariffsTimelineInput {
   periodRows: PeriodQueryRow[];
   referencePeriodRows?: PeriodQueryRow[];
   tariffMap: Map<number, Tariff>;
+  /** Site.installed as a site-local YYYY-MM-DD. */
+  siteInstalled: string;
   battery?: SiteBatteryDTO | null;
+  systemCostRows?: SystemCostRow[];
   reattribution?: SiteTariffReattributionRow;
   latestTesla?: LatestTeslaTariffSummary;
 }
@@ -162,7 +166,9 @@ export function buildSiteTariffsTimelineResponse(
     periodRows,
     referencePeriodRows = [],
     tariffMap,
+    siteInstalled,
     battery = null,
+    systemCostRows = [],
     reattribution,
     latestTesla,
   } = input;
@@ -206,6 +212,7 @@ export function buildSiteTariffsTimelineResponse(
     referencePeriods,
     estimates: null,
     battery,
+    systemCosts: { siteInstalled, ...mapSystemCostRows(systemCostRows) },
     reattribution: toReattributionDTO(reattribution),
     holidayDates: holidayYears.flatMap(y => observedHolidayDates(y)),
     teslaSync: {
@@ -725,16 +732,45 @@ export class TariffTimelineRepo {
     logEvent('info', 'tariff.history.saved', { revisionCount: revisions.length, savedPeriodCount: savedCount, openPlan: openLabel !== null });
     return this.getTimeline(siteId, userId);
   }
+
+  /** Replaces both components: a `null` component deletes its row. Costs are not re-attributed. */
+  async saveSystemCosts(siteId: string, userId: string, input: SystemCostsInput): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      if (!site.rowCount) throw new TariffNotFoundError('Site not found');
+      for (const component of SYSTEM_COST_COMPONENTS) {
+        const cost = input[component];
+        if (!cost) {
+          await client.query('DELETE FROM "SiteSystemCost" WHERE site_id = $1 AND component = $2', [siteId, component]);
+          continue;
+        }
+        await client.query(
+          `INSERT INTO "SiteSystemCost" (site_id, component, install_date, price, tax_credit_percent, incentives, updated_by_user_id, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+           ON CONFLICT (site_id, component) DO UPDATE SET install_date = EXCLUDED.install_date, price = EXCLUDED.price,
+             tax_credit_percent = EXCLUDED.tax_credit_percent, incentives = EXCLUDED.incentives,
+             updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`,
+          [siteId, component, cost.installDate, cost.price, cost.taxCreditPercent, cost.incentives, userId]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    return this.getTimeline(siteId, userId);
+  }
+
   async getTimeline(siteId: string, viewerUserId: string | null): Promise<SiteTariffsTimelineResponse> {
     const siteRes = await pool.query<{
       id: string;
       timezone: string;
+      installed: Date | string;
       currency: string | null;
       nameplate_energy: string | number | null;
       nameplate_power: string | number | null;
       backup_reserve_percent: string | number | null;
     }>(
-      `SELECT id, timezone,
+      `SELECT id, timezone, installed,
               COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
               json ->> 'nameplate_energy' AS nameplate_energy,
               json ->> 'nameplate_power' AS nameplate_power,
@@ -747,6 +783,7 @@ export class TariffTimelineRepo {
     const timezone = siteRow.timezone || 'UTC';
     const currency = siteRow.currency || 'USD';
     const today = siteLocalDateString(new Date(), timezone);
+    const siteInstalled = siteLocalDateString(new Date(siteRow.installed), timezone);
     const battery = parseSiteBattery(siteRow);
 
     const periodsRes = await pool.query<PeriodQueryRow>(
@@ -781,6 +818,12 @@ export class TariffTimelineRepo {
     ])];
     const tariffMap = await hydrateTariffs(pool, tariffIds);
 
+    const systemCostRes = await pool.query<SystemCostRow>(
+      `SELECT component, install_date::text, price::text, tax_credit_percent::text, incentives::text
+       FROM "SiteSystemCost" WHERE site_id = $1`,
+      [siteId]
+    );
+
     const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
       `SELECT id, name, updated, content_hash
        FROM "Tariff"
@@ -810,7 +853,9 @@ export class TariffTimelineRepo {
       periodRows: periodsRes.rows,
       referencePeriodRows: referencePeriodsRes.rows,
       tariffMap,
+      siteInstalled,
       battery,
+      systemCostRows: systemCostRes.rows,
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
     });

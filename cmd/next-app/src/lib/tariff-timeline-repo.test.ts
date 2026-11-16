@@ -107,7 +107,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
 
     mocks.queryMock.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM "Site"')) {
-        return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD' }] };
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD' }] };
       }
       if (sql.includes('FROM "TariffEffectivePeriod" p')) {
         return {
@@ -248,7 +248,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     try {
       mocks.queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM "Site"')) {
-          return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD' }] };
         }
         if (sql.includes('FROM "TariffEffectivePeriod" p')) {
           return {
@@ -289,7 +289,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     try {
       mocks.queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM "Site"')) {
-          return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD' }] };
         }
         if (sql.includes('FROM "TariffEffectivePeriod" p')) {
           return { rows: [] };
@@ -313,6 +313,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     const res = buildSiteTariffsTimelineResponse({
       siteId: 's1',
       timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
       currency: 'USD',
       today: '2026-11-14',
       viewerUserId: 'u1',
@@ -360,6 +361,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
           rows: [{
             id: 's1',
             timezone: 'America/Chicago',
+            installed: '2023-11-14T08:00:00Z',
             currency: 'USD',
             nameplate_energy: '13500',
             nameplate_power: '5000',
@@ -384,6 +386,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
           rows: [{
             id: 's1',
             timezone: 'America/Chicago',
+            installed: '2023-11-14T08:00:00Z',
             currency: 'USD',
             nameplate_energy: null,
             nameplate_power: null,
@@ -410,7 +413,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     };
     mocks.queryMock.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM "Site"')) {
-        return { rows: [{ id: 's1', timezone: 'America/Chicago', currency: 'USD', nameplate_energy: null, nameplate_power: null, backup_reserve_percent: null }] };
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD', nameplate_energy: null, nameplate_power: null, backup_reserve_percent: null }] };
       }
       return { rows: [] };
     });
@@ -437,5 +440,62 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(clientQueries.some(q => q.sql.includes('"TariffEffectivePeriod"'))).toBe(false);
     expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
     expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffReferencePeriod"'))).toBe(true);
+  });
+
+  it('includes system costs and the site install date', async () => {
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 's1', timezone: 'America/Los_Angeles', installed: '2023-11-14T08:00:00Z', currency: 'USD', nameplate_energy: null, nameplate_power: null, backup_reserve_percent: null }] };
+      }
+      if (sql.includes('FROM "SiteSystemCost"')) {
+        return { rows: [{ component: 'solar', install_date: '2023-11-14', price: '24000.00', tax_credit_percent: '30.00', incentives: '0.00' }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await new TariffTimelineRepo().getTimeline('s1', null);
+    expect(res.systemCosts).toEqual({
+      siteInstalled: '2023-11-14',
+      solar: { installDate: '2023-11-14', price: 24000, taxCreditPercent: 30, incentives: 0 },
+      powerwall: null,
+    });
+  });
+
+  it('system costs default to null components', async () => {
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD', nameplate_energy: null, nameplate_power: null, backup_reserve_percent: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await new TariffTimelineRepo().getTimeline('s1', null);
+    expect(res.systemCosts.solar).toBeNull();
+    expect(res.systemCosts.powerwall).toBeNull();
+  });
+
+  it('saves system costs, upserting present components and deleting null ones in one transaction', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) return { rows: [{ id: 's1' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    };
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD', nameplate_energy: null, nameplate_power: null, backup_reserve_percent: null }] };
+      }
+      return { rows: [] };
+    });
+
+    await new TariffTimelineRepo().saveSystemCosts('s1', 'u1', {
+      solar: { installDate: '2023-11-14', price: 24000, taxCreditPercent: 30, incentives: 0 },
+      powerwall: null,
+    });
+
+    const upsert = clientQueries.find(q => q.sql.includes('INSERT INTO "SiteSystemCost"'));
+    expect(upsert?.params).toEqual(['s1', 'solar', '2023-11-14', 24000, 30, 0, 'u1']);
+    const deletes = clientQueries.filter(q => q.sql.includes('DELETE FROM "SiteSystemCost"'));
+    expect(deletes.map(q => q.params)).toEqual([['s1', 'powerwall']]);
+    expect(clientQueries.some(q => q.sql === 'COMMIT')).toBe(true);
+    expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
   });
 });
