@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { pool, Tariff, TariffSchedule } from './db';
 import { ParsedTariff, tariffContentHash } from './importer/tariff-parser';
 import { logEvent } from './observability';
@@ -10,6 +11,16 @@ import {
   insertTariffGraph,
   loadExistingSpans,
 } from './tariff-timeline-repo';
+
+/** The site-local date of the earliest archived day, or `today` when there is none (or it is later). */
+async function firstArchivedDay(client: PoolClient, siteId: string, timeZone: string, today: string): Promise<string> {
+  const { rows } = await client.query<{ first_day: string | null }>(
+    `SELECT (MIN(day_start) AT TIME ZONE $2)::date::text AS first_day FROM "EnergyDayArchive" WHERE site_id = $1`,
+    [siteId, timeZone]
+  );
+  const first = rows[0]?.first_day ?? null;
+  return first !== null && first < today ? first : today;
+}
 
 export class TariffRepo {
   // === Queries ===
@@ -98,18 +109,21 @@ export class TariffRepo {
           contentHashChanged: true,
         });
       } else {
-        const nextManual = spans.find(s => s.source === 'manual' && s.effectiveFrom > today);
+        // A site's first plan covers the history already archived, as the historic-tariffs migration
+        // did for first plans; the URDB anchor then labels that start `history_start`.
+        const effectiveFrom = spans.length === 0 ? await firstArchivedDay(client, siteId, siteTz, today) : today;
+        const nextManual = spans.find(s => s.source === 'manual' && s.effectiveFrom > effectiveFrom);
         const effectiveTo = nextManual ? addCalendarDays(nextManual.effectiveFrom, -1) : null;
         await applySpanMutationPlan(client, siteId, computeSpanMutations(spans, {
           tariffId: newTariffId,
           source: 'tesla',
-          effectiveFrom: today,
+          effectiveFrom,
           effectiveTo,
           updatedByUserId: null,
         }));
         // Today's samples may already be priced under the previous plan, and when the new span is
         // now the earliest it also reprices the days before it. The cron runner picks the job up.
-        reattribution = { siteId, fromDate: today, toDate: effectiveTo, requestedByUserId: null, trigger: 'tesla_sync' };
+        reattribution = { siteId, fromDate: effectiveFrom, toDate: effectiveTo, requestedByUserId: null, trigger: 'tesla_sync' };
       }
 
       const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;

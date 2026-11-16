@@ -773,6 +773,48 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(timeline.estimates?.newerPlanName).toBeNull();
   });
 
+  it('starts a site\'s first Tesla plan at its first archived day and later plans at today', async () => {
+    const siteId = 's-first-plan-history';
+    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    // Site-local midnights (America/Chicago, CST): the first archived day is 2024-03-05.
+    await local.database.query(
+      `INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status) VALUES
+         ($1, '2024-03-05T06:00:00Z', gen_random_uuid(), 'complete'),
+         ($1, '2024-03-06T06:00:00Z', gen_random_uuid(), 'complete')`,
+      [siteId]
+    );
+    const tariffRepo = new TariffRepo();
+    const flat = (name: string, rate: number) => ({
+      name,
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: rate, sell_rate: 0.03,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: rate, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+
+    await tariffRepo.addTariffVersion(siteId, flat('First Stored Plan', 0.2), { name: 'EV2-A', code: 'EV2A' });
+
+    const first = await local.database.query<{ effective_from: string; effective_to: string | null }>(
+      `SELECT effective_from::text, effective_to::text FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]
+    );
+    expect(first.rows).toEqual([{ effective_from: '2024-03-05', effective_to: null }]);
+    const job = await local.database.query<{ status: string; from_date: string }>(
+      `SELECT status, from_date::text FROM "SiteTariffReattribution" WHERE site_id = $1`, [siteId]
+    );
+    // The earliest span reprices every day before it too, so the job reaches back to history start.
+    expect(job.rows).toEqual([{ status: 'pending', from_date: '2015-01-01' }]);
+    const utility = await local.database.query(`SELECT status FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+    expect(utility.rows).toEqual([{ status: 'pending' }]);
+
+    await tariffRepo.addTariffVersion(siteId, flat('Second Plan', 0.25));
+
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
+    const spans = await local.database.query<{ effective_from: string }>(
+      `SELECT effective_from::text FROM "TariffEffectivePeriod" WHERE site_id = $1 ORDER BY effective_from`, [siteId]
+    );
+    expect(spans.rows.map(row => row.effective_from)).toEqual(['2024-03-05', today]);
+  });
+
   it('clears needs_plan once the owner adds a rate plan', async () => {
     const siteId = 's-needs-plan-cleared';
     await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
