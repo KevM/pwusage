@@ -15,14 +15,18 @@ export function urdbStartDate(rate: UrdbRate): string | null {
 const dateOf = urdbStartDate;
 // Every month x weekday/weekend x hour cell, Tesla evaluated on the 15th at hh:30.
 const CELL_COUNT = 12 * 2 * 24;
-function teslaBuyCells(tesla: Tariff, rate: UrdbRate, withAdj: boolean): Array<{ tesla: number | null; urdb: number | null }> {
+interface Cell { month: number; weekend: boolean; hour: number }
+function teslaCells(tesla: Tariff): Array<Cell & { tesla: number | null }> {
   const schedule = new Schedule([tesla], 'UTC');
-  const cells: Array<{ tesla: number | null; urdb: number | null }> = [];
+  const cells: Array<Cell & { tesla: number | null }> = [];
   for (let month = 1; month <= 12; month++) for (const weekend of [false, true]) for (let hour = 0; hour < 24; hour++) {
     const period = schedule.getTariffPeriodByComponents(month, 15, hour, weekend ? 6 : 1, undefined, undefined, 30);
-    cells.push({ tesla: period?.schedule.buy_rate ?? period?.season.buy_rate ?? null, urdb: urdbBuyRateAt(rate, month, weekend, hour, withAdj) });
+    cells.push({ month, weekend, hour, tesla: period?.schedule.buy_rate ?? period?.season.buy_rate ?? null });
   }
   return cells;
+}
+function teslaBuyCells(tesla: Tariff, rate: UrdbRate, withAdj: boolean): Array<{ tesla: number | null; urdb: number | null }> {
+  return teslaCells(tesla).map(cell => ({ tesla: cell.tesla, urdb: urdbBuyRateAt(rate, cell.month, cell.weekend, cell.hour, withAdj) }));
 }
 export function teslaMatchesUrdb(tesla: Tariff, rate: UrdbRate): boolean {
   return [true, false].some(withAdj => teslaBuyCells(tesla, rate, withAdj).every(cell => cell.tesla != null && cell.urdb !== null && Math.abs(cell.tesla - cell.urdb) <= 0.005 + 1e-10));
@@ -36,10 +40,20 @@ export function buyRateDistance(tesla: Tariff, rate: UrdbRate): number | null {
   }).filter((mean): mean is number => mean !== null);
   return means.length ? Math.min(...means) : null;
 }
+// Like isFixedRate: time of use only when some month and day type has more than one buy price across its hours.
 export function teslaShape(tesla: Tariff | null): RatePlanKind | null {
   if (!tesla) return null;
-  const prices = new Set(teslaBuyCells(tesla, { label: '', name: '', utility: '' } as UrdbRate, false).map(cell => cell.tesla).filter((value): value is number => value !== null).map(value => Math.round(value * 1e5)));
-  return prices.size > 1 ? 'time_of_use' : 'fixed';
+  const cells = teslaCells(tesla);
+  if (cells.every(cell => cell.tesla === null)) return null;
+  const prices = new Map<string, Set<number>>();
+  for (const cell of cells) {
+    if (cell.tesla === null) continue;
+    const key = `${cell.month}-${cell.weekend}`;
+    const set = prices.get(key) ?? new Set<number>();
+    set.add(Math.round(cell.tesla * 1e5));
+    prices.set(key, set);
+  }
+  return [...prices.values()].some(set => set.size > 1) ? 'time_of_use' : 'fixed';
 }
 export function planKind(rate: UrdbRate): RatePlanKind {
   return isFixedRate(rate) ? 'fixed' : 'time_of_use';

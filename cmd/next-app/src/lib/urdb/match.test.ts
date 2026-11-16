@@ -209,6 +209,10 @@ describe('closeness to the Tesla plan', () => {
   it('teslaShapeFixedWithOnePrice', () => {
     expect(teslaShape(teslaFrom([flatSeason(0.2)]))).toBe('fixed');
   });
+  it('teslaShapeFixedWithSeasonalPricesOnly', () => {
+    const season = (name: string, fromMonth: number, toMonth: number, price: number): TariffSeasonInput => ({ ...flatSeason(price), name, fromMonth, toMonth });
+    expect(teslaShape(teslaFrom([season('Summer', 6, 9, 0.2), season('Winter', 10, 5, 0.15)]))).toBe('fixed');
+  });
   it('teslaShapeNullWithoutPlan', () => {
     expect(teslaShape(null)).toBeNull();
   });
