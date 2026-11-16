@@ -13,19 +13,6 @@ enum TariffStartSource: String, Codable, Equatable, Sendable {
     case historyStart = "history_start"
 }
 
-struct SiteRateEstimatesDTO: Codable, Equatable, Sendable {
-    enum Status: String, Codable, Equatable, Sendable {
-        case pending, ready, skipped, failed
-        case needsUtility = "needs_utility"
-        case needsPlan = "needs_plan"
-    }
-
-    let status: Status
-    let utilityName: String?
-    let teslaPlanOutOfDate: Bool
-    let newerPlanName: String?
-}
-
 struct UtilityPlanDTO: Decodable, Sendable, Identifiable {
     let label: String
     let name: String

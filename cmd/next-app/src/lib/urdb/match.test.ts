@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorStart, pickTeslaMatch, referenceSpans, teslaMatchesUrdb, walkSupersedes } from './match';
+import { anchorStart, estimateFreshness, estimateMayBeOutdated, pickTeslaMatch, referenceSpans, teslaMatchesUrdb, walkSupersedes } from './match';
 import { compileSeasonsToParsedTariff } from '../tariff-timeline';
 import { urdbRateToSeasons } from './convert';
 import type { UrdbRate } from './types';
@@ -95,5 +95,60 @@ describe('URDB revision history', () => {
       seasons: parsed.seasons as unknown as Tariff['seasons'],
     };
     expect(pickTeslaMatch(tesla, weEnergiesEffective as UrdbRate[])?.label).toBe('6859a6a4417690873a01fd68');
+  });
+});
+
+describe('estimate freshness', () => {
+  const starts = (...dates: string[]) => dates;
+  it('mayBeOutdatedAfterFifteenMonths', () => {
+    const revisions = starts('2023-01-01', '2024-01-01', '2025-01-01', '2025-06-01');
+    expect(estimateMayBeOutdated({ today: '2026-08-31', newestRevisionStart: '2025-06-01', revisionStarts: revisions })).toBe(false);
+    expect(estimateMayBeOutdated({ today: '2026-09-02', newestRevisionStart: '2025-06-01', revisionStarts: revisions })).toBe(true);
+  });
+  it('mayBeOutdatedSoonerForFrequentChangers', () => {
+    // Median gap 182 days: 1.5 x 182 = 273 days after 2025-07-01 is 2026-03-31.
+    const revisions = starts('2024-01-01', '2024-07-01', '2025-01-01', '2025-07-01');
+    expect(estimateMayBeOutdated({ today: '2026-03-31', newestRevisionStart: '2025-07-01', revisionStarts: revisions })).toBe(false);
+    expect(estimateMayBeOutdated({ today: '2026-04-01', newestRevisionStart: '2025-07-01', revisionStarts: revisions })).toBe(true);
+  });
+  it('notOutdatedWithoutEstimateToday', () => {
+    expect(estimateMayBeOutdated({ today: '2026-11-16', newestRevisionStart: null, revisionStarts: starts('2020-01-01', '2021-01-01', '2022-01-01') })).toBe(false);
+  });
+  it('fewRevisionsUseFifteenMonths', () => {
+    // Two revisions: the gap is not a reliable median, so only the 15-month cap applies.
+    const revisions = starts('2025-05-01', '2025-06-01');
+    expect(estimateMayBeOutdated({ today: '2026-08-31', newestRevisionStart: '2025-06-01', revisionStarts: revisions })).toBe(false);
+    expect(estimateMayBeOutdated({ today: '2026-09-02', newestRevisionStart: '2025-06-01', revisionStarts: revisions })).toBe(true);
+  });
+  it('flags the Harrison-like fixture (newest 2025-06-01, today 2026-11-16)', () => {
+    expect(estimateMayBeOutdated({ today: '2026-11-16', newestRevisionStart: '2025-06-01', revisionStarts: starts('2014-01-01', '2020-01-01', '2025-06-01') })).toBe(true);
+  });
+  it('derives the newest revision and its staleness from the estimate covering today', () => {
+    const sources = [
+      { tariff_id: 1, role: 'estimated_actual', start_date: '2023-01-01' },
+      { tariff_id: 2, role: 'estimated_actual', start_date: '2025-06-01' },
+      { tariff_id: 9, role: 'estimated_reference', start_date: '2020-01-01' },
+    ];
+    const periods = [{ tariff_id: 2, source: 'estimated', effective_from: '2025-06-01', effective_to: null }];
+    expect(estimateFreshness({ today: '2026-11-16', periodRows: periods, referencePeriodRows: [], sources }))
+      .toEqual({ newestRevisionStart: '2025-06-01', mayBeOutdated: true });
+  });
+  it('falls back to the reference timeline when no actual estimate covers today', () => {
+    const sources = [
+      { tariff_id: 9, role: 'estimated_reference', start_date: '2024-01-01' },
+      { tariff_id: 10, role: 'estimated_reference', start_date: '2026-10-01' },
+    ];
+    const reference = [{ tariff_id: 10, source: 'estimated', effective_from: '2026-10-01', effective_to: null }];
+    expect(estimateFreshness({ today: '2026-11-16', periodRows: [], referencePeriodRows: reference, sources }))
+      .toEqual({ newestRevisionStart: '2026-10-01', mayBeOutdated: false });
+  });
+  it('reports no revision when no estimate covers today or manual plans cover it', () => {
+    const sources = [{ tariff_id: 1, role: 'estimated_actual', start_date: '2023-01-01' }];
+    const periods = [
+      { tariff_id: 1, source: 'estimated', effective_from: '2023-01-01', effective_to: '2023-12-31' },
+      { tariff_id: 5, source: 'manual', effective_from: '2024-01-01', effective_to: null },
+    ];
+    expect(estimateFreshness({ today: '2026-11-16', periodRows: periods, referencePeriodRows: [], sources }))
+      .toEqual({ newestRevisionStart: null, mayBeOutdated: false });
   });
 });

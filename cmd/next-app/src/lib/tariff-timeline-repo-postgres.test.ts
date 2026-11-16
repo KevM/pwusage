@@ -88,6 +88,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const estimateMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_estimated_rate_plans.sql'));
     if (!estimateMigration) throw new Error('URDB estimate migration missing');
     await local.database.query(await readFile(`db-migrations/${estimateMigration}`, 'utf8'));
+    const newerStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_newer_plan_start.sql'));
+    if (!newerStartMigration) throw new Error('URDB newer plan start migration missing');
+    await local.database.query(await readFile(`db-migrations/${newerStartMigration}`, 'utf8'));
 
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion('s1', {
@@ -373,6 +376,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const estimateMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_estimated_rate_plans.sql'));
     if (!estimateMigration) throw new Error('URDB estimate migration missing');
     await local.database.query(await readFile(`db-migrations/${estimateMigration}`, 'utf8'));
+    const newerStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_newer_plan_start.sql'));
+    if (!newerStartMigration) throw new Error('URDB newer plan start migration missing');
+    await local.database.query(await readFile(`db-migrations/${newerStartMigration}`, 'utf8'));
     const tariff = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
        VALUES ('s-estimated-source', 'Estimated', 1, FALSE, 'estimated') RETURNING id`
@@ -765,12 +771,34 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla New', 0.21));
     const ids = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 ORDER BY id`, [siteId])).rows.map(row => Number(row.id));
     await local.database.query(`UPDATE "SiteUtility" SET status = 'ready', urdb_utility = 'Wisconsin Electric Power Co' WHERE site_id = $1`, [siteId]);
-    await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name) VALUES ($1, $2, 'tesla_anchor', 'old', '2025-01-01', 'urdb', 'newer', 'Newer Plan')`, [ids[0], siteId]);
+    await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start) VALUES ($1, $2, 'tesla_anchor', 'old', '2025-01-01', 'urdb', 'newer', 'Newer Plan', '2025-06-01')`, [ids[0], siteId]);
 
     const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
 
     expect(timeline.estimates?.teslaPlanOutOfDate).toBe(false);
     expect(timeline.estimates?.newerPlanName).toBeNull();
+    expect(timeline.estimates?.newerPlanStart).toBeNull();
+  });
+
+  it('reports the newer URDB revision start and the estimate freshness on the wire', async () => {
+    const siteId = 's-estimate-freshness';
+    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
+    const teslaId = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`, [siteId])).rows[0]!.id;
+    await local.database.query(`UPDATE "SiteUtility" SET status = 'ready', urdb_utility = 'Wisconsin Electric Power Co' WHERE site_id = $1`, [siteId]);
+    await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start) VALUES ($1, $2, 'tesla_anchor', 'old', '2024-01-01', 'urdb', 'rev-2025', 'Residential', '2025-06-01')`, [teslaId, siteId]);
+    await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]);
+    for (const [from, to, label] of [['2023-01-01', '2023-12-31', 'rev-2023'], ['2025-06-01', null, 'rev-2025']] as const) {
+      const id = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Residential', $2, FALSE, 'estimated') RETURNING id`, [siteId, from.slice(0, 4)]
+      )).rows[0]!.id;
+      await local.database.query(`INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source) VALUES ($1, $2, $3, $4, 'estimated')`, [siteId, id, from, to]);
+      await local.database.query(`INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, end_date, start_source) VALUES ($1, $2, 'estimated_actual', $3, $4, $5, 'urdb')`, [id, siteId, label, from, to]);
+    }
+
+    const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
+
+    expect(timeline.estimates).toMatchObject({ newerPlanStart: '2025-06-01', newestRevisionStart: '2025-06-01', mayBeOutdated: true });
   });
 
   it('clears needs_plan once the owner adds a rate plan', async () => {

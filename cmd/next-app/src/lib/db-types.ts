@@ -74,6 +74,7 @@ export interface TariffUrdbSourceRow {
   start_source: TariffStartSource;
   newer_urdb_label: string | null;
   newer_urdb_name: string | null;
+  newer_urdb_start: string | null;
   created_at: Date;
 }
 
