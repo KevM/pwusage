@@ -13,7 +13,7 @@ export interface EnqueueReattributionParams {
   fromDate: string;
   toDate: string | null;
   requestedByUserId: string | null;
-  trigger: 'create' | 'update' | 'delete' | 'retry' | 'tesla_sync';
+  trigger: 'create' | 'update' | 'delete' | 'retry' | 'tesla_sync' | 'estimate';
 }
 
 export interface EnqueuedReattribution {

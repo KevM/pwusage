@@ -1,3 +1,4 @@
+import { layoutTimeline } from './tariff-estimates';
 import type { PoolClient } from 'pg';
 import { pool } from './db';
 import type {
@@ -35,6 +36,10 @@ import {
   type TariffPlanWriteInput,
 } from './tariff-timeline';
 
+export class UtilityChangedError extends Error {
+  readonly status = 409;
+}
+
 export class TariffNotFoundError extends Error {
   readonly status = 404;
 }
@@ -47,6 +52,8 @@ export interface PeriodQueryRow {
   source: TariffSource;
   updated_by_user_id: string | null;
   updated_by_email: string | null;
+  start_source?: import('./db-types').TariffStartSource | null;
+  anchor_start?: string | null;
   name: string | null;
   version: number;
   content_hash: string | null;
@@ -103,6 +110,7 @@ function mapPeriodRowToDTO(
     name: r.name || 'Rate Plan',
     version: Number(r.version ?? 1),
     source: r.source,
+    startSource: r.source === 'estimated' ? 'urdb' : r.source === 'tesla' && !r.updated_by_user_id && r.anchor_start?.slice(0, 10) === effectiveFrom ? r.start_source ?? null : null,
     effectiveFrom,
     effectiveTo,
     isCurrentToday: false,
@@ -156,7 +164,7 @@ export function buildSiteTariffsTimelineResponse(
 
   const periods: TariffPeriodDTO[] = periodRows.map(r => mapPeriodRowToDTO(r, viewerUserId, tariffMap));
   const referencePeriods: TariffPeriodDTO[] = referencePeriodRows
-    .map(r => mapPeriodRowToDTO({ ...r, source: 'manual' }, viewerUserId, tariffMap))
+    .map(r => mapPeriodRowToDTO(r, viewerUserId, tariffMap))
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom) || a.periodId - b.periodId);
 
   const activeToday = pickActivePeriodForDate(periods, today);
@@ -191,6 +199,7 @@ export function buildSiteTariffsTimelineResponse(
     currency,
     periods,
     referencePeriods,
+    estimates: null,
     battery,
     reattribution: toReattributionDTO(reattribution),
     holidayDates: holidayYears.flatMap(y => observedHolidayDates(y)),
@@ -300,6 +309,30 @@ export async function applySpanMutationPlan(
     inserted.push({ id: Number(res.rows[0]?.id ?? 0), source: row.source });
   }
   return inserted;
+}
+
+export async function applyEstimatesOnClient(
+  client: PoolClient, siteId: string, today: string
+): Promise<{ changed: Array<{ from: string; to: string | null }> }> {
+  const sources = await client.query<{ tariff_id: number; role: string; start_date: string; end_date: string | null }>(
+    `SELECT tariff_id, role, start_date::text, end_date::text FROM "TariffUrdbSource" WHERE site_id = $1 ORDER BY created_at DESC, tariff_id DESC`, [siteId]
+  );
+  const actual = await loadExistingSpans(client, siteId);
+  const referenceRows = await client.query<{ id: number; tariff_id: number; source: TariffSource; effective_from: string; effective_to: string | null; updated_by_user_id: string | null }>(
+    `SELECT id, tariff_id, source, effective_from::text, effective_to::text, updated_by_user_id FROM "TariffReferencePeriod" WHERE site_id = $1 ORDER BY effective_from, id`, [siteId]
+  );
+  const reference: ExistingSpan[] = referenceRows.rows.map(row => ({ id: Number(row.id), tariffId: Number(row.tariff_id), source: row.source, effectiveFrom: row.effective_from, effectiveTo: row.effective_to, updatedByUserId: row.updated_by_user_id }));
+  const desired = (role: string) => sources.rows.filter(row => row.role === role).map(row => ({ tariffId: Number(row.tariff_id), effectiveFrom: row.start_date, effectiveTo: row.end_date }));
+  const anchors = sources.rows.filter(row => row.role === 'tesla_anchor').map(row => ({ tariffId: Number(row.tariff_id), startDate: row.start_date }));
+  const actualLayout = layoutTimeline(actual, anchors, desired('estimated_actual'));
+  const referenceLayout = layoutTimeline(reference, [], desired('estimated_reference'));
+  await applySpanMutationPlan(client, siteId, actualLayout);
+  if (referenceLayout.deleteIds.length) await client.query('DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = ANY($2::int[])', [siteId, referenceLayout.deleteIds]);
+  for (const row of referenceLayout.inserts) {
+    await client.query(`INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id) VALUES ($1, $2, $3::date, $4::date, $5, $6)`, [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.source, row.updatedByUserId]);
+  }
+  await recomputeIsCurrentTariff(client, siteId, today);
+  return { changed: actualLayout.changed };
 }
 
 export async function recomputeIsCurrentTariff(
@@ -418,7 +451,7 @@ async function assertPlanNameAvailable(
 ): Promise<void> {
   const clash = await client.query(
     `SELECT 1 FROM "TariffEffectivePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id
-     WHERE p.site_id = $1 AND lower(btrim(t.name)) = lower(btrim($2))
+     WHERE p.site_id = $1 AND p.source <> 'estimated' AND lower(btrim(t.name)) = lower(btrim($2))
        AND ($3::int IS NULL OR t.id <> $3)
      LIMIT 1`,
     [siteId, name, exceptTariffId]
@@ -428,7 +461,7 @@ async function assertPlanNameAvailable(
   }
 }
 
-async function hydrateTariffs(
+export async function hydrateTariffs(
   queryable: { query: PoolClient['query'] },
   tariffIds: number[]
 ): Promise<Map<number, Tariff>> {
@@ -436,7 +469,7 @@ async function hydrateTariffs(
   if (tariffIds.length === 0) return map;
 
   const tariffsRes = await queryable.query<Tariff>(
-    'SELECT id, site_id, updated, name, version, is_current, content_hash, source, created_by_user_id FROM "Tariff" WHERE id = ANY($1::int[])',
+    'SELECT id, site_id, updated, name, version, is_current, content_hash, source, created_by_user_id, plan_name, plan_code FROM "Tariff" WHERE id = ANY($1::int[])',
     [tariffIds]
   );
   const seasonsRes = await queryable.query<TariffSeason>(
@@ -512,6 +545,43 @@ async function hydrateTariffs(
 }
 
 export class TariffTimelineRepo {
+  async getSiteUtilityContext(siteId: string): Promise<{ name: string | null; timezone: string } | null> {
+    const result = await pool.query<{ name: string | null; timezone: string }>(`SELECT u.urdb_utility AS name, s.timezone FROM "Site" s LEFT JOIN "SiteUtility" u ON u.site_id = s.id WHERE s.id = $1`, [siteId]);
+    return result.rows[0] ?? null;
+  }
+
+  async getSiteUtility(siteId: string): Promise<string | null> {
+    const result = await pool.query<{ urdb_utility: string | null }>('SELECT urdb_utility FROM "SiteUtility" WHERE site_id = $1', [siteId]);
+    return result.rows[0]?.urdb_utility ?? null;
+  }
+
+  async setSiteUtility(siteId: string, userId: string, input: { name: string } | { skipped: true }): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      if (!site.rowCount) throw new TariffNotFoundError('Site not found');
+      const skipped = 'skipped' in input;
+      await client.query(`INSERT INTO "SiteUtility" (site_id, urdb_utility, choice, status, updated_by_user_id)
+        VALUES ($1, $2, $3, 'pending', $4) ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`,
+      [siteId, skipped ? null : input.name, skipped ? 'skipped' : 'owner', userId]);
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    return this.getTimeline(siteId, userId);
+  }
+
+  async setSitePlanLabel(siteId: string, userId: string, label: string, expectedUtility: string): Promise<SiteTariffsTimelineResponse> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      if (!site.rowCount) throw new TariffNotFoundError('Site not found');
+      const updated = await client.query(`UPDATE "SiteUtility" SET urdb_plan_label = $2, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $3, updated_at = now() WHERE site_id = $1 AND urdb_utility = $4 AND choice <> 'skipped'`, [siteId, label, userId, expectedUtility]);
+      if (!updated.rowCount) throw new UtilityChangedError('Utility changed. Choose a rate plan again.');
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    return this.getTimeline(siteId, userId);
+  }
   async getTimeline(siteId: string, viewerUserId: string | null): Promise<SiteTariffsTimelineResponse> {
     const siteRes = await pool.query<{
       id: string;
@@ -539,9 +609,10 @@ export class TariffTimelineRepo {
     const periodsRes = await pool.query<PeriodQueryRow>(
       `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
               p.source, p.updated_by_user_id, u.email AS updated_by_email,
-              t.name, t.version, t.content_hash
+              t.name, t.version, t.content_hash, us.start_source, us.start_date::text AS anchor_start
        FROM "TariffEffectivePeriod" p
        JOIN "Tariff" t ON t.id = p.tariff_id
+       LEFT JOIN "TariffUrdbSource" us ON us.tariff_id = p.tariff_id AND us.role = 'tesla_anchor'
        LEFT JOIN "User" u ON u.id = p.updated_by_user_id
        WHERE p.site_id = $1
        ORDER BY p.effective_from DESC, p.id DESC`,
@@ -550,7 +621,7 @@ export class TariffTimelineRepo {
 
     const referencePeriodsRes = await pool.query<PeriodQueryRow>(
       `SELECT p.id AS period_id, p.tariff_id, p.effective_from::text, p.effective_to::text,
-              'manual'::text AS source, p.updated_by_user_id, u.email AS updated_by_email,
+              p.source, p.updated_by_user_id, u.email AS updated_by_email,
               t.name, t.version, t.content_hash
        FROM "TariffReferencePeriod" p
        JOIN "Tariff" t ON t.id = p.tariff_id
@@ -578,7 +649,11 @@ export class TariffTimelineRepo {
       [siteId]
     );
 
-    return buildSiteTariffsTimelineResponse({
+    const utilityRes = await pool.query<{ status: string; choice: string; urdb_utility: string | null; newer_urdb_name: string | null }>(
+      `SELECT u.status, u.choice, u.urdb_utility, (SELECT newer_urdb_name FROM "TariffUrdbSource" WHERE site_id = u.site_id AND role = 'tesla_anchor' AND newer_urdb_label IS NOT NULL ORDER BY start_date DESC LIMIT 1) AS newer_urdb_name FROM "SiteUtility" u WHERE u.site_id = $1`, [siteId]
+    );
+    const utility = utilityRes.rows[0];
+    const timeline = buildSiteTariffsTimelineResponse({
       siteId,
       timezone,
       currency,
@@ -591,6 +666,8 @@ export class TariffTimelineRepo {
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
     });
+    if (utility) timeline.estimates = { status: utility.choice === 'skipped' ? 'skipped' : utility.status === 'running' ? 'pending' : utility.status as Exclude<import('./tariff-contract').EstimatesStatusDTO['status'], 'skipped'>, utilityName: utility.urdb_utility, teslaPlanOutOfDate: utility.choice !== 'skipped' && utility.newer_urdb_name !== null, newerPlanName: utility.choice === 'skipped' ? null : utility.newer_urdb_name };
+    return timeline;
   }
 
   async createManualPeriod(
@@ -627,16 +704,20 @@ export class TariffTimelineRepo {
         updatedByUserId: userId,
       };
       const plan = computeSpanMutations(existing, incoming);
-      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      const resultingCount = existing.filter(row => row.source !== 'estimated' && !plan.deleteIds.includes(row.id)).length + plan.inserts.filter(row => row.source !== 'estimated').length;
       if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
         throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
       }
       const inserted = await applySpanMutationPlan(client, siteId, plan);
       createdPeriodId = inserted.at(-1)?.id ?? 0;
-      await recomputeIsCurrentTariff(client, siteId, today);
+      const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
       reattribution = {
         siteId, fromDate: validated.effectiveFrom, toDate: validated.effectiveTo, requestedByUserId: userId, trigger: 'create',
       };
+      for (const range of estimateChanges) {
+        reattribution.fromDate = minDate(reattribution.fromDate, range.from);
+        reattribution.toDate = maxEnd(reattribution.toDate, range.to);
+      }
       queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
     } catch (error) {
@@ -716,12 +797,12 @@ export class TariffTimelineRepo {
           seasons: patch.seasons ?? currentSeasons,
         }, today);
         seasonCount = validated.seasons.length;
-        if (validated.name.trim().toLowerCase() !== (currentTariff.name ?? '').trim().toLowerCase()) {
+        if (target.source === 'estimated' || validated.name.trim().toLowerCase() !== (currentTariff.name ?? '').trim().toLowerCase()) {
           await assertPlanNameAvailable(client, siteId, validated.name, target.tariffId);
         }
         const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
         const newHash = tariffContentHash(parsed);
-        if (newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
+        if (target.source === 'estimated' || newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
           targetTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false, newHash);
         } else {
           targetTariffId = target.tariffId;
@@ -731,7 +812,7 @@ export class TariffTimelineRepo {
       const remaining = existing.filter(s => s.id !== periodId);
       const mutationPlan = computeSpanMutations(remaining, {
         tariffId: targetTariffId,
-        source: target.source,
+        source: target.source === 'estimated' ? 'manual' : target.source,
         effectiveFrom: nextFrom,
         effectiveTo: nextTo,
         updatedByUserId: userId,
@@ -740,7 +821,7 @@ export class TariffTimelineRepo {
         deleteIds: [periodId, ...mutationPlan.deleteIds],
         inserts: mutationPlan.inserts,
       };
-      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      const resultingCount = existing.filter(row => row.source !== 'estimated' && !plan.deleteIds.includes(row.id)).length + plan.inserts.filter(row => row.source !== 'estimated').length;
       if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
         throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
       }
@@ -762,7 +843,7 @@ export class TariffTimelineRepo {
         await healVacatedIntervalWithTesla(client, siteId, vacatedFrom, oldTo);
       }
 
-      await recomputeIsCurrentTariff(client, siteId, today);
+      const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
       reattribution = {
         siteId,
         fromDate: minDate(oldFrom, nextFrom),
@@ -770,6 +851,10 @@ export class TariffTimelineRepo {
         requestedByUserId: userId,
         trigger: 'update',
       };
+      for (const range of estimateChanges) {
+        reattribution.fromDate = minDate(reattribution.fromDate, range.from);
+        reattribution.toDate = maxEnd(reattribution.toDate, range.to);
+      }
       queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
     } catch (error) {
@@ -826,6 +911,7 @@ export class TariffTimelineRepo {
       const existing = await loadExistingSpans(client, siteId);
       const target = existing.find(s => s.id === periodId);
       if (!target) throw new TariffNotFoundError('Rate plan period not found');
+      if (target.source === 'estimated') throw new TariffValidationError('Estimated rate plans fill days without a plan. Add your rate plan to replace one.');
       if (target.source !== 'manual') {
         throw new TariffValidationError('Only custom rate plan periods can be deleted');
       }
@@ -860,10 +946,14 @@ export class TariffTimelineRepo {
         }
       }
 
-      await recomputeIsCurrentTariff(client, siteId, today);
+      const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
       reattribution = {
         siteId, fromDate: removedFrom, toDate: removedTo, requestedByUserId: userId, trigger: 'delete',
       };
+      for (const range of estimateChanges) {
+        reattribution.fromDate = minDate(reattribution.fromDate, range.from);
+        reattribution.toDate = maxEnd(reattribution.toDate, range.to);
+      }
       queued = await enqueueReattributionOnClient(client, reattribution);
       await client.query('COMMIT');
     } catch (error) {
@@ -965,12 +1055,13 @@ export class TariffTimelineRepo {
         effectiveTo: validated.effectiveTo,
         updatedByUserId: userId,
       });
-      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      const resultingCount = existing.filter(row => row.source !== 'estimated' && !plan.deleteIds.includes(row.id)).length + plan.inserts.filter(row => row.source !== 'estimated').length;
       if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
         throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
       }
       const inserted = await applyReferenceSpanMutationPlan(client, siteId, plan);
       createdPeriodId = inserted.find(row => row.tariffId === newTariffId)?.id ?? inserted.at(-1)?.id ?? 0;
+      await applyEstimatesOnClient(client, siteId, today);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1032,7 +1123,7 @@ export class TariffTimelineRepo {
 
       const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
       const newHash = tariffContentHash(parsed);
-      if (newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
+      if (target.source === 'estimated' || newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
         targetTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false, newHash);
       } else {
         targetTariffId = target.tariffId;
@@ -1050,11 +1141,12 @@ export class TariffTimelineRepo {
         deleteIds: [periodId, ...mutationPlan.deleteIds],
         inserts: mutationPlan.inserts,
       };
-      const resultingCount = existing.length - plan.deleteIds.length + plan.inserts.length;
+      const resultingCount = existing.filter(row => row.source !== 'estimated' && !plan.deleteIds.includes(row.id)).length + plan.inserts.filter(row => row.source !== 'estimated').length;
       if (resultingCount > MAX_EFFECTIVE_PERIODS_PER_SITE) {
         throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
       }
       await applyReferenceSpanMutationPlan(client, siteId, plan);
+      await applyEstimatesOnClient(client, siteId, today);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1089,11 +1181,14 @@ export class TariffTimelineRepo {
       );
       if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
 
+      const target = (await loadReferenceSpans(client, siteId)).find(row => row.id === periodId);
+      if (target?.source === 'estimated') throw new TariffValidationError('Estimated rate plans fill days without a plan. Add your rate plan to replace one.');
       const delRes = await client.query<{ id: number }>(
         'DELETE FROM "TariffReferencePeriod" WHERE site_id = $1 AND id = $2 RETURNING id',
         [siteId, periodId]
       );
       if (delRes.rowCount === 0) throw new TariffNotFoundError('Reference rate plan period not found');
+      await applyEstimatesOnClient(client, siteId, siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC'));
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -1115,11 +1210,12 @@ async function loadReferenceSpans(client: PoolClient, siteId: string): Promise<E
   const res = await client.query<{
     id: number;
     tariff_id: number;
+    source: TariffSource;
     effective_from: string;
     effective_to: string | null;
     updated_by_user_id: string | null;
   }>(
-    `SELECT id, tariff_id, effective_from::text, effective_to::text, updated_by_user_id
+    `SELECT id, tariff_id, source, effective_from::text, effective_to::text, updated_by_user_id
      FROM "TariffReferencePeriod"
      WHERE site_id = $1
      ORDER BY effective_from ASC, id ASC`,
@@ -1128,7 +1224,7 @@ async function loadReferenceSpans(client: PoolClient, siteId: string): Promise<E
   return res.rows.map(r => ({
     id: Number(r.id),
     tariffId: Number(r.tariff_id),
-    source: 'manual',
+    source: r.source,
     effectiveFrom: r.effective_from.slice(0, 10),
     effectiveTo: r.effective_to ? r.effective_to.slice(0, 10) : null,
     updatedByUserId: r.updated_by_user_id,
@@ -1149,10 +1245,10 @@ async function applyReferenceSpanMutationPlan(
   const inserted: Array<{ id: number; tariffId: number }> = [];
   for (const row of plan.inserts) {
     const res = await client.query<{ id: number }>(
-      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
-       VALUES ($1, $2, $3::date, $4::date, $5)
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id, source)
+       VALUES ($1, $2, $3::date, $4::date, $5, $6)
        RETURNING id`,
-      [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.updatedByUserId]
+      [siteId, row.tariffId, row.effectiveFrom, row.effectiveTo, row.updatedByUserId, row.source]
     );
     inserted.push({ id: Number(res.rows[0].id), tariffId: row.tariffId });
   }

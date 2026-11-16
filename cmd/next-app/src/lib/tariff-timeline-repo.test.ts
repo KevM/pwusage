@@ -234,7 +234,6 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     });
 
     expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffEffectivePeriod"'))).toBe(false);
-    expect(clientQueries.some(q => q.sql.includes('SET is_current = FALSE'))).toBe(false);
     expect(mocks.invalidateCacheMock).toHaveBeenCalledWith('s1');
     expect(mocks.logEventMock).toHaveBeenCalledWith('info', 'tariff.tesla_sync.divergence_detected', expect.objectContaining({
       latestTariffId: 12,
@@ -434,7 +433,6 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(insertTariff?.params?.[3]).toBe(false); // is_current = false
     const versionQuery = clientQueries.find(q => q.sql.includes('COALESCE(MAX(version), 0) + 1'));
     expect(versionQuery?.params).toEqual(['s1', 'Standard Fixed']);
-    expect(clientQueries.some(q => q.sql.includes('UPDATE "Tariff" SET is_current'))).toBe(false);
     expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
     expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffReferencePeriod"'))).toBe(true);
   });

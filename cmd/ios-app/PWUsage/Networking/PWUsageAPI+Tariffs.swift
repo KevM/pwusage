@@ -1,6 +1,44 @@
 import Foundation
 
 extension PWUsageAPI {
+    func searchUtilities(siteID: String, query: String) async throws -> [String] {
+        let base = try makeSiteURL(siteID: siteID, suffix: "utility/search")
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            throw PWUsageAPIError.invalidResponse
+        }
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        guard let url = components.url else { throw PWUsageAPIError.invalidResponse }
+        let data = try await request(url: url)
+        return try MobileContractDecoder.make().decode(UtilitiesResponse.self, from: data).utilities
+    }
+
+    func setUtility(siteID: String, name: String) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(siteID: siteID, suffix: "utility", method: "PUT", body: UtilityName(name: name))
+    }
+
+    func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(
+            siteID: siteID, suffix: "utility", method: "PUT", body: UtilitySkip(skipped: true)
+        )
+    }
+
+    func utilityPlans(siteID: String) async throws -> [UtilityPlanDTO] {
+        let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "utility/plans"))
+        return try MobileContractDecoder.make().decode(UtilityPlansResponse.self, from: data).plans
+    }
+
+    func setUtilityPlan(siteID: String, label: String) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(
+            siteID: siteID, suffix: "utility/plan", method: "PUT", body: UtilityPlanLabel(label: label)
+        )
+    }
+
+    private struct UtilitiesResponse: Decodable { let utilities: [String] }
+    private struct UtilityPlansResponse: Decodable { let plans: [UtilityPlanDTO] }
+    private struct UtilityName: Encodable { let name: String }
+    private struct UtilitySkip: Encodable { let skipped: Bool }
+    private struct UtilityPlanLabel: Encodable { let label: String }
+
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
         guard case .changed(let timeline, _) = try await fetchTariffTimeline(siteID: siteID, knownETag: nil) else {
             throw PWUsageAPIError.invalidResponse

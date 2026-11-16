@@ -415,4 +415,20 @@ describe('tariff timeline API routes', () => {
     });
     expect(afterCallbacks).toHaveLength(1);
   });
+
+  it('refuses deleting an estimated period with the replacement guidance', async () => {
+    deleteManualPeriodMock.mockRejectedValueOnce(new TariffValidationError(
+      'Estimated rate plans fill days without a plan. Add your rate plan to replace one.'
+    ));
+    const response = await DELETE(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/12', { method: 'DELETE' }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '12' }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Estimated rate plans fill days without a plan. Add your rate plan to replace one.',
+    });
+    expect(afterCallbacks).toHaveLength(0);
+  });
 });

@@ -3,6 +3,34 @@ import Foundation
 enum TariffSource: String, Codable, Equatable, Sendable {
     case tesla
     case manual
+    case estimated
+}
+
+enum TariffStartSource: String, Codable, Equatable, Sendable {
+    case urdb
+    case teslaFirstSeen = "tesla_first_seen"
+    case assumedJan1 = "assumed_jan_1"
+    case historyStart = "history_start"
+}
+
+struct SiteRateEstimatesDTO: Codable, Equatable, Sendable {
+    enum Status: String, Codable, Equatable, Sendable {
+        case pending, ready, skipped, failed
+        case needsUtility = "needs_utility"
+        case needsPlan = "needs_plan"
+    }
+
+    let status: Status
+    let utilityName: String?
+    let teslaPlanOutOfDate: Bool
+    let newerPlanName: String?
+}
+
+struct UtilityPlanDTO: Decodable, Sendable, Identifiable {
+    let label: String
+    let name: String
+    let startDate: String
+    var id: String { label }
 }
 
 enum TariffPeriodName: String, Codable, Equatable, Sendable, CaseIterable, Hashable {
@@ -60,6 +88,7 @@ struct TariffPeriodDTO: Codable, Equatable, Sendable, Identifiable {
     let isCurrentToday: Bool
     let updatedBy: TariffUpdatedByDTO?
     let seasons: [TariffSeasonInput]
+    var startSource: TariffStartSource?
 
     var id: Int { periodId }
 }
@@ -141,6 +170,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
     /// Observed holidays (site-local YYYY-MM-DD); they follow the weekend schedule. Nil from older servers.
     var holidayDates: [String]?
     let teslaSync: TeslaSyncDTO
+    var estimates: SiteRateEstimatesDTO?
 
     private enum CodingKeys: String, CodingKey {
         case version
@@ -153,6 +183,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         case reattribution
         case holidayDates
         case teslaSync
+        case estimates
     }
 
     init(
@@ -165,7 +196,8 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         battery: SiteBatteryDTO? = nil,
         reattribution: ReattributionStatusDTO?,
         holidayDates: [String]? = nil,
-        teslaSync: TeslaSyncDTO
+        teslaSync: TeslaSyncDTO,
+        estimates: SiteRateEstimatesDTO? = nil
     ) {
         self.version = version
         self.siteId = siteId
@@ -177,6 +209,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         self.reattribution = reattribution
         self.holidayDates = holidayDates
         self.teslaSync = teslaSync
+        self.estimates = estimates
     }
 
     init(from decoder: Decoder) throws {
@@ -191,6 +224,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         reattribution = try container.decodeIfPresent(ReattributionStatusDTO.self, forKey: .reattribution)
         holidayDates = try container.decodeIfPresent([String].self, forKey: .holidayDates)
         teslaSync = try container.decode(TeslaSyncDTO.self, forKey: .teslaSync)
+        estimates = try container.decodeIfPresent(SiteRateEstimatesDTO.self, forKey: .estimates)
     }
 
     func validating(siteID: String) throws -> Self {
@@ -289,6 +323,11 @@ enum TimelineFetch: Equatable, Sendable {
 
 @MainActor
 protocol MobileTariffDataAPI: Sendable {
+    func searchUtilities(siteID: String, query: String) async throws -> [String]
+    func setUtility(siteID: String, name: String) async throws -> SiteTariffsTimelineResponse
+    func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse
+    func utilityPlans(siteID: String) async throws -> [UtilityPlanDTO]
+    func setUtilityPlan(siteID: String, label: String) async throws -> SiteTariffsTimelineResponse
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse
     func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch
     func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse
@@ -316,6 +355,26 @@ protocol MobileTariffDataAPI: Sendable {
 }
 
 extension MobileTariffDataAPI {
+    func searchUtilities(siteID _: String, query _: String) async throws -> [String] {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func setUtility(siteID _: String, name _: String) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func skipUtility(siteID _: String) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func utilityPlans(siteID _: String) async throws -> [UtilityPlanDTO] {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func setUtilityPlan(siteID _: String, label _: String) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
     func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
         .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
     }

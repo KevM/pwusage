@@ -18,6 +18,13 @@ vi.mock('./db', () => ({
 
 import { TariffRepo } from './tariff-repo';
 import { recomputeIsCurrentTariff, TariffTimelineRepo } from './tariff-timeline-repo';
+import { runUrdbEstimatesForSite } from './urdb/estimate-job';
+import type { UrdbApi } from './urdb/estimate-job';
+import type { UrdbRate } from './urdb/types';
+
+vi.mock('./energy-repo-factory', () => ({
+  createEnergyRepo: () => ({ getCycleAggregates: async () => [] }),
+}));
 
 describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync precedence (postgres)', () => {
   afterAll(async () => {
@@ -74,6 +81,12 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const migFile = (await readdir('db-migrations')).find(f => f.endsWith('_historic_effective_tariffs.sql'));
     if (!migFile) throw new Error('Migration missing');
     await local.database.query(await readFile(`db-migrations/${migFile}`, 'utf8'));
+    const referenceMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_reference_periods.sql'));
+    if (!referenceMigration) throw new Error('Reference migration missing');
+    await local.database.query(await readFile(`db-migrations/${referenceMigration}`, 'utf8'));
+    const estimateMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_estimated_rate_plans.sql'));
+    if (!estimateMigration) throw new Error('URDB estimate migration missing');
+    await local.database.query(await readFile(`db-migrations/${estimateMigration}`, 'utf8'));
 
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion('s1', {
@@ -289,13 +302,17 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     await local.database.query(await readFile(`db-migrations/${migRef}`, 'utf8'));
 
     const tariffRepo = new TariffRepo();
-    const teslaTariffId = await tariffRepo.addTariffVersion('s7', {
+    await tariffRepo.addTariffVersion('s7', {
       name: 'Tesla ToU',
       seasons: [{
         name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.25, sell_rate: 0.05,
         schedules: [{ name: 'OFF_PEAK', buy_rate: 0.25, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
       }],
     });
+    const teslaTariffId = (await local.database.query<{ id: number }>(
+      `SELECT id FROM "Tariff" WHERE site_id = 's7' AND name = 'Tesla ToU'`
+    )).rows[0]?.id;
+    if (teslaTariffId === undefined) throw new Error('Tesla tariff missing');
 
     const refTariffRes = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
@@ -336,13 +353,240 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       }],
     });
     const refId = created.referencePeriods.find(p => p.name === 'Owner Fixed')!.periodId;
-    await repo.updateReferencePeriod('s7', 'u1', refId, { name: 'Owner Fixed v2' });
-    const afterDelete = await repo.deleteReferencePeriod('s7', refId, 'u1');
-    expect(afterDelete.referencePeriods.some(p => p.periodId === refId)).toBe(false);
+    const updatedReference = await repo.updateReferencePeriod('s7', 'u1', refId, { name: 'Owner Fixed v2' });
+    const updatedRefId = updatedReference.referencePeriods.find(p => p.name === 'Owner Fixed v2')!.periodId;
+    const afterDelete = await repo.deleteReferencePeriod('s7', updatedRefId, 'u1');
+    expect(afterDelete.referencePeriods.some(p => p.periodId === updatedRefId)).toBe(false);
 
     const currentRows = await local.database.query<{ id: number }>(
       `SELECT id FROM "Tariff" WHERE site_id = 's7' AND is_current`
     );
     expect(currentRows.rows.map(r => r.id)).toEqual([teslaTariffId]);
+  });
+
+  it('accepts estimated sources, defaults reference sources to manual, and rejects unknown tariff sources', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-estimated-source', 'u1', 'America/Chicago', '{}')`);
+    const referenceMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_reference_periods.sql'));
+    if (!referenceMigration) throw new Error('Reference migration missing');
+    await local.database.query(await readFile(`db-migrations/${referenceMigration}`, 'utf8'));
+    const estimateMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_estimated_rate_plans.sql'));
+    if (!estimateMigration) throw new Error('URDB estimate migration missing');
+    await local.database.query(await readFile(`db-migrations/${estimateMigration}`, 'utf8'));
+    const tariff = await local.database.query<{ id: number }>(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
+       VALUES ('s-estimated-source', 'Estimated', 1, FALSE, 'estimated') RETURNING id`
+    );
+    await local.database.query(
+      `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+       VALUES ('s-estimated-source', $1, '2025-01-01', NULL, 'estimated')`,
+      [tariff.rows[0]!.id]
+    );
+
+    const reference = await local.database.query<{ source: string }>(
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to)
+       VALUES ('s-estimated-source', $1, '2025-01-01', NULL) RETURNING source`,
+      [tariff.rows[0]!.id]
+    );
+    expect(reference.rows[0]?.source).toBe('manual');
+
+    await expect(local.database.query(
+      `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
+       VALUES ('s-estimated-source', 'Unknown', 2, FALSE, 'unknown')`
+    )).rejects.toThrow();
+  });
+
+  it('splits estimated coverage around an owner period, restores it after deletion, and converts it on edit', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-estimate-mutation', 'u1', 'America/Chicago', '{}')`);
+    const tariffRepo = new TariffRepo();
+    await tariffRepo.addTariffVersion('s-estimate-mutation', {
+      name: 'Estimated Utility Plan',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+        buy_rate: 0.2, sell_rate: 0.05,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.2, sell_rate: 0.05, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+    const tariffId = (await local.database.query<{ id: number }>(
+      `SELECT id FROM "Tariff" WHERE site_id = 's-estimate-mutation' AND name = 'Estimated Utility Plan'`
+    )).rows[0]!.id;
+    await local.database.query(`UPDATE "Tariff" SET source = 'estimated' WHERE id = $1`, [tariffId]);
+    await local.database.query(
+      `UPDATE "TariffEffectivePeriod" SET source = 'estimated', effective_from = '2024-01-01', effective_to = NULL WHERE tariff_id = $1`,
+      [tariffId]
+    );
+    await local.database.query(
+      `INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, start_source)
+       VALUES ($1, 's-estimate-mutation', 'estimated_actual', 'fixture-label', '2024-01-01', 'urdb')`,
+      [tariffId]
+    );
+
+    const repo = new TariffTimelineRepo();
+    const manual = await repo.createManualPeriod('s-estimate-mutation', 'u1', {
+      name: 'Owner Plan', effectiveFrom: '2025-01-01', effectiveTo: '2025-01-31',
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.3, sellRate: 0.06 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.3, sellRate: 0.06 }],
+      }],
+    });
+    const afterCreate = await local.database.query<{ source: string; effective_from: string; effective_to: string | null }>(
+      `SELECT source, effective_from::text, effective_to::text FROM "TariffEffectivePeriod"
+       WHERE site_id = 's-estimate-mutation' ORDER BY effective_from`
+    );
+    expect(afterCreate.rows).toEqual([
+      { source: 'estimated', effective_from: '2024-01-01', effective_to: '2024-12-31' },
+      { source: 'manual', effective_from: '2025-01-01', effective_to: '2025-01-31' },
+      { source: 'estimated', effective_from: '2025-02-01', effective_to: null },
+    ]);
+
+    const manualId = manual.periods.find(period => period.name === 'Owner Plan')!.periodId;
+    await repo.deleteManualPeriod('s-estimate-mutation', manualId, 'u1');
+    const afterDelete = await local.database.query<{ source: string; effective_from: string; effective_to: string | null }>(
+      `SELECT source, effective_from::text, effective_to::text FROM "TariffEffectivePeriod"
+       WHERE site_id = 's-estimate-mutation' ORDER BY effective_from`
+    );
+    expect(afterDelete.rows).toEqual([
+      { source: 'estimated', effective_from: '2024-01-01', effective_to: null },
+    ]);
+
+    const estimate = (await repo.getTimeline('s-estimate-mutation', 'u1')).periods[0]!;
+    await repo.updatePeriod('s-estimate-mutation', estimate.periodId, 'u1', { name: 'Ownerized Estimate' });
+    const afterEdit = await local.database.query<{ source: string; name: string }>(
+      `SELECT p.source, t.name FROM "TariffEffectivePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id
+       WHERE p.site_id = 's-estimate-mutation'`
+    );
+    expect(afterEdit.rows).toEqual([{ source: 'manual', name: 'Ownerized Estimate' }]);
+  });
+
+  it('parks an unknown site utility without making rate queries', async () => {
+    await local.database.query('ALTER TABLE "Site" ADD COLUMN utility TEXT, ADD COLUMN orphaned_at TIMESTAMPTZ');
+    await local.database.query(
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
+       VALUES ('s-unknown-utility', 'u1', 'America/Chicago', '{}', 'Unlisted Local Utility')`
+    );
+    const api: UrdbApi = {
+      utilityNames: async () => ['We Energies'],
+      ratesEffectiveOn: async () => { throw new Error('Should not request rates for unknown utility'); },
+      rateByLabel: async () => null,
+      defaultRates: async () => { throw new Error('Should not request defaults for unknown utility'); },
+    };
+
+    const result = await runUrdbEstimatesForSite('s-unknown-utility', api, new Date('2026-11-16T12:00:00Z'));
+    const row = await local.database.query<{ status: string; urdb_utility: string | null }>(
+      `SELECT status, urdb_utility FROM "SiteUtility" WHERE site_id = 's-unknown-utility'`
+    );
+
+    expect(result.status).toBe('needs_utility');
+    expect(row.rows[0]).toEqual({ status: 'needs_utility', urdb_utility: null });
+  });
+
+  it('moves from needs_plan to an owner-picked current estimate and reuses its tariff rows', async () => {
+    const schedule = Array.from({ length: 12 }, () => Array(24).fill(0));
+    const defaultRate: UrdbRate = {
+      label: 'default-label', name: 'Fixed Residential', utility: 'Wisconsin Electric Power Co',
+      startdate: 1_704_067_200, is_default: true,
+      energyratestructure: [[{ rate: 0.18 }]], energyweekdayschedule: schedule, energyweekendschedule: schedule,
+    };
+    const pickedRate: UrdbRate = {
+      ...defaultRate, label: 'picked-label', name: 'Picked Residential', is_default: false,
+      startdate: 1_735_689_600,
+    };
+    let selectedRate: UrdbRate | null = null;
+    const api: UrdbApi = {
+      utilityNames: async () => ['Wisconsin Electric Power Co'],
+      ratesEffectiveOn: async () => [],
+      rateByLabel: async label => label === 'picked-label' ? selectedRate : null,
+      defaultRates: async () => [defaultRate],
+    };
+    await local.database.query(
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
+       VALUES ('s-picked-estimate', 'u1', 'America/Chicago', '{}', 'We Energies')`
+    );
+
+    const now = new Date('2026-11-16T12:00:00Z');
+    const missingPlan = await runUrdbEstimatesForSite('s-picked-estimate', api, now);
+    expect(missingPlan.status).toBe('needs_plan');
+    const reference = await local.database.query<{ source: string }>(
+      `SELECT source FROM "TariffReferencePeriod" WHERE site_id = 's-picked-estimate'`
+    );
+    expect(reference.rows).toEqual([{ source: 'estimated' }]);
+
+    selectedRate = pickedRate;
+    await local.database.query(
+      `UPDATE "SiteUtility" SET choice = 'owner', urdb_plan_label = 'picked-label' WHERE site_id = 's-picked-estimate'`
+    );
+    const selectedPlan = await runUrdbEstimatesForSite('s-picked-estimate', api, now);
+    expect(selectedPlan.status).toBe('ready');
+    const actual = await local.database.query<{ source: string; effective_from: string; is_current: boolean; role: string }>(
+      `SELECT p.source, p.effective_from::text, t.is_current, u.role
+       FROM "TariffEffectivePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id
+       JOIN "TariffUrdbSource" u ON u.tariff_id = t.id
+       WHERE p.site_id = 's-picked-estimate' AND u.role = 'estimated_actual'`
+    );
+    expect(actual.rows).toEqual([{ source: 'estimated', effective_from: '2025-01-01', is_current: true, role: 'estimated_actual' }]);
+
+    const beforeRerun = await local.database.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM "Tariff" WHERE site_id = 's-picked-estimate'`
+    );
+    await runUrdbEstimatesForSite('s-picked-estimate', api, now);
+    const afterRerun = await local.database.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM "Tariff" WHERE site_id = 's-picked-estimate'`
+    );
+    expect(afterRerun.rows[0]?.count).toBe(beforeRerun.rows[0]?.count);
+
+    await local.database.query(`UPDATE "SiteUtility" SET choice = 'skipped' WHERE site_id = 's-picked-estimate'`);
+    await runUrdbEstimatesForSite('s-picked-estimate', api, now);
+    const remaining = await local.database.query<{ count: string }>(
+      `SELECT (SELECT count(*) FROM "TariffEffectivePeriod" WHERE site_id = 's-picked-estimate' AND source = 'estimated') +
+              (SELECT count(*) FROM "TariffReferencePeriod" WHERE site_id = 's-picked-estimate' AND source = 'estimated') AS count`
+    );
+    expect(Number(remaining.rows[0]?.count)).toBe(0);
+  });
+
+  it('keeps a manual plan inserted during URDB fetch and clips the estimate around it', async () => {
+    await local.database.query(
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
+       VALUES ('s-owner-edit-during-fetch', 'u1', 'America/Chicago', '{}', 'We Energies')`
+    );
+    await local.database.query(
+      `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status)
+       VALUES ('s-owner-edit-during-fetch', 'Wisconsin Electric Power Co', 'owner', 'picked-label', 'pending')`
+    );
+    const schedule = Array.from({ length: 12 }, () => Array(24).fill(0));
+    const picked: UrdbRate = {
+      label: 'picked-label', name: 'Picked Residential', utility: 'Wisconsin Electric Power Co',
+      startdate: 1_735_689_600, energyratestructure: [[{ rate: 0.18 }]],
+      energyweekdayschedule: schedule, energyweekendschedule: schedule,
+    };
+    let manualWritten = false;
+    const api: UrdbApi = {
+      utilityNames: async () => ['Wisconsin Electric Power Co'],
+      ratesEffectiveOn: async () => [],
+      rateByLabel: async label => label === 'picked-label' ? picked : null,
+      defaultRates: async () => {
+        if (!manualWritten) {
+          manualWritten = true;
+          await new TariffTimelineRepo().createManualPeriod('s-owner-edit-during-fetch', 'u1', {
+            name: 'Edited During URDB', effectiveFrom: '2025-06-01', effectiveTo: null,
+            seasons: [{
+              name: 'All Year', fromMonth: 1, toMonth: 12,
+              weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.3, sellRate: 0.05 }],
+              weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.3, sellRate: 0.05 }],
+            }],
+          });
+        }
+        return [];
+      },
+    };
+
+    await runUrdbEstimatesForSite('s-owner-edit-during-fetch', api, new Date('2026-11-16T12:00:00Z'));
+    const spans = await local.database.query<{ source: string; effective_from: string; effective_to: string | null }>(
+      `SELECT source, effective_from::text, effective_to::text FROM "TariffEffectivePeriod"
+       WHERE site_id = 's-owner-edit-during-fetch' ORDER BY effective_from`
+    );
+    expect(spans.rows).toEqual([
+      { source: 'estimated', effective_from: '2025-01-01', effective_to: '2025-05-31' },
+      { source: 'manual', effective_from: '2025-06-01', effective_to: null },
+    ]);
   });
 });

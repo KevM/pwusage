@@ -46,7 +46,36 @@ export interface Site {
   live_status_cache?: unknown | null;
 }
 
-export type TariffSource = 'tesla' | 'manual';
+export type TariffSource = 'tesla' | 'manual' | 'estimated';
+export type TariffStartSource = 'urdb' | 'tesla_first_seen' | 'assumed_jan_1' | 'history_start';
+export type SiteUtilityStatus = 'pending' | 'running' | 'ready' | 'needs_utility' | 'needs_plan' | 'failed';
+
+export interface SiteUtilityRow {
+  site_id: string;
+  urdb_utility: string | null;
+  choice: 'auto' | 'owner' | 'skipped';
+  urdb_plan_label: string | null;
+  status: SiteUtilityStatus;
+  attempt_count: number;
+  last_error: string | null;
+  checked_at: Date | null;
+  next_check_at: Date | null;
+  updated_by_user_id: string | null;
+  updated_at: Date;
+}
+
+export interface TariffUrdbSourceRow {
+  tariff_id: number;
+  site_id: string;
+  role: 'tesla_anchor' | 'estimated_actual' | 'estimated_reference';
+  urdb_label: string | null;
+  start_date: string;
+  end_date: string | null;
+  start_source: TariffStartSource;
+  newer_urdb_label: string | null;
+  newer_urdb_name: string | null;
+  created_at: Date;
+}
 
 export interface Tariff {
   id: number;
@@ -56,6 +85,8 @@ export interface Tariff {
   version?: number;
   is_current?: boolean;
   content_hash?: string | null;
+  plan_name?: string | null;
+  plan_code?: string | null;
   source?: TariffSource;
   created_by_user_id?: string | null;
   seasons?: TariffSeason[];

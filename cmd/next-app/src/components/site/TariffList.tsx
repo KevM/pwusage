@@ -241,10 +241,12 @@ export function TariffList({
                           className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             period.source === 'manual'
                               ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200'
-                              : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300'
+                              : period.source === 'estimated'
+                                ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-200'
+                                : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300'
                           }`}
                         >
-                          {period.source === 'manual' ? 'Custom' : 'Synced from Tesla'}
+                          {period.source === 'manual' ? 'Custom' : period.source === 'estimated' ? 'Estimated' : 'Synced from Tesla'}
                         </span>
                       </div>
                     }

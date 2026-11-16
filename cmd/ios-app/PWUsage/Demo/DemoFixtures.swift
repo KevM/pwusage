@@ -312,7 +312,7 @@ enum DemoFixtures {
             tariffId: 10,
             name: tariffName,
             version: 1,
-            source: .tesla,
+            source: .estimated,
             effectiveFrom: "2025-01-01",
             effectiveTo: "2025-12-31",
             isCurrentToday: false,

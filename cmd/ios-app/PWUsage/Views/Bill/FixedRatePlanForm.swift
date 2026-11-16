@@ -58,7 +58,7 @@ struct FixedRatePlanForm: View {
                             .foregroundStyle(.red)
                     }
                 }
-                if let existing, onDelete != nil {
+                if let existing, existing.source != .estimated, onDelete != nil {
                     deleteSection(periodID: existing.periodId)
                 }
             }
@@ -79,6 +79,11 @@ struct FixedRatePlanForm: View {
 
     private var detailsSection: some View {
         Section {
+            if existing?.source == .estimated {
+                Text("Estimated")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+            }
             TextField("Plan name", text: $name)
                 .textInputAutocapitalization(.words)
             RatePlanDateField(

@@ -49,6 +49,24 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         DemoFixtures.planningContext(asOf: currentSource())
     }
 
+    func searchUtilities(siteID _: String, query: String) async throws -> [String] {
+        [DemoFixtures.site.utility].filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    func setUtility(siteID: String, name _: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func utilityPlans(siteID _: String) async throws -> [UtilityPlanDTO] { [] }
+
+    func setUtilityPlan(siteID: String, label _: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
         let current = demoTimeline ?? DemoFixtures.tariffs(asOf: now())
         demoTimeline = current
@@ -108,7 +126,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
                 tariffId: period.tariffId + 1,
                 name: body.name ?? period.name,
                 version: period.version + 1,
-                source: period.source,
+                source: period.source == .estimated ? .manual : period.source,
                 effectiveFrom: body.effectiveFrom ?? period.effectiveFrom,
                 effectiveTo: nextTo,
                 isCurrentToday: period.isCurrentToday,
