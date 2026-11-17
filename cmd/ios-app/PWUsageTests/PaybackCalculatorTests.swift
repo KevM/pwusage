@@ -253,6 +253,34 @@ struct PaybackCalculatorTests {
         #expect(solar.breakEven == .projected(month: expected))
     }
 
+    @Test("A shorter history keeps each month's savings on its own calendar month")
+    func shortHistoryKeepsSeasonsOnCalendarMonths() throws {
+        // Eleven cycles closing January to November 2026; only June's cycle (ending 1 Jul) saves.
+        let cycles = try makeMonthlyCycles(count: 11) { $0 == 5 ? Self.savings(1_000) : .zero }
+        let result = try #require(try compute(cycles: cycles, solar: Self.cost(price: 2_000), solarSince: "2025-12-10"))
+        let solar = try #require(result.components.first)
+        #expect(solar.paidToDate == 1_000)
+        // December, missing from the history, takes the mean month (about 91); the rest of the 1,000 comes in June.
+        let expected = try utcMonth(2027, 6)
+        #expect(solar.breakEven == .projected(month: expected))
+    }
+
+    @Test("A start after the last counted day projects from the window's history")
+    func startAfterLastCountedDayProjectsFromHistory() throws {
+        let cycles = try makeMonthlyCycles(
+            { $0 == 11 ? .zero : Self.savings(100) },
+            daysWithData: { $0 == 11 ? 0 : 30 }
+        )
+        let result = try #require(try compute(
+            cycles: cycles, solar: Self.cost(price: 3_000, installDate: "2026-11-10"), solarSince: "2024-01-01"
+        ))
+        let solar = try #require(result.components.first)
+        #expect(solar.paidToDate == 0)
+        // 100 a cycle from December 2026: the thirtieth cycle closes in May 2029.
+        let expected = try utcMonth(2029, 5)
+        #expect(solar.breakEven == .projected(month: expected))
+    }
+
     // MARK: Helpers
 
     private static func savings(_ solar: Double) -> ScenarioCosts {

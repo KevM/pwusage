@@ -8,38 +8,55 @@ extension PaybackContext {
     }
 
     /// First future cycle whose paid-to-date plus projected savings reaches the net cost, within the horizon.
+    /// Cycle k closes k + 1 calendar months after the current cycle's month and takes that month's base.
     func projectedMonth(_ streams: [PaybackStream], netCost: Double, paid: Double) -> Date? {
-        let recent = report.recentCycles
-        guard !recent.isEmpty, let current = recent.last else { return nil }
-        let currentMonth = monthStart(of: current.end.addingTimeInterval(-1))
-        let bases = streams.map { baseSavings(for: $0) }
+        guard let current = report.recentCycles.last else { return nil }
+        let currentMonth = billingMonth(closedAt: current.end)
+        let bases = streams.map { monthlyBase(for: $0) }
         var cumulative = paid
         for index in 0 ..< PaybackCalculator.horizonCycles {
+            let month = calendar.date(byAdding: .month, value: index + 1, to: currentMonth) ?? currentMonth
+            let slot = calendar.component(.month, from: month) - 1
             let years = Double(index + 1) / Double(PaybackCalculator.cyclesPerYear)
             var cycleSavings = 0.0
             for (stream, base) in zip(streams, bases) {
-                cycleSavings += base[index % recent.count] * growth(of: stream, years: years)
+                cycleSavings += base[slot] * growth(of: stream, years: years)
             }
             cumulative += cycleSavings
             if cumulative >= netCost {
-                // Cycle k closes k + 1 calendar months after the current cycle's month, whatever the history length.
-                return calendar.date(byAdding: .month, value: index + 1, to: currentMonth) ?? currentMonth
+                return month
             }
         }
         return nil
     }
 
+    /// One full-cycle base per calendar month, January first, from the last 12 cycles. A month the window
+    /// has no cycle for (a shorter history or a billing-day change) takes the mean of the months it has, so
+    /// a short history never shifts the seasons.
+    func monthlyBase(for stream: PaybackStream) -> [Double] {
+        var slots = [Double?](repeating: nil, count: PaybackCalculator.cyclesPerYear)
+        for (cycle, value) in zip(report.recentCycles, baseSavings(for: stream)) {
+            slots[calendar.component(.month, from: billingMonth(closedAt: cycle.end)) - 1] = value
+        }
+        let known = slots.compactMap(\.self)
+        let fill = known.isEmpty ? 0 : known.reduce(0, +) / Double(known.count)
+        return slots.map { $0 ?? fill }
+    }
+
     /// The last 12 cycles' savings for one stream, each scaled to a full cycle, oldest first.
     /// Cycles before the stream's start and cycles with no counted days take the mean daily savings of the
-    /// stream's counted cycles, times their length.
+    /// stream's counted cycles, times their length. With no counted day since the start (a start after the
+    /// last synced day), the whole window's history is the base instead.
     func baseSavings(for stream: PaybackStream) -> [Double] {
         let cycles = report.recentCycles
-        let counted = cycles.filter { $0.end > stream.start }
+        let postStart = cycles.filter { $0.end > stream.start }
+        let usesStart = postStart.contains { $0.daysWithData > 0 }
+        let counted = usesStart ? postStart : cycles
         let countedDays = counted.reduce(0) { $0 + $1.daysWithData }
         let countedSavings = counted.reduce(0.0) { $0 + stream.component.savings($1.costs) }
         let meanDaily = countedDays > 0 ? countedSavings / Double(countedDays) : 0
         return cycles.map { cycle in
-            guard cycle.end > stream.start, cycle.daysWithData > 0 else {
+            guard !usesStart || cycle.end > stream.start, cycle.daysWithData > 0 else {
                 return meanDaily * Double(cycle.daysInCycle)
             }
             let savings = stream.component.savings(cycle.costs)
