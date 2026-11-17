@@ -11,6 +11,16 @@ extension DashboardCoordinator {
         savingsTimeline?.referencePeriods.min { $0.effectiveFrom < $1.effectiveFrom }
     }
 
+    /// The coverage note for editing `period` in the fixed rate plan sheet. History starts where the
+    /// rate plan timeline does, since its estimates and backfill begin at the first day of data.
+    func fixedPlanEstimateCoverageNote(editing period: TariffPeriodDTO?) -> String? {
+        RateEstimatesPresentation.fixedPlanEstimateCoverageNote(
+            editing: period,
+            referencePeriods: savingsTimeline?.referencePeriods ?? [],
+            historyStart: savingsTimeline?.periods.map(\.effectiveFrom).min()
+        )
+    }
+
     /// Recomputes cached savings from `overrideTimeline` (if provided) or the stored rate-plan timeline.
     func refreshSavings(timeline overrideTimeline: SiteTariffsTimelineResponse? = nil) async {
         let siteID = selectedSiteID

@@ -85,6 +85,7 @@ struct SolarSystemView: View {
                     existing: existing,
                     defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
                     suggestedStartDate: suggestion,
+                    estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
                     timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
                     currency: coordinator.bill.response?.currentBill.currency ?? "USD",
                     onSave: { request, editing in

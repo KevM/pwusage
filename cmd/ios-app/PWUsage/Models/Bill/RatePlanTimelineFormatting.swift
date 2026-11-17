@@ -62,6 +62,14 @@ enum RatePlanTimelineFormatting {
         return "\(start) – \(end)"
     }
 
+    /// The calendar day after `ymd`, or nil when it is not a date.
+    static func dayAfter(_ ymd: String) -> String? {
+        guard let date = parseYMD(ymd), let next = utcCalendar().date(byAdding: .day, value: 1, to: date) else {
+            return nil
+        }
+        return formatYMD(next)
+    }
+
     static func gapDescription(newer: TariffPeriodDTO, older: TariffPeriodDTO) -> String? {
         guard let olderEndYMD = older.effectiveTo,
               let olderEnd = parseYMD(olderEndYMD),
