@@ -8,7 +8,8 @@ import { buyRateDistance, planKind, teslaShape, urdbStartDate } from './match';
 import type { UrdbRate } from './types';
 
 const MAX_CONCURRENT_URDB_CALLS = 4;
-const NOT_RESIDENTIAL = /\b(farm|commercial|industrial|agricultur\w*|lighting|general service|irrigation)\b/i;
+/** URDB is queried with sector=Residential already; this only drops the few non-home services filed there. */
+const NOT_RESIDENTIAL = /\b(lighting|irrigation|industrial)\b/i;
 const round5 = (value: number) => Math.round(value * 1e5) / 1e5;
 
 export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

@@ -33,7 +33,19 @@ describe('historyPlans', () => {
     expect(names.some(name => /three/i.test(name))).toBe(false);
   });
   it('dropsNonResidentialPlans', () => {
-    expect(historyPlans(rates(y2025), null, defaults).some(plan => /farm/i.test(plan.name))).toBe(false);
+    const base = rates(y2025).find(rate => rate.label === '6859a625ee417fe3fa0cb0df') as UrdbRate;
+    const named = (label: string, name: string) => ({ ...base, label, name, energyratestructure: base.energyratestructure?.map(tiers => tiers.map(tier => ({ ...tier, rate: (tier.rate ?? 0) + Number(label.length) / 100 }))) });
+    const names = historyPlans([
+      named('farm', 'Residential and Farm Service'),
+      named('general', 'Residential General Service'),
+      named('lights', 'Outdoor Lighting Service'),
+      named('pumps', 'Irrigation Pumping'),
+      named('plant', 'Industrial Power'),
+    ], null, new Set()).map(plan => plan.name);
+    expect(names).toEqual(expect.arrayContaining(['Residential and Farm Service', 'Residential General Service']));
+    expect(names).not.toContain('Outdoor Lighting Service');
+    expect(names).not.toContain('Irrigation Pumping');
+    expect(names).not.toContain('Industrial Power');
   });
   it('historyPlansFlagsOnlyTheClosest', () => {
     const plans = historyPlans(rates(y2025), harrisonTesla(), defaults);
@@ -42,7 +54,7 @@ describe('historyPlans', () => {
   });
   it('groupsOptionsThatDifferOnlyInPeakHours', () => {
     const plans = historyPlans(rates(y2025), harrisonTesla(), defaults);
-    expect(plans.map(plan => plan.name)).toEqual(['Residential Time-of-Use (Single-Phase) Rg 2', 'Residential (Single-Phase) Rg 1']);
+    expect(plans.map(plan => plan.name)).toEqual(['Residential Time-of-Use (Single-Phase) Rg 2', 'Farm (Single-Phase) Fg 1', 'Residential (Single-Phase) Rg 1']);
     const group = rg2(plans)!;
     expect(group.kind).toBe('time_of_use');
     expect(group.peakWindows.map(window => [window.fromHour, window.toHour])).toEqual([[7, 19], [8, 20], [9, 21], [10, 22]]);
@@ -66,7 +78,7 @@ describe('historyPlans', () => {
     const plans = historyPlans(rates(y2025), null, defaults);
     expect(plans.some(plan => plan.closest)).toBe(false);
     expect(plans.every(plan => plan.closestWindow === null)).toBe(true);
-    expect(plans.map(plan => plan.name)).toEqual(['Residential (Single-Phase) Rg 1', 'Residential Time-of-Use (Single-Phase) Rg 2']);
+    expect(plans.map(plan => plan.name)).toEqual(['Farm (Single-Phase) Fg 1', 'Residential (Single-Phase) Rg 1', 'Residential Time-of-Use (Single-Phase) Rg 2']);
   });
   it('lowAndHighRatesFromConvertedSeasons', () => {
     const optionB = rates(y2025).find(rate => rate.label === OPTION_B) as UrdbRate;
@@ -75,7 +87,7 @@ describe('historyPlans', () => {
     expect(group.highRate).toBeCloseTo(0.27006 + adj(optionB), 5);
   });
   it('marksDefaultFixedPlansAndKeepsFixedLabel', () => {
-    const fixed = historyPlans(rates(y2025), null, defaults).find(plan => plan.kind === 'fixed')!;
+    const fixed = historyPlans(rates(y2025), null, defaults).find(plan => plan.name === 'Residential (Single-Phase) Rg 1')!;
     expect(fixed.isDefault).toBe(true);
     expect(fixed.fixedLabel).toBe('6859a625ee417fe3fa0cb0df');
     expect(fixed.peakWindows).toEqual([]);
@@ -98,7 +110,7 @@ describe('buildRatePlanHistory', () => {
     const result = await buildRatePlanHistory({ api, utilityName: 'Wisconsin Electric Power Co', timeZone: 'America/Chicago', today: '2026-11-16', window, tesla: harrisonTesla() });
     expect(result.years.map(year => [year.year, year.askDate])).toEqual([[2025, '2025-07-01'], [2024, '2024-07-01'], [2023, '2023-11-14']]);
     expect(result).toMatchObject({ utilityName: 'Wisconsin Electric Power Co', historyStart: '2023-11-14', fillThrough: '2026-04-27', teslaShape: 'time_of_use' });
-    expect(result.current.length).toBe(2);
+    expect(result.current.length).toBe(3);
     expect(result.years[0].plans[0].closestWindow).toBe(OPTION_B);
   });
   it('callsUrdbOncePerYearPlusTodayAndDefaults', async () => {
