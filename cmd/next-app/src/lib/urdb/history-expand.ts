@@ -3,6 +3,7 @@ import { urdbRateToSeasons, type ConvertContext } from './convert';
 import type { UrdbApi } from './estimate-job';
 import { newerRevision, urdbStartDate, walkSupersedes } from './match';
 import type { UrdbRate } from './types';
+import { normalizeUtilityName } from './utility-lookup';
 
 export interface HistoryPeriodInput { label: string; from: string; to: string | null }
 export interface ExpandedRevision { label: string; revisionStart: string; from: string; to: string | null; name: string; seasons: TariffSeasonInput[] }
@@ -12,9 +13,10 @@ const MAX_WALK_STEPS = 40;
 
 export async function expandHistoryPeriod(period: HistoryPeriodInput, ctx: { api: UrdbApi; utilityName: string; timeZone: string; today: string; convert: ConvertContext }): Promise<ExpandedRevision[]> {
   const fetchByLabel = (label: string) => ctx.api.rateByLabel(label);
-  const chosen = await fetchByLabel(period.label);
-  if (!chosen || chosen.utility.trim().toLowerCase() !== ctx.utilityName.trim().toLowerCase()) throw new HistoryPeriodError('That rate plan isn’t listed for your utility.');
-  const inEffect = await ctx.api.ratesEffectiveOn(ctx.utilityName, period.to ?? ctx.today, ctx.timeZone);
+  const [chosen, inEffect] = await Promise.all([fetchByLabel(period.label), ctx.api.ratesEffectiveOn(ctx.utilityName, period.to ?? ctx.today, ctx.timeZone)]);
+  // URDB lists some utilities under an alias ("We energies") whose rates are filed under another name.
+  const utilityNames = new Set([ctx.utilityName, ...inEffect.map(rate => rate.utility)].map(normalizeUtilityName));
+  if (!chosen || !utilityNames.has(normalizeUtilityName(chosen.utility))) throw new HistoryPeriodError('That rate plan isn’t listed for your utility.');
   const newest: UrdbRate = (await newerRevision(chosen, inEffect, fetchByLabel)) ?? chosen;
   const walked = await walkSupersedes(newest, fetchByLabel, { endBefore: null, maxSteps: MAX_WALK_STEPS, timeZone: ctx.timeZone });
   // The owner says they were on this plan: the oldest known prices are the best guess before them.
