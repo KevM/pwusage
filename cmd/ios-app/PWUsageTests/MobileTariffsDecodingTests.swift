@@ -240,4 +240,63 @@ struct MobileTariffsDecodingTests {
         #expect(json.contains("\"to\":null"))
         #expect(json.contains("\"to\":\"2023-12-31\""))
     }
+
+    @Test("Decodes systemCosts with solar and Powerwall components")
+    func decodesSystemCosts() throws {
+        let json = Self.estimatedTimelineJSON.replacingOccurrences(
+            of: "\"reattribution\": null,",
+            with: """
+            "reattribution": null,
+              "systemCosts": {
+                "siteInstalled": "2024-02-14",
+                "solar": {
+                  "installDate": "2024-03-04",
+                  "price": 16100,
+                  "taxCreditPercent": 30,
+                  "incentives": 1200
+                },
+                "powerwall": {
+                  "installDate": null,
+                  "price": 9000,
+                  "taxCreditPercent": null,
+                  "incentives": 0
+                }
+              },
+            """
+        )
+        let decoded = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(decoded.systemCosts == SystemCostsDTO(
+            siteInstalled: "2024-02-14",
+            solar: SystemCostDTO(installDate: "2024-03-04", price: 16_100, taxCreditPercent: 30, incentives: 1_200),
+            powerwall: SystemCostDTO(installDate: nil, price: 9_000, taxCreditPercent: nil, incentives: 0)
+        ))
+    }
+
+    @Test("Decodes a timeline without systemCosts as nil")
+    func decodesTimelineWithoutSystemCosts() throws {
+        let decoded = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(TariffSheetTests.fixture.utf8)
+        )
+
+        #expect(decoded.systemCosts == nil)
+    }
+
+    @Test("Encodes a missing component as an explicit null")
+    func encodesSystemCostsWriteRequest() throws {
+        let request = SystemCostsWriteRequest(
+            solar: SystemCostDTO(installDate: "2024-03-04", price: 16_100, taxCreditPercent: nil, incentives: 0),
+            powerwall: nil
+        )
+        let encoded = try JSONEncoder().encode(request)
+        let text = try #require(String(data: encoded, encoding: .utf8))
+
+        #expect(text.contains("\"powerwall\":null"))
+        #expect(text.contains("\"taxCreditPercent\":null"))
+        #expect(text.contains("\"installDate\":\"2024-03-04\""))
+    }
 }

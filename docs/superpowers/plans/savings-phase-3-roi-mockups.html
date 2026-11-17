@@ -1,0 +1,197 @@
+<title>Payback Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a strip of iPhone-width grouped-list screens, each labelled with the state it shows; notes beneath. */
+:root {
+  --page: #eef0f3; --ink: #15181d; --muted: #6b7280; --faint: #9aa1ab;
+  --phone: #f2f2f7; --cell: #ffffff; --sep: #e2e3e8; --tint: #0a7cff;
+  --good: #2f9e55; --track: #e4e6ea; --note-bg: #ffffff; --chip: #e8f0ff;
+  --display: "SF Pro Display", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --text: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --page: #0d0f12; --ink: #f2f3f5; --muted: #9ba3ae; --faint: #6b7280;
+  --phone: #000000; --cell: #1c1c1e; --sep: #2c2c2e; --tint: #3d9bff;
+  --good: #4cc274; --track: #2c2c2e; --note-bg: #16191d; --chip: #13284a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --page: #0d0f12; --ink: #f2f3f5; --muted: #9ba3ae; --faint: #6b7280;
+  --phone: #000000; --cell: #1c1c1e; --sep: #2c2c2e; --tint: #3d9bff;
+  --good: #4cc274; --track: #2c2c2e; --note-bg: #16191d; --chip: #13284a; color-scheme: dark }
+body { background: var(--page); color: var(--ink); font-family: var(--text);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }
+header { max-width: 1180px; margin: 0 auto 24px; display: grid; gap: 6px; }
+h1 { font-family: var(--display); font-size: 26px; margin: 0; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.45; }
+.strip { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 28px; align-items: start; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+figcaption { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.phone { background: var(--phone); border-radius: 28px; padding: 14px 0 18px; border: 1px solid var(--sep); }
+.nav { font-family: var(--display); font-size: 17px; font-weight: 600; text-align: center; padding: 4px 16px 12px; display: flex; justify-content: space-between; align-items: center; }
+.nav .side { color: var(--tint); font-weight: 400; font-size: 16px; min-width: 56px; }
+.nav .side.r { text-align: right; font-weight: 600; }
+.sec-h { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; padding: 14px 32px 6px; }
+.group { background: var(--cell); margin: 0 16px; border-radius: 12px; overflow: hidden; }
+.row { padding: 11px 16px; border-bottom: 1px solid var(--sep); display: grid; gap: 4px; }
+.row:last-child { border-bottom: 0; }
+.row.kv { grid-template-columns: 1fr auto; align-items: center; }
+.cap { font-size: 12px; font-weight: 600; color: var(--muted); }
+.head { font-size: 15px; font-weight: 600; line-height: 1.3; }
+.sub { font-size: 13px; color: var(--muted); line-height: 1.35; }
+.tiny { font-size: 11.5px; color: var(--faint); }
+.big { font-family: var(--display); font-size: 20px; font-weight: 600; }
+.when { font-size: 15px; font-weight: 600; color: var(--good); }
+.bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; margin: 2px 0; }
+.bar > i { display: block; height: 100%; background: var(--good); border-radius: 3px; }
+.btn { color: var(--tint); font-size: 15px; }
+.val { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
+.lbl { font-size: 15px; }
+.toggle { width: 46px; height: 28px; border-radius: 14px; background: var(--good); position: relative; }
+.toggle::after { content: ""; position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; border-radius: 50%; background: #fff; }
+.toggle.off { background: var(--track); }
+.toggle.off::after { right: auto; left: 2px; }
+.foot { font-size: 12.5px; color: var(--muted); padding: 6px 32px 0; line-height: 1.4; }
+ul.assume { margin: 2px 0 0; padding-left: 18px; display: grid; gap: 3px; font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.comp { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: baseline; }
+.comp .when { font-size: 14px; }
+.notes { max-width: 1180px; margin: 36px auto 0; background: var(--note-bg); border: 1px solid var(--sep); border-radius: 14px; padding: 18px 22px; display: grid; gap: 8px; }
+.notes h2 { font-family: var(--display); font-size: 17px; margin: 0; }
+.notes ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; line-height: 1.45; max-width: 90ch; }
+.chip { display: inline-block; background: var(--chip); color: var(--tint); border-radius: 6px; padding: 0 6px; font-size: 12px; }
+</style>
+
+<header>
+  <h1>Payback mockups (Savings Phase 3)</h1>
+  <p>A new <strong>Payback</strong> section on the Solar System screen, directly under Savings, and the <strong>System Costs</strong> sheet it opens. Figures are examples. Every amount says “about”; every projection lists its assumptions.</p>
+</header>
+
+<div class="strip">
+
+  <figure>
+    <figcaption>A · No costs entered</figcaption>
+    <div class="phone">
+      <div class="nav"><span class="side">‹ Back</span><span>Solar System</span><span class="side r"></span></div>
+      <div class="sec-h">Savings</div>
+      <div class="group">
+        <div class="row"><span class="cap">Lifetime</span><span class="head">Your system saved about $9,050</span><span class="sub">Solar about $7,840 · Powerwall and your rate plan about $1,210</span><span class="tiny">Based on 1,060 of 1,072 days</span></div>
+      </div>
+      <div class="sec-h">Payback</div>
+      <div class="group">
+        <div class="row"><span class="sub">Enter what your system cost to see how much it has paid back and when it should pay for itself.</span></div>
+        <div class="row"><span class="btn">Enter System Costs</span></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>B · Costs entered (main state)</figcaption>
+    <div class="phone">
+      <div class="nav"><span class="side">‹ Back</span><span>Solar System</span><span class="side r"></span></div>
+      <div class="sec-h">Payback</div>
+      <div class="group">
+        <div class="row">
+          <span class="cap">Your system</span>
+          <span class="head">Paid back about $9,050 of $26,250</span>
+          <div class="bar"><i style="width:34%"></i></div>
+          <span class="when">Paid off around summer 2035</span>
+        </div>
+        <div class="row comp">
+          <span class="lbl">Solar</span><span class="when">around spring 2031</span>
+          <span class="sub">about $7,840 of $16,100</span><span></span>
+        </div>
+        <div class="row comp">
+          <span class="lbl">Powerwall</span><span class="when">around fall 2041</span>
+          <span class="sub">about $1,210 of $10,150, since Mar 4, 2024</span><span></span>
+        </div>
+        <div class="row">
+          <span class="cap">Assumes</span>
+          <ul class="assume">
+            <li>Your usage stays like the last 12 months</li>
+            <li>Rates rise about 4.1% a year, the pace of your rate plans since 2019</li>
+            <li>Solar output falls about 0.6% a year, as Panel Health measured</li>
+            <li>Powerwall capacity falls about 3% a year, in line with Tesla’s warranty (70% after 10 years)</li>
+          </ul>
+          <span class="tiny">Based on 1,060 of 1,072 days · About 18% of these days use estimated rates</span>
+        </div>
+        <div class="row"><span class="btn">Edit System Costs</span></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>C · System Costs sheet</figcaption>
+    <div class="phone">
+      <div class="nav"><span class="side">Cancel</span><span>System Costs</span><span class="side r">Save</span></div>
+      <div class="sec-h">Solar</div>
+      <div class="group">
+        <div class="row kv"><span class="lbl">Installed</span><span class="val">Nov 14, 2023</span></div>
+        <div class="row kv"><span class="lbl">Price</span><span class="val">$24,000</span></div>
+        <div class="row kv"><span class="lbl">Federal Tax Credit</span><span class="toggle"></span></div>
+        <div class="row kv"><span class="lbl">Credit Rate</span><span class="val">30%</span></div>
+        <div class="row kv"><span class="lbl">Rebates and Incentives</span><span class="val">$1,000</span></div>
+        <div class="row kv"><span class="lbl">Net Cost</span><span class="val">about $16,100</span></div>
+      </div>
+      <div class="sec-h">Powerwall</div>
+      <div class="group">
+        <div class="row kv"><span class="lbl">Installed</span><span class="val">Mar 4, 2024</span></div>
+        <div class="row kv"><span class="lbl">Price</span><span class="val">$14,500</span></div>
+        <div class="row kv"><span class="lbl">Federal Tax Credit</span><span class="toggle"></span></div>
+        <div class="row kv"><span class="lbl">Credit Rate</span><span class="val">30%</span></div>
+        <div class="row kv"><span class="lbl">Rebates and Incentives</span><span class="val">$0</span></div>
+        <div class="row kv"><span class="lbl">Net Cost</span><span class="val">about $10,150</span></div>
+      </div>
+      <p class="foot">Paying off a loan? Enter the total you’ll pay over the loan as the price. The tax credit is counted on the price after rebates. Everyone on this site sees these costs.</p>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>D · Less than a year counted</figcaption>
+    <div class="phone">
+      <div class="nav"><span class="side">‹ Back</span><span>Solar System</span><span class="side r"></span></div>
+      <div class="sec-h">Payback</div>
+      <div class="group">
+        <div class="row">
+          <span class="cap">Your system</span>
+          <span class="head">Paid back about $1,420 of $26,250</span>
+          <div class="bar"><i style="width:5%"></i></div>
+          <span class="sub">We’ll estimate when it pays for itself once a full year of savings is counted (214 of 300 days so far).</span>
+        </div>
+        <div class="row comp"><span class="lbl">Solar</span><span class="sub">about $1,180 of $16,100</span></div>
+        <div class="row comp"><span class="lbl">Powerwall</span><span class="sub">about $240 of $10,150</span></div>
+        <div class="row"><span class="tiny">Based on 214 of 230 days</span></div>
+        <div class="row"><span class="btn">Edit System Costs</span></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <figcaption>E · Paid off, and a part that won’t be</figcaption>
+    <div class="phone">
+      <div class="nav"><span class="side">‹ Back</span><span>Solar System</span><span class="side r"></span></div>
+      <div class="sec-h">Payback</div>
+      <div class="group">
+        <div class="row">
+          <span class="cap">Your system</span>
+          <span class="head">Paid back about $23,900 of $21,400</span>
+          <div class="bar"><i style="width:100%"></i></div>
+          <span class="when">Paid off around fall 2024</span>
+        </div>
+        <div class="row comp"><span class="lbl">Solar</span><span class="when">paid off around spring 2023</span><span class="sub">about $22,950 of $13,800</span><span></span></div>
+        <div class="row comp"><span class="lbl">Powerwall</span><span class="sub">not within 30 years</span><span class="sub">about $950 of $7,600</span><span></span></div>
+        <div class="row"><span class="sub">At its current pace, your Powerwall won’t pay for itself within 30 years. Under full net metering a battery adds little to savings.</span></div>
+        <div class="row"><span class="btn">Edit System Costs</span></div>
+      </div>
+    </div>
+  </figure>
+
+</div>
+
+<section class="notes">
+  <h2>What to check</h2>
+  <ol>
+    <li><span class="chip">Placement</span> Payback is its own section under Savings on Solar System. iOS only; no web screen.</li>
+    <li><span class="chip">Seasons</span> “around spring 2031” uses Mar–May spring, Jun–Aug summer, Sep–Nov fall, Dec–Feb winter (December counts toward the next year’s winter).</li>
+    <li><span class="chip">Credit</span> The rate pre-fills from the install year (30% through 2019, 26% for 2020–2021, 30% for 2022–2025, off from 2026, when the federal home credit ended) and stays editable.</li>
+    <li><span class="chip">Powerwall date</span> Pre-fills from the first day the Powerwall ran. Once saved, it also sets when the Powerwall enters the savings scenarios.</li>
+    <li><span class="chip">Caveats</span> Coverage, estimated-share and Fix buttons reuse the Phase 2 lines. Break-even waits for 300 counted days in the last 12 months.</li>
+  </ol>
+</section>

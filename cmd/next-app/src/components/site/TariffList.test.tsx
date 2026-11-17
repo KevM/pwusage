@@ -11,6 +11,7 @@ const baseTimeline: SiteTariffsTimelineResponse = {
   referencePeriods: [],
   estimates: null,
   battery: null,
+  systemCosts: { siteInstalled: '2023-11-14', solar: null, powerwall: null },
   periods: [
     {
       periodId: 2,

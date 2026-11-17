@@ -61,6 +61,10 @@ extension DashboardCoordinator {
         }
     }
 
+    func putSystemCosts(_ body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in try await api.saveSystemCosts(siteID: siteID, body: body) }
+    }
+
     func searchUtilities(query: String) async throws -> [String] {
         try await runTariffQuery { api, siteID in try await api.searchUtilities(siteID: siteID, query: query) }
     }

@@ -54,6 +54,20 @@ export interface ReattributionStatusDTO {
   updatedAt: string;
 }
 
+export interface SystemCostDTO {
+  installDate: string | null;
+  price: number;
+  taxCreditPercent: number | null;
+  incentives: number;
+}
+
+export interface SystemCostsDTO {
+  /** Site.installed as a site-local YYYY-MM-DD. */
+  siteInstalled: string;
+  solar: SystemCostDTO | null;
+  powerwall: SystemCostDTO | null;
+}
+
 export interface SiteBatteryDTO {
   nameplateEnergyWh: number;
   nameplatePowerW: number;
@@ -113,6 +127,7 @@ export interface SiteTariffsTimelineResponse {
   referencePeriods: TariffPeriodDTO[];
   estimates: EstimatesStatusDTO | null;
   battery: SiteBatteryDTO | null;
+  systemCosts: SystemCostsDTO;
   reattribution: ReattributionStatusDTO | null;
   /** Observed holidays this year and next (site-local YYYY-MM-DD): holidays use the weekend schedule. */
   holidayDates: string[];
