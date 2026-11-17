@@ -93,37 +93,36 @@ struct RatePlanHistoryPresentationTests {
         #expect(RatePlanHistoryPresentation.question(flow) == "What kind of rate plan are you on now?")
         #expect(RatePlanHistoryPresentation.navigationTitle(flow) == "Your Rate Plans")
         flow.chooseKind(.fixed)
-        #expect(flow.step == .stillOn(year: 2025))
-        #expect(RatePlanHistoryPresentation.question(flow) == "In 2025, were you still on Residential Rg 1?")
-        #expect(RatePlanHistoryPresentation.navigationTitle(flow) == "2025")
-        #expect(RatePlanHistoryPresentation.progressLine(flow) == "2025")
-        flow.answerStillOn(true)
-        #expect(RatePlanHistoryPresentation.progressLine(flow) == "2025 · 2024")
-        flow.answerStillOn(true)
-        flow.answerStillOn(true)
+        #expect(flow.step == .sinceStart)
+        #expect(RatePlanHistoryPresentation.question(flow) == "Have you been on Residential Rg 1 since Nov 2023?")
+        #expect(RatePlanHistoryPresentation.navigationTitle(flow) == "Your Rate Plans")
+        flow.answerSinceStart(true)
         #expect(flow.step == .review)
         #expect(RatePlanHistoryPresentation.navigationTitle(flow) == "Review")
         #expect(RatePlanHistoryPresentation.question(flow) == "Your rate plans since Nov 2023")
-        #expect(RatePlanHistoryPresentation.progressLine(flow) == nil)
     }
 
-    @Test func notListedAndPlanQuestions() {
+    @Test func questionsAboutThePlanBefore() {
         let history = RatePlanHistoryDTO(
             utilityName: "U", historyStart: "2023-11-14", fillThrough: nil, teslaShape: nil,
             current: [Self.plan("Current Plan", kind: .fixed)],
             years: [RatePlanHistoryYearDTO(
-                year: 2025, askDate: "2025-07-01",
+                year: 2024, askDate: "2024-07-01",
                 plans: [Self.plan("Other", kind: .fixed), Self.plan("Other 2", kind: .fixed)]
             )]
         )
-        var flow = RatePlanHistoryFlow(history: history, hasTeslaPlan: false)
+        var flow = RatePlanHistoryFlow(history: history, hasTeslaPlan: false, today: "2026-11-16")
         flow.chooseKind(.fixed)
-        #expect(flow.step == .kind(year: 2025, notListed: true))
-        #expect(RatePlanHistoryPresentation.notListedLine(flow) == "Current Plan isn’t listed for 2025.")
-        #expect(RatePlanHistoryPresentation.question(flow) == "In 2025, what kind of rate plan were you on?")
+        flow.answerSinceStart(false)
+        #expect(RatePlanHistoryPresentation.question(flow) == "When did you switch to Current Plan?")
+        flow.chooseSwitchMonth("2025-01")
+        #expect(flow.step == .kind(year: 2024))
+        #expect(RatePlanHistoryPresentation.question(flow) == "What kind of rate plan were you on before Jan 2025?")
         flow.chooseKind(.fixed)
-        #expect(RatePlanHistoryPresentation.question(flow) == "Which plan were you on in 2025?")
-        #expect(RatePlanHistoryPresentation.notListedLine(flow) == nil)
+        #expect(RatePlanHistoryPresentation.question(flow) == "Which plan were you on before Jan 2025?")
+        flow.choosePlan(history.years[0].plans[1])
+        #expect(RatePlanHistoryPresentation.question(flow)
+            == "Before Jan 2025, had you been on Other 2 since Nov 2023?")
     }
 
     @Test func helpSheetCopy() {

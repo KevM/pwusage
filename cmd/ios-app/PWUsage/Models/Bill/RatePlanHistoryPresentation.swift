@@ -26,40 +26,29 @@ enum RatePlanHistoryPresentation {
     static let flowTitle = "Your Rate Plans"
     static let reviewTitle = "Review"
 
-    /// The navigation title: the year on year steps, `Your Rate Plans` on the current plan's, `Review` last.
+    /// The navigation title: `Your Rate Plans` while asking, `Review` last.
     static func navigationTitle(_ flow: RatePlanHistoryFlow) -> String {
-        switch flow.step {
-        case .currentKind, .currentPlan: flowTitle
-        case .peakHours(let year): flow.spans.isEmpty ? flowTitle : String(year)
-        case .stillOn(let year), .kind(let year, _), .plan(let year, _), .switchMonth(let year): String(year)
-        case .review: reviewTitle
-        }
+        flow.step == .review ? reviewTitle : flowTitle
     }
 
     static func question(_ flow: RatePlanHistoryFlow) -> String {
         let plan = flow.currentPlan.map { displayName($0.name) } ?? ""
+        let start = monthYear(flow.history.historyStart)
+        // The plan the walk is asking about starts here; the one before it ends the day before.
+        let before = flow.spans.last.map { monthYear($0.from) } ?? ""
         switch flow.step {
         case .currentKind: return "What kind of rate plan are you on now?"
         case .currentPlan: return "Which plan are you on now?"
-        case .stillOn(let year): return "In \(year), were you still on \(plan)?"
-        case .kind(let year, _): return "In \(year), what kind of rate plan were you on?"
-        case .plan(let year, _): return "Which plan were you on in \(year)?"
+        case .sinceStart:
+            guard flow.spans.count > 1 else { return "Have you been on \(plan) since \(start)?" }
+            let newer = monthYear(flow.spans[flow.spans.count - 2].from)
+            return "Before \(newer), had you been on \(plan) since \(start)?"
+        case .switchMonth: return "When did you switch to \(plan)?"
+        case .kind: return "What kind of rate plan were you on before \(before)?"
+        case .plan: return "Which plan were you on before \(before)?"
         case .peakHours: return "When does your Peak start and stop?"
-        case .switchMonth: return "About when did you switch to \(plan)?"
         case .review: return reviewHeading(historyStart: flow.history.historyStart)
         }
-    }
-
-    /// The line above the kind question when the current plan isn't listed that year.
-    static func notListedLine(_ flow: RatePlanHistoryFlow) -> String? {
-        guard case .kind(let year, true) = flow.step, let plan = flow.currentPlan else { return nil }
-        return "\(displayName(plan.name)) isn’t listed for \(year)."
-    }
-
-    /// `2025 · 2024 · 2023` on the still-on step: the years asked so far, newest first.
-    static func progressLine(_ flow: RatePlanHistoryFlow) -> String? {
-        guard case .stillOn(let year) = flow.step else { return nil }
-        return flow.history.years.map(\.year).filter { $0 >= year }.map(String.init).joined(separator: " · ")
     }
 
     // MARK: Buttons and pills

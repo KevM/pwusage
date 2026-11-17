@@ -99,7 +99,7 @@ struct RatePlanHistoryModelTests {
         let model = stub.model()
         await model.load()
         model.update { $0.chooseKind(.fixed) }
-        model.update { $0.answerStillOn(true) }
+        model.update { $0.answerSinceStart(true) }
         guard case .ready(let flow) = model.state else {
             Issue.record("expected ready")
             return
@@ -119,7 +119,7 @@ struct RatePlanHistoryModelTests {
         let model = stub.model()
         await model.load()
         model.update { $0.chooseKind(.fixed) }
-        model.update { $0.answerStillOn(true) }
+        model.update { $0.answerSinceStart(true) }
         let answered = model.state
         await model.save()
         #expect(model.state == answered)

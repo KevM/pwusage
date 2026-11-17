@@ -47,28 +47,28 @@
             return flow
         }
 
-        static var stillOn: RatePlanHistoryFlow {
+        static var sinceStart: RatePlanHistoryFlow {
             var flow = hours
             flow.choosePeakWindow(history.current[0].peakWindows[1])
             return flow
         }
 
-        static var yearKind: RatePlanHistoryFlow {
-            var flow = stillOn
-            flow.answerStillOn(false)
+        static var switchMonth: RatePlanHistoryFlow {
+            var flow = sinceStart
+            flow.answerSinceStart(false)
             return flow
         }
 
-        static var switchMonth: RatePlanHistoryFlow {
-            var flow = yearKind
-            flow.chooseKind(.fixed)
+        static var olderKind: RatePlanHistoryFlow {
+            var flow = switchMonth
+            if let month = flow.defaultSwitchMonth() { flow.chooseSwitchMonth(month) }
             return flow
         }
 
         static var review: RatePlanHistoryFlow {
-            var flow = switchMonth
-            flow.answerStillOn(true)
-            flow.answerStillOn(true)
+            var flow = olderKind
+            flow.chooseKind(.fixed)
+            flow.answerSinceStart(true)
             return flow
         }
 
@@ -107,9 +107,9 @@
     #Preview("Kind") { previewStep(RatePlanHistoryPreviewFlows.start) }
     #Preview("Plan") { previewStep(RatePlanHistoryPreviewFlows.plan) }
     #Preview("Peak hours") { previewStep(RatePlanHistoryPreviewFlows.hours) }
-    #Preview("Still on") { previewStep(RatePlanHistoryPreviewFlows.stillOn) }
-    #Preview("Year kind") { previewStep(RatePlanHistoryPreviewFlows.yearKind) }
+    #Preview("Since the start") { previewStep(RatePlanHistoryPreviewFlows.sinceStart) }
     #Preview("Switch month") { previewStep(RatePlanHistoryPreviewFlows.switchMonth) }
+    #Preview("Plan before") { previewStep(RatePlanHistoryPreviewFlows.olderKind) }
     #Preview("Review") { previewStep(RatePlanHistoryPreviewFlows.review) }
     #Preview("Review, assumed") { previewStep(RatePlanHistoryPreviewFlows.reviewAssumed) }
 

@@ -1,21 +1,22 @@
 import Foundation
 
-/// The rate plan history guide's walk-back: the current plan first, then one question per
-/// listed year, newest first. Pure state; the view renders `step` and calls the answers.
+/// The rate plan history guide's walk-back: the current plan first, then one question per plan,
+/// "since the start?", and on No, when they switched and what they were on before.
+/// Pure state; the view renders `step` and calls the answers.
 struct RatePlanHistoryFlow: Equatable, Sendable {
     enum Step: Equatable, Sendable {
         /// "What kind of rate plan are you on now?"
         case currentKind
         case currentPlan(RatePlanKind)
-        /// "In <year>, were you still on <plan>?"
-        case stillOn(year: Int)
-        /// `notListed`: the current plan isn't listed that year.
-        case kind(year: Int, notListed: Bool)
+        /// "Have you been on <plan> since <history start>?"
+        case sinceStart
+        /// "When did you switch to <plan>?"
+        case switchMonth
+        /// The plan before the switch; `year` is the year it ended in, whose plans are listed.
+        case kind(year: Int)
         case plan(year: Int, RatePlanKind)
         /// "When does your Peak start and stop?" (only for plans with 2+ windows)
         case peakHours(year: Int)
-        /// "About when did you switch to <plan>?"
-        case switchMonth(year: Int)
         case review
     }
 
@@ -44,21 +45,22 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         let step: Step
         let spans: [Span]
         let pick: Pick
-        let yearIndex: Int
     }
 
     let history: RatePlanHistoryDTO
     let hasTeslaPlan: Bool
+    /// Site-local `YYYY-MM-DD`: the newest switch month offered when the plan is open (no Tesla).
+    let today: String
     private(set) var step: Step = .currentKind
     /// Newest first; the last one is the plan the walk is asking about.
     private(set) var spans: [Span] = []
     private var pick = Pick()
-    private var yearIndex = 0
     private var undo: [Snapshot] = []
 
-    init(history: RatePlanHistoryDTO, hasTeslaPlan: Bool) {
+    init(history: RatePlanHistoryDTO, hasTeslaPlan: Bool, today: String = IsoDay.today()) {
         self.history = history
         self.hasTeslaPlan = hasTeslaPlan
+        self.today = today
     }
 
     /// Tesla's shape, on the first step only.
@@ -77,7 +79,7 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         return pick.plan?.closestWindow
     }
 
-    /// The plan the still-on and switch-month questions name.
+    /// The plan the since-start and switch-month questions name.
     var currentPlan: RatePlanHistoryPlanDTO? {
         spans.last?.plan
     }
@@ -86,33 +88,29 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         switch step {
         case .currentKind: history.current
         case let .currentPlan(kind): history.current.filter { $0.kind == kind }
-        case let .stillOn(year), let .kind(year, _): plans(in: year)
-        case let .plan(year, kind): plans(in: year).filter { $0.kind == kind }
-        case .peakHours, .switchMonth, .review: []
+        case let .kind(year): plans(endingIn: year)
+        case let .plan(year, kind): plans(endingIn: year).filter { $0.kind == kind }
+        case .sinceStart, .switchMonth, .peakHours, .review: []
         }
     }
 
-    /// `YYYY-MM`, newest first: from the current plan's start month down to February of `year`,
-    /// keeping only months after the history start so the older plan gets at least one day.
-    func switchMonths(year: Int) -> [String] {
-        guard let newer = spans.last, let upper = YearMonth(day: newer.from) else { return [] }
-        let lower = YearMonth(year: year, month: 2)
+    /// `YYYY-MM`, newest first: the months the asked plan could have started in, from its last
+    /// month down to the month after the history start, so the plan before it gets at least one day.
+    func switchMonths() -> [String] {
+        guard let asked = spans.last, let upper = YearMonth(day: asked.endDate ?? today) else { return [] }
         var months: [String] = []
         var month = upper
-        while month >= lower {
-            if month.firstDay > history.historyStart {
-                months.append(month.text)
-            }
+        while month.firstDay > history.historyStart {
+            months.append(month.text)
             month = month.previous
         }
         return months
     }
 
-    /// January of `year + 1` when offered, else the newest month offered.
-    func defaultSwitchMonth(year: Int) -> String? {
-        let months = switchMonths(year: year)
-        let january = YearMonth(year: year + 1, month: 1).text
-        return months.contains(january) ? january : months.first
+    /// The newest January offered (rates often change then), else the newest month offered.
+    func defaultSwitchMonth() -> String? {
+        let months = switchMonths()
+        return months.first { $0.hasSuffix("-01") } ?? months.first
     }
 
     /// Oldest first, contiguous; the newest `to` is `fillThrough` (nil = open).
@@ -137,12 +135,12 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         let year: Int?
         switch step {
         case .currentKind: year = nil
-        case let .kind(asked, _): year = asked
+        case let .kind(asked): year = asked
         default: return
         }
+        let options = plans(for: step).filter { $0.kind == kind }
         save()
         pick = Pick()
-        let options = candidates.filter { $0.kind == kind }
         if options.count == 1, let only = options.first {
             take(only)
         } else {
@@ -167,21 +165,16 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         finishPick()
     }
 
-    mutating func answerStillOn(_ yes: Bool) {
-        guard case let .stillOn(year) = step else { return }
+    mutating func answerSinceStart(_ yes: Bool) {
+        guard step == .sinceStart else { return }
         save()
-        if yes {
-            extendCurrentPlan(assumed: false)
-            goToYear(yearIndex + 1)
-        } else {
-            step = .kind(year: year, notListed: false)
-        }
+        step = yes || switchMonths().isEmpty ? .review : .switchMonth
     }
 
     mutating func chooseSwitchMonth(_ month: String) {
-        guard case let .switchMonth(year) = step, switchMonths(year: year).contains(month) else { return }
+        guard step == .switchMonth, switchMonths().contains(month) else { return }
         save()
-        applySwitch(month: month, year: year)
+        applySwitch(month: month)
     }
 
     /// The help sheet's Still Not Sure: answers this step with the best guess, marked assumed.
@@ -199,15 +192,15 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
             pick.assumed = true
             pick.windowLabel = plan.closestWindow ?? plan.peakWindows.first?.label
             finishPick()
-        case .stillOn:
+        case .sinceStart:
             save()
-            extendCurrentPlan(assumed: true)
-            goToYear(yearIndex + 1)
-        case let .switchMonth(year):
-            guard let month = defaultSwitchMonth(year: year) else { return }
+            spans[spans.count - 1].assumed = true
+            step = .review
+        case .switchMonth:
+            guard let month = defaultSwitchMonth() else { return }
             save()
-            pick.assumed = true
-            applySwitch(month: month, year: year)
+            spans[spans.count - 1].assumed = true
+            applySwitch(month: month)
         case .review:
             return
         }
@@ -218,34 +211,22 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         step = previous.step
         spans = previous.spans
         pick = previous.pick
-        yearIndex = previous.yearIndex
     }
 
     // MARK: - Transitions
 
-    /// The plans the current kind/plan step chooses from.
-    private var candidates: [RatePlanHistoryPlanDTO] {
-        spans.isEmpty ? history.current : askedYear.map(plans(in:)) ?? []
-    }
-
-    private var askedYear: Int? {
-        history.years.indices.contains(yearIndex) ? history.years[yearIndex].year : nil
-    }
-
-    /// The year the current plan's hours step names.
-    private var currentYear: Int {
+    /// The year a newly picked plan ends in: the year before the asked plan's start, or the
+    /// current plan's year.
+    private var pickYear: Int {
+        if let asked = spans.last { return YearMonth(day: IsoDay.dayBefore(asked.from))?.year ?? 0 }
         if let newest = history.years.first { return newest.year + 1 }
-        return YearMonth(day: history.fillThrough ?? history.historyStart)?.year ?? 0
+        return YearMonth(day: history.fillThrough ?? today)?.year ?? 0
     }
 
-    /// Where the current plan starts before the walk: January after the newest asked year.
-    private var newestFrom: String {
-        let start = history.years.first.map { YearMonth(year: $0.year + 1, month: 1).firstDay }
-        return max(start ?? history.historyStart, history.historyStart)
-    }
-
-    private func plans(in year: Int) -> [RatePlanHistoryPlanDTO] {
-        history.years.first { $0.year == year }?.plans ?? []
+    /// The plans listed for a year; today's when the server listed none for it.
+    private func plans(endingIn year: Int) -> [RatePlanHistoryPlanDTO] {
+        let listed = history.years.first { $0.year == year }?.plans ?? []
+        return listed.isEmpty ? history.current : listed
     }
 
     private func notSurePlan(from options: [RatePlanHistoryPlanDTO]) -> RatePlanHistoryPlanDTO? {
@@ -257,86 +238,38 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         return options.first(where: \.isDefault) ?? options.first { $0.kind == .fixed } ?? options.first
     }
 
-    private func yearStart(_ year: Int) -> String {
-        max(YearMonth(year: year, month: 1).firstDay, history.historyStart)
-    }
-
     private mutating func save() {
-        undo.append(Snapshot(step: step, spans: spans, pick: pick, yearIndex: yearIndex))
+        undo.append(Snapshot(step: step, spans: spans, pick: pick))
     }
 
     private mutating func take(_ plan: RatePlanHistoryPlanDTO) {
         pick.plan = plan
         if plan.peakWindows.count > 1 {
-            step = .peakHours(year: spans.isEmpty ? currentYear : askedYear ?? currentYear)
+            step = .peakHours(year: pickYear)
         } else {
             pick.windowLabel = plan.peakWindows.first?.label
             finishPick()
         }
     }
 
-    /// Turns a finished pick into the current plan, an extension of it, or a switch question.
+    /// Turns a finished pick into a span reaching back to the history start, then asks whether it did.
     private mutating func finishPick() {
         guard let plan = pick.plan else { return }
-        guard let current = spans.last else {
-            spans = [Span(
-                plan: plan, windowLabel: pick.windowLabel, from: newestFrom,
-                endDate: history.fillThrough, assumed: pick.assumed
-            )]
-            pick = Pick()
-            goToYear(0)
-            return
-        }
-        if plan.name == current.plan.name, pick.windowLabel == current.windowLabel {
-            extendCurrentPlan(assumed: pick.assumed)
-            pick = Pick()
-            goToYear(yearIndex + 1)
-        } else if let year = askedYear {
-            step = .switchMonth(year: year)
-        }
-    }
-
-    /// Covers all of the asked year with the current plan; an assumed year is its own span.
-    private mutating func extendCurrentPlan(assumed: Bool) {
-        guard let year = askedYear, let current = spans.last else { return }
-        let start = yearStart(year)
-        if current.assumed == assumed {
-            spans[spans.count - 1].from = start
-        } else {
-            spans.append(Span(
-                plan: current.plan, windowLabel: current.windowLabel, from: start,
-                endDate: IsoDay.dayBefore(current.from), assumed: assumed
-            ))
-        }
-    }
-
-    private mutating func applySwitch(month: String, year: Int) {
-        guard let plan = pick.plan, !spans.isEmpty else { return }
-        let switchDay = "\(month)-01"
-        spans[spans.count - 1].from = switchDay
+        let endDate = spans.last.map { IsoDay.dayBefore($0.from) } ?? history.fillThrough
         spans.append(Span(
-            plan: plan, windowLabel: pick.windowLabel, from: yearStart(year),
-            endDate: IsoDay.dayBefore(switchDay), assumed: pick.assumed
+            plan: plan, windowLabel: pick.windowLabel, from: history.historyStart,
+            endDate: endDate, assumed: pick.assumed
         ))
         pick = Pick()
-        goToYear(yearIndex + 1)
+        step = .sinceStart
     }
 
-    private mutating func goToYear(_ index: Int) {
-        yearIndex = index
-        guard history.years.indices.contains(index) else {
-            step = .review
-            return
-        }
-        let year = history.years[index]
-        // Nothing to choose from that year: keep the newer plan, marked Assumed so Review shows it.
-        if year.plans.isEmpty, !spans.isEmpty {
-            extendCurrentPlan(assumed: true)
-            goToYear(index + 1)
-            return
-        }
-        let isListed = year.plans.contains { $0.name == spans.last?.plan.name }
-        step = isListed ? .stillOn(year: year.year) : .kind(year: year.year, notListed: true)
+    /// Starts the asked plan in `month`, then asks for the plan before it.
+    private mutating func applySwitch(month: String) {
+        guard !spans.isEmpty else { return }
+        spans[spans.count - 1].from = "\(month)-01"
+        pick = Pick()
+        step = .kind(year: pickYear)
     }
 }
 
@@ -375,7 +308,15 @@ private struct YearMonth: Comparable {
     }
 }
 
-private enum IsoDay {
+enum IsoDay {
+    /// Today in the device's zone, `YYYY-MM-DD`.
+    static func today(_ now: Date = Date()) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let parts = calendar.dateComponents([.year, .month, .day], from: now)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 1, parts.day ?? 1)
+    }
+
     static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt

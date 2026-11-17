@@ -19,10 +19,10 @@ struct RatePlanHistoryStepView: View {
             RatePlanPlanStep(flow: flow, model: model)
         case .peakHours:
             RatePlanHoursStep(flow: flow, model: model)
-        case .stillOn:
-            RatePlanStillOnStep(flow: flow, model: model)
-        case .switchMonth(let year):
-            RatePlanSwitchMonthStep(flow: flow, model: model, year: year)
+        case .sinceStart:
+            RatePlanSinceStartStep(flow: flow, model: model)
+        case .switchMonth:
+            RatePlanSwitchMonthStep(flow: flow, model: model)
         case .review:
             RatePlanHistoryReviewView(
                 flow: flow,
@@ -54,10 +54,7 @@ private struct RatePlanKindStep: View {
     }
 
     var body: some View {
-        HistoryStepFrame(
-            title: RatePlanHistoryPresentation.question(flow),
-            lead: RatePlanHistoryPresentation.notListedLine(flow)
-        ) {
+        HistoryStepFrame(title: RatePlanHistoryPresentation.question(flow)) {
             HistoryChoiceCard {
                 ForEach(RatePlanHistoryPresentation.kinds(in: plans), id: \.self) { kind in
                     HistoryChoiceRow(
@@ -171,9 +168,9 @@ private struct RatePlanHoursStep: View {
     }
 }
 
-// MARK: - Still on
+// MARK: - Since the start
 
-private struct RatePlanStillOnStep: View {
+private struct RatePlanSinceStartStep: View {
     let flow: RatePlanHistoryFlow
     let model: RatePlanHistoryModel
 
@@ -181,20 +178,14 @@ private struct RatePlanStillOnStep: View {
         HistoryStepFrame(title: RatePlanHistoryPresentation.question(flow)) {
             EmptyView()
         } footer: {
-            if let progress = RatePlanHistoryPresentation.progressLine(flow) {
-                Text(progress)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-            }
-            Button { model.update { $0.answerStillOn(true) } } label: {
+            Button { model.update { $0.answerSinceStart(true) } } label: {
                 Text(RatePlanHistoryPresentation.yesTitle)
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
             .emphasisProminentButton()
             .controlSize(.large)
-            Button { model.update { $0.answerStillOn(false) } } label: {
+            Button { model.update { $0.answerSinceStart(false) } } label: {
                 Text(RatePlanHistoryPresentation.noTitle)
                     .font(.headline)
                     .frame(maxWidth: .infinity)
@@ -212,20 +203,18 @@ private struct RatePlanStillOnStep: View {
 private struct RatePlanSwitchMonthStep: View {
     let flow: RatePlanHistoryFlow
     let model: RatePlanHistoryModel
-    let year: Int
     @State private var month: String
 
-    init(flow: RatePlanHistoryFlow, model: RatePlanHistoryModel, year: Int) {
+    init(flow: RatePlanHistoryFlow, model: RatePlanHistoryModel) {
         self.flow = flow
         self.model = model
-        self.year = year
-        _month = State(initialValue: flow.defaultSwitchMonth(year: year) ?? "")
+        _month = State(initialValue: flow.defaultSwitchMonth() ?? "")
     }
 
     var body: some View {
         HistoryStepFrame(title: RatePlanHistoryPresentation.question(flow)) {
             Picker(RatePlanHistoryPresentation.question(flow), selection: $month) {
-                ForEach(flow.switchMonths(year: year), id: \.self) { month in
+                ForEach(flow.switchMonths(), id: \.self) { month in
                     Text(RatePlanHistoryPresentation.switchMonthLabel(month)).tag(month)
                 }
             }

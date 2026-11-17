@@ -87,7 +87,7 @@ struct RatePlanHistoryFlowTests {
 
         var fixed = RatePlanHistoryFlow(history: Self.harrison(), hasTeslaPlan: true)
         fixed.chooseKind(.fixed)
-        #expect(fixed.step == .stillOn(year: 2025))
+        #expect(fixed.step == .sinceStart)
         #expect(fixed.spans.first?.plan.name == Self.fixedName)
         #expect(fixed.spans.first?.windowLabel == nil)
     }
@@ -118,42 +118,35 @@ struct RatePlanHistoryFlowTests {
 
     // MARK: - Walk-back
 
-    @Test func stillOnKeepsPeakHours() {
+    @Test func asksOnceWhetherTheCurrentPlanRanSinceTheStart() {
         var flow = Self.onOptionB()
-        #expect(flow.step == .stillOn(year: 2025))
-        flow.answerStillOn(true)
-        #expect(flow.step == .stillOn(year: 2024))
-        #expect(flow.spans.count == 1)
+        #expect(flow.step == .sinceStart)
+        #expect(flow.spans.map(\.from) == ["2023-11-14"])
         #expect(flow.spans[0].windowLabel == "Rg 2 Option B 2026")
-        #expect(flow.spans[0].from == "2025-01-01")
-    }
-
-    @Test func harrisonAllYesGivesOnePeriod() {
-        var flow = Self.onOptionB()
-        flow.answerStillOn(true)
-        flow.answerStillOn(true)
-        flow.answerStillOn(true)
+        flow.answerSinceStart(true)
         #expect(flow.step == .review)
         #expect(flow.periods() == [
             RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
         ])
     }
 
-    @Test func noInTwentyFourSwitchesInJanuaryByDefault() {
+    @Test func noAsksWhenTheySwitchedThenThePlanBefore() {
         var flow = Self.onOptionB()
-        flow.answerStillOn(true)
-        flow.answerStillOn(false)
-        #expect(flow.step == .kind(year: 2024, notListed: false))
-        flow.chooseKind(.fixed)
-        #expect(flow.step == .switchMonth(year: 2024))
-        let months = flow.switchMonths(year: 2024)
-        #expect(months.first == "2025-01")
-        #expect(months.last == "2024-02")
-        #expect(months.count == 12)
-        #expect(flow.defaultSwitchMonth(year: 2024) == "2025-01")
+        flow.answerSinceStart(false)
+        #expect(flow.step == .switchMonth)
+        let months = flow.switchMonths()
+        #expect(months.first == "2026-04")
+        #expect(months.last == "2023-12")
+        #expect(flow.defaultSwitchMonth() == "2026-01")
         flow.chooseSwitchMonth("2025-01")
-        #expect(flow.step == .stillOn(year: 2023))
-        flow.answerStillOn(true)
+        #expect(flow.step == .kind(year: 2024))
+        #expect(flow.spans.map(\.from) == ["2025-01-01"])
+        flow.chooseKind(.fixed)
+        #expect(flow.step == .sinceStart)
+        #expect(flow.currentPlan?.name == Self.fixedName)
+        #expect(flow.spans.map(\.from) == ["2025-01-01", "2023-11-14"])
+        #expect(flow.spans.map(\.endDate) == ["2026-04-27", "2024-12-31"])
+        flow.answerSinceStart(true)
         #expect(flow.step == .review)
         #expect(flow.periods() == [
             RatePlanHistoryPeriod(label: "Residential Rg 1 2024", from: "2023-11-14", to: "2024-12-31"),
@@ -161,57 +154,47 @@ struct RatePlanHistoryFlowTests {
         ])
     }
 
-    @Test func midYearSwitchMonthStartsTheNewerPlan() {
+    @Test func anOlderSwitchEndsBeforeTheNewerPlan() {
         var flow = Self.onOptionB()
-        flow.answerStillOn(false)
+        flow.answerSinceStart(false)
+        flow.chooseSwitchMonth("2025-01")
         flow.chooseKind(.fixed)
-        #expect(flow.switchMonths(year: 2025).first == "2026-01")
-        flow.chooseSwitchMonth("2025-06")
-        #expect(flow.spans.map(\.from) == ["2025-06-01", "2025-01-01"])
-        #expect(flow.spans.map(\.endDate) == ["2026-04-27", "2025-05-31"])
-        #expect(flow.step == .stillOn(year: 2024))
-    }
-
-    @Test func asksForPlanWhenCurrentIsNotListed() {
-        let fixedOnly = [Self.fixed(2024), Self.fixed(2024, name: "Residential Rg 3", isDefault: false)]
-        let years = [Self.year(2025), Self.year(2024, fixedOnly), Self.year(2023)]
-        var flow = Self.onOptionB(Self.harrison(years: years))
-        flow.answerStillOn(true)
-        #expect(flow.step == .kind(year: 2024, notListed: true))
-        flow.chooseKind(.fixed)
-        #expect(flow.step == .plan(year: 2024, .fixed))
-        #expect(flow.plans(for: flow.step).map(\.name) == [Self.fixedName, "Residential Rg 3"])
-        flow.choosePlan(fixedOnly[1])
-        #expect(flow.step == .switchMonth(year: 2024))
-    }
-
-    @Test func skipsYearsTheServerDidNotList() {
-        var flow = Self.onOptionB(Self.harrison(years: [Self.year(2025), Self.year(2023)]))
-        flow.answerStillOn(true)
-        #expect(flow.step == .stillOn(year: 2023))
-        flow.answerStillOn(true)
-        #expect(flow.step == .review)
-    }
-
-    @Test func yearWithNoPlansKeepsTheNewerPlanAssumed() {
-        var flow = Self.onOptionB(Self.harrison(years: [Self.year(2025), Self.year(2024, []), Self.year(2023)]))
-        flow.answerStillOn(true)
-        #expect(flow.step == .stillOn(year: 2023))
-        #expect(flow.spans.map(\.assumed) == [false, true])
-        flow.answerStillOn(true)
-        #expect(flow.step == .review)
+        flow.answerSinceStart(false)
+        #expect(flow.switchMonths().first == "2024-12")
+        #expect(flow.switchMonths().last == "2023-12")
+        flow.chooseSwitchMonth("2024-06")
+        #expect(flow.step == .kind(year: 2024))
+        flow.chooseKind(.timeOfUse)
+        #expect(flow.step == .peakHours(year: 2024))
+        flow.choosePeakWindow(Self.windows(2024)[0])
+        flow.answerSinceStart(true)
         #expect(flow.periods() == [
-            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
+            RatePlanHistoryPeriod(label: "Rg 2 Option A 2024", from: "2023-11-14", to: "2024-05-31"),
+            RatePlanHistoryPeriod(label: "Residential Rg 1 2024", from: "2024-06-01", to: "2024-12-31"),
+            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2025-01-01", to: "2026-04-27")
         ])
     }
 
+    @Test func olderPlansFallBackToTodaysWhenTheYearHasNone() {
+        let years = [Self.year(2025), Self.year(2024, []), Self.year(2023)]
+        var flow = Self.onOptionB(Self.harrison(years: years))
+        flow.answerSinceStart(false)
+        flow.chooseSwitchMonth("2026-02")
+        #expect(flow.step == .kind(year: 2026))
+        #expect(flow.plans(for: flow.step).map(\.name) == [Self.timeOfUseName, Self.fixedName])
+        flow.back()
+        flow.chooseSwitchMonth("2025-01")
+        #expect(flow.step == .kind(year: 2024))
+        #expect(flow.plans(for: flow.step).map(\.name) == [Self.timeOfUseName, Self.fixedName])
+    }
+
     @Test func openPeriodWithoutTesla() {
-        var flow = RatePlanHistoryFlow(history: Self.harrison(fillThrough: nil, teslaShape: nil), hasTeslaPlan: false)
+        let history = Self.harrison(fillThrough: nil, teslaShape: nil)
+        var flow = RatePlanHistoryFlow(history: history, hasTeslaPlan: false, today: "2026-11-16")
         #expect(flow.preselectedKind == nil)
         flow.chooseKind(.fixed)
-        flow.answerStillOn(true)
-        flow.answerStillOn(true)
-        flow.answerStillOn(true)
+        #expect(flow.switchMonths().first == "2026-11")
+        flow.answerSinceStart(true)
         #expect(flow.periods() == [
             RatePlanHistoryPeriod(label: "Residential Rg 1 2026", from: "2023-11-14", to: nil)
         ])
@@ -222,7 +205,7 @@ struct RatePlanHistoryFlowTests {
     @Test func stillNotSureWithTeslaPicksClosest() {
         var flow = RatePlanHistoryFlow(history: Self.harrison(), hasTeslaPlan: true)
         flow.stillNotSure()
-        #expect(flow.step == .stillOn(year: 2025))
+        #expect(flow.step == .sinceStart)
         #expect(flow.spans.count == 1)
         #expect(flow.spans[0].plan.name == Self.timeOfUseName)
         #expect(flow.spans[0].windowLabel == "Rg 2 Option B 2026")
@@ -244,28 +227,11 @@ struct RatePlanHistoryFlowTests {
         #expect(onHours.spans.first?.assumed == true)
     }
 
-    @Test func stillNotSureOnAYearKeepsThePlanAssumed() {
+    @Test func stillNotSureSinceTheStartAssumesTheWholeStretch() {
         var flow = Self.onOptionB()
         flow.stillNotSure()
-        #expect(flow.step == .stillOn(year: 2024))
-        #expect(flow.spans.map(\.plan.name) == [Self.timeOfUseName, Self.timeOfUseName])
-        #expect(flow.spans.map(\.assumed) == [false, true])
-        #expect(flow.spans.map(\.windowLabel) == ["Rg 2 Option B 2026", "Rg 2 Option B 2026"])
-        flow.stillNotSure()
-        flow.stillNotSure()
         #expect(flow.step == .review)
-        #expect(flow.periods() == [
-            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
-        ])
-    }
-
-    @Test func alternatingYesAndNotSureSendsOnePeriod() {
-        var flow = Self.onOptionB()
-        flow.stillNotSure()
-        flow.answerStillOn(true)
-        flow.stillNotSure()
-        #expect(flow.step == .review)
-        #expect(flow.spans.map(\.assumed) == [false, true, false, true])
+        #expect(flow.spans.map(\.assumed) == [true])
         #expect(flow.periods() == [
             RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
         ])
@@ -273,7 +239,7 @@ struct RatePlanHistoryFlowTests {
 
     @Test func backRestoresThePreviousStep() {
         var flow = Self.onOptionB()
-        #expect(flow.step == .stillOn(year: 2025))
+        #expect(flow.step == .sinceStart)
         flow.back()
         #expect(flow.step == .peakHours(year: 2026))
         #expect(flow.spans.isEmpty)
@@ -285,20 +251,19 @@ struct RatePlanHistoryFlowTests {
 
     private static func reviewedWithOneSwitch() -> RatePlanHistoryFlow {
         var flow = onOptionB()
-        flow.answerStillOn(true)
-        flow.answerStillOn(false)
-        flow.chooseKind(.fixed)
+        flow.answerSinceStart(false)
         flow.chooseSwitchMonth("2025-01")
-        flow.answerStillOn(true)
+        flow.chooseKind(.fixed)
+        flow.answerSinceStart(true)
         return flow
     }
 
-    @Test func changeOnTheOlderSpanReopensItsSwitchMonth() {
+    @Test func changeOnTheOlderSpanAsksItsPlanAgain() {
         var flow = Self.reviewedWithOneSwitch()
         #expect(flow.step == .review)
         #expect(flow.spans.count == 2)
         flow.reopenSpan(at: 1)
-        #expect(flow.step == .switchMonth(year: 2024))
+        #expect(flow.step == .kind(year: 2024))
         #expect(flow.spans.count == 1)
     }
 

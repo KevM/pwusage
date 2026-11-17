@@ -57,7 +57,7 @@ struct RatePlanHistoryPlanChoiceTests {
         #expect(flow.step == .currentPlan(.timeOfUse))
         flow.choosePlan(Self.optionA)
         #expect(flow.spans.first?.windowLabel == "Option A 2024")
-        #expect(flow.step == .stillOn(year: 2025))
+        #expect(flow.step == .sinceStart)
     }
 
     @Test func notSureOnThePlanStepKeepsTheChosenKind() {
@@ -77,20 +77,20 @@ struct RatePlanHistoryPlanChoiceTests {
     @Test func periodsKeepAPlanThatReturnsAfterAnotherApart() {
         var flow = RatePlanHistoryFlow(history: Self.walkThree(), hasTeslaPlan: true)
         flow.chooseKind(.fixed)
-        flow.answerStillOn(false)
+        flow.answerSinceStart(false)
+        flow.chooseSwitchMonth("2025-06")
         flow.chooseKind(.timeOfUse)
         flow.choosePlan(Self.optionA)
-        flow.chooseSwitchMonth("2025-06")
-        flow.answerStillOn(false)
-        flow.chooseKind(.fixed)
+        flow.answerSinceStart(false)
         flow.chooseSwitchMonth("2024-03")
+        flow.chooseKind(.fixed)
+        flow.answerSinceStart(true)
         #expect(flow.step == .review)
         #expect(flow.periods().map(\.label) == ["Rg 1 2024", "Option A 2024", "Rg 1 2024"])
     }
 
-    @Test func reviewLeavesOutEmptySpans() {
-        // Tesla from January 1: the current plan starts after the fill window ends, so a switch in
-        // January leaves it with no days.
+    @Test func switchMonthsStopAtTheEndOfTheWindow() {
+        // Tesla from January 1: the plan before it can't have started after December.
         let history = RatePlanHistoryDTO(
             utilityName: "We Energies", historyStart: "2023-11-14", fillThrough: "2025-12-31", teslaShape: .timeOfUse,
             current: [Self.fixed],
@@ -98,18 +98,11 @@ struct RatePlanHistoryPlanChoiceTests {
         )
         var flow = RatePlanHistoryFlow(history: history, hasTeslaPlan: true)
         flow.chooseKind(.fixed)
-        flow.answerStillOn(false)
-        flow.chooseKind(.timeOfUse)
-        flow.choosePlan(Self.optionA)
-        flow.chooseSwitchMonth("2026-01")
-        #expect(flow.step == .review)
-        #expect(flow.spans.count == 2)
-        #expect(flow.reviewSpans.map(\.index) == [1])
-        #expect(flow.reviewSpans.map(\.span.label) == ["Option A 2024"])
-        #expect(flow.periods().map(\.label) == ["Option A 2024"])
+        flow.answerSinceStart(false)
+        #expect(flow.switchMonths().first == "2025-12")
+        #expect(flow.reviewSpans.map(\.index) == [0])
     }
 
-    /// Current Fixed, then 2025 and 2024 with the split Time of Use rows and the Fixed plan.
     private static func walkThree() -> RatePlanHistoryDTO {
         RatePlanHistoryDTO(
             utilityName: "We Energies", historyStart: "2023-11-14", fillThrough: "2026-04-27", teslaShape: .timeOfUse,
