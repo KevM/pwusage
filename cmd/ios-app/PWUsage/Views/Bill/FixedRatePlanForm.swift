@@ -5,6 +5,9 @@ struct FixedRatePlanForm: View {
     let existing: TariffPeriodDTO?
     let defaultStartDate: String?
     let suggestedStartDate: String?
+    /// How far back an estimated plan's unbroken run of revisions reaches; see
+    /// `RateEstimatesPresentation.fixedPlanEstimateCoverageNote`.
+    let estimateCoverageNote: String?
     let timeZone: TimeZone
     let currency: String
     let onSave: (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?
@@ -22,6 +25,7 @@ struct FixedRatePlanForm: View {
         existing: TariffPeriodDTO? = nil,
         defaultStartDate: String? = nil,
         suggestedStartDate: String? = nil,
+        estimateCoverageNote: String? = nil,
         timeZone: TimeZone,
         currency: String,
         onSave: @escaping (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?,
@@ -30,6 +34,7 @@ struct FixedRatePlanForm: View {
         self.existing = existing
         self.defaultStartDate = defaultStartDate
         self.suggestedStartDate = suggestedStartDate
+        self.estimateCoverageNote = estimateCoverageNote
         self.timeZone = timeZone
         self.currency = currency
         self.onSave = onSave
@@ -83,6 +88,11 @@ struct FixedRatePlanForm: View {
                 Text("Estimated")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.orange)
+                if let estimateCoverageNote {
+                    Text(estimateCoverageNote)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             TextField("Plan name", text: $name)
                 .textInputAutocapitalization(.words)

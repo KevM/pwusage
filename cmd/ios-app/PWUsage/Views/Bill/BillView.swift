@@ -88,6 +88,7 @@ struct BillView: View {
                     existing: existing,
                     defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
                     suggestedStartDate: suggestion,
+                    estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
                     timeZone: TimeZone(identifier: timeZone) ?? .current,
                     currency: response?.currentBill.currency ?? "USD",
                     onSave: { request, editing in

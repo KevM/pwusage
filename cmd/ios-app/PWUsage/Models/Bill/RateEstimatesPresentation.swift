@@ -109,6 +109,30 @@ enum RateEstimatesPresentation {
         return mayBeOutdatedNote(estimates)
     }
 
+    /// What an estimated fixed plan covers. The sheet edits one URDB revision (the current one), whose
+    /// start date alone reads as if the fixed plan began then; the estimate is a chain of revisions
+    /// reaching back to the first day of data, so say how far back the unbroken estimated run goes.
+    static func fixedPlanEstimateCoverageNote(
+        editing: TariffPeriodDTO?,
+        referencePeriods: [TariffPeriodDTO],
+        historyStart: String?
+    ) -> String? {
+        guard let editing, editing.source == .estimated else { return nil }
+        let earlier = referencePeriods
+            .filter { $0.effectiveFrom < editing.effectiveFrom }
+            .sorted { $0.effectiveFrom > $1.effectiveFrom }
+        var start = editing.effectiveFrom
+        for period in earlier {
+            guard period.source == .estimated, let end = period.effectiveTo,
+                  RatePlanTimelineFormatting.dayAfter(end) == start else { break }
+            start = period.effectiveFrom
+        }
+        if let historyStart, start < historyStart { start = historyStart }
+        return "Estimated from public utility rates for every day since "
+            + "\(RatePlanTimelineFormatting.displayDate(start)). "
+            + "Saving your own rates replaces the estimate from the start date."
+    }
+
     static let addRatePlanButtonTitle = "Add Rate Plan"
     static let notNowLabel = "Not now"
 
