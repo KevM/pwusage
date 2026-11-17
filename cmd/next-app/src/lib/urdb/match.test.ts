@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorStart, buyRateDistance, estimateFreshness, estimateMayBeOutdated, pickTeslaMatch, planKind, referenceSpans, teslaMatchesUrdb, teslaShape, walkSupersedes } from './match';
+import { anchorStart, buyRateDistance, estimateFreshness, estimateMayBeOutdated, newerRevision, pickTeslaMatch, planKind, referenceSpans, teslaMatchesUrdb, teslaShape, walkSupersedes } from './match';
 import { compileSeasonsToParsedTariff } from '../tariff-timeline';
 import type { TariffSeasonInput, TimePeriodWindowInput } from '../tariff-contract';
 import { urdbRateToSeasons } from './convert';
@@ -222,5 +222,35 @@ describe('closeness to the Tesla plan', () => {
   it('planKindFromIsFixedRate', () => {
     expect(planKind(rg1)).toBe('fixed');
     expect(planKind(optionA)).toBe('time_of_use');
+  });
+});
+
+describe('newerRevision', () => {
+  // Five unrelated plans, each revised yearly back to 2015, plus the chosen plan's own newer revision.
+  const unrelated = Array.from({ length: 5 }, (_, plan) => Array.from({ length: 10 }, (_, step) => rate(`p${plan}-${2025 - step}`, `${2025 - step}-06-01`, step < 9 ? `p${plan}-${2024 - step}` : undefined))).flat();
+  const chosen = { ...rate('mine-2022', '2022-06-01', 'mine-2021'), name: 'Mine' };
+  const middle = { ...rate('mine-2023', '2023-06-01', 'mine-2022'), name: 'Mine' };
+  const newest = { ...rate('mine-2025', '2025-06-01', 'mine-2023'), name: 'Mine' };
+  const all = new Map([...unrelated, chosen, middle, newest].map(entry => [entry.label, entry]));
+  const today = [...unrelated.filter(entry => entry.label.endsWith('2025')), newest];
+  function counting() {
+    const fetched: string[] = [];
+    return { fetched, fetch: async (label: string) => { fetched.push(label); return all.get(label) ?? null; } };
+  }
+  it('findsTheChosenPlansNewestRevisionWithFewFetches', async () => {
+    const { fetched, fetch } = counting();
+    expect((await newerRevision(chosen, today, fetch))?.label).toBe('mine-2025');
+    expect(fetched.length).toBeLessThanOrEqual(2);
+  });
+  it('stopsWalkingUnrelatedPlansOlderThanTheChosenOne', async () => {
+    const { fetched, fetch } = counting();
+    const orphan = { ...rate('orphan-2022', '2022-06-01'), name: 'Orphan' };
+    expect(await newerRevision(orphan, today.filter(entry => entry.label !== 'mine-2025'), fetch)).toBeNull();
+    expect(fetched.length).toBeLessThanOrEqual(5 * 4);
+  });
+  it('directSuccessorNeedsNoFetch', async () => {
+    const { fetched, fetch } = counting();
+    expect((await newerRevision(middle, today, fetch))?.label).toBe('mine-2025');
+    expect(fetched).toEqual([]);
   });
 });

@@ -102,15 +102,25 @@ export function referenceSpans(defaults: UrdbRate[], timeZone: string): Revision
   const sorted = ordered.sort((a, b) => Number(lineage.has(b.label)) - Number(lineage.has(a.label)) || b.label.localeCompare(a.label));
   return revisionSpans(sorted, null);
 }
+/**
+ * The plan in effect `today` that revises `matched`. Cheap checks first: a direct successor needs no fetch, and
+ * plans with the same name are walked before the rest. A walk stops once it reaches revisions older than `matched`.
+ */
 export async function newerRevision(matched: UrdbRate, today: UrdbRate[], fetchByLabel: (label: string) => Promise<UrdbRate | null>): Promise<UrdbRate | null> {
-  for (const candidate of [...today].sort((a, b) => (b.startdate ?? 0) - (a.startdate ?? 0))) {
-    if ((candidate.startdate ?? 0) <= (matched.startdate ?? 0)) continue;
+  const matchedStart = matched.startdate ?? 0;
+  const newer = today.filter(candidate => (candidate.startdate ?? 0) > matchedStart);
+  const direct = newer.find(candidate => candidate.supersedes === matched.label);
+  if (direct) return direct;
+  const sameName = (candidate: UrdbRate) => Number(candidate.name === matched.name);
+  const ordered = [...newer].sort((a, b) => sameName(b) - sameName(a) || (b.startdate ?? 0) - (a.startdate ?? 0));
+  for (const candidate of ordered) {
     let rate: UrdbRate | null = candidate;
     const seen = new Set<string>();
     for (let i = 0; i < 10 && rate?.supersedes && !seen.has(rate.label); i++) {
       seen.add(rate.label);
       if (rate.supersedes === matched.label) return candidate;
       rate = await fetchByLabel(rate.supersedes);
+      if (rate?.startdate !== undefined && rate.startdate < matchedStart) break;
     }
   }
   return null;
