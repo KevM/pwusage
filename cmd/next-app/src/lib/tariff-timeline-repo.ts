@@ -831,7 +831,8 @@ export class TariffTimelineRepo {
         ...freshness,
         historyGuide: null,
       };
-      if (!skipped && (utility.status === 'ready' || utility.status === 'needs_plan')) {
+      // The guide lists the utility's public plans, so a site with no utility (outside the US) gets none.
+      if (!skipped && utility.urdb_utility !== null && (utility.status === 'ready' || utility.status === 'needs_plan')) {
         const window = await loadHistoryWindow(pool, siteId, today);
         if (window) timeline.estimates.historyGuide = { historyStart: window.historyStart, fillThrough: window.fillThrough, unconfirmedDays: window.unconfirmedDays };
       }
