@@ -187,7 +187,10 @@ export function convertUrdbRateWithProvenance(
   const usedIndices = collectUsedScheduleIndices(rate);
   const structure = rate.energyratestructure ?? [];
   const hasTieredUsage = usedIndices.some(idx => (structure[idx]?.length ?? 0) > 1);
-  const allExportsPublished = usedIndices.every(idx => structure[idx]?.[0]?.sell !== undefined);
+  const allExportsPublished = usedIndices.every(idx => {
+    const sell = structure[idx]?.[0]?.sell;
+    return typeof sell === 'number' && Number.isFinite(sell);
+  });
 
   const approximationNotes: TariffApproximationNote[] = [];
   if (hasTieredUsage) {

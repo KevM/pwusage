@@ -5,6 +5,11 @@ const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(), verifySiteAccess: vi.fn(), isCrossOriginRequest: vi.fn(),
   utilityNames: vi.fn(), ratesEffectiveOn: vi.fn(),
   getSiteUtilityContext: vi.fn(), loadSitePublicConversionContext: vi.fn(), setSiteUtility: vi.fn(), setSitePlanLabel: vi.fn(),
+  poolQuery: vi.fn(), poolConnect: vi.fn(),
+}));
+
+vi.mock('@/lib/db', () => ({
+  pool: { query: mocks.poolQuery, connect: mocks.poolConnect },
 }));
 
 vi.mock('@/lib/auth-checks', () => ({
@@ -43,6 +48,7 @@ vi.mock('@/lib/urdb/estimate-job', async importOriginal => ({
 
 import { PUT as saveUtility } from './route';
 import { GET as searchUtilities } from './search/route';
+import * as plansRoute from './plans/route';
 import { GET as listPlans } from './plans/route';
 import { PUT as savePlan } from './plan/route';
 import { UrdbUnavailableError } from '@/lib/urdb/client';
@@ -203,5 +209,118 @@ describe('utility and plan routes', () => {
       context
     );
     expect(badCurrency.status).toBe(400);
+  });
+
+  it('does not expose POST /utility/plans and legacy utility mutations preserve explicit owner selections', async () => {
+    expect('POST' in plansRoute).toBe(false);
+
+    const actualMod = await vi.importActual<typeof import('@/lib/tariff-timeline-repo')>('@/lib/tariff-timeline-repo');
+    const actualRepo = new actualMod.TariffTimelineRepo();
+    const clientQueries: string[] = [];
+    const protectedPublicRow = {
+      id: 21,
+      tariff_id: 77,
+      source: 'estimated' as const,
+      effective_from: '2025-01-01',
+      effective_to: null,
+      updated_by_user_id: 'user-1',
+      selection_id: 501,
+      choice_kind: 'owner' as const,
+    };
+
+    const fakeClient = {
+      query: vi.fn(async (sql: string) => {
+        clientQueries.push(sql);
+        if (sql.includes('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE')) {
+          return { rows: [{ id: 'site-1' }], rowCount: 1 };
+        }
+        if (sql.includes('UPDATE "SiteUtility" SET urdb_plan_label = $2')) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('SELECT timezone FROM "Site" WHERE id = $1')) {
+          return { rows: [{ timezone: 'America/Chicago' }], rowCount: 1 };
+        }
+        if (sql.includes('FROM "TariffEffectivePeriod" p') && sql.includes('ORDER BY effective_from ASC')) {
+          return { rows: [protectedPublicRow] };
+        }
+        if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('effective_from <= $2::date')) {
+          return { rows: [{ tariff_id: 77 }] };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+
+    mocks.poolConnect.mockResolvedValue(fakeClient);
+    mocks.poolQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"') && sql.includes('WHERE id = $1')) {
+        return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T00:00:00Z', currency: 'USD' }] };
+      }
+      if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 21,
+            tariff_id: 77,
+            effective_from: '2025-01-01',
+            effective_to: null,
+            source: 'estimated',
+            updated_by_user_id: 'user-1',
+            updated_by_email: 'owner@example.com',
+            name: 'Owner Public Plan',
+            version: 1,
+            content_hash: 'h-pub',
+            selection_id: 501,
+            choice_kind: 'owner',
+            candidate_kind: 'public',
+            selected_by_user_id: 'user-1',
+            urdb_label: 'valid-plan',
+            utility_name: 'We Energies',
+            revision_start: '2026-01-01',
+            export_rate_provenance: 'published',
+            holidays_use_weekend: true,
+            approximation_notes: [],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    mocks.setSitePlanLabel.mockImplementation((...args: Parameters<typeof actualRepo.setSitePlanLabel>) =>
+      actualRepo.setSitePlanLabel(...args)
+    );
+    mocks.setSiteUtility.mockImplementation((...args: Parameters<typeof actualRepo.setSiteUtility>) =>
+      actualRepo.setSiteUtility(...args)
+    );
+
+    const savePlanRes = await savePlan(
+      new NextRequest('https://app.test/api/site/site-1/utility/plan', {
+        method: 'PUT',
+        body: JSON.stringify({ label: 'valid-plan' }),
+      }),
+      context
+    );
+    expect(savePlanRes.status).toBe(200);
+    expect(clientQueries.some(q => q.includes('FROM "TariffEffectivePeriod"'))).toBe(false);
+    expect(clientQueries.some(q => q.includes('FROM "TariffSelection"'))).toBe(false);
+
+    clientQueries.length = 0;
+    const skipRes = await saveUtility(
+      new NextRequest('https://app.test/api/site/site-1/utility', {
+        method: 'PUT',
+        body: JSON.stringify({ skipped: true }),
+      }),
+      context
+    );
+    expect(skipRes.status).toBe(200);
+    expect(clientQueries.some(q => q.includes('DELETE FROM "TariffEffectivePeriod"'))).toBe(false);
+    expect(clientQueries.some(q => q.includes('INSERT INTO "TariffEffectivePeriod"'))).toBe(false);
+    const deleteUrdbSql = clientQueries.find(q => q.includes('DELETE FROM "TariffUrdbSource"'));
+    expect(deleteUrdbSql).toContain("s.choice_kind = 'owner'");
+    const skipBody = await skipRes.json();
+    expect(skipBody.periods[0]).toMatchObject({
+      periodId: 21,
+      source: 'estimated',
+      choiceKind: 'owner',
+    });
   });
 });

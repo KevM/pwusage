@@ -1738,6 +1738,22 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       expect(retryPublic.unchanged).toBe(true);
       expect(retryPublic.selectionIds).toEqual([overrideSelectionId]);
 
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+            effectiveFrom: '2025-03-01',
+            effectiveTo: '2025-09-30',
+            expectedReviewHash: 'f'.repeat(64),
+            verifiedAgainstBill: true,
+          },
+          { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+
       // 4. Legacy saveRatePlanHistory (PUT /utility/history) must NOT overwrite the owner-selected public plan.
       await repo.saveRatePlanHistory(
         siteId,
@@ -1778,6 +1794,43 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       expect(patchedPublic?.source).toBe('estimated');
       expect(patchedPublic?.choiceKind).toBe('owner');
       expect(patchedPublic?.urdbLabel).toBe('urdb-e2e-tiered');
+
+      // 6b. Reference-scope owner-selected public plan + date-only updateReferencePeriod preserves source='estimated' & urdbLabel.
+      const refPreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'reference',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-01-01',
+          effectiveTo: null,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      const refCommit = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'reference',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-01-01',
+          effectiveTo: null,
+          expectedReviewHash: refPreview.reviewHash,
+          verifiedAgainstBill: false,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      const refPeriodId = refCommit.timeline.referencePeriods![0].periodId;
+      const afterRefDatePatch = await repo.updateReferencePeriod(siteId, 'u1', refPeriodId, {
+        effectiveTo: '2025-12-31',
+      });
+      expect(afterRefDatePatch.referencePeriods?.[0]).toMatchObject({
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        source: 'estimated',
+        choiceKind: 'owner',
+        urdbLabel: 'urdb-e2e-tiered',
+      });
 
       // 7. Later Tesla import arrives while override is active, then multi-interval restore recovers exact v1 & v2.
       await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v3 Newer', 0.35));

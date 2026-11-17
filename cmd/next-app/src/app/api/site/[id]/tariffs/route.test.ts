@@ -13,6 +13,7 @@ const {
   enqueueMock,
   runSiteMock,
   poolQueryMock,
+  poolConnectMock,
 } = vi.hoisted(() => ({
   afterCallbacks: [] as Array<() => Promise<unknown> | unknown>,
   getCurrentUserMock: vi.fn(),
@@ -25,6 +26,7 @@ const {
   enqueueMock: vi.fn(),
   runSiteMock: vi.fn(),
   poolQueryMock: vi.fn(),
+  poolConnectMock: vi.fn(),
 }));
 
 vi.mock('next/server', async (importOriginal) => {
@@ -51,6 +53,7 @@ vi.mock('@/lib/observability', () => ({
   setLogContext: vi.fn(),
   logEvent: vi.fn(),
   flushLogEvents: vi.fn(),
+  accountFingerprint: (id: string) => `fp_${id}`,
   errorFields: (err: unknown) => ({ errorName: err instanceof Error ? err.name : 'Error' }),
 }));
 
@@ -65,7 +68,7 @@ vi.mock('@/lib/tariff-reattribution', () => ({
 }));
 
 vi.mock('@/lib/db', () => ({
-  pool: { query: poolQueryMock },
+  pool: { query: poolQueryMock, connect: poolConnectMock },
 }));
 
 vi.mock('@/lib/tariff-timeline-repo', async (importOriginal) => {
@@ -430,5 +433,247 @@ describe('tariff timeline API routes', () => {
       error: 'Estimated rate plans fill days without a plan. Add your rate plan to replace one.',
     });
     expect(afterCallbacks).toHaveLength(0);
+  });
+
+  it('enforces selection protection across legacy POST /tariffs, PATCH /tariffs/[id], and DELETE /tariffs/[id]', async () => {
+    const actualMod = await vi.importActual<typeof import('@/lib/tariff-timeline-repo')>('@/lib/tariff-timeline-repo');
+    const actualRepo = new actualMod.TariffTimelineRepo();
+    const queries: string[] = [];
+    let existingPeriods: Array<{
+      id: number;
+      tariff_id: number;
+      source: 'tesla' | 'manual' | 'estimated';
+      effective_from: string;
+      effective_to: string | null;
+      updated_by_user_id: string | null;
+      selection_id: number | null;
+      choice_kind: 'automatic' | 'owner' | null;
+    }> = [];
+
+    const fakeClient = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql);
+        if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
+          return { rows: [{ timezone: 'America/Chicago' }] };
+        }
+        if (sql.includes('COALESCE(MAX(version), 0) + 1')) return { rows: [{ next: 4 }] };
+        if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 109 }] };
+        if (sql.includes('INSERT INTO "TariffSeason"(')) return { rows: [{ id: 209 }] };
+        if (sql.includes('FROM "TariffEffectivePeriod" p') && sql.includes('ORDER BY effective_from ASC')) {
+          return { rows: existingPeriods };
+        }
+        if (sql.includes('FROM "Tariff"') && sql.includes('id = ANY')) {
+          return {
+            rows: [{
+              id: 77,
+              site_id: 'site-1',
+              version: 2,
+              name: 'Public TOU',
+              is_current: true,
+              updated: new Date(),
+              content_hash: 'h-pub',
+              source: 'estimated',
+            }],
+          };
+        }
+        if (sql.includes('FROM "TariffSeason"')) {
+          return {
+            rows: [{
+              id: 700, tariff_id: 77, name: 'All Year',
+              from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.2, sell_rate: 0.05,
+            }],
+          };
+        }
+        if (sql.includes('FROM "TariffSchedule"')) {
+          return {
+            rows: [{
+              id: 800, season_id: 700, name: 'OFF_PEAK', buy_rate: 0.2, sell_rate: 0.05,
+              from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0,
+            }],
+          };
+        }
+        if (sql.includes('FROM "TariffSelection" WHERE id = $1')) {
+          return {
+            rows: [{
+              urdb_label: 'urdb-pub-1',
+              utility_name: 'We Energies',
+              revision_start: '2026-01-01',
+              export_rate_provenance: 'published',
+              holidays_use_weekend: true,
+              approximation_notes: [],
+            }],
+          };
+        }
+        if (sql.includes('INSERT INTO "TariffEffectivePeriod"')) return { rows: [{ id: 12 }] };
+        if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+          return {
+            rows: [{
+              site_id: 'site-1',
+              status: 'pending',
+              generation: 1,
+              from_date: '2026-01-01',
+              to_date: '2026-06-30',
+              cursor_day_start: null,
+              total_days: 120,
+              processed_days: 0,
+              updated_days: 0,
+              attempt_count: 0,
+              last_error: null,
+              requested_by_user_id: 'user-1',
+              updated_at: new Date('2026-06-01T00:00:00.000Z'),
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+
+    poolConnectMock.mockResolvedValue(fakeClient);
+    poolQueryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T00:00:00Z', currency: 'USD' }] };
+      }
+      if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+        return {
+          rows: existingPeriods.map(p => ({
+            period_id: p.id,
+            tariff_id: p.tariff_id,
+            effective_from: p.effective_from,
+            effective_to: p.effective_to,
+            source: p.source,
+            updated_by_user_id: p.updated_by_user_id,
+            updated_by_email: p.updated_by_user_id ? 'owner@example.com' : null,
+            name: 'Public TOU',
+            version: 2,
+            content_hash: 'h-pub',
+            selection_id: p.selection_id,
+            choice_kind: p.choice_kind,
+            candidate_kind: p.source === 'estimated' ? 'public' : 'manual',
+            selected_by_user_id: p.updated_by_user_id,
+            urdb_label: p.source === 'estimated' ? 'urdb-pub-1' : null,
+            utility_name: p.source === 'estimated' ? 'We Energies' : null,
+            revision_start: '2026-01-01',
+            export_rate_provenance: p.source === 'estimated' ? 'published' : 'manual',
+            holidays_use_weekend: true,
+            approximation_notes: [],
+          })),
+        };
+      }
+      return { rows: [] };
+    });
+
+    createManualPeriodMock.mockImplementation((...args: Parameters<typeof actualRepo.createManualPeriod>) =>
+      actualRepo.createManualPeriod(...args)
+    );
+    updatePeriodMock.mockImplementation((...args: Parameters<typeof actualRepo.updatePeriod>) =>
+      actualRepo.updatePeriod(...args)
+    );
+    deleteManualPeriodMock.mockImplementation((...args: Parameters<typeof actualRepo.deleteManualPeriod>) =>
+      actualRepo.deleteManualPeriod(...args)
+    );
+
+    // 1. Overlapping an owner-selected public plan via legacy POST /tariffs MUST be refused (400).
+    existingPeriods = [{
+      id: 21, tariff_id: 77, source: 'estimated',
+      effective_from: '2026-01-01', effective_to: null,
+      updated_by_user_id: 'user-1', selection_id: 501, choice_kind: 'owner',
+    }];
+    const postPublicRes = await POST(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        method: 'POST',
+        body: JSON.stringify(validPayload),
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(postPublicRes.status).toBe(400);
+    expect(queries.some(q => q.includes('INSERT INTO "TariffEffectivePeriod"'))).toBe(false);
+    expect(queries).toContain('ROLLBACK');
+    expect(afterCallbacks).toHaveLength(0);
+
+    // 2. Overlapping a restored saved Tesla plan (source='tesla', choice_kind='owner') via POST /tariffs MUST be refused (400).
+    queries.length = 0;
+    existingPeriods = [{
+      id: 22, tariff_id: 50, source: 'tesla',
+      effective_from: '2026-01-01', effective_to: null,
+      updated_by_user_id: 'user-1', selection_id: 502, choice_kind: 'owner',
+    }];
+    const postRestoredTeslaRes = await POST(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        method: 'POST',
+        body: JSON.stringify(validPayload),
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(postRestoredTeslaRes.status).toBe(400);
+    expect(queries.some(q => q.includes('INSERT INTO "TariffEffectivePeriod"'))).toBe(false);
+    expect(afterCallbacks).toHaveLength(0);
+
+    // 3. Deleting an owner-selected public plan via legacy DELETE /tariffs/[periodId] MUST be refused (400).
+    queries.length = 0;
+    existingPeriods = [{
+      id: 21, tariff_id: 77, source: 'estimated',
+      effective_from: '2026-01-01', effective_to: null,
+      updated_by_user_id: 'user-1', selection_id: 501, choice_kind: 'owner',
+    }];
+    const deletePublicRes = await DELETE(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/21', { method: 'DELETE' }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '21' }) }
+    );
+    expect(deletePublicRes.status).toBe(400);
+    expect(queries.some(q => q.includes('DELETE FROM "TariffEffectivePeriod"'))).toBe(false);
+    expect(afterCallbacks).toHaveLength(0);
+
+    // 4. Editing rates/name of an owner-selected public plan via legacy PATCH MUST be refused (400),
+    // while extending an unrelated manual period over a protected selection MUST also be refused (400).
+    const patchPublicRatesRes = await PATCH(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/21', {
+        method: 'PATCH',
+        body: JSON.stringify({ name: 'Stripped To Manual' }),
+      }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '21' }) }
+    );
+    expect(patchPublicRatesRes.status).toBe(400);
+    expect(afterCallbacks).toHaveLength(0);
+
+    existingPeriods = [
+      {
+        id: 20, tariff_id: 66, source: 'manual',
+        effective_from: '2025-01-01', effective_to: '2025-12-31',
+        updated_by_user_id: 'user-1', selection_id: 500, choice_kind: 'owner',
+      },
+      {
+        id: 21, tariff_id: 77, source: 'estimated',
+        effective_from: '2026-01-01', effective_to: null,
+        updated_by_user_id: 'user-1', selection_id: 501, choice_kind: 'owner',
+      },
+    ];
+    const patchOverlapProtectedRes = await PATCH(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/20', {
+        method: 'PATCH',
+        body: JSON.stringify({ effectiveTo: '2026-03-31' }),
+      }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '20' }) }
+    );
+    expect(patchOverlapProtectedRes.status).toBe(400);
+    expect(afterCallbacks).toHaveLength(0);
+
+    // 5. Legacy POST /tariffs still succeeds for old clients when overlapping only automatic Tesla spans.
+    queries.length = 0;
+    existingPeriods = [{
+      id: 10, tariff_id: 44, source: 'tesla',
+      effective_from: '2025-01-01', effective_to: null,
+      updated_by_user_id: null, selection_id: null, choice_kind: 'automatic',
+    }];
+    const legacyAutoPostRes = await POST(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        method: 'POST',
+        body: JSON.stringify(validPayload),
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(legacyAutoPostRes.status).toBe(201);
+    expect(queries).toContain('COMMIT');
+    expect(afterCallbacks).toHaveLength(1);
   });
 });

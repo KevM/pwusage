@@ -9,6 +9,7 @@ import { logEvent } from '../observability';
 import { enqueueReattributionOnClient } from '../tariff-reattribution-queue';
 import {
   applyEstimatesOnClient,
+  bumpSiteTimelineRevisionOnClient,
   clearUnprotectedUrdbSourcesOnClient,
   hydrateTariffs,
   insertTariffGraph,
@@ -291,6 +292,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
         await enqueueReattributionOnClient(write, { siteId, fromDate, toDate, requestedByUserId: null, trigger: 'estimate' });
       }
       await write.query(`UPDATE "SiteUtility" SET urdb_utility = CASE WHEN choice = 'auto' THEN $2 ELSE urdb_utility END, status = $3, attempt_count = 0, last_error = NULL, checked_at = $4, next_check_at = $4::timestamptz + interval '7 days', updated_at = clock_timestamp() WHERE site_id = $1`, [siteId, preview.utilityName, preview.status, now]);
+      await bumpSiteTimelineRevisionOnClient(write, siteId);
       checkIoDeadline();
       await write.query('COMMIT');
       new SiteRepo().invalidateCache(siteId);

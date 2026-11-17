@@ -1050,4 +1050,203 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(targets[0].effectiveTo).toBe('2025-05-31');
     expect(targets[0].original.tariffId).toBe(42);
   });
+
+  it('refuses legacy reference-scope POST/PATCH/DELETE mutations that overwrite or delete protected owner selections', async () => {
+    const repo = new TariffTimelineRepo();
+    let refSpans: Array<{
+      id: number;
+      tariff_id: number;
+      source: 'estimated' | 'manual';
+      effective_from: string;
+      effective_to: string | null;
+      updated_by_user_id: string | null;
+      selection_id: number | null;
+      choice_kind: 'automatic' | 'owner' | null;
+    }> = [
+      {
+        id: 81,
+        tariff_id: 91,
+        source: 'estimated',
+        effective_from: '2025-01-01',
+        effective_to: null,
+        updated_by_user_id: 'u1',
+        selection_id: 401,
+        choice_kind: 'owner',
+      },
+    ];
+
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
+        return { rows: [{ timezone: 'America/Chicago' }] };
+      }
+      if (sql.includes('COALESCE(MAX(version), 0) + 1')) return { rows: [{ next: 2 }] };
+      if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 102 }] };
+      if (sql.includes('INSERT INTO "TariffSeason"(')) return { rows: [{ id: 202 }] };
+      if (sql.includes('FROM "TariffReferencePeriod" p') && sql.includes('ORDER BY effective_from ASC')) {
+        return { rows: refSpans };
+      }
+      return { rows: [] };
+    };
+
+    const season = [{
+      name: 'All Year',
+      fromMonth: 1,
+      toMonth: 12,
+      weekdayPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.14, sellRate: 0.03 }],
+      weekendPeriods: [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.14, sellRate: 0.03 }],
+    }];
+
+    await expect(
+      repo.createReferencePeriod('s1', 'u1', {
+        name: 'Override Ref',
+        effectiveFrom: '2025-06-01',
+        effectiveTo: '2025-12-31',
+        seasons: season,
+      })
+    ).rejects.toThrow(TariffValidationError);
+
+    await expect(
+      repo.updateReferencePeriod('s1', 'u1', 81, { name: 'Rename Public Ref' })
+    ).rejects.toThrow(TariffValidationError);
+
+    await expect(
+      repo.deleteReferencePeriod('s1', 81, 'u1')
+    ).rejects.toThrow(TariffValidationError);
+
+    refSpans = [
+      {
+        id: 80,
+        tariff_id: 90,
+        source: 'manual',
+        effective_from: '2024-01-01',
+        effective_to: '2024-12-31',
+        updated_by_user_id: 'u1',
+        selection_id: 400,
+        choice_kind: 'owner',
+      },
+      refSpans[0],
+    ];
+    await expect(
+      repo.updateReferencePeriod('s1', 'u1', 80, { effectiveTo: '2025-03-01' })
+    ).rejects.toThrow(TariffValidationError);
+  });
+
+  it('updateReferencePeriod dates-only edit on an owner-selected public plan preserves source=estimated and public TariffSelection metadata', async () => {
+    const repo = new TariffTimelineRepo();
+    const insertedSelections: Array<{ sql: string; params?: unknown[] }> = [];
+    const insertedPeriods: Array<{ sql: string; params?: unknown[] }> = [];
+
+    clientQueryHandler = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
+        return { rows: [{ timezone: 'America/Chicago' }] };
+      }
+      if (sql.includes('FROM "TariffReferencePeriod" p') && sql.includes('ORDER BY effective_from ASC')) {
+        return {
+          rows: [{
+            id: 81,
+            tariff_id: 91,
+            source: 'estimated',
+            effective_from: '2025-01-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 401,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      if (sql.includes('SELECT content_hash FROM "Tariff" WHERE id = $1')) {
+        return { rows: [{ content_hash: 'hash-pub-ref' }] };
+      }
+      if (sql.includes('FROM "TariffSelection" WHERE id = $1')) {
+        return {
+          rows: [{
+            urdb_label: 'urdb-ref-1',
+            utility_name: 'Wisconsin Electric Power Co',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'net_metering',
+            holidays_use_weekend: true,
+            approximation_notes: [{ kind: 'tier_blended', message: 'Blended tiers' }],
+          }],
+        };
+      }
+      if (sql.includes('INSERT INTO "TariffSelection"')) {
+        insertedSelections.push({ sql, params });
+        return { rows: [{ id: 402 }] };
+      }
+      if (sql.includes('INSERT INTO "TariffReferencePeriod"')) {
+        insertedPeriods.push({ sql, params });
+        return { rows: [{ id: 82, tariff_id: 91 }] };
+      }
+      return { rows: [] };
+    };
+
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2024-01-01T00:00:00Z', currency: 'USD' }] };
+      }
+      if (sql.includes('FROM "TariffReferencePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 82,
+            tariff_id: 91,
+            effective_from: '2025-01-01',
+            effective_to: '2025-08-31',
+            source: 'estimated',
+            updated_by_user_id: 'u1',
+            updated_by_email: 'owner@example.com',
+            name: 'WE Public Ref',
+            version: 1,
+            content_hash: 'hash-pub-ref',
+            selection_id: 402,
+            choice_kind: 'owner',
+            candidate_kind: 'public',
+            selected_by_user_id: 'u1',
+            urdb_label: 'urdb-ref-1',
+            utility_name: 'Wisconsin Electric Power Co',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'net_metering',
+            holidays_use_weekend: true,
+            approximation_notes: [{ kind: 'tier_blended', message: 'Blended tiers' }],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const timeline = await repo.updateReferencePeriod('s1', 'u1', 81, { effectiveTo: '2025-08-31' });
+
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "Tariff"('))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
+    expect(insertedSelections).toHaveLength(1);
+    expect(insertedSelections[0].params).toEqual(
+      expect.arrayContaining([
+        's1',
+        'reference',
+        91,
+        '2025-01-01',
+        '2025-08-31',
+        'estimated',
+        'owner',
+        'public',
+        'u1',
+        'urdb-ref-1',
+        'Wisconsin Electric Power Co',
+        '2025-01-01',
+        'net_metering',
+        true,
+        JSON.stringify([{ kind: 'tier_blended', message: 'Blended tiers' }]),
+        'hash-pub-ref',
+      ])
+    );
+    expect(insertedPeriods).toHaveLength(1);
+    expect(insertedPeriods[0].params).toEqual(['s1', 91, '2025-01-01', '2025-08-31', 'u1', 'estimated', 402]);
+    expect(timeline.referencePeriods?.[0]).toMatchObject({
+      periodId: 82,
+      source: 'estimated',
+      choiceKind: 'owner',
+      urdbLabel: 'urdb-ref-1',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: '2025-08-31',
+    });
+  });
 });

@@ -8,6 +8,7 @@ import { addCalendarDays, computeSpanMutations, isProtectedSpan, siteLocalDateSt
 import {
   applyEstimatesOnClient,
   applySpanMutationPlan,
+  bumpSiteTimelineRevisionOnClient,
   insertTariffGraph,
   insertTariffSelectionOnClient,
   loadExistingSpans,
@@ -103,7 +104,10 @@ export class TariffRepo {
       if (latestTesla?.content_hash === newHash) {
         if (metadata) {
           const updated = await client.query(`UPDATE "Tariff" SET plan_name = $2, plan_code = $3 WHERE id = $1 AND (plan_name IS DISTINCT FROM $2 OR plan_code IS DISTINCT FROM $3)`, [latestTesla.id, metadata.name, metadata.code]);
-          if (updated.rowCount) await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = clock_timestamp()`, [siteId]);
+          if (updated.rowCount) {
+            await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = clock_timestamp()`, [siteId]);
+            await bumpSiteTimelineRevisionOnClient(client, siteId);
+          }
         }
         await client.query('COMMIT');
         return false;
@@ -167,6 +171,7 @@ export class TariffRepo {
         }
       }
       if (reattribution) queued = await enqueueReattributionOnClient(client, reattribution);
+      await bumpSiteTimelineRevisionOnClient(client, siteId);
       await client.query('COMMIT');
       changed = true;
     } catch (e) {

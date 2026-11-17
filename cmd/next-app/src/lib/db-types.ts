@@ -148,6 +148,8 @@ export interface TariffSelectionRow {
   approximation_notes: unknown;
   selected_content_hash: string | null;
   restored_from_selection_id: number | null;
+  review_hash?: string | null;
+  timeline_revision?: number | null;
   created_at: Date;
 }
 

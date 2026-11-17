@@ -24,9 +24,18 @@ CREATE TABLE IF NOT EXISTS "TariffSelection" (
   approximation_notes        JSONB NOT NULL DEFAULT '[]'::jsonb,
   selected_content_hash      TEXT,
   restored_from_selection_id INTEGER REFERENCES "TariffSelection"(id) ON DELETE SET NULL,
+  review_hash                TEXT,
+  timeline_revision          BIGINT,
   created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (effective_to IS NULL OR effective_to >= effective_from)
 );
+
+ALTER TABLE "TariffSelection"
+  ADD COLUMN IF NOT EXISTS review_hash TEXT,
+  ADD COLUMN IF NOT EXISTS timeline_revision BIGINT;
+
+ALTER TABLE "Site"
+  ADD COLUMN IF NOT EXISTS timeline_revision BIGINT NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS tariff_selection_site_scope_idx
   ON "TariffSelection" (site_id, scope, created_at DESC, id DESC);
