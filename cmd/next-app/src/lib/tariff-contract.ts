@@ -1,4 +1,13 @@
-import type { TariffReattributionStatus, TariffSource, TariffStartSource } from './db-types';
+import type {
+  ExportRateProvenance,
+  TariffReattributionStatus,
+  TariffSelectionChoiceKind,
+  TariffSelectionScope,
+  TariffSource,
+  TariffStartSource,
+} from './db-types';
+
+export type { ExportRateProvenance, TariffSelectionChoiceKind, TariffSelectionScope };
 
 export type TariffPeriodName = 'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK';
 
@@ -41,6 +50,10 @@ export interface TariffPeriodDTO {
   isCurrentToday: boolean;
   updatedBy: TariffUpdatedByDTO | null;
   seasons: TariffSeasonInput[];
+  selectionId?: number | null;
+  choiceKind?: TariffSelectionChoiceKind;
+  urdbLabel?: string | null;
+  verification?: TariffVerificationSummary | null;
 }
 
 export interface ReattributionStatusDTO {
@@ -141,8 +154,6 @@ export interface SiteTariffsTimelineResponse {
   };
 }
 
-export type TariffSelectionScope = 'actual' | 'reference';
-
 export type TariffSelectionCandidate =
   | { kind: 'public'; label: string }
   | { kind: 'manual'; name: string; seasons: TariffSeasonInput[] }
@@ -159,10 +170,6 @@ export interface TariffSelectionCommit extends TariffSelectionRequest {
   expectedReviewHash: string;
   verifiedAgainstBill: boolean;
 }
-
-export type TariffSelectionChoiceKind = 'automatic' | 'owner';
-
-export type ExportRateProvenance = 'published' | 'net_metering' | 'inherited' | 'manual' | 'tesla';
 
 export type TariffApproximationKind =
   | 'tier_blended'

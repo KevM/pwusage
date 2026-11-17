@@ -239,4 +239,50 @@ describe('computeSpanMutations', () => {
       { tariffId: 99, source: 'manual', effectiveFrom: '2024-05-01', effectiveTo: '2025-03-31', updatedByUserId: 'u-new' },
     ]);
   });
+
+  it('preserves selectionId and choiceKind on split left/right fragments', () => {
+    const existing = [
+      {
+        id: 1,
+        tariffId: 50,
+        source: 'estimated' as const,
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        updatedByUserId: 'u1',
+        selectionId: 77,
+        choiceKind: 'owner',
+      },
+    ];
+    const incoming = {
+      tariffId: 60,
+      source: 'manual' as const,
+      effectiveFrom: '2025-06-01',
+      effectiveTo: '2025-06-30',
+      updatedByUserId: 'u1',
+      selectionId: 88,
+      choiceKind: 'owner',
+    };
+    const plan = computeSpanMutations(existing as never, incoming as never);
+    expect(plan.inserts).toEqual([
+      {
+        tariffId: 50,
+        source: 'estimated',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-05-31',
+        updatedByUserId: 'u1',
+        selectionId: 77,
+        choiceKind: 'owner',
+      },
+      {
+        tariffId: 50,
+        source: 'estimated',
+        effectiveFrom: '2025-07-01',
+        effectiveTo: '2025-12-31',
+        updatedByUserId: 'u1',
+        selectionId: 77,
+        choiceKind: 'owner',
+      },
+      incoming,
+    ]);
+  });
 });

@@ -49,6 +49,15 @@ export interface Site {
 export type TariffSource = 'tesla' | 'manual' | 'estimated';
 export type TariffStartSource = 'urdb' | 'tesla_first_seen' | 'assumed_jan_1' | 'history_start';
 export type SiteUtilityStatus = 'pending' | 'running' | 'ready' | 'needs_utility' | 'needs_plan' | 'failed';
+export type TariffSelectionScope = 'actual' | 'reference';
+export type TariffSelectionChoiceKind = 'automatic' | 'owner';
+export type TariffSelectionCandidateKind =
+  | 'tesla_sync'
+  | 'automatic_estimate'
+  | 'manual'
+  | 'public'
+  | 'restore_tesla';
+export type ExportRateProvenance = 'published' | 'net_metering' | 'inherited' | 'manual' | 'tesla';
 
 export interface SiteUtilityRow {
   site_id: string;
@@ -67,7 +76,7 @@ export interface SiteUtilityRow {
 export interface TariffUrdbSourceRow {
   tariff_id: number;
   site_id: string;
-  role: 'tesla_anchor' | 'estimated_actual' | 'estimated_reference' | 'owner_history';
+  role: 'tesla_anchor' | 'estimated_actual' | 'estimated_reference' | 'owner_history' | 'owner_selection';
   urdb_label: string | null;
   start_date: string;
   end_date: string | null;
@@ -77,6 +86,7 @@ export interface TariffUrdbSourceRow {
   newer_urdb_start: string | null;
   /** The URDB revision's own start date (estimated rows); start_date is clipped to the site history. */
   revision_start: string | null;
+  is_current_estimate?: boolean;
   created_at: Date;
 }
 
@@ -103,7 +113,67 @@ export interface TariffEffectivePeriodRow {
   effective_to: string | null;
   source: TariffSource;
   updated_by_user_id: string | null;
+  selection_id?: number | null;
   created_at: Date;
+}
+
+export interface TariffReferencePeriodRow {
+  id: number;
+  site_id: string;
+  tariff_id: number;
+  effective_from: string;
+  effective_to: string | null;
+  source: Exclude<TariffSource, 'tesla'>;
+  updated_by_user_id: string | null;
+  selection_id?: number | null;
+  created_at: Date;
+}
+
+export interface TariffSelectionRow {
+  id: number;
+  site_id: string;
+  scope: TariffSelectionScope;
+  tariff_id: number;
+  effective_from: string;
+  effective_to: string | null;
+  source: TariffSource;
+  choice_kind: TariffSelectionChoiceKind;
+  candidate_kind: TariffSelectionCandidateKind;
+  selected_by_user_id: string | null;
+  urdb_label: string | null;
+  utility_name: string | null;
+  revision_start: string | null;
+  export_rate_provenance: ExportRateProvenance;
+  holidays_use_weekend: boolean;
+  approximation_notes: unknown;
+  selected_content_hash: string | null;
+  restored_from_selection_id: number | null;
+  created_at: Date;
+}
+
+export interface TariffSelectionOriginalRow {
+  id: number;
+  selection_id: number;
+  site_id: string;
+  scope: TariffSelectionScope;
+  effective_from: string;
+  effective_to: string | null;
+  original_tariff_id: number;
+  original_selection_id: number | null;
+  created_at: Date;
+}
+
+export interface TariffSelectionVerificationRow {
+  id: number;
+  selection_id: number;
+  site_id: string;
+  scope: TariffSelectionScope;
+  tariff_id: number;
+  tariff_content_hash: string;
+  effective_from: string;
+  effective_to: string | null;
+  verified_by_user_id: string | null;
+  verified_at: Date;
 }
 
 export type TariffReattributionStatus = 'pending' | 'running' | 'idle' | 'failed';

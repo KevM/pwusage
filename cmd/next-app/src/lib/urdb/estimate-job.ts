@@ -7,8 +7,15 @@ import { createEnergyRepo } from '../energy-repo-factory';
 import { checkIoDeadline } from '../io-deadline';
 import { logEvent } from '../observability';
 import { enqueueReattributionOnClient } from '../tariff-reattribution-queue';
-import { applyEstimatesOnClient, hydrateTariffs, insertTariffGraph, loadExistingSpans, pickActivePeriodForDate } from '../tariff-timeline-repo';
-import { addCalendarDays, compileSeasonsToParsedTariff, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
+import {
+  applyEstimatesOnClient,
+  clearUnprotectedUrdbSourcesOnClient,
+  hydrateTariffs,
+  insertTariffGraph,
+  loadExistingSpans,
+  pickActivePeriodForDate,
+} from '../tariff-timeline-repo';
+import { addCalendarDays, compileSeasonsToParsedTariff, isProtectedSpan, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
 import { buildDefaultTariff, parseTariffContent, tariffContentHash, type ParsedTariff } from '../importer/tariff-parser';
 import type { TariffV2 } from '../tesla-client';
 import { layoutTimeline } from '../tariff-estimates';
@@ -107,7 +114,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     matches.push(matched);
     const ownedSpan = spans.find(span => span.tariffId === tariff.id);
     if (!ownedSpan) continue;
-    const anchor = anchorStart({ matched, firstSeen, isFirstVersion: index === firstSpanned, currentSpanStart: ownedSpan.effectiveFrom, ownerDated: ownedSpan.updatedByUserId !== null, timeZone: site.timezone });
+    const anchor = anchorStart({ matched, firstSeen, isFirstVersion: index === firstSpanned, currentSpanStart: ownedSpan.effectiveFrom, ownerDated: isProtectedSpan(ownedSpan), timeZone: site.timezone });
     if (anchor) anchors.push({ tariffId: tariff.id, ...anchor, label: matched?.label ?? null, newer: null });
   }
   if (matches.at(-1)) {
@@ -147,7 +154,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   });
   const ownerPicked = !tariffs.length && !!start && !!utility?.urdb_plan_label;
   const previewSpans = ownerPicked ? spans.flatMap(row => {
-    if (row.source !== 'tesla' || row.updatedByUserId !== null || !fallbackTariffIds.includes(row.tariffId)) return [row];
+    if (row.source !== 'tesla' || isProtectedSpan(row) || !fallbackTariffIds.includes(row.tariffId)) return [row];
     let parts = [{ from: row.effectiveFrom, to: row.effectiveTo }];
     for (const estimate of actual) parts = parts.flatMap(part => {
       const startDate = estimate.span.effectiveFrom;
@@ -177,7 +184,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     return result ? [result] : [];
   });
   const changed = layout.changed;
-  const status = !tariffs.length && !spans.some(span => span.source === 'manual') && !start ? 'needs_plan' : 'ready';
+  const status = !tariffs.length && !spans.some(span => isProtectedSpan(span)) && !start ? 'needs_plan' : 'ready';
   const matchOutcomes = matches.map((match, index) => !match ? 'no_match' as const : convert({ rate: match, effectiveFrom: today, effectiveTo: null }, 'estimated_actual', averageSell(tariffs[index])) ? 'matched' as const : 'unconvertible' as const);
   return { planBackfill, status, utilityName, anchors, actual, reference, changed, fallbackTariffIds, ownerPicked, matchOutcomes };
 }
@@ -222,20 +229,20 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       const current = await write.query<{ claim: string; choice: string }>('SELECT updated_at::text AS claim, choice FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE', [siteId]);
       if (current.rows[0]?.claim !== claim) { await write.query('ROLLBACK'); return { status: 'pending', changedDays: 0 }; }
       checkIoDeadline();
-      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
-      await write.query(`DELETE FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
+      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference', 'owner_selection')`, [siteId]);
+      await clearUnprotectedUrdbSourcesOnClient(write, siteId);
       if (preview.planBackfill) {
         await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [preview.planBackfill.tariffId, siteId, preview.planBackfill.name, preview.planBackfill.code]);
       }
       for (const anchor of preview.anchors) {
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date)`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start, is_current_estimate) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, start_source = EXCLUDED.start_source, newer_urdb_label = EXCLUDED.newer_urdb_label, newer_urdb_name = EXCLUDED.newer_urdb_name, newer_urdb_start = EXCLUDED.newer_urdb_start, is_current_estimate = TRUE`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
       }
       for (const item of [...preview.actual, ...preview.reference]) {
         const parsed = compileSeasonsToParsedTariff(item.name, item.seasons);
         const hash = tariffContentHash(parsed);
         const previous = old.rows.find(row => row.role === item.role && row.urdb_label === item.span.rate.label && row.content_hash === hash);
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date)`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start, is_current_estimate) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, start_source = EXCLUDED.start_source, revision_start = EXCLUDED.revision_start, is_current_estimate = TRUE`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
       }
       const today = siteLocalDateString(now, (await write.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone ?? 'UTC');
       const beforeCoverage = current.rows[0].choice === 'skipped' ? [] : (await write.query<{ source: string; effective_from: string; effective_to: string | null; kind: string }>(`SELECT source, effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT source, effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;
@@ -243,7 +250,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
         // The importer creates a synthetic Tesla fallback when Tesla has no plan. Once an
         // owner picks a public plan, only overlapping, unedited fallback days are replaced.
         const currentSpans = await loadExistingSpans(write, siteId);
-        for (const fallback of currentSpans.filter(row => row.source === 'tesla' && row.updatedByUserId === null && preview.fallbackTariffIds.includes(row.tariffId))) {
+        for (const fallback of currentSpans.filter(row => row.source === 'tesla' && !isProtectedSpan(row) && preview.fallbackTariffIds.includes(row.tariffId))) {
           let parts = [{ from: fallback.effectiveFrom, to: fallback.effectiveTo }];
           for (const estimate of preview.actual) {
             const start = estimate.span.effectiveFrom;
@@ -258,7 +265,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
           }
           if (parts.length === 1 && parts[0].from === fallback.effectiveFrom && parts[0].to === fallback.effectiveTo) continue;
           await write.query('DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1 AND id = $2', [siteId, fallback.id]);
-          for (const part of parts) await write.query(`INSERT INTO "TariffEffectivePeriod" (site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id) VALUES ($1, $2, $3::date, $4::date, 'tesla', NULL)`, [siteId, fallback.tariffId, part.from, part.to]);
+          for (const part of parts) await write.query(`INSERT INTO "TariffEffectivePeriod" (site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id, selection_id) VALUES ($1, $2, $3::date, $4::date, 'tesla', NULL, $5)`, [siteId, fallback.tariffId, part.from, part.to, fallback.selectionId ?? null]);
         }
       }
 

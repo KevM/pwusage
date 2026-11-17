@@ -1,4 +1,4 @@
-import type { Tariff, TariffSchedule, TariffSource } from './db-types';
+import type { Tariff, TariffSchedule, TariffSelectionChoiceKind, TariffSource } from './db-types';
 import type { ParsedSchedule, ParsedSeason, ParsedTariff } from './importer/tariff-parser';
 import { matchesScheduleForDay, sortSchedulesBySpecificity } from './schedule';
 import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
@@ -22,6 +22,8 @@ export interface ExistingSpan {
   effectiveFrom: string;
   effectiveTo: string | null;
   updatedByUserId: string | null;
+  selectionId?: number | null;
+  choiceKind?: TariffSelectionChoiceKind;
 }
 
 export interface NewSpanRow {
@@ -30,6 +32,21 @@ export interface NewSpanRow {
   effectiveFrom: string;
   effectiveTo: string | null;
   updatedByUserId: string | null;
+  selectionId?: number | null;
+  choiceKind?: TariffSelectionChoiceKind;
+}
+
+export function spanChoiceKind(
+  span: Pick<ExistingSpan, 'source' | 'updatedByUserId' | 'choiceKind'>
+): TariffSelectionChoiceKind {
+  if (span.choiceKind) return span.choiceKind;
+  return span.source === 'manual' || span.updatedByUserId !== null ? 'owner' : 'automatic';
+}
+
+export function isProtectedSpan(
+  span: Pick<ExistingSpan, 'source' | 'updatedByUserId' | 'choiceKind'>
+): boolean {
+  return spanChoiceKind(span) === 'owner';
 }
 
 export interface SpanMutationPlan {
@@ -346,6 +363,10 @@ export function computeSpanMutations(
       continue;
     }
     deleteIds.push(span.id);
+    const provenance = {
+      ...(span.selectionId !== undefined ? { selectionId: span.selectionId } : {}),
+      ...(span.choiceKind !== undefined ? { choiceKind: span.choiceKind } : {}),
+    };
     if (span.effectiveFrom < incoming.effectiveFrom) {
       fragments.push({
         tariffId: span.tariffId,
@@ -353,6 +374,7 @@ export function computeSpanMutations(
         effectiveFrom: span.effectiveFrom,
         effectiveTo: addCalendarDays(incoming.effectiveFrom, -1),
         updatedByUserId: span.updatedByUserId,
+        ...provenance,
       });
     }
     if (incoming.effectiveTo !== null && cmpEnd(span.effectiveTo, incoming.effectiveTo) > 0) {
@@ -362,6 +384,7 @@ export function computeSpanMutations(
         effectiveFrom: addCalendarDays(incoming.effectiveTo, 1),
         effectiveTo: span.effectiveTo,
         updatedByUserId: span.updatedByUserId,
+        ...provenance,
       });
     }
   }

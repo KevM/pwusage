@@ -27,11 +27,15 @@ vi.mock('./observability', () => ({
 
 import { TariffRepo } from './tariff-repo';
 import {
+  applyTariffSelectionOnClient,
   buildSiteTariffsTimelineResponse,
+  loadRestorationTargets,
+  loadScopeSelectionSpans,
   recomputeIsCurrentTariff,
   TariffTimelineRepo,
 } from './tariff-timeline-repo';
 import { TariffValidationError } from './tariff-timeline';
+import type { TariffSeasonInput } from './tariff-contract';
 import type { PoolClient } from 'pg';
 
 describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
@@ -497,5 +501,357 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(deletes.map(q => q.params)).toEqual([['s1', 'powerwall']]);
     expect(clientQueries.some(q => q.sql === 'COMMIT')).toBe(true);
     expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
+  });
+
+  it('buildSiteTariffsTimelineResponse retains choiceKind and displays verification only when exact hash and range match', () => {
+    const res = buildSiteTariffsTimelineResponse({
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
+      currency: 'USD',
+      today: '2026-11-17',
+      viewerUserId: 'u2',
+      periodRows: [
+        {
+          period_id: 1,
+          tariff_id: 10,
+          effective_from: '2025-01-01',
+          effective_to: '2025-05-31',
+          source: 'estimated',
+          updated_by_user_id: 'u1',
+          updated_by_email: 'owner@example.com',
+          name: 'Public Split Fragment',
+          version: 1,
+          content_hash: 'hash-a',
+          selection_id: 50,
+          choice_kind: 'owner',
+          urdb_label: 'urdb-a',
+          verified_at: '2025-02-01T00:00:00Z',
+          verified_by_user_id: 'u1',
+          verified_by_email: 'owner@example.com',
+          verified_tariff_id: 10,
+          verified_content_hash: 'hash-a',
+          verified_effective_from: '2025-01-01',
+          verified_effective_to: '2025-12-31',
+        } as never,
+        {
+          period_id: 2,
+          tariff_id: 11,
+          effective_from: '2025-06-01',
+          effective_to: null,
+          source: 'manual',
+          updated_by_user_id: 'u1',
+          updated_by_email: 'owner@example.com',
+          name: 'Exact Verified Plan',
+          version: 1,
+          content_hash: 'hash-b',
+          selection_id: 51,
+          choice_kind: 'owner',
+          verified_at: '2025-06-02T00:00:00Z',
+          verified_by_user_id: 'u1',
+          verified_by_email: 'owner@example.com',
+          verified_tariff_id: 11,
+          verified_content_hash: 'hash-b',
+          verified_effective_from: '2025-06-01',
+          verified_effective_to: null,
+        } as never,
+      ],
+      tariffMap: new Map(),
+    });
+
+    const split = res.periods[0] as unknown as Record<string, unknown>;
+    expect(split.choiceKind).toBe('owner');
+    expect(split.selectionId).toBe(50);
+    expect(split.verification).toBeNull();
+
+    const exact = res.periods[1] as unknown as Record<string, unknown>;
+    expect(exact.choiceKind).toBe('owner');
+    expect(exact.selectionId).toBe(51);
+    expect(exact.verification).toEqual({
+      verifiedAt: '2025-06-02T00:00:00.000Z',
+      verifiedByEmail: 'owner@example.com',
+      verifiedByCurrentUser: false,
+    });
+
+    const contentChanged = buildSiteTariffsTimelineResponse({
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
+      currency: 'USD',
+      today: '2026-11-17',
+      viewerUserId: 'u1',
+      periodRows: [
+        {
+          period_id: 3,
+          tariff_id: 12,
+          effective_from: '2025-06-01',
+          effective_to: null,
+          source: 'estimated',
+          updated_by_user_id: 'u1',
+          updated_by_email: 'owner@example.com',
+          name: 'Changed Content Plan',
+          version: 2,
+          content_hash: 'hash-new',
+          selection_id: 52,
+          choice_kind: 'owner',
+          verified_at: '2025-06-02T00:00:00Z',
+          verified_by_user_id: 'u1',
+          verified_by_email: 'owner@example.com',
+          verified_tariff_id: 12,
+          verified_content_hash: 'hash-old',
+          verified_effective_from: '2025-06-01',
+          verified_effective_to: null,
+        } as never,
+      ],
+      tariffMap: new Map(),
+    });
+    expect(contentChanged.periods[0].verification).toBeNull();
+  });
+
+  const sampleSeasons: TariffSeasonInput[] = [
+    {
+      name: 'All Year',
+      fromMonth: 1,
+      fromDay: 1,
+      toMonth: 12,
+      toDay: 31,
+      weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.12, sellRate: 0.04 }],
+      weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.12, sellRate: 0.04 }],
+    },
+  ];
+
+  it('applyTariffSelectionOnClient avoids manufacturing duplicate Tariff versions on unchanged saves', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) {
+        return {
+          rows: [{
+            id: 10,
+            tariff_id: 88,
+            source: 'estimated',
+            effective_from: '2025-01-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 500,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      if (sql.includes('LEFT JOIN "TariffUrdbSource" u ON u.tariff_id = t.id')) {
+        return { rows: [{ id: 88, has_urdb: true }] };
+      }
+      if (sql.includes('FROM "TariffSelection" WHERE id = $1')) {
+        return {
+          rows: [{
+            urdb_label: 'urdb-tou-1',
+            utility_name: 'Demo Utility',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'published',
+            holidays_use_weekend: true,
+          }],
+        };
+      }
+      if (sql.includes('FROM "TariffSelectionVerification"')) {
+        return { rows: [{ verified_by_user_id: 'u1' }] };
+      }
+      return { rows: [] };
+    };
+
+    const result = await applyTariffSelectionOnClient(fakeClient, 's1', '2026-11-17', {
+      scope: 'actual',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      userId: 'u1',
+      verifiedAgainstBill: true,
+      candidate: {
+        kind: 'public',
+        name: 'Public TOU',
+        seasons: sampleSeasons,
+        urdbLabel: 'urdb-tou-1',
+        utilityName: 'Demo Utility',
+        revisionStart: '2025-01-01',
+        exportRateProvenance: 'published',
+        holidaysUseWeekendSchedule: true,
+      },
+    });
+
+    expect(result).toEqual({
+      selectionIds: [500],
+      tariffIds: [88],
+      createdNewTariffVersion: false,
+      unchanged: true,
+      reattributionRange: null,
+    });
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "Tariff"('))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffSelection"'))).toBe(false);
+  });
+
+  it('applyTariffSelectionOnClient verifies an identical span in place without duplicating the Tariff version', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) {
+        return {
+          rows: [{
+            id: 10,
+            tariff_id: 88,
+            source: 'estimated',
+            effective_from: '2025-01-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 500,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      if (sql.includes('LEFT JOIN "TariffUrdbSource" u ON u.tariff_id = t.id')) {
+        return { rows: [{ id: 88, has_urdb: true }] };
+      }
+      if (sql.includes('FROM "TariffSelection" WHERE id = $1')) {
+        return {
+          rows: [{
+            urdb_label: 'urdb-tou-1',
+            utility_name: 'Demo Utility',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'published',
+            holidays_use_weekend: true,
+          }],
+        };
+      }
+      if (sql.includes('FROM "TariffSelectionVerification"')) {
+        return { rows: [] };
+      }
+      if (sql.includes('INSERT INTO "TariffSelection"')) {
+        return { rows: [{ id: 501 }] };
+      }
+      return { rows: [] };
+    };
+
+    const result = await applyTariffSelectionOnClient(fakeClient, 's1', '2026-11-17', {
+      scope: 'actual',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      userId: 'u1',
+      verifiedAgainstBill: true,
+      candidate: {
+        kind: 'public',
+        name: 'Public TOU',
+        seasons: sampleSeasons,
+        urdbLabel: 'urdb-tou-1',
+        utilityName: 'Demo Utility',
+        revisionStart: '2025-01-01',
+        exportRateProvenance: 'published',
+        holidaysUseWeekendSchedule: true,
+      },
+    });
+
+    expect(result.createdNewTariffVersion).toBe(false);
+    expect(result.unchanged).toBe(false);
+    expect(result.selectionIds).toEqual([501]);
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "Tariff"('))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffSelectionVerification"'))).toBe(true);
+    expect(clientQueries.some(q => q.sql.includes('UPDATE "TariffEffectivePeriod" SET selection_id = $3'))).toBe(true);
+  });
+
+  it('applyTariffSelectionOnClient rejects restore_tesla when no saved original exists', async () => {
+    await expect(
+      applyTariffSelectionOnClient(fakeClient, 's1', '2026-11-17', {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-06-30',
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'restore_tesla',
+          originalSelectionId: 999,
+        },
+      })
+    ).rejects.toThrow(TariffValidationError);
+  });
+
+  it('loadScopeSelectionSpans attaches preservedTeslaOriginal clipped to the active span', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 21,
+            tariff_id: 88,
+            effective_from: '2025-03-01',
+            effective_to: '2025-06-30',
+            source: 'estimated',
+            updated_by_user_id: 'u1',
+            updated_by_email: 'owner@example.com',
+            name: 'Public TOU',
+            version: 1,
+            content_hash: 'hash-pub',
+            selection_id: 600,
+            choice_kind: 'owner',
+            urdb_label: 'urdb-tou-1',
+          }],
+        };
+      }
+      if (sql.includes('FROM "Tariff"') && sql.includes('id = ANY')) {
+        return { rows: [{ id: 88, site_id: 's1', version: 1, name: 'Public TOU', currency: 'USD', is_current: true, updated: new Date(), content_hash: 'hash-pub', source: 'estimated' }] };
+      }
+      if (sql.includes('FROM "TariffSelectionOriginal"')) {
+        return {
+          rows: [{
+            selection_id: 600,
+            effective_from: '2025-01-01',
+            effective_to: '2025-12-31',
+            original_tariff_id: 42,
+            original_selection_id: 300,
+            name: 'Original Tesla TOU',
+            version: 2,
+            content_hash: 'hash-tesla-2',
+          }],
+        };
+      }
+      return { rows: [] };
+    };
+
+    const spans = await loadScopeSelectionSpans(fakeClient, 's1', 'actual', 'u1');
+    expect(spans).toHaveLength(1);
+    expect(spans[0].preservedTeslaOriginal).toEqual({
+      originalSelectionId: 300,
+      tariffId: 42,
+      name: 'Original Tesla TOU',
+      version: 2,
+      contentHash: 'hash-tesla-2',
+      effectiveFrom: '2025-03-01',
+      effectiveTo: '2025-06-30',
+    });
+  });
+
+  it('loadRestorationTargets coalesces duplicate intervals carried across chained overrides', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('WHERE site_id = $1 AND scope = $2 AND original_selection_id = $3')) {
+        return {
+          rows: [
+            {
+              selection_id: 20,
+              effective_from: '2025-01-01',
+              effective_to: '2025-06-30',
+              original_tariff_id: 42,
+              original_selection_id: 300,
+            },
+            {
+              selection_id: 30,
+              effective_from: '2025-01-01',
+              effective_to: '2025-06-30',
+              original_tariff_id: 42,
+              original_selection_id: 300,
+            },
+          ],
+        };
+      }
+      if (sql.includes('FROM "Tariff"') && sql.includes('id = ANY')) {
+        return { rows: [{ id: 42, site_id: 's1', version: 1, name: 'Saved Tesla v1', currency: 'USD', is_current: false, updated: new Date(), content_hash: 'hash-t1', source: 'tesla' }] };
+      }
+      return { rows: [] };
+    };
+
+    const targets = await loadRestorationTargets(fakeClient, 's1', 'actual', 300, '2025-02-01', '2025-05-31');
+    expect(targets).toHaveLength(1);
+    expect(targets[0].effectiveFrom).toBe('2025-02-01');
+    expect(targets[0].effectiveTo).toBe('2025-05-31');
+    expect(targets[0].original.tariffId).toBe(42);
   });
 });

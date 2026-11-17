@@ -89,6 +89,107 @@ describe('TariffRepo.addTariffVersion', () => {
     expect(sqls.some((s) => s.includes('SET is_current = FALSE'))).toBe(false);
     expect(invalidateCacheMock).not.toHaveBeenCalled();
   });
+
+  it('does not overwrite an active owner-selected public plan (source: estimated, choice_kind: owner)', async () => {
+    clientQueryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes(`source = 'tesla'`)) return { rows: [{ id: 1, content_hash: 'OLD_TESLA' }] };
+      if (sql.includes('MAX(version)')) return { rows: [{ next: 2 }] };
+      if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 9 }] };
+      if (sql.includes('INSERT INTO "TariffSeason"(')) return { rows: [{ id: 90 }] };
+      if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
+      if (sql.includes('FROM "TariffEffectivePeriod"')) {
+        return {
+          rows: [{
+            id: 21,
+            tariff_id: 15,
+            source: 'estimated',
+            effective_from: '2025-01-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 55,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const changed = await new TariffRepo().addTariffVersion('site-1', parsed);
+
+    expect(changed).toBe(true);
+    const sqls = clientQueryMock.mock.calls.map(sqlOf);
+    expect(sqls.some((s) => s.includes('INSERT INTO "TariffEffectivePeriod"'))).toBe(false);
+    expect(sqls.some((s) => s.includes('DELETE FROM "TariffEffectivePeriod"'))).toBe(false);
+  });
+
+  it('does not overwrite an active restored saved Tesla plan (source: tesla, choice_kind: owner)', async () => {
+    clientQueryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes(`source = 'tesla'`)) return { rows: [{ id: 1, content_hash: 'OLD_TESLA' }] };
+      if (sql.includes('MAX(version)')) return { rows: [{ next: 3 }] };
+      if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 10 }] };
+      if (sql.includes('INSERT INTO "TariffSeason"(')) return { rows: [{ id: 91 }] };
+      if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'America/Chicago' }] };
+      if (sql.includes('FROM "TariffEffectivePeriod"')) {
+        return {
+          rows: [{
+            id: 22,
+            tariff_id: 1,
+            source: 'tesla',
+            effective_from: '2025-01-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 56,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const changed = await new TariffRepo().addTariffVersion('site-1', parsed);
+
+    expect(changed).toBe(true);
+    const sqls = clientQueryMock.mock.calls.map(sqlOf);
+    expect(sqls.some((s) => s.includes('INSERT INTO "TariffEffectivePeriod"'))).toBe(false);
+    expect(sqls.some((s) => s.includes('DELETE FROM "TariffEffectivePeriod"'))).toBe(false);
+  });
+
+  it('caps a new automatic Tesla span before a future owner-selected public plan', async () => {
+    clientQueryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes(`source = 'tesla'`)) return { rows: [{ id: 1, content_hash: 'OLD_TESLA' }] };
+      if (sql.includes('MAX(version)')) return { rows: [{ next: 2 }] };
+      if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 12 }] };
+      if (sql.includes('INSERT INTO "TariffSeason"(')) return { rows: [{ id: 92 }] };
+      if (sql.includes('SELECT timezone FROM "Site"')) return { rows: [{ timezone: 'UTC' }] };
+      if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) {
+        return {
+          rows: [{
+            id: 30,
+            tariff_id: 18,
+            source: 'estimated',
+            effective_from: '2099-06-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 77,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      if (sql.includes('INSERT INTO "TariffSelection"')) return { rows: [{ id: 99 }] };
+      if (sql.includes('INSERT INTO "TariffEffectivePeriod"')) return { rows: [{ id: 31 }] };
+      if (sql.includes('INSERT INTO "SiteTariffReattribution"')) {
+        return { rows: [{ status: 'pending', from_date: '2026-11-17', to_date: '2099-05-31', total_days: 0, processed_days: 0, updated_days: 0, last_error: null, updated_at: new Date() }] };
+      }
+      return { rows: [] };
+    });
+
+    await new TariffRepo().addTariffVersion('site-1', parsed);
+
+    const periodInsert = clientQueryMock.mock.calls.find(c => sqlOf(c).includes('INSERT INTO "TariffEffectivePeriod"'));
+    expect(periodInsert).toBeDefined();
+    expect(periodInsert?.[1]?.[3]).toBe('2099-05-31');
+    expect(periodInsert?.[1]?.[6]).toBe(99);
+  });
 });
 
 it('resolves inherited rates in historical schedules without filtering out old tariff versions', async () => {

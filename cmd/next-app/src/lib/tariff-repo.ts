@@ -4,11 +4,12 @@ import { ParsedTariff, tariffContentHash } from './importer/tariff-parser';
 import { logEvent } from './observability';
 import { SiteRepo } from './site-repo';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
-import { addCalendarDays, computeSpanMutations, siteLocalDateString } from './tariff-timeline';
+import { addCalendarDays, computeSpanMutations, isProtectedSpan, siteLocalDateString } from './tariff-timeline';
 import {
   applyEstimatesOnClient,
   applySpanMutationPlan,
   insertTariffGraph,
+  insertTariffSelectionOnClient,
   loadExistingSpans,
 } from './tariff-timeline-repo';
 
@@ -119,7 +120,7 @@ export class TariffRepo {
       const spans = await loadExistingSpans(client, siteId);
       const coveringToday = spans.find(s => s.effectiveFrom <= today && (s.effectiveTo === null || s.effectiveTo >= today));
 
-      if (coveringToday?.source === 'manual') {
+      if (coveringToday && isProtectedSpan(coveringToday)) {
         logEvent('info', 'tariff.tesla_sync.divergence_detected', {
           latestTariffId: newTariffId,
           activeManualTariffId: coveringToday.tariffId,
@@ -129,14 +130,28 @@ export class TariffRepo {
         // A site's first plan covers the history already archived, as the historic-tariffs migration
         // did for first plans; the URDB anchor then labels that start `history_start`.
         const effectiveFrom = spans.length === 0 ? await firstArchivedDay(client, siteId, siteTz, today) : today;
-        const nextManual = spans.find(s => s.source === 'manual' && s.effectiveFrom > effectiveFrom);
-        const effectiveTo = nextManual ? addCalendarDays(nextManual.effectiveFrom, -1) : null;
+        const nextProtected = spans.find(s => isProtectedSpan(s) && s.effectiveFrom > effectiveFrom);
+        const effectiveTo = nextProtected ? addCalendarDays(nextProtected.effectiveFrom, -1) : null;
+        const selectionId = await insertTariffSelectionOnClient(client, {
+          siteId,
+          scope: 'actual',
+          tariffId: newTariffId,
+          effectiveFrom,
+          effectiveTo,
+          source: 'tesla',
+          choiceKind: 'automatic',
+          candidateKind: 'tesla_sync',
+          selectedByUserId: null,
+          exportRateProvenance: 'tesla',
+          selectedContentHash: newHash,
+        });
         await applySpanMutationPlan(client, siteId, computeSpanMutations(spans, {
           tariffId: newTariffId,
           source: 'tesla',
           effectiveFrom,
           effectiveTo,
           updatedByUserId: null,
+          ...(selectionId !== null ? { selectionId, choiceKind: 'automatic' as const } : {}),
         }));
         // Today's samples may already be priced under the previous plan, and when the new span is
         // now the earliest it also reprices the days before it. The cron runner picks the job up.
