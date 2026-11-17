@@ -504,6 +504,25 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(row.rows[0]).toEqual({ status: 'needs_utility', urdb_utility: null });
   });
 
+  it('leaves a site outside the US ready with no estimates and no OpenEI calls', async () => {
+    const siteId = 's-outside-us';
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'Australia/Sydney', '{}', 'AGL')`, [siteId]);
+    const api: UrdbApi = {
+      utilityNames: async () => { throw new Error('Should not list OpenEI utilities for a site outside the US'); },
+      ratesEffectiveOn: async () => { throw new Error('Should not request rates for a site outside the US'); },
+      rateByLabel: async () => null,
+      defaultRates: async () => { throw new Error('Should not request defaults for a site outside the US'); },
+    };
+
+    const result = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+    const row = await local.database.query<{ status: string; urdb_utility: string | null }>(`SELECT status, urdb_utility FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+    const timeline = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
+
+    expect(result.status).toBe('ready');
+    expect(row.rows[0]).toEqual({ status: 'ready', urdb_utility: null });
+    expect(timeline.estimates).toMatchObject({ status: 'ready', utilityName: null, historyGuide: null });
+  });
+
   it('moves from needs_plan to an owner-picked current estimate and reuses its tariff rows', async () => {
     const schedule = Array.from({ length: 12 }, () => Array(24).fill(0));
     const defaultRate: UrdbRate = {

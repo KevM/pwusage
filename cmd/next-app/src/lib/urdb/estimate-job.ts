@@ -16,6 +16,7 @@ import * as client from './client';
 import { urdbRateToSeasons } from './convert';
 import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, urdbStartDate, walkSupersedes, type RevisionSpan } from './match';
 import { normalizeUtilityName, resolveUtility } from './utility-lookup';
+import { isOutsideUs } from './us-time-zones';
 import type { UrdbRate } from './types';
 import type { TariffSeasonInput } from '../tariff-contract';
 
@@ -85,6 +86,9 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const tariffs = planBackfill ? unfilled.map(tariff => tariff.id === planBackfill.tariffId ? { ...tariff, plan_name: planBackfill.name, plan_code: planBackfill.code } : tariff) : unfilled;
   const empty = (status: SiteUtilityStatus, utilityName: string | null): Preview => ({ planBackfill, status, utilityName, anchors: [], actual: [], reference: [], changed: [], fallbackTariffIds, ownerPicked: false, matchOutcomes: tariffs.map(() => 'no_utility') });
   if (utility?.choice === 'skipped') return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
+  // OpenEI lists US utilities only, so a site outside the US can never match one. Leave it ready with no
+  // estimates rather than asking the owner to pick a utility; an owner's own pick still applies.
+  if (utility?.choice !== 'owner' && isOutsideUs(site.timezone)) return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
   const names = await api.utilityNames(); checkIoDeadline();
   const utilityName = utility?.choice === 'owner' ? utility.urdb_utility : resolveUtility(site.utility, names);
   if (!utilityName) return empty('needs_utility', null);
