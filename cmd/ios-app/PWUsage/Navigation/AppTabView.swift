@@ -62,7 +62,7 @@ struct AppTabView: View {
                 isDemo: model.isDemo,
                 isDismissed: accessoryDismissals.isDismissed(siteID: site.id),
                 yieldsTo: hold != nil || deep != nil || showsBanner
-            )
+            )?.setupPrompt // The history offer's accessory view arrives with the guide screens.
             tabView.tabViewBottomAccessory(isEnabled: hold != nil || deep != nil || showsBanner || estimate != nil) {
                 if let hold {
                     BatteryHoldAccessory(model: hold) { coordinator.isBatteryHoldSheetPresented = true }
