@@ -21,7 +21,7 @@ import type { UrdbRate } from './types';
 import type { TariffSeasonInput } from '../tariff-contract';
 
 export interface UrdbApi { ratesEffectiveOn: typeof client.ratesEffectiveOn; rateByLabel: typeof client.rateByLabel; defaultRates: typeof client.defaultRates; utilityNames: typeof client.utilityNames }
-type Snapshot = { site: { id: string; utility: string | null; timezone: string; history_start: string | null; tariff_content: TariffV2 | null; site_name: string | null }; utility: SiteUtilityRow | undefined; spans: Awaited<ReturnType<typeof loadExistingSpans>>; tariffs: Tariff[]; allTariffs: Tariff[]; sources: Array<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null }> };
+type Snapshot = { site: { id: string; utility: string | null; grid_utility: string | null; timezone: string; history_start: string | null; tariff_content: TariffV2 | null; site_name: string | null }; utility: SiteUtilityRow | undefined; spans: Awaited<ReturnType<typeof loadExistingSpans>>; tariffs: Tariff[]; allTariffs: Tariff[]; sources: Array<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null }> };
 type Anchor = { tariffId: number; startDate: string; startSource: string; label: string | null; newer: UrdbRate | null };
 type Converted = { span: RevisionSpan; seasons: TariffSeasonInput[]; name: string; role: 'estimated_actual' | 'estimated_reference' };
 type PlanBackfill = { tariffId: number; name: string | null; code: string | null };
@@ -35,7 +35,7 @@ export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: 
   return names.has(normalizeUtilityName(selected.utility));
 }
 async function snapshot(siteId: string): Promise<Snapshot> {
-  const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, COALESCE(s.timezone, 'UTC') AS timezone, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
+  const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, s.json ->> 'utility' AS grid_utility, COALESCE(s.timezone, 'UTC') AS timezone, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
   const utility = (await pool.query<SiteUtilityRow>('SELECT * FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
   const connection = await pool.connect();
@@ -90,7 +90,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   // estimates rather than asking the owner to pick a utility; an owner's own pick still applies.
   if (utility?.choice !== 'owner' && isOutsideUs(site.timezone)) return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
   const names = await api.utilityNames(); checkIoDeadline();
-  const utilityName = utility?.choice === 'owner' ? utility.urdb_utility : resolveUtility(site.utility, names);
+  const utilityName = utility?.choice === 'owner' ? utility.urdb_utility : resolveUtility(site.utility, names, site.grid_utility);
   if (!utilityName) return empty('needs_utility', null);
   const today = siteLocalDateString(now, site.timezone);
   let inEffectToday: Promise<UrdbRate[]> | undefined;
