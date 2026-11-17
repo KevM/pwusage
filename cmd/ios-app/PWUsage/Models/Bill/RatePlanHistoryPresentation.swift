@@ -122,6 +122,17 @@ enum RatePlanHistoryPresentation {
         return stripped.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    /// The plan row's title: the display name, plus its Peak hours when another row in `plans` has the
+    /// same name (`Residential Time-of-Use Rg 2 · Peak 7 AM – 7 PM`). A row grouping several Peak-hours
+    /// options shows the span from the first window's start to the last window's end.
+    static func planRowTitle(_ plan: RatePlanHistoryPlanDTO, among plans: [RatePlanHistoryPlanDTO]) -> String {
+        let name = displayName(plan.name)
+        let sharesName = plans.contains { $0.id != plan.id && displayName($0.name) == name }
+        guard sharesName, let first = plan.peakWindows.first, let last = plan.peakWindows.last else { return name }
+        let span = RatePlanPeakWindowDTO(label: first.label, fromHour: first.fromHour, toHour: last.toHour)
+        return "\(name) · Peak \(windowRow(span))"
+    }
+
     /// `Off-Peak $0.10 · Peak $0.27`, or `$0.19/kWh` for a Fixed plan.
     static func priceRow(_ plan: RatePlanHistoryPlanDTO) -> String {
         switch plan.kind {
@@ -237,11 +248,19 @@ enum RatePlanHistoryPresentation {
 
     /// A server 400/409 message is shown as-is; anything else gets the generic save failure.
     static func saveErrorMessage(for error: any Error) -> String {
-        if case .requestRejected(let status, let message?) = error as? PWUsageAPIError,
-           status == 400 || status == 409, !message.isEmpty {
-            return message
-        }
-        return saveFailureMessage
+        serverMessage(in: error) ?? saveFailureMessage
+    }
+
+    /// A server 400/409 message (`Choose a utility first.`) is shown as-is; anything else gets the
+    /// generic load failure.
+    static func loadErrorMessage(for error: any Error) -> String {
+        serverMessage(in: error) ?? loadFailureMessage
+    }
+
+    private static func serverMessage(in error: any Error) -> String? {
+        guard case .requestRejected(let status, let message?) = error as? PWUsageAPIError,
+              status == 400 || status == 409, !message.isEmpty else { return nil }
+        return message
     }
 
     // MARK: Dates

@@ -97,7 +97,7 @@ private struct RatePlanPlanStep: View {
         self.model = model
         let plans = flow.plans(for: flow.step)
         let preferred = plans.first(where: \.closest) ?? plans.first(where: \.isDefault) ?? plans.first
-        _selection = State(initialValue: preferred?.name)
+        _selection = State(initialValue: preferred?.id)
     }
 
     private var plans: [RatePlanHistoryPlanDTO] {
@@ -110,17 +110,17 @@ private struct RatePlanPlanStep: View {
                 ForEach(Array(plans.enumerated()), id: \.element.id) { index, plan in
                     if index > 0 { Divider().padding(.leading, 42) }
                     HistoryChoiceRow(
-                        title: RatePlanHistoryPresentation.displayName(plan.name),
+                        title: RatePlanHistoryPresentation.planRowTitle(plan, among: plans),
                         detail: RatePlanHistoryPresentation.priceRow(plan),
                         pill: RatePlanHistoryPresentation.planPill(plan),
-                        isSelected: selection == plan.name
-                    ) { selection = plan.name }
+                        isSelected: selection == plan.id
+                    ) { selection = plan.id }
                 }
             }
             HistoryNotSureButton { model.update { $0.stillNotSure() } }
         } footer: {
             HistoryContinueButton(isEnabled: selection != nil) {
-                guard let plan = plans.first(where: { $0.name == selection }) else { return }
+                guard let plan = plans.first(where: { $0.id == selection }) else { return }
                 model.update { $0.choosePlan(plan) }
             }
         }

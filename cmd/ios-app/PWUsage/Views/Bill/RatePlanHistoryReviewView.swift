@@ -11,11 +11,11 @@ struct RatePlanHistoryReviewView: View {
         HistoryStepFrame(title: RatePlanHistoryPresentation.question(flow)) {
             VStack(spacing: 0) {
                 if let teslaRow {
-                    timelineRow(isLast: flow.spans.isEmpty, dot: Color.secondary) { teslaCard(teslaRow) }
+                    timelineRow(isLast: shown.isEmpty, dot: Color.secondary) { teslaCard(teslaRow) }
                 }
-                ForEach(Array(flow.spans.enumerated()), id: \.offset) { index, span in
-                    timelineRow(isLast: index == flow.spans.count - 1, dot: Color.emphasis) {
-                        spanCard(span, index: index)
+                ForEach(Array(shown.enumerated()), id: \.element.index) { position, item in
+                    timelineRow(isLast: position == shown.count - 1, dot: Color.emphasis) {
+                        spanCard(item.span, index: item.index)
                     }
                 }
             }
@@ -47,6 +47,10 @@ struct RatePlanHistoryReviewView: View {
             .controlSize(.large)
             .disabled(model.isSaving)
         }
+    }
+
+    private var shown: [(index: Int, span: RatePlanHistoryFlow.Span)] {
+        flow.reviewSpans
     }
 
     private func timelineRow(

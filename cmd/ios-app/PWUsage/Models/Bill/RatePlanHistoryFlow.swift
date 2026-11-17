@@ -188,7 +188,8 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     mutating func stillNotSure() {
         switch step {
         case .currentKind, .currentPlan, .kind, .plan:
-            guard let plan = notSurePlan(from: candidates) else { return }
+            // The plan steps list only the kind the owner chose, so the guess keeps to it.
+            guard let plan = notSurePlan(from: plans(for: step)) else { return }
             save()
             pick = Pick(plan: plan, windowLabel: plan.closestWindow ?? plan.peakWindows.first?.label, assumed: true)
             finishPick()

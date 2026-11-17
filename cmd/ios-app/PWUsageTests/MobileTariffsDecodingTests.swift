@@ -225,7 +225,8 @@ struct MobileTariffsDecodingTests {
         #expect(decoded.years.first?.year == 2024)
         #expect(decoded.years.first?.plans.last?.kind == .fixed)
         #expect(decoded.years.first?.plans.last?.fixedLabel == "abc123")
-        #expect(decoded.years.first?.plans.last?.id == "Residential Flat")
+        #expect(decoded.years.first?.plans.last?.id == "abc123")
+        #expect(decoded.years.first?.plans.first?.id == "4-9 PM")
     }
 
     @Test("Encodes an open period with a null to")

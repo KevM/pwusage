@@ -34,7 +34,8 @@ struct RatePlanHistoryPlanDTO: Decodable, Sendable, Equatable, Identifiable {
     /// Fixed plans: the URDB label to save.
     let fixedLabel: String?
 
-    var id: String { name }
+    /// Unique within a list: two rows can share a name when one Peak-hours option is priced apart.
+    var id: String { fixedLabel ?? peakWindows.first?.label ?? name }
 }
 
 struct RatePlanHistoryYearDTO: Decodable, Sendable, Equatable, Identifiable {
