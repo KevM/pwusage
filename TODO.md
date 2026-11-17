@@ -6,6 +6,10 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Web: rate plan backfill and overrides (2026-11-17)
+
+- [ ] **Add a responsive web rate-plan editor for non-iOS users:** the web currently shows the timeline and sync/repricing controls but sends historical edits to iOS. Add gap backfill and persistent Change Plan actions for actual and fixed comparison plans, public utility plan selection for US sites, manual entry, and Restore Original Tesla Rate Plan. Require explicitly chosen effective dates with no default, allow backdating, and show before/after plan names, usage rates, and production rates for every affected interval before applying. Include separate bill verification, clear source labels, and repricing progress. Use the same authenticated preview/commit, public-plan browsing, country eligibility, and timeline APIs planned for iOS; keep validation, selection precedence, verification, restoration, and repricing on the server. Support explicit site-country selection when no country is known. Extend the [design](docs/plans/2026-11-17-rate-plan-selection-design.md) and [implementation plan](docs/plans/2026-11-17-rate-plan-selection-implementation.md) with web UI tasks; the shared APIs are planned, not yet implemented. Tracked with draft [PR #392](https://github.com/KevM/pwusage/pull/392), branch `docs/rate-plan-selection-design`.
+
 ## iOS: Solar Health follow-ups from the degradation backtest (2026-11-13)
 
 See the [results](docs/plans/2026-11-13-solar-degradation-backtest-results.md).
