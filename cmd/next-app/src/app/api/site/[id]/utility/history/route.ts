@@ -95,10 +95,11 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       if (open && window.fillThrough !== null) return json({ error: 'Choose when each rate plan ended.' }, 400);
       const convert = { medianMonthlyKwh: await monthlyUsage(siteId, site.timezone, now), fallbackSellRate: tesla ? averageSell(tesla) : 0 };
       const api = memoisedApi();
-      // The open period is checked like the others but saved as the plan pick, so its revisions are dropped.
+      // The open period's current revision is saved as the plan pick. Its closed revisions are saved like the
+      // others: the oldest one reaches back to the owner's start, which the pick's own chain does not.
       const expanded = await withIoDeadline(45_000, () => mapWithConcurrency(periods, 4, period =>
         expandHistoryPeriod(period, { api, utilityName, timeZone: site.timezone, today, convert })));
-      const revisions = expanded.filter((_, index) => periods[index] !== open).flat();
+      const revisions = expanded.flatMap((items, index) => periods[index] === open ? items.filter(item => item.to !== null) : items);
       return jsonWithETag(await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null));
     } catch (error) {
       if (error instanceof urdb.UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);

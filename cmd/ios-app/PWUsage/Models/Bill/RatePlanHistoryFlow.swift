@@ -329,6 +329,12 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
             return
         }
         let year = history.years[index]
+        // Nothing to choose from that year: keep the newer plan, marked Assumed so Review shows it.
+        if year.plans.isEmpty, !spans.isEmpty {
+            extendCurrentPlan(assumed: true)
+            goToYear(index + 1)
+            return
+        }
         let isListed = year.plans.contains { $0.name == spans.last?.plan.name }
         step = isListed ? .stillOn(year: year.year) : .kind(year: year.year, notListed: true)
     }

@@ -185,6 +185,7 @@ describe('PUT /api/site/[id]/utility/history', () => {
     expect(response.status).toBe(200);
     const [, , , revisions, openLabel] = mocks.saveRatePlanHistory.mock.calls[0];
     expect(openLabel).toBe(OPTION_B);
-    expect(revisions.every((r: { to: string | null }) => r.to !== null && r.to <= '2024-12-31')).toBe(true);
+    // The open period's closed revisions stay saved, so days before its oldest URDB revision keep their prices.
+    expect(revisions.map((r: { from: string; to: string | null }) => [r.from, r.to])).toEqual([['2024-01-01', '2024-12-31'], ['2025-01-01', '2025-05-31']]);
   });
 });

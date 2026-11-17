@@ -193,6 +193,18 @@ struct RatePlanHistoryFlowTests {
         #expect(flow.step == .review)
     }
 
+    @Test func yearWithNoPlansKeepsTheNewerPlanAssumed() {
+        var flow = Self.onOptionB(Self.harrison(years: [Self.year(2025), Self.year(2024, []), Self.year(2023)]))
+        flow.answerStillOn(true)
+        #expect(flow.step == .stillOn(year: 2023))
+        #expect(flow.spans.map(\.assumed) == [false, true])
+        flow.answerStillOn(true)
+        #expect(flow.step == .review)
+        #expect(flow.periods() == [
+            RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
+        ])
+    }
+
     @Test func openPeriodWithoutTesla() {
         var flow = RatePlanHistoryFlow(history: Self.harrison(fillThrough: nil, teslaShape: nil), hasTeslaPlan: false)
         #expect(flow.preselectedKind == nil)
