@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { askDate, fillWindowBounds, historyWindow, uncoveredPieces, type HistoryWindowInput } from './history-window';
 
 const today = '2026-11-16';
-const base: HistoryWindowInput = { today, historyStart: '2023-11-14', earliestTesla: null, manualSpans: [] };
+const base: HistoryWindowInput = { today, historyStart: '2023-11-14', earliestTesla: null, manualSpans: [], ownerPickedPlan: false };
 
 describe('historyWindow', () => {
   it('harrisonWindowEndsBeforeFirstSeen', () => {
@@ -33,6 +33,21 @@ describe('historyWindow', () => {
     const nearlyCovered = historyWindow({ ...base, manualSpans: [{ from: '2023-11-14', to: '2026-10-20' }] });
     expect(nearlyCovered).toBeNull();
   });
+  it('ownerPlanPickWithoutTeslaConfirmsTheDaysAfterTheOwnerPlans', () => {
+    // After a guide save: the closed periods are owner plans, the open period is the plan pick.
+    const saved = { ...base, ownerPickedPlan: true, manualSpans: [{ from: '2023-11-14', to: '2025-05-31' }] };
+    expect(historyWindow(saved)).toBeNull();
+    // The same plan the whole time: the pick alone covers the history.
+    expect(historyWindow({ ...base, ownerPickedPlan: true })).toBeNull();
+    // Gaps before the owner's latest plan are still unconfirmed.
+    const gap = historyWindow({ ...base, ownerPickedPlan: true, manualSpans: [{ from: '2025-01-01', to: '2025-05-31' }] });
+    expect(gap).toMatchObject({ fillThrough: null, askYears: [2024, 2023] });
+    expect(gap?.unconfirmedDays).toBe(414);
+  });
+  it('ownerPlanPickIsIgnoredWithTesla', () => {
+    const tesla = { firstSeen: '2026-04-28', anchorStart: '2023-11-14', anchorSource: 'history_start' as const };
+    expect(historyWindow({ ...base, earliestTesla: tesla, ownerPickedPlan: true })?.unconfirmedDays).toBe(896);
+  });
   it('askDateClampsToTheWindow', () => {
     const window = historyWindow({ ...base, earliestTesla: { firstSeen: '2026-04-28', anchorStart: null, anchorSource: null } })!;
     expect(askDate(2023, window, today)).toBe('2023-11-14');
@@ -57,7 +72,7 @@ describe('uncoveredPieces', () => {
 
 describe('fillWindowBounds', () => {
   it('endsTheDayBeforeTheTrustedStartWithoutThresholds', () => {
-    const input: HistoryWindowInput = { today: '2026-11-16', historyStart: '2026-10-01', earliestTesla: { firstSeen: '2026-11-01', anchorStart: null, anchorSource: null }, manualSpans: [] };
+    const input: HistoryWindowInput = { today: '2026-11-16', historyStart: '2026-10-01', earliestTesla: { firstSeen: '2026-11-01', anchorStart: null, anchorSource: null }, manualSpans: [], ownerPickedPlan: false };
     expect(fillWindowBounds(input)).toEqual({ historyStart: '2026-10-01', fillThrough: '2026-10-31' });
     expect(fillWindowBounds({ ...input, earliestTesla: null })).toEqual({ historyStart: '2026-10-01', fillThrough: null });
     expect(fillWindowBounds({ ...input, historyStart: null })).toBeNull();

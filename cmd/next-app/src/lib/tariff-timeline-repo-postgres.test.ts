@@ -1,5 +1,5 @@
 import { effectiveTariffIdSql } from './effective-tariff-sql';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Pool } from 'pg';
 import { readdir, readFile } from 'node:fs/promises';
 import {
@@ -995,6 +995,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
   });
 
   it('timelineCarriesHistoryGuide', async () => {
+    // Midday UTC: the pg driver writes `updated` in the machine's zone, so a real clock near midnight shifts first-seen a day.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-16T18:00:00Z') });
+    onTestFinished(() => { vi.useRealTimers(); });
     const siteId = 's-history-guide';
     await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
@@ -1152,6 +1155,24 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       expect(utility.rows).toEqual([{ urdb_plan_label: 'open-label', status: 'pending', updated_by_user_id: 'u1' }]);
       expect(timeline.estimates?.status).toBe('pending');
       expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([['manual', '2023-11-14', '2025-05-31']]);
+      // Once the estimate job has run, the open period counts as confirmed: the offer stays gone.
+      await local.database.query(`UPDATE "SiteUtility" SET status = 'ready' WHERE site_id = $1`, [siteId]);
+      expect((await new TariffTimelineRepo().getTimeline(siteId, 'u1')).estimates?.historyGuide).toBeNull();
+    });
+
+    it('skippingTheUtilityKeepsOwnerHistorySources', async () => {
+      const siteId = 's-save-then-skip';
+      await harrisonSite(siteId);
+      const repo = new TariffTimelineRepo();
+      await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], null);
+      const tariffId = (await local.database.query(`SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`, [siteId])).rows[0].id;
+      await local.database.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source) VALUES ($1, $2, 'tesla_anchor', 'anchor', '2023-11-14', 'urdb')`, [tariffId, siteId]);
+
+      await repo.setSiteUtility(siteId, 'u1', { skipped: true });
+
+      const roles = await local.database.query(`SELECT role FROM "TariffUrdbSource" WHERE site_id = $1 ORDER BY role`, [siteId]);
+      expect(roles.rows).toEqual([{ role: 'owner_history' }]);
+      expect((await ownerHistory(siteId)).map(row => row.urdb_label)).toEqual(['a']);
     });
 
     it('defaultRateFallbackIsNotATeslaVersion', async () => {

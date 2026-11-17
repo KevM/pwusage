@@ -13,6 +13,8 @@ export interface HistoryWindowInput {
   historyStart: string | null;
   earliestTesla: { firstSeen: string; anchorStart: string | null; anchorSource: TariffStartSource | null } | null;
   manualSpans: Array<{ from: string; to: string | null }>;
+  /** The owner chose the site's current plan (SiteUtility.urdb_plan_label, set only by an owner). */
+  ownerPickedPlan: boolean;
 }
 export interface HistoryWindow {
   historyStart: string;
@@ -55,8 +57,21 @@ export function fillWindowBounds(input: HistoryWindowInput): { historyStart: str
   return { historyStart: input.historyStart, fillThrough: trusted ? addCalendarDays(trusted, -1) : null };
 }
 
+/**
+ * Without Tesla versions, the owner's plan pick covers the days from their latest own plan on (the
+ * guide saves its open period as the pick): those days count as confirmed.
+ */
+function confirmedSpans(input: HistoryWindowInput): HistoryWindowInput['manualSpans'] {
+  const { historyStart, earliestTesla, manualSpans, ownerPickedPlan } = input;
+  if (earliestTesla || !ownerPickedPlan || !historyStart) return manualSpans;
+  if (manualSpans.some(span => span.to === null)) return manualSpans;
+  const latestEnd = manualSpans.reduce<string | null>((latest, span) => latest === null || (span.to as string) > latest ? span.to : latest, null);
+  return [...manualSpans, { from: latestEnd ? addCalendarDays(latestEnd, 1) : historyStart, to: null }];
+}
+
 export function historyWindow(input: HistoryWindowInput): HistoryWindow | null {
-  const { today, historyStart, earliestTesla, manualSpans } = input;
+  const { today, historyStart, earliestTesla } = input;
+  const manualSpans = confirmedSpans(input);
   if (!historyStart || dayNumber(today) - dayNumber(historyStart) < HISTORY_GUIDE_MIN_DAYS) return null;
   const trusted = trustedStart(earliestTesla);
   const fillThrough = trusted ? addCalendarDays(trusted, -1) : null;
@@ -100,11 +115,15 @@ export async function loadHistoryWindowInput(client: Queryable, siteId: string, 
      WHERE t.site_id = $1 AND t.source = 'tesla' AND t.content_hash IS DISTINCT FROM $2
      ORDER BY t.updated, t.id LIMIT 1`, [siteId, fallbackHash])).rows[0];
   const manual = (await client.query(`SELECT effective_from::text AS "from", effective_to::text AS "to" FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source = 'manual'`, [siteId])).rows;
+  // Only setPlanLabelOnClient sets the label, always with the owner's id; choosing a utility clears it.
+  const picked = (await client.query(
+    `SELECT 1 FROM "SiteUtility" WHERE site_id = $1 AND choice <> 'skipped' AND urdb_plan_label IS NOT NULL AND updated_by_user_id IS NOT NULL`, [siteId])).rowCount;
   return {
     today,
     historyStart: start.history_start,
     earliestTesla: tesla ? { firstSeen: tesla.first_seen, anchorStart: tesla.anchor_start, anchorSource: tesla.anchor_source } : null,
     manualSpans: manual,
+    ownerPickedPlan: Boolean(picked),
   };
 }
 

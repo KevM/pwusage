@@ -621,7 +621,8 @@ export class TariffTimelineRepo {
       if (skipped) {
         // Removing estimates needs no OpenEI call, so do it now rather than on the next cron run.
         const timezone = (await client.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone || 'UTC';
-        await client.query('DELETE FROM "TariffUrdbSource" WHERE site_id = $1', [siteId]);
+        // Only the estimate job's rows: the owner's own history (owner_history) stays with their plans.
+        await client.query(`DELETE FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
         const { changed } = await applyEstimatesOnClient(client, siteId, siteLocalDateString(new Date(), timezone));
         if (changed.length) {
           reattribution = {
