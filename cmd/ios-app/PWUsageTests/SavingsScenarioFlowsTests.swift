@@ -203,6 +203,75 @@ struct SavingsScenarioFlowsTests {
         #expect(result.batteryFixed[1].gridWh == [0, 0])
     }
 
+    @Test("Powerwall start override replaces the first battery-flow day")
+    func batteryStartOverrideReplacesFirstFlowDay() {
+        let day1 = Self.makeDay(
+            day: "2026-06-01",
+            dayOffset: 0,
+            solar: [500, 0],
+            load: [100, 300],
+            grid: [-400, 300],
+            battery: [0, 0]
+        )
+        let day2 = Self.makeDay(
+            day: "2026-06-02",
+            dayOffset: 1,
+            solar: [500, 0],
+            load: [100, 300],
+            grid: [-400, 300],
+            battery: [100, -100]
+        )
+        let day3 = Self.makeDay(
+            day: "2026-06-03",
+            dayOffset: 2,
+            solar: [500, 0],
+            load: [100, 300],
+            grid: [-400, 300],
+            battery: [0, 0]
+        )
+        let result = SavingsScenarioFlows.build(
+            days: [day1, day2, day3],
+            battery: Self.defaultBattery,
+            batteryStartOverride: "2026-06-03"
+        )
+        #expect(result.batteryStartDay == "2026-06-03")
+        // Days before the override match solarAlone, even the day with battery flow
+        #expect(result.batteryFixed[0] == result.solarAlone[0])
+        #expect(result.batteryFixed[1] == result.solarAlone[1])
+        // The override day starts the battery: it charges on slot 0 and discharges on slot 1
+        #expect(result.batteryFixed[2].gridWh == [0, 0])
+    }
+
+    @Test("Powerwall start override before the first battery-flow day starts the simulation earlier")
+    func overrideBeforeFirstFlowStartsSimulationEarlier() {
+        let day1 = Self.makeDay(
+            day: "2026-06-01",
+            dayOffset: 0,
+            solar: [500, 0],
+            load: [100, 300],
+            grid: [-400, 300],
+            battery: [0, 0]
+        )
+        let day2 = Self.makeDay(
+            day: "2026-06-02",
+            dayOffset: 1,
+            solar: [0, 0],
+            load: [0, 0],
+            grid: [0, 0],
+            battery: [100, -100]
+        )
+        let withoutOverride = SavingsScenarioFlows.build(days: [day1, day2], battery: Self.defaultBattery)
+        let withOverride = SavingsScenarioFlows.build(
+            days: [day1, day2],
+            battery: Self.defaultBattery,
+            batteryStartOverride: "2026-06-01"
+        )
+        #expect(withoutOverride.batteryStartDay == "2026-06-02")
+        #expect(withoutOverride.batteryFixed[0] == withoutOverride.solarAlone[0])
+        #expect(withOverride.batteryStartDay == "2026-06-01")
+        #expect(withOverride.batteryFixed[0].gridWh == [0, 0])
+    }
+
     private static func makeDay(
         day: String,
         dayOffset: Int = 0,

@@ -330,4 +330,39 @@ struct SavingsCalculatorTests {
         print("SavingsCalculator 3-year benchmark: \(elapsed)")
         #expect(elapsed < .seconds(5))
     }
+
+    @Test("Report measures rate growth from the first stored day")
+    func reportMeasuresRateGrowthFromFirstStoredDay() throws {
+        let slots = 288
+        let day = try SavingsTestFixtures.makeDay(
+            "2022-01-01",
+            solar: Array(repeating: Float?(0), count: slots),
+            load: Array(repeating: Float?(150), count: slots),
+            grid: Array(repeating: Float?(150), count: slots)
+        )
+        let scenarios = SavingsScenarioFlows.build(days: [day], battery: nil)
+        let old = SavingsTestFixtures.makeFlatPeriod(
+            id: 1, name: "Old", buyRate: 0.20, sellRate: 0.05, effectiveFrom: "2020-01-01", effectiveTo: "2024-12-31"
+        )
+        let new = SavingsTestFixtures.makeFlatPeriod(
+            id: 2, name: "New", buyRate: 0.22, sellRate: 0.05, effectiveFrom: "2025-01-01"
+        )
+        let reference = SavingsTestFixtures.makeFlatPeriod(id: 9, name: "Reference", buyRate: 0.14, sellRate: 0.04)
+        let timeline = SavingsTestFixtures.makeTimeline(actual: [old, new], reference: [reference])
+        let actual = try #require(RatePeriodResolver(timeline: timeline))
+        let referenceResolver = try #require(RatePeriodResolver(referenceOf: timeline))
+
+        let report = SavingsCalculator.compute(
+            scenarios: scenarios,
+            actual: actual,
+            reference: referenceResolver,
+            billingDay: 1,
+            now: try SavingsTestFixtures.makeUTCDate(year: 2026, month: 3, day: 1, hour: 12)
+        )
+
+        #expect(report.rateGrowth.isMeasured)
+        #expect(report.rateGrowth.measuredSince == "2022-01-01")
+        // 0.22 / 0.20 over about 3.17 years (2022-01-01 to 2025-03-02) is about 3.06% a year.
+        #expect(abs(report.rateGrowth.annualRate - 0.0306) < 0.0005)
+    }
 }

@@ -16,7 +16,7 @@ enum SavingsState: Equatable, Sendable {
 @MainActor
 final class SavingsModel {
     typealias ComputeReport = @Sendable (
-        SavingsScenarioDays, RatePeriodResolver, RatePeriodResolver, Int, Date
+        SavingsScenarioDays, RatePeriodResolver, RatePeriodResolver, Int, Date, ComponentStarts
     ) -> SavingsReport
 
     private struct FlowsSignature: Equatable, Sendable {
@@ -147,6 +147,7 @@ final class SavingsModel {
         let existingCacheKey = lastCacheKey
         let hasReadyState = if case .ready = state { true } else { false }
         let battery = request.timeline.battery
+        let systemCosts = request.timeline.systemCosts
         let computeFn = computeReport
 
         return await Task.detached(priority: .utility) {
@@ -160,8 +161,19 @@ final class SavingsModel {
             if hasReadyState, cacheKey == existingCacheKey {
                 return nil
             }
-            let scenarios = SavingsScenarioFlows.build(days: request.flowDays, battery: battery)
-            let report = computeFn(scenarios, request.actual, request.reference, request.billingDay, request.now)
+            let scenarios = SavingsScenarioFlows.build(
+                days: request.flowDays,
+                battery: battery,
+                batteryStartOverride: systemCosts?.powerwall?.installDate
+            )
+            let starts = ComponentStarts.make(
+                solarDay: systemCosts.map { $0.solar?.installDate ?? $0.siteInstalled },
+                powerwallDay: systemCosts?.powerwall?.installDate ?? scenarios.batteryStartDay,
+                timeZone: request.actual.siteTimeZone
+            )
+            let report = computeFn(
+                scenarios, request.actual, request.reference, request.billingDay, request.now, starts
+            )
             return (cacheKey, report)
         }.value
     }

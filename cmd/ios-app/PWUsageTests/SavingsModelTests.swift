@@ -30,16 +30,8 @@ struct SavingsModelTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         try await seedDay(store, day: "2026-06-01")
 
-        let counter = ComputeCounter()
-        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
-            counter.compute(
-                scenarios: scenarios,
-                actual: actual,
-                reference: reference,
-                billingDay: billingDay,
-                now: now
-            )
-        }
+        let counter = ComputeRecorder()
+        let model = SavingsModel(store: store, computeReport: counter.recording(SavingsCalculator.compute))
         let timeline = makeTimeline(referenceBuyRate: 0.14)
         let now = makeUTCDate(year: 2026, month: 6, day: 10)
 
@@ -59,16 +51,8 @@ struct SavingsModelTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         try await seedDay(store, day: "2026-06-01")
 
-        let counter = ComputeCounter()
-        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
-            counter.compute(
-                scenarios: scenarios,
-                actual: actual,
-                reference: reference,
-                billingDay: billingDay,
-                now: now
-            )
-        }
+        let counter = ComputeRecorder()
+        let model = SavingsModel(store: store, computeReport: counter.recording(SavingsCalculator.compute))
         let now = makeUTCDate(year: 2026, month: 6, day: 10)
 
         _ = await model.refresh(scope: scope, timeline: makeTimeline(referenceBuyRate: 0.14), billingDay: 1, now: now)
@@ -83,16 +67,8 @@ struct SavingsModelTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         try await seedDay(store, day: "2026-06-01")
 
-        let counter = ComputeCounter()
-        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
-            counter.compute(
-                scenarios: scenarios,
-                actual: actual,
-                reference: reference,
-                billingDay: billingDay,
-                now: now
-            )
-        }
+        let counter = ComputeRecorder()
+        let model = SavingsModel(store: store, computeReport: counter.recording(SavingsCalculator.compute))
         let timeline = makeTimeline(referenceBuyRate: 0.14)
         let now = makeUTCDate(year: 2026, month: 6, day: 10)
 
@@ -109,16 +85,8 @@ struct SavingsModelTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         try await seedDay(store, day: "2026-06-01", solarWh: 1_000)
 
-        let counter = ComputeCounter()
-        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
-            counter.compute(
-                scenarios: scenarios,
-                actual: actual,
-                reference: reference,
-                billingDay: billingDay,
-                now: now
-            )
-        }
+        let counter = ComputeRecorder()
+        let model = SavingsModel(store: store, computeReport: counter.recording(SavingsCalculator.compute))
         let timeline = makeTimeline(referenceBuyRate: 0.14)
         let now = makeUTCDate(year: 2026, month: 6, day: 10)
 
@@ -135,16 +103,8 @@ struct SavingsModelTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         try await seedDay(store, day: "2026-06-01")
 
-        let counter = ComputeCounter()
-        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
-            counter.compute(
-                scenarios: scenarios,
-                actual: actual,
-                reference: reference,
-                billingDay: billingDay,
-                now: now
-            )
-        }
+        let counter = ComputeRecorder()
+        let model = SavingsModel(store: store, computeReport: counter.recording(SavingsCalculator.compute))
         let timeline = makeTimeline(referenceBuyRate: 0.14)
 
         _ = await model.refresh(
@@ -200,7 +160,7 @@ struct SavingsModelTests {
 
         let (enteredStream, enteredContinuation) = AsyncStream.makeStream(of: Void.self)
         let release = DispatchSemaphore(value: 0)
-        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now in
+        let model = SavingsModel(store: store) { scenarios, actual, reference, billingDay, now, starts in
             enteredContinuation.yield()
             enteredContinuation.finish()
             release.wait()
@@ -209,7 +169,8 @@ struct SavingsModelTests {
                 actual: actual,
                 reference: reference,
                 billingDay: billingDay,
-                now: now
+                now: now,
+                starts: starts
             )
         }
 
@@ -228,6 +189,44 @@ struct SavingsModelTests {
         release.signal()
         _ = await firstTask.value
         #expect(model.state == .notReady(.noReferencePlan))
+    }
+
+    @Test("Powerwall install date feeds the scenario battery start and the Powerwall payback start")
+    func powerwallInstallDateFeedsScenarioStart() async throws {
+        let (store, folder) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try await seedDay(store, day: "2026-06-01")
+        try await seedDay(store, day: "2026-06-05")
+
+        let recorder = ComputeRecorder()
+        let model = SavingsModel(store: store, computeReport: recorder.recording(SavingsCalculator.compute))
+        var timeline = makeTimeline(referenceBuyRate: 0.14)
+        timeline.systemCosts = SystemCostsDTO(
+            siteInstalled: "2026-05-01",
+            solar: nil,
+            powerwall: SystemCostDTO(
+                installDate: "2026-06-05",
+                price: 9_000,
+                taxCreditPercent: nil,
+                incentives: 0
+            )
+        )
+
+        _ = await model.refresh(
+            scope: scope,
+            timeline: timeline,
+            billingDay: 1,
+            now: makeUTCDate(year: 2026, month: 6, day: 10)
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let powerwallMidnight = calendar.startOfDay(for: makeUTCDate(year: 2026, month: 6, day: 5))
+        let solarMidnight = calendar.startOfDay(for: makeUTCDate(year: 2026, month: 5, day: 1))
+        #expect(recorder.batteryStartDay == "2026-06-05")
+        #expect(recorder.starts?.powerwall == powerwallMidnight)
+        // Solar falls back to the site install date when no solar install date is entered.
+        #expect(recorder.starts?.solar == solarMidnight)
     }
 
     private func makeTempStore() -> (store: SolarHistoryStore, folder: URL) {
@@ -327,28 +326,33 @@ struct SavingsModelTests {
     }
 }
 
-private final class ComputeCounter: @unchecked Sendable {
+private final class ComputeRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var _count = 0
+    private var _starts: ComponentStarts?
+    private var _batteryStartDay: String?
 
     var count: Int {
         lock.withLock { _count }
     }
 
-    func compute(
-        scenarios: SavingsScenarioDays,
-        actual: RatePeriodResolver,
-        reference: RatePeriodResolver,
-        billingDay: Int,
-        now: Date
-    ) -> SavingsReport {
-        lock.withLock { _count += 1 }
-        return SavingsCalculator.compute(
-            scenarios: scenarios,
-            actual: actual,
-            reference: reference,
-            billingDay: billingDay,
-            now: now
-        )
+    var starts: ComponentStarts? {
+        lock.withLock { _starts }
+    }
+
+    var batteryStartDay: String? {
+        lock.withLock { _batteryStartDay }
+    }
+
+    /// Wraps `compute` so each call is counted and the starts and battery start day it used are kept.
+    func recording(_ compute: @escaping SavingsModel.ComputeReport) -> SavingsModel.ComputeReport {
+        { [self] scenarios, actual, reference, billingDay, now, starts in
+            lock.withLock {
+                _count += 1
+                _starts = starts
+                _batteryStartDay = scenarios.batteryStartDay
+            }
+            return compute(scenarios, actual, reference, billingDay, now, starts)
+        }
     }
 }

@@ -52,13 +52,6 @@ struct SavingsFigures: Equatable, Sendable {
     }
 }
 
-struct SavingsReport: Equatable, Sendable {
-    let cycle: SavingsFigures
-    let year: SavingsFigures
-    let lifetime: SavingsFigures
-    let cycleStart: Date
-}
-
 enum SavingsCalculator {
     private struct BucketKey: Hashable {
         let planName: String
@@ -140,7 +133,8 @@ enum SavingsCalculator {
         actual: RatePeriodResolver,
         reference: RatePeriodResolver,
         billingDay: Int,
-        now: Date
+        now: Date,
+        starts: ComponentStarts = ComponentStarts(solar: nil, powerwall: nil)
     ) -> SavingsReport {
         let timeZone = actual.siteTimeZone
         let currentCycle = BillingCycle.current(billingDay: billingDay, now: now, timeZone: timeZone)
@@ -167,24 +161,51 @@ enum SavingsCalculator {
         calendar.timeZone = timeZone
         let firstStoredDay = scenarios.recorded.first?.dayStart
 
+        let yearResults = Array(cycleResults.suffix(12))
+        func figures(_ results: [CycleResult]) -> SavingsFigures {
+            makeFigures(
+                from: results, firstStoredDay: firstStoredDay, now: now,
+                calendar: calendar, reference: reference
+            )
+        }
+
         return SavingsReport(
-            cycle: makeFigures(
-                from: [currentResult], firstStoredDay: firstStoredDay, now: now,
-                calendar: calendar, reference: reference
-            ),
-            year: makeFigures(
-                from: Array(cycleResults.suffix(12)),
-                firstStoredDay: firstStoredDay,
-                now: now,
-                calendar: calendar,
-                reference: reference
-            ),
-            lifetime: makeFigures(
-                from: cycleResults, firstStoredDay: firstStoredDay, now: now,
-                calendar: calendar, reference: reference
-            ),
-            cycleStart: currentCycle.start
+            cycle: figures([currentResult]),
+            year: figures(yearResults),
+            lifetime: figures(cycleResults),
+            cycleStart: currentCycle.start,
+            solarSinceInstall: figures(resultsSince(starts.solar, in: cycleResults)),
+            powerwallSinceInstall: starts.powerwall.map { figures(resultsSince($0, in: cycleResults)) },
+            cycles: cycleResults.map { cycleSavings($0, in: timeZone) },
+            recentCycles: yearResults.map { cycleSavings($0, in: timeZone) },
+            batteryStartDay: scenarios.batteryStartDay,
+            rateGrowth: rateGrowth(actual: actual, firstStoredDay: firstStoredDay, now: now)
         )
+    }
+
+    private static func cycleSavings(_ result: CycleResult, in timeZone: TimeZone) -> CycleSavings {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return CycleSavings(
+            start: result.start,
+            end: result.end,
+            costs: result.costs,
+            daysWithData: result.daysWithData,
+            daysInCycle: calendar.dateComponents([.day], from: result.start, to: result.end).day ?? 0
+        )
+    }
+
+    /// Measured from the first stored day; `.typical` when no day is stored.
+    private static func rateGrowth(actual: RatePeriodResolver, firstStoredDay: Date?, now: Date) -> RateGrowth {
+        guard let firstStoredDay else { return .typical }
+        return RateGrowth.measure(actual: actual, firstDay: firstStoredDay, now: now)
+    }
+
+    /// Cycles from the one containing `start` onward, that cycle counted in full. All cycles when `start` is nil.
+    private static func resultsSince(_ start: Date?, in results: [CycleResult]) -> [CycleResult] {
+        guard let start else { return results }
+        guard let index = results.firstIndex(where: { start < $0.end }) else { return [] }
+        return Array(results[index...])
     }
 
     private static func priceAllCycles(
