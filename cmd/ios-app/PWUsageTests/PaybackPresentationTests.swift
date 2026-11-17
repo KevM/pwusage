@@ -181,7 +181,7 @@ struct PaybackPresentationTests {
         #expect(PaybackPresentation.powerwallNeverNote(projected) == nil)
     }
 
-    @Test("Assumptions show only under a projected date, as mockup B shows")
+    @Test("Assumptions show under a projected or not-within-horizon date, and stay hidden otherwise")
     func assumptionsShowOnlyForProjection() {
         let assumptions = PaybackAssumptions(
             rateGrowth: Self.measuredGrowth, solarDecline: 0.005, solarDeclineMeasured: false, batteryFadePerYear: nil
@@ -194,9 +194,31 @@ struct PaybackPresentationTests {
             )
         }
         #expect(PaybackPresentation.showsAssumptions(result(.projected(month: Self.monthStart(2035, 7)))))
+        #expect(PaybackPresentation.showsAssumptions(result(.notWithinHorizon)))
         #expect(!PaybackPresentation.showsAssumptions(result(.paidOff(month: Self.monthStart(2024, 10)))))
-        #expect(!PaybackPresentation.showsAssumptions(result(.notWithinHorizon)))
         #expect(!PaybackPresentation.showsAssumptions(result(.needsFullYear(countedDays: 214))))
         #expect(!PaybackPresentation.showsAssumptions(result(.noCost)))
+    }
+
+    @Test("Assumptions show when a component is projected even if the combined date is paid off")
+    func assumptionsShowForProjectedComponent() {
+        let assumptions = PaybackAssumptions(
+            rateGrowth: Self.measuredGrowth, solarDecline: 0.005, solarDeclineMeasured: false, batteryFadePerYear: nil
+        )
+        let coverage = SavingsFigures(costs: .zero, daysWithData: 300, daysInPeriod: 365)
+        let paidOff = BreakEven.paidOff(month: Self.monthStart(2024, 10))
+        func result(powerwall: BreakEven) -> PaybackResult {
+            PaybackResult(
+                components: [
+                    Self.payback(.solar, breakEven: paidOff),
+                    Self.payback(.powerwall, breakEven: powerwall)
+                ],
+                combined: Self.payback(.solar, netCost: 26_250, paid: 26_250, breakEven: paidOff),
+                assumptions: assumptions, coverage: coverage
+            )
+        }
+        #expect(PaybackPresentation.showsAssumptions(result(powerwall: .projected(month: Self.monthStart(2041, 10)))))
+        #expect(PaybackPresentation.showsAssumptions(result(powerwall: .notWithinHorizon)))
+        #expect(!PaybackPresentation.showsAssumptions(result(powerwall: paidOff)))
     }
 }

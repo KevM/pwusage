@@ -116,8 +116,10 @@ struct SolarSystemView: View {
         }
     }
 
+    /// The savings timeline's zone first, so the payback section matches the savings math; then the bill's zone.
     private var siteTimeZone: TimeZone {
-        TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current
+        let identifier = coordinator.savingsTimeline?.timezone ?? coordinator.bill.response?.site.timezone ?? ""
+        return TimeZone(identifier: identifier) ?? .current
     }
 
     private var currency: String {

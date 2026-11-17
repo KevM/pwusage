@@ -86,11 +86,16 @@ enum PaybackPresentation {
         return min(max(payback.paidToDate / payback.netCost, 0), 1)
     }
 
-    /// Assumptions appear only under a projected date, as mockup B shows; mockups D and E leave them out.
+    /// Assumptions appear when the headline or any component is a projection (a projected month or
+    /// "not within 30 years"), as mockup B shows. Held-back and settled-only states leave them out (mockups D and E).
     static func showsAssumptions(_ result: PaybackResult) -> Bool {
-        guard let headline = result.combined ?? result.components.first else { return false }
-        if case .projected = headline.breakEven { return true }
-        return false
+        let paybacks = (result.combined.map { [$0] } ?? []) + result.components
+        return paybacks.contains { payback in
+            switch payback.breakEven {
+            case .projected, .notWithinHorizon: true
+            case .paidOff, .needsFullYear, .noCost: false
+            }
+        }
     }
 
     /// The assumptions a projection rests on. The Powerwall line appears only when a Powerwall has a stream.

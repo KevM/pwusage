@@ -217,7 +217,8 @@ struct PaybackCalculatorTests {
         }
         let combined = try #require(result.combined)
         let expected = try utcMonth(2026, 11)
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.utc
         let month = try #require(calendar.date(byAdding: .month, value: cycle, to: expected))
         #expect(combined.netCost == 6_000)
         #expect(combined.paidToDate == 900)
