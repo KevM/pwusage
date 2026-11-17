@@ -1001,6 +1001,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const siteId = 's-history-guide';
     await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
+    // The database stamps `updated` with the real clock; pin it to the faked day.
+    await local.database.query(`UPDATE "Tariff" SET updated = '2026-11-16 17:00:00' WHERE site_id = $1 AND source = 'tesla'`, [siteId]);
     await local.database.query(`UPDATE "SiteUtility" SET status = 'ready', urdb_utility = 'Wisconsin Electric Power Co' WHERE site_id = $1`, [siteId]);
     const today = siteLocalDateString(new Date(), 'America/Chicago');
 
@@ -1104,6 +1106,20 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
       expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([
         ['tesla', '2023-11-14', '2024-12-31'], ['manual', '2025-01-01', '2026-04-27'], ['tesla', '2026-04-28', null],
+      ]);
+    });
+
+    it('saveKeepsAnOwnerDatedTeslaStart', async () => {
+      const siteId = 's-save-owner-dated-tesla';
+      await harrisonSite(siteId);
+      await local.database.query(`UPDATE "TariffEffectivePeriod" SET effective_from = '2026-01-01', updated_by_user_id = 'u1' WHERE site_id = $1 AND source = 'tesla'`, [siteId]);
+      const repo = new TariffTimelineRepo();
+      expect((await repo.getTimeline(siteId, 'u1')).estimates?.historyGuide).toMatchObject({ historyStart: '2023-11-14', fillThrough: '2025-12-31', unconfirmedDays: 779 });
+
+      await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2023-11-14', '2026-04-27')], null);
+
+      expect((await spans(siteId)).filter(row => row.source !== 'estimated').map(row => [row.source, row.effective_from, row.effective_to])).toEqual([
+        ['manual', '2023-11-14', '2025-12-31'], ['tesla', '2026-01-01', null],
       ]);
     });
 

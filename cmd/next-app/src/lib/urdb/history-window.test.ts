@@ -15,6 +15,14 @@ describe('historyWindow', () => {
     expect(window?.fillThrough).toBe('2025-05-31');
     expect(window?.askYears).toEqual([2024, 2023]);
   });
+  it('ownerDatedTeslaStartIsTheTrustedStart', () => {
+    const tesla = { firstSeen: '2026-04-28', anchorStart: '2023-11-14', anchorSource: 'history_start' as const };
+    const window = historyWindow({ ...base, earliestTesla: { ...tesla, ownerStart: '2026-01-01' } });
+    expect(window).toMatchObject({ fillThrough: '2025-12-31', askYears: [2025, 2024, 2023], unconfirmedDays: 779 });
+    expect(historyWindow({ ...base, earliestTesla: { ...tesla, ownerStart: '2023-11-14' } })).toBeNull();
+    // An owner date after first seen does not move the window later.
+    expect(historyWindow({ ...base, earliestTesla: { ...tesla, ownerStart: '2026-08-01' } })?.fillThrough).toBe('2026-04-27');
+  });
   it('noTeslaFillsThroughToday', () => {
     const window = historyWindow(base);
     expect(window?.fillThrough).toBeNull();

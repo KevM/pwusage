@@ -11,7 +11,8 @@ type Queryable = { query: PoolClient['query'] };
 export interface HistoryWindowInput {
   today: string;
   historyStart: string | null;
-  earliestTesla: { firstSeen: string; anchorStart: string | null; anchorSource: TariffStartSource | null } | null;
+  /** ownerStart: the earliest start an owner set on a Tesla span, which they say is when that plan began. */
+  earliestTesla: { firstSeen: string; anchorStart: string | null; anchorSource: TariffStartSource | null; ownerStart?: string | null } | null;
   manualSpans: Array<{ from: string; to: string | null }>;
   /** The owner chose the site's current plan (SiteUtility.urdb_plan_label, set only by an owner). */
   ownerPickedPlan: boolean;
@@ -45,9 +46,11 @@ function uncoveredDays(from: string, to: string, spans: HistoryWindowInput['manu
   return end - start + 1 - covered;
 }
 
-/** The first day a non-owner source is known to be right: null without Tesla versions. */
+/** The first day the Tesla plan is known to be right (null without Tesla versions): an owner-set start wins when earlier. */
 function trustedStart(earliestTesla: HistoryWindowInput['earliestTesla']): string | null {
-  return earliestTesla ? (earliestTesla.anchorSource === 'urdb' && earliestTesla.anchorStart ? earliestTesla.anchorStart : earliestTesla.firstSeen) : null;
+  if (!earliestTesla) return null;
+  const known = earliestTesla.anchorSource === 'urdb' && earliestTesla.anchorStart ? earliestTesla.anchorStart : earliestTesla.firstSeen;
+  return earliestTesla.ownerStart && earliestTesla.ownerStart < known ? earliestTesla.ownerStart : known;
 }
 
 /** The fill window's bounds with no offer thresholds: what a save may write. */
@@ -114,6 +117,8 @@ export async function loadHistoryWindowInput(client: Queryable, siteId: string, 
      LEFT JOIN "TariffUrdbSource" u ON u.tariff_id = t.id AND u.role = 'tesla_anchor'
      WHERE t.site_id = $1 AND t.source = 'tesla' AND t.content_hash IS DISTINCT FROM $2
      ORDER BY t.updated, t.id LIMIT 1`, [siteId, fallbackHash])).rows[0];
+  const ownerStart = tesla ? (await client.query<{ start: string | null }>(
+    `SELECT min(effective_from)::text AS start FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source = 'tesla' AND updated_by_user_id IS NOT NULL`, [siteId])).rows[0]?.start ?? null : null;
   const manual = (await client.query(`SELECT effective_from::text AS "from", effective_to::text AS "to" FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source = 'manual'`, [siteId])).rows;
   // Only setPlanLabelOnClient sets the label, always with the owner's id; choosing a utility clears it.
   const picked = (await client.query(
@@ -121,7 +126,7 @@ export async function loadHistoryWindowInput(client: Queryable, siteId: string, 
   return {
     today,
     historyStart: start.history_start,
-    earliestTesla: tesla ? { firstSeen: tesla.first_seen, anchorStart: tesla.anchor_start, anchorSource: tesla.anchor_source } : null,
+    earliestTesla: tesla ? { firstSeen: tesla.first_seen, anchorStart: tesla.anchor_start, anchorSource: tesla.anchor_source, ownerStart } : null,
     manualSpans: manual,
     ownerPickedPlan: Boolean(picked),
   };
