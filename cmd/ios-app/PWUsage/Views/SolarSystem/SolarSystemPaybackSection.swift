@@ -54,14 +54,16 @@ struct SolarSystemPaybackSection: View {
         }
         ForEach(result.components, id: \.component) { payback in
             componentRow(payback)
+            if payback.component == .powerwall, let note = PaybackPresentation.powerwallNeverNote(result) {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        assumptions(result)
+        if PaybackPresentation.showsAssumptions(result) {
+            assumptions(result)
+        }
         coverage(result)
-        if let note = PaybackPresentation.powerwallNeverNote(result) {
-            Text(note)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
         Button("Edit System Costs", action: onEditCosts)
     }
 

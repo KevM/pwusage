@@ -180,4 +180,23 @@ struct PaybackPresentationTests {
         )
         #expect(PaybackPresentation.powerwallNeverNote(projected) == nil)
     }
+
+    @Test("Assumptions show only under a projected date, as mockup B shows")
+    func assumptionsShowOnlyForProjection() {
+        let assumptions = PaybackAssumptions(
+            rateGrowth: Self.measuredGrowth, solarDecline: 0.005, solarDeclineMeasured: false, batteryFadePerYear: nil
+        )
+        let coverage = SavingsFigures(costs: .zero, daysWithData: 300, daysInPeriod: 365)
+        func result(_ breakEven: BreakEven) -> PaybackResult {
+            PaybackResult(
+                components: [Self.payback(breakEven: breakEven)], combined: nil,
+                assumptions: assumptions, coverage: coverage
+            )
+        }
+        #expect(PaybackPresentation.showsAssumptions(result(.projected(month: Self.monthStart(2035, 7)))))
+        #expect(!PaybackPresentation.showsAssumptions(result(.paidOff(month: Self.monthStart(2024, 10)))))
+        #expect(!PaybackPresentation.showsAssumptions(result(.notWithinHorizon)))
+        #expect(!PaybackPresentation.showsAssumptions(result(.needsFullYear(countedDays: 214))))
+        #expect(!PaybackPresentation.showsAssumptions(result(.noCost)))
+    }
 }
