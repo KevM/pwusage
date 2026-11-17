@@ -140,6 +140,8 @@ enum DashboardSheet: String, Identifiable, CaseIterable {
     /// Estimate setup: the utility, or the rate plan on the chosen utility.
     case chooseUtility
     case choosePlan
+    /// The rate plan history guide, from the Home accessory.
+    case rateHistory
 
     var id: String { rawValue }
 }

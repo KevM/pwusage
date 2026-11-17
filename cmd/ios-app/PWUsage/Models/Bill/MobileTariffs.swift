@@ -315,6 +315,11 @@ protocol MobileTariffDataAPI: Sendable {
     func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse
     func utilityPlans(siteID: String) async throws -> [UtilityPlanDTO]
     func setUtilityPlan(siteID: String, label: String) async throws -> SiteTariffsTimelineResponse
+    func rateHistory(siteID: String) async throws -> RatePlanHistoryDTO
+    func saveRateHistory(
+        siteID: String,
+        periods: [RatePlanHistoryPeriod]
+    ) async throws -> SiteTariffsTimelineResponse
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse
     func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch
     func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse
