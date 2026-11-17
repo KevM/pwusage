@@ -60,6 +60,35 @@ export interface SiteBatteryDTO {
   backupReservePercent: number;
 }
 
+export type RatePlanKind = 'fixed' | 'time_of_use';
+
+export interface RatePlanPeakWindow { label: string; fromHour: number; toHour: number }
+export interface RatePlanHistoryPlan {
+  name: string;
+  startDate: string;
+  kind: RatePlanKind;
+  isDefault: boolean;
+  closest: boolean;
+  lowRate: number;
+  highRate: number;
+  peakWindows: RatePlanPeakWindow[];
+  /** Label of the window closest to the Tesla plan (Time of Use only). */
+  closestWindow: string | null;
+  /** Fixed plans: the URDB label to save. */
+  fixedLabel: string | null;
+}
+export interface RatePlanHistoryYear { year: number; askDate: string; plans: RatePlanHistoryPlan[] }
+export interface RatePlanHistoryResponse {
+  utilityName: string;
+  historyStart: string;
+  fillThrough: string | null;
+  teslaShape: RatePlanKind | null;
+  /** Plans in effect on `fillThrough` (today when null): the newest plan the guide fills. */
+  current: RatePlanHistoryPlan[];
+  /** Newest first. */
+  years: RatePlanHistoryYear[];
+}
+
 export interface EstimatesStatusDTO {
   status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
   utilityName: string | null;
@@ -71,6 +100,8 @@ export interface EstimatesStatusDTO {
   newestRevisionStart: string | null;
   /** True when that newest revision is old enough that URDB may have missed a change. */
   mayBeOutdated: boolean;
+  /** Offer to walk the owner through past rate plans; null when there is nothing to fill. */
+  historyGuide: { historyStart: string; fillThrough: string | null; unconfirmedDays: number } | null;
 }
 
 export interface SiteTariffsTimelineResponse {

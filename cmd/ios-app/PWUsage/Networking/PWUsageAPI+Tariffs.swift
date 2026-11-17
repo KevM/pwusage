@@ -33,6 +33,25 @@ extension PWUsageAPI {
         )
     }
 
+    func rateHistory(siteID: String) async throws -> RatePlanHistoryDTO {
+        let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "utility/history"))
+        do {
+            return try MobileContractDecoder.make().decode(RatePlanHistoryDTO.self, from: data)
+        } catch {
+            throw PWUsageAPIError.invalidResponse
+        }
+    }
+
+    func saveRateHistory(
+        siteID: String,
+        periods: [RatePlanHistoryPeriod]
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await performTariffMutation(
+            siteID: siteID, suffix: "utility/history", method: "PUT", body: RatePlanHistoryBody(periods: periods)
+        )
+    }
+
+    private struct RatePlanHistoryBody: Encodable { let periods: [RatePlanHistoryPeriod] }
     private struct UtilitiesResponse: Decodable { let utilities: [String] }
     private struct UtilityPlansResponse: Decodable { let plans: [UtilityPlanDTO] }
     private struct UtilityName: Encodable { let name: String }

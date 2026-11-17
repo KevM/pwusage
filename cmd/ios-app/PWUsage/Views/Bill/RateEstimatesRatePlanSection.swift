@@ -4,6 +4,10 @@ import SwiftUI
 /// row. A plan step appears only when the site still needs a rate plan on its utility.
 struct RateEstimatesRatePlanSection: View {
     let estimates: SiteRateEstimatesDTO?
+    /// The first day of the history guide's range while its offer shows; nil hides the offer card.
+    var historyStart: String?
+    var onFindHistory: () -> Void = {}
+    var onDismissHistory: () -> Void = {}
     let onAddRatePlan: () -> Void
     let onChooseUtility: () -> Void
     let onChoosePlan: () -> Void
@@ -21,6 +25,9 @@ struct RateEstimatesRatePlanSection: View {
                     .emphasisProminentButton()
                     .controlSize(.small)
             }
+        }
+        if let historyStart {
+            RatePlanHistoryOfferCard(historyStart: historyStart, onFind: onFindHistory, onNotNow: onDismissHistory)
         }
         if let estimates {
             utilityRow(estimates)

@@ -17,4 +17,6 @@ struct SiteRateEstimatesDTO: Codable, Equatable, Sendable {
     let newestRevisionStart: String?
     /// True when that newest revision may have missed a rate change.
     let mayBeOutdated: Bool
+    /// Offer to walk the owner through past rate plans; nil when there is nothing to fill.
+    var historyGuide: RatePlanHistoryGuideDTO?
 }

@@ -67,6 +67,17 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         try await fetchTariffTimeline(siteID: siteID)
     }
 
+    func rateHistory(siteID _: String) async throws -> RatePlanHistoryDTO {
+        DemoFixtures.rateHistory(asOf: now())
+    }
+
+    func saveRateHistory(
+        siteID: String,
+        periods _: [RatePlanHistoryPeriod]
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
         let current = demoTimeline ?? DemoFixtures.tariffs(asOf: now())
         demoTimeline = current

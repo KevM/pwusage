@@ -2,6 +2,7 @@ import type { Tariff, TariffStartSource } from '../db-types';
 import { Schedule } from '../schedule';
 import { addCalendarDays } from '../tariff-timeline';
 import { isFixedRate, urdbBuyRateAt } from './convert';
+import type { RatePlanKind } from '../tariff-contract';
 import type { UrdbRate } from './types';
 export interface RevisionSpan { rate: UrdbRate; effectiveFrom: string; effectiveTo: string | null }
 // URDB start dates are calendar days, but records store them anywhere from an hour before
@@ -12,17 +13,50 @@ export function urdbStartDate(rate: UrdbRate): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
 }
 const dateOf = urdbStartDate;
-export function teslaMatchesUrdb(tesla: Tariff, rate: UrdbRate): boolean {
+// Every month x weekday/weekend x hour cell, Tesla evaluated on the 15th at hh:30.
+const CELL_COUNT = 12 * 2 * 24;
+interface Cell { month: number; weekend: boolean; hour: number }
+function teslaCells(tesla: Tariff): Array<Cell & { tesla: number | null }> {
   const schedule = new Schedule([tesla], 'UTC');
-  return [true, false].some(withAdj => {
-    for (let month = 1; month <= 12; month++) for (const weekend of [false, true]) for (let hour = 0; hour < 24; hour++) {
-      const period = schedule.getTariffPeriodByComponents(month, 15, hour, weekend ? 6 : 1, undefined, undefined, 30);
-      const teslaRate = period?.schedule.buy_rate ?? period?.season.buy_rate;
-      const urdbRate = urdbBuyRateAt(rate, month, weekend, hour, withAdj);
-      if (teslaRate == null || urdbRate === null || Math.abs(teslaRate - urdbRate) > 0.005 + 1e-10) return false;
-    }
-    return true;
-  });
+  const cells: Array<Cell & { tesla: number | null }> = [];
+  for (let month = 1; month <= 12; month++) for (const weekend of [false, true]) for (let hour = 0; hour < 24; hour++) {
+    const period = schedule.getTariffPeriodByComponents(month, 15, hour, weekend ? 6 : 1, undefined, undefined, 30);
+    cells.push({ month, weekend, hour, tesla: period?.schedule.buy_rate ?? period?.season.buy_rate ?? null });
+  }
+  return cells;
+}
+function teslaBuyCells(tesla: Tariff, rate: UrdbRate, withAdj: boolean): Array<{ tesla: number | null; urdb: number | null }> {
+  return teslaCells(tesla).map(cell => ({ tesla: cell.tesla, urdb: urdbBuyRateAt(rate, cell.month, cell.weekend, cell.hour, withAdj) }));
+}
+export function teslaMatchesUrdb(tesla: Tariff, rate: UrdbRate): boolean {
+  return [true, false].some(withAdj => teslaBuyCells(tesla, rate, withAdj).every(cell => cell.tesla != null && cell.urdb !== null && Math.abs(cell.tesla - cell.urdb) <= 0.005 + 1e-10));
+}
+// Mean absolute buy-rate difference over the 576 cells, the smaller of with and without adj; null when a cell has no rate.
+export function buyRateDistance(tesla: Tariff, rate: UrdbRate): number | null {
+  const means = [true, false].map(withAdj => {
+    const cells = teslaBuyCells(tesla, rate, withAdj);
+    if (cells.some(cell => cell.tesla == null || cell.urdb === null)) return null;
+    return cells.reduce((sum, cell) => sum + Math.abs((cell.tesla as number) - (cell.urdb as number)), 0) / CELL_COUNT;
+  }).filter((mean): mean is number => mean !== null);
+  return means.length ? Math.min(...means) : null;
+}
+// Mirrors isFixedRate: time of use when any month has more than one buy price across its 48 weekday and weekend cells.
+export function teslaShape(tesla: Tariff | null): RatePlanKind | null {
+  if (!tesla) return null;
+  const cells = teslaCells(tesla);
+  if (cells.every(cell => cell.tesla === null)) return null;
+  const prices = new Map<string, Set<number>>();
+  for (const cell of cells) {
+    if (cell.tesla === null) continue;
+    const key = String(cell.month);
+    const set = prices.get(key) ?? new Set<number>();
+    set.add(Math.round(cell.tesla * 1e5));
+    prices.set(key, set);
+  }
+  return [...prices.values()].some(set => set.size > 1) ? 'time_of_use' : 'fixed';
+}
+export function planKind(rate: UrdbRate): RatePlanKind {
+  return isFixedRate(rate) ? 'fixed' : 'time_of_use';
 }
 function overlapScore(tesla: Tariff, rate: UrdbRate): number {
   const tokens = (value: string) => new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
@@ -34,7 +68,7 @@ const threePhase = (rate: UrdbRate) => Number(/three[- ]phase|3[- ]phase/i.test(
 export function pickTeslaMatch(tesla: Tariff, candidates: UrdbRate[]): UrdbRate | null {
   return candidates.filter(rate => teslaMatchesUrdb(tesla, rate)).sort((a, b) => overlapScore(tesla, b) - overlapScore(tesla, a) || threePhase(a) - threePhase(b) || (b.startdate ?? 0) - (a.startdate ?? 0) || b.label.localeCompare(a.label))[0] ?? null;
 }
-function spans(rates: UrdbRate[], endBefore: string | null): RevisionSpan[] {
+export function revisionSpans(rates: UrdbRate[], endBefore: string | null): RevisionSpan[] {
   const byDate = new Map<string, UrdbRate>();
   // Input order is newest-chain-first: prefer that item for duplicate dates.
   for (const rate of rates) {
@@ -52,7 +86,7 @@ export async function walkSupersedes(start: UrdbRate, fetchByLabel: (label: stri
     seen.add(rate.label); rates.push(rate);
     rate = rate.supersedes && rates.length < opts.maxSteps ? await fetchByLabel(rate.supersedes) : null;
   }
-  return spans(rates, opts.endBefore);
+  return revisionSpans(rates, opts.endBefore);
 }
 export function referenceSpans(defaults: UrdbRate[], timeZone: string): RevisionSpan[] {
   void timeZone;
@@ -66,17 +100,27 @@ export function referenceSpans(defaults: UrdbRate[], timeZone: string): Revision
     current = current.supersedes ? byLabel.get(current.supersedes) : undefined;
   }
   const sorted = ordered.sort((a, b) => Number(lineage.has(b.label)) - Number(lineage.has(a.label)) || b.label.localeCompare(a.label));
-  return spans(sorted, null);
+  return revisionSpans(sorted, null);
 }
+/**
+ * The plan in effect `today` that revises `matched`. Cheap checks first: a direct successor needs no fetch, and
+ * plans with the same name are walked before the rest. A walk stops once it reaches revisions older than `matched`.
+ */
 export async function newerRevision(matched: UrdbRate, today: UrdbRate[], fetchByLabel: (label: string) => Promise<UrdbRate | null>): Promise<UrdbRate | null> {
-  for (const candidate of [...today].sort((a, b) => (b.startdate ?? 0) - (a.startdate ?? 0))) {
-    if ((candidate.startdate ?? 0) <= (matched.startdate ?? 0)) continue;
+  const matchedStart = matched.startdate ?? 0;
+  const newer = today.filter(candidate => (candidate.startdate ?? 0) > matchedStart);
+  const direct = newer.find(candidate => candidate.supersedes === matched.label);
+  if (direct) return direct;
+  const sameName = (candidate: UrdbRate) => Number(candidate.name === matched.name);
+  const ordered = [...newer].sort((a, b) => sameName(b) - sameName(a) || (b.startdate ?? 0) - (a.startdate ?? 0));
+  for (const candidate of ordered) {
     let rate: UrdbRate | null = candidate;
     const seen = new Set<string>();
     for (let i = 0; i < 10 && rate?.supersedes && !seen.has(rate.label); i++) {
       seen.add(rate.label);
       if (rate.supersedes === matched.label) return candidate;
       rate = await fetchByLabel(rate.supersedes);
+      if (rate?.startdate !== undefined && rate.startdate < matchedStart) break;
     }
   }
   return null;
