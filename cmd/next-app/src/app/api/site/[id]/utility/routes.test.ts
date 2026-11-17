@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(), verifySiteAccess: vi.fn(), isCrossOriginRequest: vi.fn(),
   utilityNames: vi.fn(), ratesEffectiveOn: vi.fn(),
-  getSiteUtilityContext: vi.fn(), setSiteUtility: vi.fn(), setSitePlanLabel: vi.fn(),
+  getSiteUtilityContext: vi.fn(), loadSitePublicConversionContext: vi.fn(), setSiteUtility: vi.fn(), setSitePlanLabel: vi.fn(),
 }));
 
 vi.mock('@/lib/auth-checks', () => ({
@@ -30,11 +30,16 @@ vi.mock('@/lib/tariff-timeline-repo', async importOriginal => {
     ...actual,
     TariffTimelineRepo: class {
       getSiteUtilityContext = mocks.getSiteUtilityContext;
+      loadSitePublicConversionContext = mocks.loadSitePublicConversionContext;
       setSiteUtility = mocks.setSiteUtility;
       setSitePlanLabel = mocks.setSitePlanLabel;
     },
   };
 });
+vi.mock('@/lib/urdb/estimate-job', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/urdb/estimate-job')>(),
+  monthlyUsage: async () => 600,
+}));
 
 import { PUT as saveUtility } from './route';
 import { GET as searchUtilities } from './search/route';
@@ -58,7 +63,8 @@ describe('utility and plan routes', () => {
     mocks.isCrossOriginRequest.mockReturnValue(false);
     mocks.utilityNames.mockResolvedValue(['We Energies']);
     mocks.ratesEffectiveOn.mockResolvedValue([allDayRate]);
-    mocks.getSiteUtilityContext.mockResolvedValue({ name: 'We Energies', timezone: 'America/Chicago' });
+    mocks.getSiteUtilityContext.mockResolvedValue({ name: 'We Energies', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' });
+    mocks.loadSitePublicConversionContext.mockResolvedValue({ fallbackSellRate: 0.04, hasTeslaSellFallback: true });
     mocks.setSiteUtility.mockResolvedValue({ version: 2, periods: [] });
     mocks.setSitePlanLabel.mockResolvedValue({ version: 2, periods: [] });
   });
@@ -140,5 +146,62 @@ describe('utility and plan routes', () => {
     mocks.ratesEffectiveOn.mockRejectedValueOnce(new UrdbUnavailableError('OpenEI unavailable'));
     const unavailable = await listPlans(new NextRequest('https://app.test/api/site/site-1/utility/plans'), context);
     expect(unavailable.status).toBe(503);
+  });
+
+  it('supports effectiveDate browsing and returns complete rate details and approximation notes', async () => {
+    mocks.ratesEffectiveOn.mockResolvedValueOnce([
+      {
+        label: 'tiered-plan',
+        name: 'Tiered Plan',
+        utility: 'We Energies',
+        startdate: 1_735_689_600,
+        dgrules: 'Buy All Sell All',
+        energyratestructure: [
+          [{ rate: 0.1, max: 300, unit: 'kWh' }, { rate: 0.2, unit: 'kWh' }],
+        ],
+        energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+        energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+      },
+    ]);
+
+    const res = await listPlans(
+      new NextRequest('https://app.test/api/site/site-1/utility/plans?effectiveDate=2025-04-01'),
+      context
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.ratesEffectiveOn).toHaveBeenCalledWith('We Energies', '2025-04-01', 'America/Chicago');
+    const body = await res.json();
+    expect(body).toMatchObject({
+      utilityName: 'We Energies',
+      effectiveDate: '2025-04-01',
+      currency: 'USD',
+      unit: 'kWh',
+    });
+    expect(body.plans[0]).toMatchObject({
+      label: 'tiered-plan',
+      name: 'Tiered Plan',
+      exportRateProvenance: 'inherited',
+    });
+    expect(body.plans[0].seasons[0].weekdayPeriods[0]).toMatchObject({
+      buyRate: 0.15,
+      sellRate: 0.04,
+    });
+    expect(body.plans[0].approximationNotes.map((n: { kind: string }) => n.kind)).toEqual([
+      'tier_blended',
+      'export_inherited_from_tesla',
+    ]);
+
+    const badDate = await listPlans(
+      new NextRequest('https://app.test/api/site/site-1/utility/plans?effectiveDate=2025-02-29'),
+      context
+    );
+    expect(badDate.status).toBe(400);
+
+    mocks.getSiteUtilityContext.mockResolvedValueOnce({ name: 'We Energies', timezone: 'America/Chicago', currency: 'EUR', choice: 'owner' });
+    const badCurrency = await listPlans(
+      new NextRequest('https://app.test/api/site/site-1/utility/plans'),
+      context
+    );
+    expect(badCurrency.status).toBe(400);
   });
 });

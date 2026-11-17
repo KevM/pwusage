@@ -338,3 +338,43 @@ export interface TariffSelectionPreviewResponse {
     replacesExistingPlan: boolean;
   };
 }
+
+export interface PublicUtilityPlanDTO {
+  label: string;
+  name: string;
+  utilityName: string;
+  startDate: string;
+  revisionStart: string;
+  kind: RatePlanKind;
+  isDefault: boolean;
+  currency: string;
+  unit: 'kWh';
+  holidaysUseWeekendSchedule: boolean;
+  exportRateProvenance: ExportRateProvenance;
+  seasons: TariffSeasonInput[];
+  approximationNotes: TariffApproximationNote[];
+}
+
+export interface PublicUtilityPlansResponse {
+  utilityName: string;
+  effectiveDate: string;
+  currency: string;
+  unit: 'kWh';
+  plans: PublicUtilityPlanDTO[];
+}
+
+export interface TariffSelectionCommitResponse {
+  selectionIds: number[];
+  tariffIds: number[];
+  createdNewTariffVersion: boolean;
+  unchanged: boolean;
+  reattributionRange: { fromDate: string; toDate: string | null } | null;
+  timeline: SiteTariffsTimelineResponse;
+}
+
+export interface TariffSelectionConflictResponse {
+  error: string;
+  code: 'REVIEW_STALE';
+  refreshPath: string;
+  preview: TariffSelectionPreviewResponse;
+}

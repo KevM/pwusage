@@ -19,7 +19,17 @@ vi.mock('./db', () => ({
 import { buildDefaultTariff, parseTariffContent } from './importer/tariff-parser';
 import { STORED_TARIFF_CANDIDATES_SQL } from './importer/stored-tariff-backfill';
 import { TariffRepo } from './tariff-repo';
-import { recomputeIsCurrentTariff, TariffTimelineRepo, UtilityChangedError } from './tariff-timeline-repo';
+import {
+  recomputeIsCurrentTariff,
+  TariffSelectionConflictError,
+  TariffTimelineRepo,
+  UtilityChangedError,
+} from './tariff-timeline-repo';
+import {
+  commitTariffSelection,
+  listPublicUtilityPlansForSite,
+  previewTariffSelection,
+} from './tariff-selection-service';
 import type { TariffSeasonInput } from './tariff-contract';
 import type { ExpandedRevision } from './urdb/history-expand';
 import type { TariffPlanWriteInput } from './tariff-timeline';
@@ -1581,6 +1591,257 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
             entry.verification.verifiedByCurrentUser
         )
       ).toBe(true);
+    });
+
+    it('end-to-end PostgreSQL selection preview, commit, idempotent retry, stale 409, multi-interval restore, legacy protection, and cross-site isolation', async () => {
+      const siteId = 's-sel-e2e';
+      const otherSiteId = 's-sel-other';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, installed)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z'),
+                ($2, 'u2', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z')`,
+        [siteId, otherSiteId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status)
+         VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'ready'),
+                ($2, 'Wisconsin Electric Power Co', 'owner', 'ready')`,
+        [siteId, otherSiteId]
+      );
+      await local.database.query(
+        `INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status)
+         VALUES ($1, '2024-01-01T06:00:00Z', gen_random_uuid(), 'complete')`,
+        [siteId]
+      );
+
+      // Seed two historical Tesla versions on siteId and one on otherSiteId.
+      const tariffRepo = new TariffRepo();
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v1', 0.14));
+      const t1 = (await local.database.query<{ id: number }>(
+        `SELECT id FROM "Tariff" WHERE site_id = $1 AND name = 'Tesla v1'`,
+        [siteId]
+      )).rows[0]!.id;
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v2', 0.18));
+      const t2 = (await local.database.query<{ id: number }>(
+        `SELECT id FROM "Tariff" WHERE site_id = $1 AND name = 'Tesla v2'`,
+        [siteId]
+      )).rows[0]!.id;
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]);
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', '2025-06-30', 'tesla'),
+                ($1, $3, '2025-07-01', NULL, 'tesla')`,
+        [siteId, t1, t2]
+      );
+
+      // Seed otherSiteId with an override so it owns a selectionId that must remain isolated from siteId.
+      await tariffRepo.addTariffVersion(otherSiteId, flatTesla('Other Tesla', 0.25));
+      const repo = new TariffTimelineRepo();
+      const otherCommit = await repo.applySelection(otherSiteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u2',
+        verifiedAgainstBill: false,
+        candidate: { kind: 'manual', name: 'Other Override', seasons: seasonsInput(0.29) },
+      });
+      const otherSiteSelectionId = otherCommit.selectionIds[0]!;
+
+      const publicRate: UrdbRate = {
+        label: 'urdb-e2e-tiered',
+        name: 'WE Public Tiered',
+        utility: 'Wisconsin Electric Power Co',
+        startdate: 1_735_689_600,
+        dgrules: 'Buy All Sell All',
+        energyratestructure: [
+          [{ rate: 0.1, max: 300, unit: 'kWh' }, { rate: 0.22, unit: 'kWh' }],
+        ],
+        energyweekdayschedule: Array.from({ length: 12 }, () => Array<number>(24).fill(0)),
+        energyweekendschedule: Array.from({ length: 12 }, () => Array<number>(24).fill(0)),
+      };
+      const urdb = {
+        ratesEffectiveOn: async () => [publicRate],
+        rateByLabel: async (label: string) => (label === publicRate.label ? publicRate : null),
+      };
+      const fixedNow = () => new Date('2026-11-16T18:00:00Z');
+
+      // 1. Browsing public plans supports chosen effectiveDate and explains approximations.
+      const listed = await listPublicUtilityPlansForSite(
+        siteId,
+        { effectiveDate: '2025-03-01', now: fixedNow() },
+        { repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(listed.effectiveDate).toBe('2025-03-01');
+      expect(listed.plans[0]).toMatchObject({
+        label: 'urdb-e2e-tiered',
+        name: 'WE Public Tiered',
+        exportRateProvenance: 'inherited',
+      });
+      expect(listed.plans[0].approximationNotes.map(n => n.kind)).toEqual([
+        'tier_blended',
+        'export_inherited_from_tesla',
+      ]);
+
+      // 2. Preview & commit an explicit finite public plan overriding Tesla across v1 + v2.
+      const previewPublic = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(previewPublic.affectedIntervals).toHaveLength(2);
+      expect(previewPublic.unchangedOutsidePeriods.map(p => [p.effectiveFrom, p.effectiveTo])).toEqual([
+        ['2025-01-01', '2025-02-28'],
+        ['2025-10-01', null],
+      ]);
+      expect(previewPublic.restoration.preservedOriginals).toHaveLength(2);
+
+      const committedPublic = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+          expectedReviewHash: previewPublic.reviewHash,
+          verifiedAgainstBill: true,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(committedPublic.unchanged).toBe(false);
+      const overrideSelectionId = committedPublic.selectionIds[0]!;
+      const activePublicPeriod = committedPublic.timeline.periods.find(p => p.effectiveFrom === '2025-03-01');
+      expect(activePublicPeriod?.source).toBe('estimated');
+      expect(activePublicPeriod?.choiceKind).toBe('owner');
+      expect(activePublicPeriod?.verification).toMatchObject({ verifiedByCurrentUser: true });
+
+      // 3. Immediate duplicate submission is idempotent and does not manufacture extra Tariff/Selection rows.
+      const retryPublic = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+          expectedReviewHash: previewPublic.reviewHash,
+          verifiedAgainstBill: true,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(retryPublic.unchanged).toBe(true);
+      expect(retryPublic.selectionIds).toEqual([overrideSelectionId]);
+
+      // 4. Legacy saveRatePlanHistory (PUT /utility/history) must NOT overwrite the owner-selected public plan.
+      await repo.saveRatePlanHistory(
+        siteId,
+        'u1',
+        'Wisconsin Electric Power Co',
+        [{ label: 'hist-1', revisionStart: '2024-01-01', from: '2024-01-01', to: '2025-05-31', name: 'Legacy Hist', seasons: seasonsInput(0.11) }],
+        null
+      );
+      const afterLegacyHistory = await repo.getTimeline(siteId, 'u1');
+      const keptPublicAfterHistory = afterLegacyHistory.periods.find(p => p.effectiveFrom === '2025-03-01' && p.effectiveTo === '2025-09-30');
+      expect(keptPublicAfterHistory?.source).toBe('estimated');
+      expect(keptPublicAfterHistory?.choiceKind).toBe('owner');
+      expect(keptPublicAfterHistory?.name).toBe('WE Public Tiered');
+
+      // 5. Old reviewHash MUST fail with 409 Conflict after timeline changed.
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+            effectiveFrom: '2025-03-01',
+            effectiveTo: '2025-09-30',
+            expectedReviewHash: previewPublic.reviewHash,
+            verifiedAgainstBill: true,
+          },
+          { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+
+      // 6. Legacy PATCH date-only edit on owner-selected public plan preserves source='estimated' and urdbLabel.
+      const { timeline: afterDatePatch } = await repo.updatePeriod(siteId, keptPublicAfterHistory!.periodId, 'u1', {
+        effectiveTo: '2025-08-31',
+      });
+      const patchedPublic = afterDatePatch.periods.find(p => p.effectiveFrom === '2025-03-01');
+      expect(patchedPublic?.effectiveTo).toBe('2025-08-31');
+      expect(patchedPublic?.source).toBe('estimated');
+      expect(patchedPublic?.choiceKind).toBe('owner');
+      expect(patchedPublic?.urdbLabel).toBe('urdb-e2e-tiered');
+
+      // 7. Later Tesla import arrives while override is active, then multi-interval restore recovers exact v1 & v2.
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v3 Newer', 0.35));
+      const restorePreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: overrideSelectionId },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restorePreview.restoration.canApplyRestoration).toBe(true);
+      expect(restorePreview.affectedIntervals.map(i => [i.effectiveFrom, i.effectiveTo, i.after?.tariffId])).toEqual([
+        ['2025-03-01', '2025-06-30', t1],
+        ['2025-07-01', '2025-09-30', t2],
+      ]);
+
+      const restored = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: overrideSelectionId },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+          expectedReviewHash: restorePreview.reviewHash,
+          verifiedAgainstBill: false,
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restored.timeline.periods.some(p => p.tariffId === t1 && p.effectiveFrom === '2025-03-01' && p.effectiveTo === '2025-06-30' && p.choiceKind === 'owner')).toBe(true);
+      expect(restored.timeline.periods.some(p => p.tariffId === t2 && p.effectiveFrom === '2025-07-01' && p.effectiveTo === '2025-09-30' && p.choiceKind === 'owner')).toBe(true);
+
+      // 8. Cross-site originalSelectionId isolation: siteId cannot preview or commit otherSiteId's selectionId.
+      const crossSitePreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: otherSiteSelectionId },
+          effectiveFrom: '2025-01-01',
+          effectiveTo: '2025-03-01',
+        },
+        { now: fixedNow, repo }
+      );
+      expect(crossSitePreview.restoration.canApplyRestoration).toBe(false);
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'restore_tesla', originalSelectionId: otherSiteSelectionId },
+            effectiveFrom: '2025-01-01',
+            effectiveTo: '2025-03-01',
+            expectedReviewHash: crossSitePreview.reviewHash,
+            verifiedAgainstBill: false,
+          },
+          { now: fixedNow, repo }
+        )
+      ).rejects.toThrow(TariffValidationError);
     });
   });
 });

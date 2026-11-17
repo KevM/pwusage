@@ -24,6 +24,13 @@ import { SiteRepo } from './site-repo';
 import { fillWindowBounds, loadHistoryWindow, loadHistoryWindowInput, uncoveredPieces, type HistoryWindow } from './urdb/history-window';
 import type { ExpandedRevision } from './urdb/history-expand';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
+import {
+  buildTariffSelectionPreview,
+  type ConversionInputsRecord,
+  type ExistingTimelineSpanInput,
+  type RestorationTargetSpanInput,
+} from './tariff-selection';
+import type { UrdbRate } from './urdb/types';
 import type {
   ReattributionStatusDTO,
   SiteBatteryDTO,
@@ -33,9 +40,11 @@ import type {
   TariffRestorationOriginalRef,
   TariffReviewPlanSnapshot,
   TariffSeasonInput,
+  TariffSelectionCommit,
+  TariffSelectionPreviewResponse,
+  TariffSelectionRequest,
   TariffVerificationSummary,
 } from './tariff-contract';
-import type { ExistingTimelineSpanInput, RestorationTargetSpanInput } from './tariff-selection';
 import {
   addCalendarDays,
   compileSeasonsToParsedTariff,
@@ -60,6 +69,23 @@ export class UtilityChangedError extends Error {
 
 export class TariffNotFoundError extends Error {
   readonly status = 404;
+}
+
+export class TariffSelectionConflictError extends Error {
+  readonly status = 409;
+  readonly code = 'REVIEW_STALE' as const;
+  readonly refreshPath: string;
+  readonly preview: TariffSelectionPreviewResponse;
+
+  constructor(
+    siteId: string,
+    preview: TariffSelectionPreviewResponse,
+    message = 'This rate plan preview is out of date because the timeline or utility rates changed. Review the updated details before saving.'
+  ) {
+    super(message);
+    this.refreshPath = `/api/site/${encodeURIComponent(siteId)}/tariffs/selection/preview`;
+    this.preview = preview;
+  }
 }
 
 export interface PeriodQueryRow {
@@ -1077,7 +1103,7 @@ function computeFallbackTariffHash(tariff: Tariff): string {
 }
 
 async function planNameTakenAfterReplacement(
-  client: PoolClient,
+  client: Pick<PoolClient, 'query'>,
   existing: ExistingSpan[],
   siteId: string,
   name: string,
@@ -1802,10 +1828,494 @@ export async function applyTariffSelectionOnClient(
   };
 }
 
+export interface SiteUtilityContextResult {
+  name: string | null;
+  timezone: string;
+  currency?: string;
+  choice?: 'auto' | 'owner' | 'skipped' | null;
+}
+
+export interface SitePublicConversionContext {
+  fallbackSellRate: number;
+  hasTeslaSellFallback: boolean;
+}
+
+export interface SelectionTimelineSnapshot {
+  fallbackSellRate: number;
+  hasTeslaSellFallback: boolean;
+  existingSpans: ExistingTimelineSpanInput[];
+  restorationTargets: RestorationTargetSpanInput[];
+  manualNameTaken: boolean;
+}
+
+export interface ResolvedPublicCandidatePlan {
+  candidatePlan: TariffReviewPlanSnapshot;
+  applyCandidate: Extract<ApplyTariffSelectionCandidate, { kind: 'public' }>;
+  conversionInputs: ConversionInputsRecord;
+}
+
+export interface CommitReviewedSelectionInput {
+  userId: string;
+  commit: TariffSelectionCommit;
+  publicRate?: {
+    rate: UrdbRate;
+    preLockUtilityName: string;
+    medianMonthlyKwh: number | null;
+  };
+  resolvePublicPlan: (ctx: {
+    rate: UrdbRate;
+    siteCurrency: string;
+    utilityName: string;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    todaySiteLocal: string;
+    medianMonthlyKwh: number | null;
+    fallbackSellRate: number;
+    hasTeslaSellFallback: boolean;
+  }) => ResolvedPublicCandidatePlan;
+  deriveEligibility: (ctx: {
+    timezone: string;
+    currency: string;
+    utilityChoice: 'auto' | 'owner' | 'skipped' | null;
+  }) => string;
+  now?: Date;
+}
+
+export async function loadSiteSellFallbackOnClient(
+  queryable: Pick<PoolClient, 'query'>,
+  siteId: string,
+  effectiveDate?: string
+): Promise<SitePublicConversionContext> {
+  const fallbackHash = tariffContentHash(buildDefaultTariff('Default Rate'));
+  let chosenTariffId: number | null = null;
+
+  if (effectiveDate) {
+    const activeTesla = (await queryable.query<{ tariff_id: number }>(
+      `SELECT p.tariff_id
+       FROM "TariffEffectivePeriod" p
+       JOIN "Tariff" t ON t.id = p.tariff_id
+       WHERE p.site_id = $1 AND p.source = 'tesla' AND t.content_hash IS DISTINCT FROM $2
+         AND p.effective_from <= $3::date AND (p.effective_to IS NULL OR p.effective_to >= $3::date)
+       ORDER BY p.effective_from DESC, p.id DESC LIMIT 1`,
+      [siteId, fallbackHash, effectiveDate]
+    )).rows[0];
+    if (activeTesla) {
+      chosenTariffId = Number(activeTesla.tariff_id);
+    } else {
+      const origTesla = (await queryable.query<{ original_tariff_id: number }>(
+        `SELECT o.original_tariff_id
+         FROM "TariffSelectionOriginal" o
+         JOIN "Tariff" t ON t.id = o.original_tariff_id
+         WHERE o.site_id = $1 AND o.scope = 'actual' AND t.content_hash IS DISTINCT FROM $2
+           AND o.effective_from <= $3::date AND (o.effective_to IS NULL OR o.effective_to >= $3::date)
+         ORDER BY o.id DESC LIMIT 1`,
+        [siteId, fallbackHash, effectiveDate]
+      )).rows[0];
+      if (origTesla) {
+        chosenTariffId = Number(origTesla.original_tariff_id);
+      }
+    }
+  }
+
+  if (chosenTariffId === null) {
+    const latestTesla = (await queryable.query<{ id: number }>(
+      `SELECT id FROM "Tariff"
+       WHERE site_id = $1 AND source = 'tesla' AND content_hash IS DISTINCT FROM $2
+       ORDER BY updated DESC, id DESC LIMIT 1`,
+      [siteId, fallbackHash]
+    )).rows[0];
+    if (latestTesla) {
+      chosenTariffId = Number(latestTesla.id);
+    }
+  }
+
+  if (chosenTariffId === null) {
+    return { fallbackSellRate: 0, hasTeslaSellFallback: false };
+  }
+
+  const map = await hydrateTariffs(queryable, [chosenTariffId]);
+  const tariff = map.get(chosenTariffId);
+  if (!tariff) {
+    return { fallbackSellRate: 0, hasTeslaSellFallback: false };
+  }
+  const rates = tariff.seasons?.flatMap(
+    season => season.schedules?.map(sch => sch.sell_rate ?? season.sell_rate) ?? [season.sell_rate]
+  ) ?? [];
+  const rawAvg = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+  const fallbackSellRate = Math.round(rawAvg * 100_000) / 100_000;
+  return {
+    fallbackSellRate: Object.is(fallbackSellRate, -0) ? 0 : fallbackSellRate,
+    hasTeslaSellFallback: true,
+  };
+}
+
+interface ProtectedPublicPatchMetadata {
+  urdbLabel: string | null;
+  utilityName: string | null;
+  revisionStart: string | null;
+  exportRateProvenance: ExportRateProvenance;
+  holidaysUseWeekend: boolean;
+  approximationNotes: TariffApproximationNote[];
+  contentHash: string | null;
+}
+
+async function loadProtectedPublicPatchMetadata(
+  client: Pick<PoolClient, 'query'>,
+  selectionId: number | null | undefined,
+  tariffId: number
+): Promise<ProtectedPublicPatchMetadata> {
+  const hashRes = await client.query<{ content_hash: string | null }>(
+    'SELECT content_hash FROM "Tariff" WHERE id = $1',
+    [tariffId]
+  );
+  const contentHash = hashRes.rows[0]?.content_hash ?? null;
+  if (selectionId === null || selectionId === undefined) {
+    return {
+      urdbLabel: null,
+      utilityName: null,
+      revisionStart: null,
+      exportRateProvenance: 'published',
+      holidaysUseWeekend: true,
+      approximationNotes: [],
+      contentHash,
+    };
+  }
+  const selRes = await client.query<{
+    urdb_label: string | null;
+    utility_name: string | null;
+    revision_start: string | null;
+    export_rate_provenance: ExportRateProvenance;
+    holidays_use_weekend: boolean;
+    approximation_notes: unknown;
+  }>(
+    `SELECT urdb_label, utility_name, revision_start::text, export_rate_provenance, holidays_use_weekend, approximation_notes
+     FROM "TariffSelection" WHERE id = $1`,
+    [selectionId]
+  );
+  const row = selRes.rows[0];
+  return {
+    urdbLabel: row?.urdb_label ?? null,
+    utilityName: row?.utility_name ?? null,
+    revisionStart: row?.revision_start ? row.revision_start.slice(0, 10) : null,
+    exportRateProvenance: row?.export_rate_provenance ?? 'published',
+    holidaysUseWeekend: row?.holidays_use_weekend ?? true,
+    approximationNotes: parseApproximationNotes(row?.approximation_notes),
+    contentHash,
+  };
+}
+
+async function hasNewerTimelineActivityOnClient(
+  client: Pick<PoolClient, 'query'>,
+  siteId: string,
+  scope: TariffSelectionScope,
+  maxMatchedSelectionId: number,
+  selectionCreatedAt: Date | string
+): Promise<boolean> {
+  const maxSelRes = await client.query<{ max_id: number | null }>(
+    `SELECT MAX(id)::int AS max_id FROM "TariffSelection" WHERE site_id = $1 AND scope = $2`,
+    [siteId, scope]
+  );
+  const maxId = maxSelRes.rows[0]?.max_id;
+  if (maxId === undefined || maxId === null || Number(maxId) !== maxMatchedSelectionId) {
+    return true;
+  }
+
+  const createdIso = selectionCreatedAt instanceof Date
+    ? selectionCreatedAt.toISOString()
+    : new Date(selectionCreatedAt).toISOString();
+
+  const periodTable = scope === 'actual' ? '"TariffEffectivePeriod"' : '"TariffReferencePeriod"';
+  const newerPeriod = await client.query<{ id: number }>(
+    `SELECT id FROM ${periodTable} WHERE site_id = $1 AND created_at > $2::timestamptz LIMIT 1`,
+    [siteId, createdIso]
+  );
+  if ((newerPeriod.rows?.length ?? 0) > 0) {
+    return true;
+  }
+
+  if (scope === 'actual') {
+    const newerTesla = await client.query<{ id: number }>(
+      `SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla' AND updated::timestamptz > $2::timestamptz LIMIT 1`,
+      [siteId, createdIso]
+    );
+    if ((newerTesla.rows?.length ?? 0) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function findIdempotentRetryOnClient(
+  client: Pick<PoolClient, 'query'>,
+  siteId: string,
+  userId: string,
+  commit: TariffSelectionCommit,
+  candidatePlan: TariffReviewPlanSnapshot | null,
+  existingSpans: ExistingTimelineSpanInput[],
+  restorationTargets: RestorationTargetSpanInput[]
+): Promise<ApplyTariffSelectionResult | null> {
+  const { scope, effectiveFrom, effectiveTo, candidate, verifiedAgainstBill } = commit;
+  const currentSpans = await loadScopeSpans(client, siteId, scope);
+
+  if (candidate.kind === 'restore_tesla') {
+    if (restorationTargets.length === 0) return null;
+    const matchedSpans: Array<{ span: ExistingSpan; target: RestorationTargetSpanInput }> = [];
+    for (const target of restorationTargets) {
+      const match = currentSpans.find(
+        s =>
+          s.effectiveFrom === target.effectiveFrom &&
+          s.effectiveTo === target.effectiveTo &&
+          s.tariffId === target.original.tariffId &&
+          s.source === 'tesla' &&
+          s.choiceKind === 'owner' &&
+          s.selectionId !== null &&
+          s.selectionId !== undefined
+      );
+      if (!match) return null;
+      matchedSpans.push({ span: match, target });
+    }
+
+    const matchedSelectionIds = [...new Set(matchedSpans.map(m => Number(m.span.selectionId)))];
+    const selRes = await client.query<TariffSelectionRow>(
+      `SELECT id, site_id, scope, tariff_id, effective_from::text, effective_to::text,
+              source, choice_kind, candidate_kind, selected_by_user_id,
+              urdb_label, utility_name, revision_start::text, export_rate_provenance,
+              holidays_use_weekend, approximation_notes, selected_content_hash,
+              restored_from_selection_id, created_at
+       FROM "TariffSelection"
+       WHERE site_id = $1 AND scope = $2 AND id = ANY($3::int[])`,
+      [siteId, scope, matchedSelectionIds]
+    );
+    if (selRes.rows.length !== matchedSelectionIds.length) return null;
+
+    for (const m of matchedSpans) {
+      const sel = selRes.rows.find(r => Number(r.id) === Number(m.span.selectionId));
+      if (!sel) return null;
+      if (sel.selected_by_user_id !== userId) return null;
+      if (sel.choice_kind !== 'owner' || sel.candidate_kind !== 'restore_tesla') return null;
+      if (Number(sel.restored_from_selection_id) !== candidate.originalSelectionId) return null;
+      if (sel.effective_from.slice(0, 10) !== m.target.effectiveFrom) return null;
+      const selTo = sel.effective_to ? sel.effective_to.slice(0, 10) : null;
+      if (selTo !== m.target.effectiveTo) return null;
+      if (sel.selected_content_hash !== m.target.original.contentHash) return null;
+    }
+
+    const verRes = await client.query<{
+      selection_id: number;
+      tariff_id: number;
+      tariff_content_hash: string;
+      effective_from: string;
+      effective_to: string | null;
+      verified_by_user_id: string | null;
+    }>(
+      `SELECT selection_id, tariff_id, tariff_content_hash, effective_from::text, effective_to::text, verified_by_user_id
+       FROM "TariffSelectionVerification"
+       WHERE selection_id = ANY($1::int[])`,
+      [matchedSelectionIds]
+    );
+
+    if (verifiedAgainstBill) {
+      for (const m of matchedSpans) {
+        const ver = verRes.rows.find(v => Number(v.selection_id) === Number(m.span.selectionId));
+        if (!ver) return null;
+        if (ver.verified_by_user_id !== userId) return null;
+        if (Number(ver.tariff_id) !== m.target.original.tariffId) return null;
+        if (ver.tariff_content_hash !== m.target.original.contentHash) return null;
+        if (ver.effective_from.slice(0, 10) !== m.target.effectiveFrom) return null;
+        const vTo = ver.effective_to ? ver.effective_to.slice(0, 10) : null;
+        if (vTo !== m.target.effectiveTo) return null;
+      }
+    } else if (verRes.rows.length > 0) {
+      return null;
+    }
+
+    const maxSelectionId = Math.max(...matchedSelectionIds);
+    const createdAt = selRes.rows[0].created_at;
+    if (await hasNewerTimelineActivityOnClient(client, siteId, scope, maxSelectionId, createdAt)) {
+      return null;
+    }
+
+    return {
+      selectionIds: matchedSelectionIds,
+      tariffIds: [...new Set(matchedSpans.map(m => m.target.original.tariffId))],
+      createdNewTariffVersion: false,
+      unchanged: true,
+      reattributionRange: null,
+    };
+  }
+
+  if (!candidatePlan) return null;
+  const overlapping = currentSpans.filter(s =>
+    spansOverlapDates(s.effectiveFrom, s.effectiveTo, effectiveFrom, effectiveTo)
+  );
+  if (overlapping.length !== 1) return null;
+  const match = overlapping[0];
+  if (
+    match.effectiveFrom !== effectiveFrom ||
+    match.effectiveTo !== effectiveTo ||
+    match.source !== candidatePlan.source ||
+    match.choiceKind !== 'owner' ||
+    match.selectionId === null ||
+    match.selectionId === undefined
+  ) {
+    return null;
+  }
+
+  const previewSpan = existingSpans.find(
+    s => s.effectiveFrom === effectiveFrom && s.effectiveTo === effectiveTo && s.plan.selectionId === match.selectionId
+  );
+  if (previewSpan && previewSpan.plan.name !== candidatePlan.name) {
+    return null;
+  }
+
+  const selRes = await client.query<TariffSelectionRow>(
+    `SELECT id, site_id, scope, tariff_id, effective_from::text, effective_to::text,
+            source, choice_kind, candidate_kind, selected_by_user_id,
+            urdb_label, utility_name, revision_start::text, export_rate_provenance,
+            holidays_use_weekend, approximation_notes, selected_content_hash,
+            restored_from_selection_id, created_at
+     FROM "TariffSelection"
+     WHERE site_id = $1 AND scope = $2 AND id = ANY($3::int[])`,
+    [siteId, scope, [match.selectionId]]
+  );
+  const sel = selRes.rows[0];
+  if (!sel) return null;
+  if (sel.selected_by_user_id !== userId) return null;
+  if (sel.choice_kind !== 'owner' || sel.candidate_kind !== candidate.kind) return null;
+  if (sel.effective_from.slice(0, 10) !== effectiveFrom) return null;
+  const selTo = sel.effective_to ? sel.effective_to.slice(0, 10) : null;
+  if (selTo !== effectiveTo) return null;
+  if (sel.selected_content_hash !== candidatePlan.contentHash) return null;
+  if ((sel.urdb_label ?? null) !== candidatePlan.urdbLabel) return null;
+  if ((sel.utility_name ?? null) !== candidatePlan.utilityName) return null;
+  const selRev = sel.revision_start ? sel.revision_start.slice(0, 10) : null;
+  if (selRev !== candidatePlan.revisionStart) return null;
+  if (sel.export_rate_provenance !== candidatePlan.exportRateProvenance) return null;
+  if (Boolean(sel.holidays_use_weekend) !== candidatePlan.holidaysUseWeekendSchedule) return null;
+  if (
+    JSON.stringify(parseApproximationNotes(sel.approximation_notes)) !==
+    JSON.stringify(candidatePlan.approximationNotes)
+  ) {
+    return null;
+  }
+
+  const verRes = await client.query<{
+    tariff_id: number;
+    tariff_content_hash: string;
+    effective_from: string;
+    effective_to: string | null;
+    verified_by_user_id: string | null;
+  }>(
+    `SELECT tariff_id, tariff_content_hash, effective_from::text, effective_to::text, verified_by_user_id
+     FROM "TariffSelectionVerification"
+     WHERE selection_id = $1`,
+    [match.selectionId]
+  );
+  const ver = verRes.rows[0];
+  if (verifiedAgainstBill) {
+    if (!ver) return null;
+    if (ver.verified_by_user_id !== userId) return null;
+    if (Number(ver.tariff_id) !== match.tariffId) return null;
+    if (ver.tariff_content_hash !== candidatePlan.contentHash) return null;
+    if (ver.effective_from.slice(0, 10) !== effectiveFrom) return null;
+    const vTo = ver.effective_to ? ver.effective_to.slice(0, 10) : null;
+    if (vTo !== effectiveTo) return null;
+  } else if (ver) {
+    return null;
+  }
+
+  if (await hasNewerTimelineActivityOnClient(client, siteId, scope, match.selectionId, sel.created_at)) {
+    return null;
+  }
+
+  return {
+    selectionIds: [match.selectionId],
+    tariffIds: [match.tariffId],
+    createdNewTariffVersion: false,
+    unchanged: true,
+    reattributionRange: null,
+  };
+}
+
 export class TariffTimelineRepo {
-  async getSiteUtilityContext(siteId: string): Promise<{ name: string | null; timezone: string } | null> {
-    const result = await pool.query<{ name: string | null; timezone: string }>(`SELECT u.urdb_utility AS name, s.timezone FROM "Site" s LEFT JOIN "SiteUtility" u ON u.site_id = s.id WHERE s.id = $1`, [siteId]);
+  async getSiteUtilityContext(siteId: string): Promise<SiteUtilityContextResult | null> {
+    const result = await pool.query<{
+      name: string | null;
+      timezone: string;
+      currency: string;
+      choice: 'auto' | 'owner' | 'skipped' | null;
+    }>(
+      `SELECT u.urdb_utility AS name,
+              s.timezone,
+              COALESCE(s.json -> 'tariff_content_v2' ->> 'currency', s.json ->> 'currency', 'USD') AS currency,
+              u.choice
+       FROM "Site" s
+       LEFT JOIN "SiteUtility" u ON u.site_id = s.id
+       WHERE s.id = $1`,
+      [siteId]
+    );
     return result.rows[0] ?? null;
+  }
+
+  async loadSitePublicConversionContext(
+    siteId: string,
+    effectiveDate?: string
+  ): Promise<SitePublicConversionContext> {
+    return loadSiteSellFallbackOnClient(pool, siteId, effectiveDate);
+  }
+
+  async loadSelectionTimelineSnapshot(params: {
+    siteId: string;
+    scope: TariffSelectionScope;
+    viewerUserId: string | null;
+    request: TariffSelectionRequest;
+  }): Promise<SelectionTimelineSnapshot> {
+    const { siteId, scope, viewerUserId, request } = params;
+    const existingSpans = await loadScopeSelectionSpans(pool, siteId, scope, viewerUserId);
+    const restorationTargets = request.candidate.kind === 'restore_tesla'
+      ? await loadRestorationTargets(
+          pool,
+          siteId,
+          scope,
+          request.candidate.originalSelectionId,
+          request.effectiveFrom,
+          request.effectiveTo
+        )
+      : [];
+    const fallback = request.candidate.kind === 'public'
+      ? await loadSiteSellFallbackOnClient(pool, siteId, request.effectiveFrom)
+      : { fallbackSellRate: 0, hasTeslaSellFallback: false };
+
+    let manualNameTaken = false;
+    if (request.candidate.kind === 'manual' && scope === 'actual') {
+      const parsed = compileSeasonsToParsedTariff(request.candidate.name, request.candidate.seasons);
+      const newHash = tariffContentHash(parsed);
+      const existingTariff = (await pool.query<{ id: number }>(
+        `SELECT id FROM "Tariff"
+         WHERE site_id = $1 AND source = 'manual' AND name = $2 AND content_hash = $3
+         ORDER BY id DESC LIMIT 1`,
+        [siteId, request.candidate.name, newHash]
+      )).rows[0];
+      const existing = await loadScopeSpans(pool, siteId, scope);
+      manualNameTaken = await planNameTakenAfterReplacement(
+        pool,
+        existing,
+        siteId,
+        request.candidate.name,
+        request.effectiveFrom,
+        request.effectiveTo,
+        existingTariff ? Number(existingTariff.id) : null
+      );
+    }
+
+    return {
+      fallbackSellRate: fallback.fallbackSellRate,
+      hasTeslaSellFallback: fallback.hasTeslaSellFallback,
+      existingSpans,
+      restorationTargets,
+      manualNameTaken,
+    };
   }
 
   /** The fill window (null when nothing is left to fill) and the newest real Tesla version, for the history guide. */
@@ -2232,6 +2742,8 @@ export class TariffTimelineRepo {
       nextTo = patch.effectiveTo !== undefined ? patch.effectiveTo : target.effectiveTo;
 
       let nextContentHash: string | null = null;
+      let nextSource: TariffSource = target.source === 'estimated' ? 'manual' : target.source;
+      let protectedPublicMeta: ProtectedPublicPatchMetadata | null = null;
       if (target.source === 'tesla') {
         if (patch.name !== undefined || patch.seasons !== undefined) {
           throw new TariffValidationError('Tesla-synced rate plans only allow adjusting effective dates');
@@ -2243,6 +2755,17 @@ export class TariffTimelineRepo {
           [target.tariffId]
         );
         nextContentHash = hashRes.rows[0]?.content_hash ?? null;
+      } else if (
+        target.source === 'estimated' &&
+        isProtectedSpan(target) &&
+        patch.name === undefined &&
+        patch.seasons === undefined
+      ) {
+        validateEffectiveDates(nextFrom, nextTo, today);
+        targetTariffId = target.tariffId;
+        nextSource = 'estimated';
+        protectedPublicMeta = await loadProtectedPublicPatchMetadata(client, target.selectionId, target.tariffId);
+        nextContentHash = protectedPublicMeta.contentHash;
       } else {
         const tariffMap = await hydrateTariffs(client, [target.tariffId]);
         const currentTariff = tariffMap.get(target.tariffId);
@@ -2270,7 +2793,6 @@ export class TariffTimelineRepo {
         }
       }
 
-      const nextSource: TariffSource = target.source === 'estimated' ? 'manual' : target.source;
       const replacedOriginals = await collectReplacedOriginalsOnClient(client, existing, nextFrom, nextTo);
       const selectionId = await insertTariffSelectionOnClient(client, {
         siteId,
@@ -2280,9 +2802,20 @@ export class TariffTimelineRepo {
         effectiveTo: nextTo,
         source: nextSource,
         choiceKind: 'owner',
-        candidateKind: nextSource === 'tesla' ? 'tesla_sync' : 'manual',
+        candidateKind: nextSource === 'tesla' ? 'tesla_sync' : nextSource === 'estimated' ? 'public' : 'manual',
         selectedByUserId: userId,
-        exportRateProvenance: nextSource === 'tesla' ? 'tesla' : 'manual',
+        ...(protectedPublicMeta
+          ? {
+              urdbLabel: protectedPublicMeta.urdbLabel,
+              utilityName: protectedPublicMeta.utilityName,
+              revisionStart: protectedPublicMeta.revisionStart,
+              exportRateProvenance: protectedPublicMeta.exportRateProvenance,
+              holidaysUseWeekend: protectedPublicMeta.holidaysUseWeekend,
+              approximationNotes: protectedPublicMeta.approximationNotes,
+            }
+          : {
+              exportRateProvenance: nextSource === 'tesla' ? 'tesla' : 'manual',
+            }),
         selectedContentHash: nextContentHash,
       });
       await storeSelectionOriginalsOnClient(client, siteId, 'actual', selectionId, replacedOriginals);
@@ -2603,24 +3136,42 @@ export class TariffTimelineRepo {
       nextFrom = patch.effectiveFrom ?? target.effectiveFrom;
       nextTo = patch.effectiveTo !== undefined ? patch.effectiveTo : target.effectiveTo;
 
-      const tariffMap = await hydrateTariffs(client, [target.tariffId]);
-      const currentTariff = tariffMap.get(target.tariffId);
-      if (!currentTariff) throw new TariffNotFoundError('Tariff not found');
-      const currentSeasons: TariffSeasonInput[] = decompileTariffToSeasons(currentTariff);
-      const validated = validateTariffPlanInput({
-        name: patch.name ?? currentTariff.name ?? '',
-        effectiveFrom: nextFrom,
-        effectiveTo: nextTo,
-        seasons: patch.seasons ?? currentSeasons,
-      }, today);
-      seasonCount = validated.seasons.length;
+      let nextSource: Exclude<TariffSource, 'tesla'> = 'manual';
+      let nextContentHash: string | null = null;
+      let protectedPublicMeta: ProtectedPublicPatchMetadata | null = null;
 
-      const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
-      const newHash = tariffContentHash(parsed);
-      if (target.source === 'estimated' || newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
-        targetTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false, newHash);
-      } else {
+      if (
+        target.source === 'estimated' &&
+        isProtectedSpan(target) &&
+        patch.name === undefined &&
+        patch.seasons === undefined
+      ) {
+        validateEffectiveDates(nextFrom, nextTo, today);
         targetTariffId = target.tariffId;
+        nextSource = 'estimated';
+        protectedPublicMeta = await loadProtectedPublicPatchMetadata(client, target.selectionId, target.tariffId);
+        nextContentHash = protectedPublicMeta.contentHash;
+      } else {
+        const tariffMap = await hydrateTariffs(client, [target.tariffId]);
+        const currentTariff = tariffMap.get(target.tariffId);
+        if (!currentTariff) throw new TariffNotFoundError('Tariff not found');
+        const currentSeasons: TariffSeasonInput[] = decompileTariffToSeasons(currentTariff);
+        const validated = validateTariffPlanInput({
+          name: patch.name ?? currentTariff.name ?? '',
+          effectiveFrom: nextFrom,
+          effectiveTo: nextTo,
+          seasons: patch.seasons ?? currentSeasons,
+        }, today);
+        seasonCount = validated.seasons.length;
+
+        const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
+        const newHash = tariffContentHash(parsed);
+        nextContentHash = newHash;
+        if (target.source === 'estimated' || newHash !== currentTariff.content_hash || validated.name !== currentTariff.name) {
+          targetTariffId = await insertTariffGraph(client, siteId, parsed, 'manual', userId, false, newHash);
+        } else {
+          targetTariffId = target.tariffId;
+        }
       }
 
       const selectionId = await insertTariffSelectionOnClient(client, {
@@ -2629,18 +3180,29 @@ export class TariffTimelineRepo {
         tariffId: targetTariffId,
         effectiveFrom: nextFrom,
         effectiveTo: nextTo,
-        source: 'manual',
+        source: nextSource,
         choiceKind: 'owner',
-        candidateKind: 'manual',
+        candidateKind: nextSource === 'estimated' ? 'public' : 'manual',
         selectedByUserId: userId,
-        exportRateProvenance: 'manual',
-        selectedContentHash: newHash,
+        ...(protectedPublicMeta
+          ? {
+              urdbLabel: protectedPublicMeta.urdbLabel,
+              utilityName: protectedPublicMeta.utilityName,
+              revisionStart: protectedPublicMeta.revisionStart,
+              exportRateProvenance: protectedPublicMeta.exportRateProvenance,
+              holidaysUseWeekend: protectedPublicMeta.holidaysUseWeekend,
+              approximationNotes: protectedPublicMeta.approximationNotes,
+            }
+          : {
+              exportRateProvenance: 'manual',
+            }),
+        selectedContentHash: nextContentHash,
       });
 
       const remaining = existing.filter(s => s.id !== periodId);
       const mutationPlan = computeSpanMutations(remaining, {
         tariffId: targetTariffId,
-        source: 'manual',
+        source: nextSource,
         effectiveFrom: nextFrom,
         effectiveTo: nextTo,
         updatedByUserId: userId,
@@ -2759,6 +3321,212 @@ export class TariffTimelineRepo {
     return {
       ...result,
       timeline: await this.getTimeline(siteId, input.userId),
+    };
+  }
+
+  async commitReviewedSelection(
+    siteId: string,
+    input: CommitReviewedSelectionInput
+  ): Promise<ApplyTariffSelectionResult & { timeline: SiteTariffsTimelineResponse }> {
+    const { userId, commit, publicRate, resolvePublicPlan, deriveEligibility } = input;
+    const now = input.now ?? new Date();
+    const client = await pool.connect();
+    let result: ApplyTariffSelectionResult;
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
+
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{
+        id: string;
+        timezone: string;
+        currency: string;
+      }>(
+        `SELECT id, timezone,
+                COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency
+         FROM "Site" WHERE id = $1 FOR UPDATE`,
+        [siteId]
+      );
+      const site = siteRes.rows[0];
+      if (!site) throw new TariffNotFoundError('Site not found');
+
+      const timezone = site.timezone || 'UTC';
+      const currency = site.currency || 'USD';
+      const today = siteLocalDateString(now, timezone);
+      validateEffectiveDates(commit.effectiveFrom, commit.effectiveTo, today);
+      if (commit.scope === 'reference' && commit.candidate.kind === 'restore_tesla') {
+        throw new TariffValidationError('Tesla restoration is only available for your rate plan.');
+      }
+
+      const utilityRes = await client.query<{
+        urdb_utility: string | null;
+        choice: 'auto' | 'owner' | 'skipped' | null;
+      }>(
+        'SELECT urdb_utility, choice FROM "SiteUtility" WHERE site_id = $1',
+        [siteId]
+      );
+      const utilityRow = utilityRes.rows[0];
+      const utilityName = utilityRow?.urdb_utility ?? null;
+      const utilityChoice = utilityRow?.choice ?? null;
+      const eligibility = deriveEligibility({ timezone, currency, utilityChoice });
+
+      const existingSpans = await loadScopeSelectionSpans(client, siteId, commit.scope, userId);
+      const restorationTargets = commit.candidate.kind === 'restore_tesla'
+        ? await loadRestorationTargets(
+            client,
+            siteId,
+            commit.scope,
+            commit.candidate.originalSelectionId,
+            commit.effectiveFrom,
+            commit.effectiveTo
+          )
+        : [];
+
+      let candidatePlan: TariffReviewPlanSnapshot | null = null;
+      let applyCandidate: ApplyTariffSelectionCandidate;
+      let conversionInputs: ConversionInputsRecord | undefined;
+
+      if (commit.candidate.kind === 'public') {
+        if (!utilityName || utilityChoice === 'skipped') {
+          throw new UtilityChangedError('Choose a utility first.');
+        }
+        if (!publicRate || utilityName !== publicRate.preLockUtilityName) {
+          throw new UtilityChangedError('Utility changed. Choose a rate plan again.');
+        }
+        if (currency.trim().toUpperCase() !== 'USD') {
+          throw new TariffValidationError(
+            `Public utility rate plans are billed in USD and cannot be applied to a site in ${currency.trim().toUpperCase()}.`
+          );
+        }
+        const fallback = await loadSiteSellFallbackOnClient(client, siteId, commit.effectiveFrom);
+        const resolved = resolvePublicPlan({
+          rate: publicRate.rate,
+          siteCurrency: currency,
+          utilityName,
+          effectiveFrom: commit.effectiveFrom,
+          effectiveTo: commit.effectiveTo,
+          todaySiteLocal: today,
+          medianMonthlyKwh: publicRate.medianMonthlyKwh,
+          fallbackSellRate: fallback.fallbackSellRate,
+          hasTeslaSellFallback: fallback.hasTeslaSellFallback,
+        });
+        candidatePlan = resolved.candidatePlan;
+        applyCandidate = resolved.applyCandidate;
+        conversionInputs = resolved.conversionInputs;
+      } else if (commit.candidate.kind === 'manual') {
+        const parsed = compileSeasonsToParsedTariff(commit.candidate.name, commit.candidate.seasons);
+        const contentHash = tariffContentHash(parsed);
+        candidatePlan = {
+          tariffId: null,
+          version: null,
+          periodId: null,
+          selectionId: null,
+          name: commit.candidate.name,
+          utilityName: null,
+          source: 'manual',
+          choiceKind: 'owner',
+          urdbLabel: null,
+          revisionStart: null,
+          contentHash,
+          exportRateProvenance: 'manual',
+          holidaysUseWeekendSchedule: true,
+          seasons: commit.candidate.seasons,
+          approximationNotes: [],
+          verification: null,
+        };
+        applyCandidate = {
+          kind: 'manual',
+          name: commit.candidate.name,
+          seasons: commit.candidate.seasons,
+          holidaysUseWeekendSchedule: true,
+        };
+      } else {
+        applyCandidate = {
+          kind: 'restore_tesla',
+          originalSelectionId: commit.candidate.originalSelectionId,
+        };
+      }
+
+      const currentPreview = buildTariffSelectionPreview({
+        siteId,
+        timezone,
+        currency,
+        todaySiteLocal: today,
+        holidaysUseWeekendSchedule: true,
+        request: {
+          scope: commit.scope,
+          candidate: commit.candidate,
+          effectiveFrom: commit.effectiveFrom,
+          effectiveTo: commit.effectiveTo,
+        },
+        existingSpans,
+        candidatePlan,
+        restorationTargets,
+        eligibility,
+        conversionInputs,
+      });
+
+      if (currentPreview.reviewHash !== commit.expectedReviewHash) {
+        const retryResult = await findIdempotentRetryOnClient(
+          client,
+          siteId,
+          userId,
+          commit,
+          candidatePlan,
+          existingSpans,
+          restorationTargets
+        );
+        if (!retryResult) {
+          throw new TariffSelectionConflictError(siteId, currentPreview);
+        }
+        result = retryResult;
+      } else {
+        result = await applyTariffSelectionOnClient(client, siteId, today, {
+          scope: commit.scope,
+          effectiveFrom: commit.effectiveFrom,
+          effectiveTo: commit.effectiveTo,
+          userId,
+          verifiedAgainstBill: commit.verifiedAgainstBill,
+          candidate: applyCandidate,
+        });
+        if (commit.scope === 'actual' && result.reattributionRange) {
+          reattribution = {
+            siteId,
+            fromDate: result.reattributionRange.fromDate,
+            toDate: result.reattributionRange.toDate,
+            requestedByUserId: userId,
+            trigger: 'update',
+          };
+          queued = await enqueueReattributionOnClient(client, reattribution);
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    if (!result.unchanged) {
+      new SiteRepo().invalidateCache(siteId);
+    }
+    if (reattribution && queued) {
+      logReattributionEnqueued(reattribution, queued);
+    }
+    logEvent('info', 'tariff.selection.committed', {
+      scope: commit.scope,
+      candidateKind: commit.candidate.kind,
+      effectiveFrom: commit.effectiveFrom,
+      effectiveTo: commit.effectiveTo,
+      unchanged: result.unchanged,
+      verifiedAgainstBill: commit.verifiedAgainstBill,
+      accountId: accountFingerprint(userId),
+    });
+    return {
+      ...result,
+      timeline: await this.getTimeline(siteId, userId),
     };
   }
 
