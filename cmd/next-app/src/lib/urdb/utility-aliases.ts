@@ -34,5 +34,7 @@ export const WIRES_ONLY_UTILITIES: ReadonlySet<string> = new Set([
   'oncor electric delivery',
   'oncor electric delivery company llc',
   'aep texas',
+  'aep texas central',
+  'aep texas north',
   'texas-new mexico power',
 ]);

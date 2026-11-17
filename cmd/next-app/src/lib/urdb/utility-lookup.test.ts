@@ -51,6 +51,10 @@ describe('URDB utility lookup', () => {
   it.each([
     ['Budget Power', 'CenterPoint Energy'],
     ['Tesla Electric', 'CenterPoint Energy'],
+    ['Tesla Electric', 'AEP Texas Central Company'],
+    ['Tesla Electric', 'AEP Texas North Company'],
+    ['Tesla Electric', 'Oncor Electric Delivery Company LLC'],
+    ['Tesla Electric', 'Texas-New Mexico Power Co'],
     ['AGL', '*'],
     ['Alberta Cooperative Energy', 'FortisAlberta'],
     [null, null],
