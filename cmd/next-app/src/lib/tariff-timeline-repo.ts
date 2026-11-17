@@ -333,8 +333,10 @@ export function buildSiteTariffsTimelineResponse(
   if (rateCountry !== undefined) {
     const eligibility = deriveRatePlanEligibility(rateCountry);
     const hasIneligiblePublicSelection =
-      eligibility === 'outside_us' &&
-      [...periods, ...referencePeriods].some(p => p.source === 'estimated');
+      eligibility !== 'us' &&
+      [...periods, ...referencePeriods].some(
+        p => p.source === 'estimated' && (p.choiceKind === 'owner' || p.updatedBy !== null)
+      );
     rateCountryDTO = {
       countryCode: rateCountry ?? null,
       source: rateCountry ? (rateCountrySource ?? null) : null,

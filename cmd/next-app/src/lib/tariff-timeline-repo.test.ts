@@ -1365,7 +1365,106 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
       utilityName: null,
       eligibility: 'outside_us',
       needsCountryConfirmation: false,
+      hasIneligiblePublicSelection: true,
       historyGuide: null,
+    });
+
+    // Uncleaned automatic public estimates on unknown/outside-US sites must NOT count as owner public selections.
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return {
+          rows: [{
+            id: 's-unknown-auto',
+            timezone: 'America/Chicago',
+            installed: '2024-01-01T00:00:00Z',
+            currency: 'USD',
+            rate_country: null,
+            rate_country_source: null,
+            rate_country_updated_at: null,
+          }],
+        };
+      }
+      if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 2,
+            tariff_id: 78,
+            effective_from: '2025-01-01',
+            effective_to: null,
+            source: 'estimated',
+            updated_by_user_id: null,
+            updated_by_email: null,
+            name: 'Auto Estimate',
+            version: 1,
+            content_hash: 'h-auto',
+            selection_id: null,
+            choice_kind: null,
+            candidate_kind: null,
+            selected_by_user_id: null,
+            urdb_label: 'urdb-auto',
+            utility_name: 'Legacy US Utility',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'published',
+            holidays_use_weekend: true,
+            approximation_notes: [],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const unknownAutoTimeline = await repo.getTimeline('s-unknown-auto', 'u1');
+    expect(unknownAutoTimeline.rateCountry?.hasIneligiblePublicSelection).toBe(false);
+
+    // Retained owner public selection on an unknown site surfaces hasIneligiblePublicSelection: true.
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return {
+          rows: [{
+            id: 's-unknown-owner',
+            timezone: 'America/Chicago',
+            installed: '2024-01-01T00:00:00Z',
+            currency: 'USD',
+            rate_country: null,
+            rate_country_source: null,
+            rate_country_updated_at: null,
+          }],
+        };
+      }
+      if (sql.includes('FROM "TariffReferencePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 3,
+            tariff_id: 79,
+            effective_from: '2025-01-01',
+            effective_to: null,
+            source: 'estimated',
+            updated_by_user_id: 'u1',
+            updated_by_email: 'owner@example.com',
+            name: 'Owner Public Ref Plan',
+            version: 1,
+            content_hash: 'h-pub-ref',
+            selection_id: 502,
+            choice_kind: 'owner',
+            candidate_kind: 'public',
+            selected_by_user_id: 'u1',
+            urdb_label: 'urdb-ref',
+            utility_name: 'Legacy US Utility',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'published',
+            holidays_use_weekend: true,
+            approximation_notes: [],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const unknownOwnerRefTimeline = await repo.getTimeline('s-unknown-owner', 'u1');
+    expect(unknownOwnerRefTimeline.rateCountry).toMatchObject({
+      countryCode: null,
+      eligibility: 'unknown',
+      hasIneligiblePublicSelection: true,
     });
   });
 });

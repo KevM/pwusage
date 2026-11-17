@@ -297,6 +297,9 @@ describe('estimate-job', () => {
     const [sql, params] = dbMocks.queryMock.mock.calls[0] as [string, [number, string[]]];
     expect(sql).toContain('s.rate_country = ANY($2::text[])');
     expect(sql).toContain("u.status = 'ready' AND u.next_check_at IS NOT NULL AND u.next_check_at <= now()");
+    expect(sql).toContain('FROM "TariffReferencePeriod" r');
+    expect(sql).toContain('LEFT JOIN "TariffSelection" ts ON ts.id = r.selection_id');
+    expect(sql).toContain("COALESCE(ts.choice_kind, 'automatic') <> 'owner'");
     expect(params[0]).toBe(10);
     expect(params[1]).toEqual(expect.arrayContaining(['US', 'PR', 'VI', 'GU', 'AS', 'MP', 'UM']));
   });

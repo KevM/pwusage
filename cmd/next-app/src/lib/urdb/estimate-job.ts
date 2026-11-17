@@ -358,14 +358,16 @@ export async function runUrdbEstimatesCron(opts: { maxTimeMs: number; maxSites: 
                WHERE p.site_id = s.id
                  AND p.source = 'estimated'
                  AND p.updated_by_user_id IS NULL
-                 AND COALESCE(ts.choice_kind, 'auto') <> 'owner'
+                 AND COALESCE(ts.choice_kind, 'automatic') <> 'owner'
              )
              OR EXISTS (
                SELECT 1
                FROM "TariffReferencePeriod" r
+               LEFT JOIN "TariffSelection" ts ON ts.id = r.selection_id
                WHERE r.site_id = s.id
                  AND r.source = 'estimated'
                  AND r.updated_by_user_id IS NULL
+                 AND COALESCE(ts.choice_kind, 'automatic') <> 'owner'
              )
            )
          )

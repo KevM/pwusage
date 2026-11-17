@@ -351,14 +351,14 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     const refTariffRes = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
-       VALUES ('s7', 'Flat Reference', 2, FALSE, 'manual') RETURNING id`
+       VALUES ('s7', 'Flat Reference', 2, FALSE, 'estimated') RETURNING id`
     );
     const refTariffId = refTariffRes.rows[0].id;
 
     // Overlapping a Tesla span in TariffEffectivePeriod is accepted in TariffReferencePeriod.
     await local.database.query(
-      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
-       VALUES ('s7', $1, '2024-01-01', NULL, 'u1')`,
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id)
+       VALUES ('s7', $1, '2024-01-01', NULL, 'estimated', NULL)`,
       [refTariffId]
     );
 
@@ -1871,7 +1871,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       expect(restorePreview.restoration.canApplyRestoration).toBe(true);
       expect(restorePreview.affectedIntervals.map(i => [i.effectiveFrom, i.effectiveTo, i.after?.tariffId])).toEqual([
         ['2025-03-01', '2025-06-30', t1],
-        ['2025-07-01', '2025-09-30', t2],
+        ['2025-07-01', '2025-08-31', t2],
+        ['2025-09-01', '2025-09-30', t2],
       ]);
 
       const restored = await commitTariffSelection(
@@ -2246,6 +2247,116 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         ['tesla', 'owner', teslaTariffId],
         ['manual', 'owner', expect.any(Number)],
       ]);
+    });
+
+    it('flags retained owner public selections on unknown sites without flagging automatic estimates, and skips owner-selected reference periods in cron cleanup', async () => {
+      const unknownSiteId = 's-unknown-owner-vs-auto';
+      const ownerRefSiteId = 's-ca-owner-ref-cron';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', NULL, NULL),
+                ($2, 'u1', 'America/Toronto', '{"currency":"CAD"}', NULL, 'CA', 'owner')`,
+        [unknownSiteId, ownerRefSiteId]
+      );
+
+      const repo = new TariffTimelineRepo();
+
+      // 1. An uncleaned automatic public estimate on an unknown site has hasIneligiblePublicSelection = false.
+      const autoEstTariffId = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Auto Uncleaned', 1, FALSE, 'estimated') RETURNING id`,
+        [unknownSiteId]
+      )).rows[0]!.id;
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', NULL, 'estimated')`,
+        [unknownSiteId, autoEstTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status) VALUES ($1, 'auto', 'ready')`,
+        [unknownSiteId]
+      );
+      const beforeUnknown = await repo.getTimeline(unknownSiteId, 'u1');
+      expect(beforeUnknown.rateCountry).toMatchObject({
+        countryCode: null,
+        eligibility: 'unknown',
+        hasIneligiblePublicSelection: false,
+      });
+      expect(beforeUnknown.estimates?.hasIneligiblePublicSelection).toBe(false);
+
+      // 2. Replace automatic estimate with an explicit owner public selection while country stays unknown ('unknown').
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [unknownSiteId]);
+      await repo.applySelection(unknownSiteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Public While Unknown',
+          seasons: simpleSeasons(0.21, 0.05),
+          urdbLabel: 'urdb-owner-unknown',
+          utilityName: 'We Energies',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      const unknownWithOwner = await repo.getTimeline(unknownSiteId, 'u1');
+      expect(unknownWithOwner.rateCountry).toMatchObject({
+        countryCode: null,
+        eligibility: 'unknown',
+        hasIneligiblePublicSelection: true,
+      });
+      expect(unknownWithOwner.estimates).toMatchObject({
+        eligibility: 'unknown',
+        needsCountryConfirmation: true,
+        hasIneligiblePublicSelection: true,
+      });
+
+      // 3. Outside-US site with ONLY an owner-selected public reference period (even with updated_by_user_id IS NULL)
+      //    must NOT be picked up as dirty automatic cleanup by runUrdbEstimatesCron.
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status, next_check_at) VALUES ($1, 'auto', 'ready', NULL)`,
+        [ownerRefSiteId]
+      );
+      await repo.applySelection(ownerRefSiteId, {
+        scope: 'reference',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Reference Public',
+          seasons: simpleSeasons(0.19, 0.04),
+          urdbLabel: 'urdb-owner-ref',
+          utilityName: 'We Energies',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      await local.database.query(
+        `UPDATE "TariffReferencePeriod" SET updated_by_user_id = NULL WHERE site_id = $1`,
+        [ownerRefSiteId]
+      );
+
+      await local.database.query(`UPDATE "Site" SET orphaned_at = now() WHERE id <> $1`, [ownerRefSiteId]);
+      onTestFinished(async () => {
+        await local.database.query(`UPDATE "Site" SET orphaned_at = NULL`);
+      });
+      const cronApi: UrdbApi = {
+        utilityNames: vi.fn(async () => { throw new Error('unexpected OpenEI utilityNames'); }),
+        ratesEffectiveOn: vi.fn(async () => { throw new Error('unexpected OpenEI ratesEffectiveOn'); }),
+        rateByLabel: vi.fn(async () => null),
+        defaultRates: vi.fn(async () => { throw new Error('unexpected OpenEI defaultRates'); }),
+      };
+      const cronRes = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 10, api: cronApi });
+      expect(cronRes.sites).toEqual([]);
+      const refPeriodStillThere = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffReferencePeriod" WHERE site_id = $1`,
+        [ownerRefSiteId]
+      );
+      expect(refPeriodStillThere.rows).toEqual([{ n: 1 }]);
     });
   });
 });
