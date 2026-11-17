@@ -31,14 +31,22 @@ final class RatePlanHistoryModel {
         self.saveHistory = saveHistory
     }
 
+    /// Loads the history once. A view's `.task` can run again (a sheet re-appears), so an
+    /// in-progress flow is never discarded: use `reload()` to start over.
     func load() async {
+        if case .ready = state { return }
+        await reload()
+    }
+
+    /// Fetches the history again and starts the flow over; the Try Again button's path.
+    func reload() async {
         state = .loading
         errorMessage = nil
         do {
             let history = try await loadHistory()
             state = .ready(RatePlanHistoryFlow(history: history, hasTeslaPlan: hasTeslaPlan))
         } catch {
-            guard !Task.isCancelled else { return }
+            // A cancelled load (the view went away) ends as failed too, never stuck at loading.
             state = .failed
         }
     }

@@ -10,6 +10,8 @@ private final class HistoryStub {
         years: [RatePlanHistoryYearDTO(year: 2025, askDate: "2025-07-01", plans: [HistoryStub.fixed(2025)])]
     )
     var loadFailure: (any Error)?
+    /// When set, `loadHistory` suspends until cancelled instead of returning.
+    var loadsUntilCancelled = false
     var saveFailure: (any Error)?
     private(set) var saved: [[RatePlanHistoryPeriod]] = []
 
@@ -24,6 +26,7 @@ private final class HistoryStub {
         RatePlanHistoryModel(
             hasTeslaPlan: true,
             loadHistory: { [self] in
+                if loadsUntilCancelled { try await Task.sleep(for: .seconds(60)) }
                 if let loadFailure { throw loadFailure }
                 return history
             },
@@ -55,11 +58,41 @@ struct RatePlanHistoryModelTests {
         await model.load()
         #expect(model.state == .failed)
         stub.loadFailure = nil
-        await model.load()
+        await model.reload()
         guard case .ready = model.state else {
             Issue.record("expected ready after retry")
             return
         }
+    }
+
+    @Test func loadKeepsAnInProgressFlow() async {
+        let stub = HistoryStub()
+        let model = stub.model()
+        await model.load()
+        model.update { $0.chooseKind(.fixed) }
+        let answered = model.state
+        #expect(answered != .ready(RatePlanHistoryFlow(history: stub.history, hasTeslaPlan: true)))
+        await model.load()
+        #expect(model.state == answered)
+    }
+
+    @Test func reloadStartsOver() async {
+        let stub = HistoryStub()
+        let model = stub.model()
+        await model.load()
+        model.update { $0.chooseKind(.fixed) }
+        await model.reload()
+        #expect(model.state == .ready(RatePlanHistoryFlow(history: stub.history, hasTeslaPlan: true)))
+    }
+
+    @Test func cancelledLoadDoesNotStayLoading() async {
+        let stub = HistoryStub()
+        stub.loadsUntilCancelled = true
+        let model = stub.model()
+        let task = Task { await model.load() }
+        task.cancel()
+        await task.value
+        #expect(model.state == .failed)
     }
 
     @Test func saveSendsPeriodsAndFinishes() async {
