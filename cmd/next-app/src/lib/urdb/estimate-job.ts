@@ -15,7 +15,7 @@ import { layoutTimeline } from '../tariff-estimates';
 import * as client from './client';
 import { urdbRateToSeasons } from './convert';
 import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, urdbStartDate, walkSupersedes, type RevisionSpan } from './match';
-import { resolveUtility } from './utility-lookup';
+import { normalizeUtilityName, resolveUtility } from './utility-lookup';
 import type { UrdbRate } from './types';
 import type { TariffSeasonInput } from '../tariff-contract';
 
@@ -26,6 +26,13 @@ type Converted = { span: RevisionSpan; seasons: TariffSeasonInput[]; name: strin
 type PlanBackfill = { tariffId: number; name: string | null; code: string | null };
 type Preview = { planBackfill: PlanBackfill | null; matchOutcomes: Array<'matched' | 'no_match' | 'unconvertible' | 'no_utility'>; fallbackTariffIds: number[]; ownerPicked: boolean; status: SiteUtilityStatus; utilityName: string | null; anchors: Anchor[]; actual: Converted[]; reference: Converted[]; changed: Array<{ from: string; to: string | null }> };
 const MAX_REVISIONS = 80;
+// URDB lists some utilities under an alias ("We energies") whose rates it files under another name
+// ("Wisconsin Electric Power Co"), so accept the names of the rates URDB lists for the stored utility.
+export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: string, inEffect: UrdbRate[]): boolean {
+  if (!selected) return false;
+  const names = new Set([utilityName, ...inEffect.map(rate => rate.utility)].map(normalizeUtilityName));
+  return names.has(normalizeUtilityName(selected.utility));
+}
 async function snapshot(siteId: string): Promise<Snapshot> {
   const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, COALESCE(s.timezone, 'UTC') AS timezone, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
@@ -82,6 +89,8 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const utilityName = utility?.choice === 'owner' ? utility.urdb_utility : resolveUtility(site.utility, names);
   if (!utilityName) return empty('needs_utility', null);
   const today = siteLocalDateString(now, site.timezone);
+  let inEffectToday: Promise<UrdbRate[]> | undefined;
+  const ratesToday = () => (inEffectToday ??= api.ratesEffectiveOn(utilityName, today, site.timezone));
   const matches: Array<UrdbRate | null> = [];
   const anchors: Anchor[] = [];
   // Earlier versions can own no span (the historic backfill spanned only the current version, and
@@ -99,7 +108,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   }
   if (matches.at(-1)) {
     const latest = matches.at(-1) as UrdbRate;
-    const newer = await newerRevision(latest, await api.ratesEffectiveOn(utilityName, today, site.timezone), api.rateByLabel);
+    const newer = await newerRevision(latest, await ratesToday(), api.rateByLabel);
     const anchor = anchors.find(item => item.tariffId === tariffs.at(-1)?.id);
     if (anchor) anchor.newer = newer;
   }
@@ -108,8 +117,8 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   // Owner plans added after a pick only take their own days: layout keeps them and the picked
   // chain still fills the rest, so the pick applies whether or not manual plans exist.
   if (!tariffs.length && utility?.urdb_plan_label) {
-    const selected = await api.rateByLabel(utility.urdb_plan_label);
-    if (selected?.utility === utilityName) start = selected;
+    const [selected, inEffect] = await Promise.all([api.rateByLabel(utility.urdb_plan_label), ratesToday()]);
+    if (ownerPlanMatchesUtility(selected, utilityName, inEffect)) start = selected;
   }
   // Keep the matched revision itself open-ended: the Tesla span cannot always move back to its start
   // (owner-dated, or a manual plan in between), and layout gives Tesla and manual spans precedence.
