@@ -2,6 +2,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { IoDeadlineError, withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, flushLogEvents, observeRoute, setLogContext } from '@/lib/observability';
+import { PublicPlansIneligibleError, publicPlansIneligiblePayload } from '@/lib/rate-plan-eligibility';
 import { isCrossOriginRequest } from '@/lib/request-security';
 import { jsonWithETag } from '@/lib/tariff-etag';
 import { REATTRIBUTION_AFTER_MAX_TIME_MS, runSiteReattribution } from '@/lib/tariff-reattribution';
@@ -63,6 +64,9 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
           },
           409
         );
+      }
+      if (error instanceof PublicPlansIneligibleError) {
+        return json(publicPlansIneligiblePayload(error), 409);
       }
       if (error instanceof UtilityChangedError) return json({ error: error.message }, 409);
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) {

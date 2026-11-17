@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { IoDeadlineError, withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
+import {
+  assertSiteContextUsEligible,
+  PublicPlansIneligibleError,
+  publicPlansIneligiblePayload,
+} from '@/lib/rate-plan-eligibility';
 import { isCrossOriginRequest } from '@/lib/request-security';
 import { jsonWithETag } from '@/lib/tariff-etag';
 import { siteLocalDateString, TariffValidationError } from '@/lib/tariff-timeline';
@@ -26,6 +31,7 @@ export function GET(req: NextRequest, context: { params: Promise<{ id: string }>
       const repo = new TariffTimelineRepo();
       const site = await repo.getSiteUtilityContext(siteId);
       if (!site) throw new TariffNotFoundError('Site not found');
+      assertSiteContextUsEligible(site);
       const utilityName = site.name;
       if (!utilityName) return json({ error: 'Choose a utility first.' }, 409);
       const today = siteLocalDateString(new Date(), site.timezone);
@@ -35,6 +41,7 @@ export function GET(req: NextRequest, context: { params: Promise<{ id: string }>
       return json(await withIoDeadline(45_000, () => buildRatePlanHistory({ api, utilityName, timeZone: site.timezone, today, window, tesla })));
     } catch (error) {
       if (error instanceof urdb.UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
+      if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);
       return json({ error: 'Could not load rate plan history.', ...errorFields(error) }, 500);
@@ -84,6 +91,7 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const repo = new TariffTimelineRepo();
       const site = await repo.getSiteUtilityContext(siteId);
       if (!site) throw new TariffNotFoundError('Site not found');
+      assertSiteContextUsEligible(site);
       const utilityName = site.name;
       if (!utilityName) return json({ error: 'Choose a utility first.' }, 409);
       const now = new Date();
@@ -103,6 +111,7 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       return jsonWithETag(await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null));
     } catch (error) {
       if (error instanceof urdb.UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
+      if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);
       if (error instanceof UtilityChangedError) return json({ error: 'Utility changed. Start again.' }, 409);
       if (error instanceof HistoryPeriodError || error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);

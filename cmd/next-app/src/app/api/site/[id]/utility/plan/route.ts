@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { IoDeadlineError, withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
+import {
+  assertSiteContextUsEligible,
+  PublicPlansIneligibleError,
+  publicPlansIneligiblePayload,
+} from '@/lib/rate-plan-eligibility';
 import { isCrossOriginRequest } from '@/lib/request-security';
 import { jsonWithETag } from '@/lib/tariff-etag';
 import { siteLocalDateString, TariffValidationError } from '@/lib/tariff-timeline';
@@ -31,6 +36,7 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const repo = new TariffTimelineRepo();
       const site = await repo.getSiteUtilityContext(siteId);
       if (!site) throw new TariffNotFoundError('Site not found');
+      assertSiteContextUsEligible(site);
       const utility = site.name;
       if (!utility) return json({ error: 'Choose a utility first.' }, 409);
       const today = siteLocalDateString(new Date(), site.timezone);
@@ -41,6 +47,7 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       return jsonWithETag(await repo.setSitePlanLabel(siteId, user.id, input.label, utility));
     } catch (error) {
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
+      if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);
       if (error instanceof UtilityChangedError) return json({ error: 'Utility changed. Choose a plan again.' }, 409);
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);

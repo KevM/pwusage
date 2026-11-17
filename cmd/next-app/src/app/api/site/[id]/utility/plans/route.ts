@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { IoDeadlineError, withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
+import { PublicPlansIneligibleError, publicPlansIneligiblePayload } from '@/lib/rate-plan-eligibility';
 import { listPublicUtilityPlansForSite } from '@/lib/tariff-selection-service';
 import { TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, UtilityChangedError } from '@/lib/tariff-timeline-repo';
@@ -30,6 +31,9 @@ export function GET(req: NextRequest, context: { params: Promise<{ id: string }>
     } catch (error) {
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) {
         return json({ error: 'Utility rates are unavailable right now.' }, 503);
+      }
+      if (error instanceof PublicPlansIneligibleError) {
+        return json(publicPlansIneligiblePayload(error), 409);
       }
       if (error instanceof UtilityChangedError) return json({ error: error.message }, 409);
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);

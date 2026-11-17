@@ -33,8 +33,12 @@ import { isFixedRate, urdbRateToSeasons } from './urdb/convert';
 import { monthlyUsage as defaultMonthlyUsage, ownerPlanMatchesUtility, type UrdbApi } from './urdb/estimate-job';
 import { memoisedApi } from './urdb/memoised-api';
 import { urdbStartDate } from './urdb/match';
+import {
+  assertUsRatePlanEligibility,
+  deriveRatePlanEligibility,
+  type RatePlanEligibility,
+} from './rate-plan-eligibility';
 import type { UrdbRate } from './urdb/types';
-import { isOutsideUs } from './urdb/us-time-zones';
 import { normalizeUtilityName } from './urdb/utility-lookup';
 
 type UrdbRateWithCurrency = UrdbRate & { currency?: unknown };
@@ -63,22 +67,14 @@ function round5(value: number): number {
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 
-export function deriveSitePublicPlanEligibility(ctx: {
-  timezone: string;
-  currency: string;
-  utilityChoice: 'auto' | 'owner' | 'skipped' | null;
-}): 'us' | 'outside_us' | 'unknown' {
-  if (ctx.currency.trim().toUpperCase() !== 'USD') {
-    return 'outside_us';
+function siteEligibilityFromContext(ctx: {
+  eligibility?: RatePlanEligibility;
+  rateCountry?: string | null;
+}): RatePlanEligibility {
+  if (ctx.eligibility !== undefined) {
+    return ctx.eligibility;
   }
-  if (isOutsideUs(ctx.timezone)) {
-    return 'outside_us';
-  }
-  const tz = ctx.timezone.trim();
-  if (!tz || tz === 'UTC' || tz.startsWith('Etc/')) {
-    return ctx.utilityChoice === 'owner' ? 'us' : 'unknown';
-  }
-  return 'us';
+  return deriveRatePlanEligibility(ctx.rateCountry ?? null);
 }
 
 function assertSiteCurrencySupportsPublicPlans(siteCurrency: string): void {
@@ -381,6 +377,8 @@ export async function listPublicUtilityPlansForSite(
     validateEffectiveDates(effectiveDate, null, today);
   }
 
+  assertUsRatePlanEligibility(siteEligibilityFromContext(site));
+
   const utility = site.name;
   if (!utility || site.choice === 'skipped') {
     throw new UtilityChangedError('Choose a utility first.');
@@ -440,6 +438,7 @@ export async function listPublicUtilityPlansForSite(
 
 async function preparePublicRateOutsideLock(params: {
   siteId: string;
+  eligibility: RatePlanEligibility;
   utilityName: string | null;
   utilityChoice: 'auto' | 'owner' | 'skipped' | null;
   siteCurrency: string;
@@ -452,6 +451,7 @@ async function preparePublicRateOutsideLock(params: {
   urdb: Pick<UrdbApi, 'ratesEffectiveOn' | 'rateByLabel'>;
   monthlyUsage: (siteId: string, timezone: string, now: Date) => Promise<number | null>;
 }): Promise<{ rate: UrdbRate; preLockUtilityName: string; medianMonthlyKwh: number | null }> {
+  assertUsRatePlanEligibility(params.eligibility);
   if (!params.utilityName || params.utilityChoice === 'skipped') {
     throw new UtilityChangedError('Choose a utility first.');
   }
@@ -506,6 +506,7 @@ export async function previewTariffSelection(
   const timezone = site.timezone || 'UTC';
   const siteCurrency = (site.currency || 'USD').trim().toUpperCase();
   const today = siteLocalDateString(now, timezone);
+  const eligibility = siteEligibilityFromContext(site);
 
   const validatedRequest = validateTariffSelectionRequest(rawRequest, today);
   if (validatedRequest.scope === 'reference' && validatedRequest.candidate.kind === 'restore_tesla') {
@@ -515,6 +516,7 @@ export async function previewTariffSelection(
   const preparedPublic = validatedRequest.candidate.kind === 'public'
     ? await preparePublicRateOutsideLock({
         siteId,
+        eligibility,
         utilityName: site.name,
         utilityChoice: site.choice ?? null,
         siteCurrency,
@@ -566,12 +568,6 @@ export async function previewTariffSelection(
     );
   }
 
-  const eligibility = deriveSitePublicPlanEligibility({
-    timezone,
-    currency: siteCurrency,
-    utilityChoice: site.choice ?? null,
-  });
-
   return buildTariffSelectionPreview({
     siteId,
     timezone,
@@ -602,6 +598,7 @@ export async function commitTariffSelection(
   const timezone = site.timezone || 'UTC';
   const siteCurrency = (site.currency || 'USD').trim().toUpperCase();
   const today = siteLocalDateString(now, timezone);
+  const eligibility = siteEligibilityFromContext(site);
 
   const commit = validateTariffSelectionCommit(rawCommit, today);
   if (commit.scope === 'reference' && commit.candidate.kind === 'restore_tesla') {
@@ -611,6 +608,7 @@ export async function commitTariffSelection(
   const publicRate = commit.candidate.kind === 'public'
     ? await preparePublicRateOutsideLock({
         siteId,
+        eligibility,
         utilityName: site.name,
         utilityChoice: site.choice ?? null,
         siteCurrency,
@@ -630,7 +628,7 @@ export async function commitTariffSelection(
     commit,
     publicRate,
     resolvePublicPlan: buildResolvedPublicPlan,
-    deriveEligibility: deriveSitePublicPlanEligibility,
+    deriveEligibility: ({ rateCountry }) => deriveRatePlanEligibility(rateCountry),
     now,
   });
 }

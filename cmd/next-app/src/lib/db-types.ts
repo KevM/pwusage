@@ -22,6 +22,9 @@ export interface User {
   session_version?: number; // Bumped on sign-out-everywhere; embedded in site_auth JWT as `sv`
 }
 
+export type RateCountrySource = 'solar_location' | 'owner';
+export type RatePlanEligibility = 'us' | 'outside_us' | 'unknown';
+
 export interface Site {
   tesla_refresh_state?: User['tesla_refresh_state'];
   refresh_lock_expires?: number;
@@ -29,6 +32,9 @@ export interface Site {
   user_id?: string | null; // FK to User
   name: string;
   utility?: string | null;
+  rate_country?: string | null;
+  rate_country_source?: RateCountrySource | null;
+  rate_country_updated_at?: Date | string | null;
   updated: Date;
   installed: Date;
   timezone: string;

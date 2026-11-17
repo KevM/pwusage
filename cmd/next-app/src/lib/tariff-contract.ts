@@ -1,5 +1,7 @@
 import type {
   ExportRateProvenance,
+  RateCountrySource,
+  RatePlanEligibility,
   TariffReattributionStatus,
   TariffSelectionChoiceKind,
   TariffSelectionScope,
@@ -7,7 +9,13 @@ import type {
   TariffStartSource,
 } from './db-types';
 
-export type { ExportRateProvenance, TariffSelectionChoiceKind, TariffSelectionScope };
+export type {
+  ExportRateProvenance,
+  RateCountrySource,
+  RatePlanEligibility,
+  TariffSelectionChoiceKind,
+  TariffSelectionScope,
+};
 
 export type TariffPeriodName = 'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK';
 
@@ -116,6 +124,14 @@ export interface RatePlanHistoryResponse {
   years: RatePlanHistoryYear[];
 }
 
+export interface SiteRateCountryDTO {
+  countryCode: string | null;
+  source: RateCountrySource | null;
+  updatedAt: string | null;
+  eligibility: RatePlanEligibility;
+  hasIneligiblePublicSelection?: boolean;
+}
+
 export interface EstimatesStatusDTO {
   status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
   utilityName: string | null;
@@ -129,6 +145,12 @@ export interface EstimatesStatusDTO {
   mayBeOutdated: boolean;
   /** Offer to walk the owner through past rate plans; null when there is nothing to fill. */
   historyGuide: { historyStart: string; fillThrough: string | null; unconfirmedDays: number } | null;
+  /** Additive US public-rate-plan eligibility derived from stored site country. */
+  eligibility?: RatePlanEligibility;
+  /** True when site country has not been confirmed yet and requires country confirmation rather than US utility search. */
+  needsCountryConfirmation?: boolean;
+  /** True when an ineligible site retains an explicit owner-selected public rate plan requiring review/replacement. */
+  hasIneligiblePublicSelection?: boolean;
 }
 
 export interface SiteTariffsTimelineResponse {
@@ -139,6 +161,8 @@ export interface SiteTariffsTimelineResponse {
   periods: TariffPeriodDTO[];
   referencePeriods: TariffPeriodDTO[];
   estimates: EstimatesStatusDTO | null;
+  /** Additive country provenance and derived US public-plan eligibility for the site. */
+  rateCountry?: SiteRateCountryDTO;
   battery: SiteBatteryDTO | null;
   systemCosts: SystemCostsDTO;
   reattribution: ReattributionStatusDTO | null;

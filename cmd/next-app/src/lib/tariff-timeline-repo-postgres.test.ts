@@ -33,8 +33,9 @@ import {
 import type { TariffSeasonInput } from './tariff-contract';
 import type { ExpandedRevision } from './urdb/history-expand';
 import type { TariffPlanWriteInput } from './tariff-timeline';
+import { PublicPlansIneligibleError } from './rate-plan-eligibility';
 import { siteLocalDateString, addCalendarDays, TariffValidationError } from './tariff-timeline';
-import { runUrdbEstimatesForSite } from './urdb/estimate-job';
+import { runUrdbEstimatesCron, runUrdbEstimatesForSite } from './urdb/estimate-job';
 import type { UrdbApi } from './urdb/estimate-job';
 import type { UrdbRate } from './urdb/types';
 
@@ -112,9 +113,15 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const ownerHistoryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_owner_history.sql'));
     if (!ownerHistoryMigration) throw new Error('URDB owner history migration missing');
     await local.database.query(await readFile(`db-migrations/${ownerHistoryMigration}`, 'utf8'));
+    const systemCostsMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_system_costs.sql'));
+    if (!systemCostsMigration) throw new Error('Site system costs migration missing');
+    await local.database.query(await readFile(`db-migrations/${systemCostsMigration}`, 'utf8'));
     const selectionProvenanceMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_selection_provenance.sql'));
     if (!selectionProvenanceMigration) throw new Error('Tariff selection provenance migration missing');
     await local.database.query(await readFile(`db-migrations/${selectionProvenanceMigration}`, 'utf8'));
+    const rateCountryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_rate_country.sql'));
+    if (!rateCountryMigration) throw new Error('Site rate country migration missing');
+    await local.database.query(await readFile(`db-migrations/${rateCountryMigration}`, 'utf8'));
 
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion('s1', {
@@ -409,9 +416,15 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const ownerHistoryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_owner_history.sql'));
     if (!ownerHistoryMigration) throw new Error('URDB owner history migration missing');
     await local.database.query(await readFile(`db-migrations/${ownerHistoryMigration}`, 'utf8'));
+    const systemCostsMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_system_costs.sql'));
+    if (!systemCostsMigration) throw new Error('Site system costs migration missing');
+    await local.database.query(await readFile(`db-migrations/${systemCostsMigration}`, 'utf8'));
     const selectionProvenanceMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_selection_provenance.sql'));
     if (!selectionProvenanceMigration) throw new Error('Tariff selection provenance migration missing');
     await local.database.query(await readFile(`db-migrations/${selectionProvenanceMigration}`, 'utf8'));
+    const rateCountryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_rate_country.sql'));
+    if (!rateCountryMigration) throw new Error('Site rate country migration missing');
+    await local.database.query(await readFile(`db-migrations/${rateCountryMigration}`, 'utf8'));
     const tariff = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
        VALUES ('s-estimated-source', 'Estimated', 1, FALSE, 'estimated') RETURNING id`
@@ -501,8 +514,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
   it('parks an unknown site utility without making rate queries', async () => {
     await local.database.query('ALTER TABLE "Site" ADD COLUMN utility TEXT, ADD COLUMN orphaned_at TIMESTAMPTZ');
     await local.database.query(
-      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
-       VALUES ('s-unknown-utility', 'u1', 'America/Chicago', '{}', 'Unlisted Local Utility')`
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ('s-unknown-utility', 'u1', 'America/Chicago', '{}', 'Unlisted Local Utility', 'US', 'owner')`
     );
     const api: UrdbApi = {
       utilityNames: async () => ['We Energies'],
@@ -522,7 +535,11 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('leaves a site outside the US ready with no estimates and no OpenEI calls', async () => {
     const siteId = 's-outside-us';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'Australia/Sydney', '{}', 'AGL')`, [siteId]);
+    await local.database.query(
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ($1, 'u1', 'Australia/Sydney', '{}', 'AGL', 'AU', 'owner')`,
+      [siteId]
+    );
     const api: UrdbApi = {
       utilityNames: async () => { throw new Error('Should not list OpenEI utilities for a site outside the US'); },
       ratesEffectiveOn: async () => { throw new Error('Should not request rates for a site outside the US'); },
@@ -558,8 +575,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       defaultRates: async () => [defaultRate],
     };
     await local.database.query(
-      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
-       VALUES ('s-picked-estimate', 'u1', 'America/Chicago', '{}', 'We Energies')`
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ('s-picked-estimate', 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`
     );
 
     const now = new Date('2026-11-16T12:00:00Z');
@@ -604,8 +621,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('keeps a manual plan inserted during URDB fetch and clips the estimate around it', async () => {
     await local.database.query(
-      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
-       VALUES ('s-owner-edit-during-fetch', 'u1', 'America/Chicago', '{}', 'We Energies')`
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ('s-owner-edit-during-fetch', 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`
     );
     await local.database.query(
       `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status)
@@ -677,7 +694,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('matches every Tesla version, even one that no longer owns a span, and walks back from the earliest match', async () => {
     const siteId = 's-unspanned-first-version';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion(siteId, flatTesla('Old Tesla', 0.25));
     await tariffRepo.addTariffVersion(siteId, flatTesla('Current Tesla', 0.18));
@@ -701,7 +718,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('keeps filling around a finite owner plan added after the owner picked a public plan', async () => {
     const siteId = 's-picked-then-manual';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
     const api = chainApi([flatRate('picked', '2025-01-01', 0.2)]);
     const now = new Date('2026-11-16T12:00:00Z');
@@ -725,10 +742,10 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('fills the days between the matched revision start and an owner-dated Tesla span with that revision', async () => {
     const siteId = 's-owner-dated-gap';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Owner Dated Tesla', 0.18));
     await local.database.query(`UPDATE "Tariff" SET updated = '2025-04-01T12:00:00Z' WHERE site_id = $1`, [siteId]);
-    await local.database.query(`UPDATE "TariffEffectivePeriod" SET effective_from = '2025-03-01', effective_to = NULL, updated_by_user_id = 'u1' WHERE site_id = $1`, [siteId]);
+    await local.database.query(`UPDATE "TariffEffectivePeriod" SET effective_from = '2025-03-01', effective_to = NULL, updated_by_user_id = 'u1', selection_id = NULL WHERE site_id = $1`, [siteId]);
 
     await runUrdbEstimatesForSite(siteId, chainApi([flatRate('rev-matched', '2025-01-01', 0.18)]), new Date('2026-11-16T12:00:00Z'));
 
@@ -745,7 +762,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       seasons: { Summer: { fromMonth: 1, fromDay: 1, toMonth: 12, toDay: 31, tou_periods: { OFF_PEAK: { periods: [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 0, fromMinute: 0, toHour: 0, toMinute: 0 }] } } } },
       energy_charges: { Summer: { rates: { OFF_PEAK: 0.4 } } },
     };
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', $2, 'We Energies')`, [siteId, { site_name: 'Home', tariff_content_v2: content }]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', $2, 'We Energies', 'US', 'owner')`, [siteId, { site_name: 'Home', tariff_content_v2: content }]);
     await new TariffRepo().addTariffVersion(siteId, parseTariffContent(content as unknown as Parameters<typeof parseTariffContent>[0], 'Home'));
     // Rows stored before content hashes existed have none.
     await local.database.query(`UPDATE "Tariff" SET content_hash = NULL WHERE site_id = $1`, [siteId]);
@@ -758,7 +775,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('removes estimates as soon as the owner says their utility is not listed', async () => {
     const siteId = 's-skip-utility-now';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
     await runUrdbEstimatesForSite(siteId, { ...chainApi([flatRate('picked', '2025-01-01', 0.2)]), defaultRates: async () => [flatRate('default', '2024-01-01', 0.15)] }, new Date('2026-11-16T12:00:00Z'));
     const before = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
@@ -817,7 +834,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('reports an out-of-date Tesla plan only from the latest Tesla version', async () => {
     const siteId = 's-out-of-date-latest';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla Old', 0.2));
     await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla New', 0.21));
@@ -834,7 +851,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('reports the newer URDB revision start and the estimate freshness on the wire', async () => {
     const siteId = 's-estimate-freshness';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
     const teslaId = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`, [siteId])).rows[0]!.id;
     await local.database.query(`UPDATE "SiteUtility" SET status = 'ready', urdb_utility = 'Wisconsin Electric Power Co' WHERE site_id = $1`, [siteId]);
@@ -855,7 +872,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('dates estimate freshness from the URDB revision, not the span clipped to the site history', async () => {
     const siteId = 's-estimate-freshness-clipped';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility) VALUES ($1, 'auto', 'ready', 'Wisconsin Electric Power Co')`, [siteId]);
     const id = (await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Residential', 1, TRUE, 'estimated') RETURNING id`, [siteId]
@@ -871,7 +888,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('starts a site\'s first Tesla plan at its first archived day and later plans at today', async () => {
     const siteId = 's-first-plan-history';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     // Site-local midnights (America/Chicago, CST): the first archived day is 2024-03-05.
     await local.database.query(
       `INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status) VALUES
@@ -961,7 +978,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('clears needs_plan once the owner adds a rate plan', async () => {
     const siteId = 's-needs-plan-cleared';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status, next_check_at) VALUES ($1, 'Wisconsin Electric Power Co', 'auto', 'needs_plan', now() + interval '7 days')`, [siteId]);
 
     const timeline = await new TariffTimelineRepo().createManualPeriod(siteId, 'u1', {
@@ -998,7 +1015,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       rateByLabel: async () => null,
       defaultRates: async () => [defaultRate],
     };
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     const tariffId = await ownerHistoryTariff(siteId, 'Owner History Plan');
 
     await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
@@ -1034,7 +1051,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-16T18:00:00Z') });
     onTestFinished(() => { vi.useRealTimers(); });
     const siteId = 's-history-guide';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z', 'US', 'owner')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
     // The database stamps `updated` with the real clock; pin it to the faked day.
     await local.database.query(`UPDATE "Tariff" SET updated = '2026-11-16 17:00:00' WHERE site_id = $1 AND source = 'tesla'`, [siteId]);
@@ -1074,7 +1091,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     /** Harrison: history from 2023-11-14, Tesla first seen 2026-04-28 and backfilled to the history start. */
     async function harrisonSite(siteId: string, tesla: 'real' | 'default' | 'none' = 'real') {
-      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z', 'US', 'owner')`, [siteId]);
       await local.database.query(`INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status) VALUES ($1, '2023-11-14T06:00:00Z', gen_random_uuid(), 'complete')`, [siteId]);
       if (tesla !== 'none') {
         await new TariffRepo().addTariffVersion(siteId, tesla === 'real' ? flatTesla('Tesla Plan', 0.2) : buildDefaultTariff('Default Rate'));
@@ -1358,7 +1375,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     it('protects owner-selected public plans on actual and reference scopes from estimate rebuilds, Tesla imports, and utility skip', async () => {
       const siteId = 's-sel-public-protect';
-      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
       await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'urdb-auto', 'pending')`, [siteId]);
 
       const repo = new TariffTimelineRepo();
@@ -1426,7 +1443,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     it('captures original Tesla versions across intervals and restores exact saved versions while remaining protected', async () => {
       const siteId = 's-sel-restore-exact';
-      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
 
       const tariffRepo = new TariffRepo();
       await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v1', 0.16));
@@ -1502,7 +1519,13 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
       // Restored Tesla spans stay protected against another newer Tesla import and URDB estimates.
       await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v4 Even Newer', 0.39));
-      await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'urdb-auto', 'pending')`, [siteId]);
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status)
+         VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'urdb-auto', 'pending')
+         ON CONFLICT (site_id) DO UPDATE
+         SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = EXCLUDED.urdb_plan_label, status = EXCLUDED.status`,
+        [siteId]
+      );
       await runUrdbEstimatesForSite(siteId, chainApi([flatRate('urdb-auto', '2025-01-01', 0.25)]), new Date('2026-11-16T12:00:00Z'));
 
       const afterSync = await repo.getTimeline(siteId, 'u1');
@@ -1597,9 +1620,9 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       const siteId = 's-sel-e2e';
       const otherSiteId = 's-sel-other';
       await local.database.query(
-        `INSERT INTO "Site"(id, user_id, timezone, json, utility, installed)
-         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z'),
-                ($2, 'u2', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z')`,
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, installed, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z', 'US', 'owner'),
+                ($2, 'u2', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z', 'US', 'owner')`,
         [siteId, otherSiteId]
       );
       await local.database.query(
@@ -1895,6 +1918,334 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           { now: fixedNow, repo }
         )
       ).rejects.toThrow(TariffValidationError);
+    });
+  });
+
+  describe('site rate country & US eligibility (postgres)', () => {
+    const simpleSeasons = (buy: number, sell = 0.04): TariffSeasonInput[] => [{
+      name: 'All Year',
+      fromMonth: 1,
+      toMonth: 12,
+      weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: sell }],
+      weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: sell }],
+    }];
+
+    it('migration is idempotent, rejects invalid country constraints, and preserves owner precedence and clearing', async () => {
+      const migFile = (await readdir('db-migrations')).find(f => f.endsWith('_site_rate_country.sql'));
+      expect(migFile).toBeDefined();
+      const migSql = await readFile(`db-migrations/${migFile!}`, 'utf8');
+      await local.database.query(migSql);
+      await local.database.query(migSql);
+
+      const siteId = 's-country-precedence';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies')`,
+        [siteId]
+      );
+      await expect(
+        local.database.query(`UPDATE "Site" SET rate_country = 'us', rate_country_source = 'owner' WHERE id = $1`, [siteId])
+      ).rejects.toThrow();
+      await expect(
+        local.database.query(`UPDATE "Site" SET rate_country = 'US', rate_country_source = NULL WHERE id = $1`, [siteId])
+      ).rejects.toThrow();
+
+      const repo = new TariffTimelineRepo();
+      expect(await repo.getSiteRateCountry(siteId)).toEqual({
+        countryCode: null,
+        source: null,
+        updatedAt: null,
+        eligibility: 'unknown',
+      });
+
+      // solar_location sets inferred US, owner overrides to CA, stale solar_location cannot overwrite owner.
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'US', source: 'solar_location' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'US', source: 'solar_location', eligibility: 'us' });
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'CA', source: 'owner' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'CA', source: 'owner', eligibility: 'outside_us' });
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'US', source: 'solar_location' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'CA', source: 'owner', eligibility: 'outside_us' });
+
+      // Explicit owner clearing resets country and source back to unknown, after which solar_location can infer again and also be cleared.
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: null, source: 'owner' });
+      const ownerCleared = await repo.getSiteRateCountry(siteId);
+      expect(ownerCleared).toMatchObject({
+        countryCode: null,
+        source: null,
+        eligibility: 'unknown',
+      });
+      expect(ownerCleared.updatedAt).not.toBeNull();
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'US', source: 'solar_location' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'US', source: 'solar_location', eligibility: 'us' });
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: null, source: 'solar_location' });
+      const locationCleared = await repo.getSiteRateCountry(siteId);
+      expect(locationCleared).toMatchObject({
+        countryCode: null,
+        source: null,
+        eligibility: 'unknown',
+      });
+      expect(locationCleared.updatedAt).not.toBeNull();
+    });
+
+    it('suppresses needs_utility for unresolved US-timezone sites and cleans dirty non-US cron rows once with zero OpenEI calls', async () => {
+      const unresolvedId = 's-country-unknown-tz-us';
+      const cleanOutsideId = 's-country-clean-au';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', NULL, NULL),
+                ($2, 'u1', 'Australia/Sydney', '{"currency":"AUD"}', 'AGL', 'AU', 'owner')`,
+        [unresolvedId, cleanOutsideId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility) VALUES ($1, 'auto', 'needs_utility', 'We Energies')`,
+        [unresolvedId]
+      );
+
+      const repo = new TariffTimelineRepo();
+      const timeline = await repo.getTimeline(unresolvedId, 'u1');
+      expect(timeline.rateCountry).toMatchObject({
+        countryCode: null,
+        source: null,
+        eligibility: 'unknown',
+        hasIneligiblePublicSelection: false,
+      });
+      expect(timeline.estimates).toMatchObject({
+        status: 'ready',
+        utilityName: null,
+        eligibility: 'unknown',
+        needsCountryConfirmation: true,
+        historyGuide: null,
+      });
+
+      const urdbSpy = {
+        ratesEffectiveOn: vi.fn(async () => { throw new Error('unexpected URDB ratesEffectiveOn'); }),
+        rateByLabel: vi.fn(async () => { throw new Error('unexpected URDB rateByLabel'); }),
+      };
+      await expect(
+        listPublicUtilityPlansForSite(unresolvedId, { now: new Date('2026-11-16T18:00:00Z') }, { repo, urdb: urdbSpy })
+      ).rejects.toThrow(PublicPlansIneligibleError);
+      expect(urdbSpy.ratesEffectiveOn).not.toHaveBeenCalled();
+
+      // Park all unrelated earlier sites' SiteUtility rows so cron only observes our test sites.
+      await local.database.query(
+        `UPDATE "Site" SET orphaned_at = now() WHERE id NOT IN ($1, $2)`,
+        [unresolvedId, cleanOutsideId]
+      );
+      onTestFinished(async () => {
+        await local.database.query(`UPDATE "Site" SET orphaned_at = NULL`);
+      });
+
+      const cronApi: UrdbApi = {
+        utilityNames: vi.fn(async () => { throw new Error('unexpected OpenEI utilityNames'); }),
+        ratesEffectiveOn: vi.fn(async () => { throw new Error('unexpected OpenEI ratesEffectiveOn'); }),
+        rateByLabel: vi.fn(async () => null),
+        defaultRates: vi.fn(async () => { throw new Error('unexpected OpenEI defaultRates'); }),
+      };
+
+      // Pass 1 picks up dirty needs_utility unresolvedId once (0 OpenEI calls), leaving cleanOutsideId untouched.
+      const pass1 = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 10, api: cronApi });
+      expect(pass1.sites).toEqual([{ siteId: unresolvedId, status: 'ready' }]);
+      expect(cronApi.utilityNames).not.toHaveBeenCalled();
+      expect(cronApi.ratesEffectiveOn).not.toHaveBeenCalled();
+
+      const afterPass1 = await local.database.query<{ status: string; next_check_at: Date | null }>(
+        `SELECT status, next_check_at FROM "SiteUtility" WHERE site_id = $1`,
+        [unresolvedId]
+      );
+      expect(afterPass1.rows).toEqual([{ status: 'ready', next_check_at: null }]);
+
+      // Pass 2 skips both unresolvedId (now clean ready/next_check_at=NULL) and cleanOutsideId.
+      const pass2 = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 10, api: cronApi });
+      expect(pass2.sites).toEqual([]);
+    });
+
+    it('cleans automatic public estimates via repricing, preserves audit/manual/Tesla history and explicit owner selections for review, and rejects 409 on mid-review eligibility flips', async () => {
+      const siteId = 's-country-cleanup-pg';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, installed, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z', 'US', 'owner')`,
+        [siteId]
+      );
+
+      const tariffRepo = new TariffRepo();
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla Anchor', 0.16));
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]);
+      const teslaTariffId = (await local.database.query<{ id: number }>(
+        `SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`,
+        [siteId]
+      )).rows[0]!.id;
+
+      // Seed manual history, owner_history source, automatic estimated actual+reference coverage, and an explicit owner public selection overriding Tesla.
+      const repo = new TariffTimelineRepo();
+      await repo.createManualPeriod(siteId, 'u1', {
+        name: 'Manual History 2024',
+        effectiveFrom: '2024-01-01',
+        effectiveTo: '2024-12-31',
+        seasons: simpleSeasons(0.14),
+      });
+      const autoEstTariffId = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Auto URDB Actual', 1, FALSE, 'estimated') RETURNING id`,
+        [siteId]
+      )).rows[0]!.id;
+      const autoRefTariffId = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Auto URDB Reference', 1, FALSE, 'estimated') RETURNING id`,
+        [siteId]
+      )).rows[0]!.id;
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', '2025-05-31', 'estimated'),
+                ($1, $3, '2025-06-01', NULL, 'tesla')`,
+        [siteId, autoEstTariffId, teslaTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', NULL, 'estimated')`,
+        [siteId, autoRefTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, end_date, start_source)
+         VALUES ($1, $2, 'estimated_actual', 'auto-actual-lbl', '2025-01-01', '2025-05-31', 'urdb'),
+                ($3, $2, 'estimated_reference', 'auto-ref-lbl', '2025-01-01', NULL, 'urdb')`,
+        [autoEstTariffId, siteId, autoRefTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status)
+         VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'ready')
+         ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = 'owner', status = 'ready'`,
+        [siteId]
+      );
+
+      // Add an explicit verified owner public selection over Tesla starting 2025-06-01.
+      const ownerPub = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-06-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: true,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Picked Public',
+          seasons: simpleSeasons(0.21, 0.06),
+          urdbLabel: 'owner-pub-lbl',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-06-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      const ownerSelectionId = ownerPub.selectionIds[0]!;
+
+      // First test preview -> mid-review country flip -> commit 409 before finalizing CA cleanup.
+      const fixedNow = () => new Date('2026-11-16T18:00:00Z');
+      const manualPreviewBeforeFlip = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'manual', name: 'Replacement Plan', seasons: simpleSeasons(0.24) },
+          effectiveFrom: '2025-06-01',
+          effectiveTo: null,
+        },
+        { now: fixedNow, repo }
+      );
+
+      // Flip site country US -> CA via setSiteRateCountry!
+      const switched = await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'CA', source: 'owner' });
+
+      // Mid-review manual commit created before the US -> CA flip rejects with 409 conflict.
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'manual', name: 'Replacement Plan', seasons: simpleSeasons(0.24) },
+            effectiveFrom: '2025-06-01',
+            effectiveTo: null,
+            expectedReviewHash: manualPreviewBeforeFlip.reviewHash,
+            verifiedAgainstBill: false,
+          },
+          { now: fixedNow, repo }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+
+      // Automatic public coverage & reference coverage are removed and queued for normal repricing, while audit Tariff rows remain.
+      expect(switched.reattributionRange).not.toBeNull();
+      const reattr = await local.database.query<{ status: string }>(
+        `SELECT status FROM "SiteTariffReattribution" WHERE site_id = $1`,
+        [siteId]
+      );
+      expect(reattr.rows).toEqual([{ status: 'pending' }]);
+
+      const refCount = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffReferencePeriod" WHERE site_id = $1`,
+        [siteId]
+      );
+      expect(refCount.rows).toEqual([{ n: 0 }]);
+
+      const autoActualPeriods = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffEffectivePeriod" WHERE site_id = $1 AND tariff_id = $2`,
+        [siteId, autoEstTariffId]
+      );
+      expect(autoActualPeriods.rows).toEqual([{ n: 0 }]);
+
+      const preservedAuditTariff = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Tariff" WHERE site_id = $1 AND id IN ($2, $3)`,
+        [siteId, autoEstTariffId, autoRefTariffId]
+      );
+      expect(preservedAuditTariff.rows).toEqual([{ n: 2 }]);
+
+      // Manual history + explicit owner selection (+ originals + verification) remain preserved and flagged for review!
+      expect(switched.timeline.rateCountry).toMatchObject({
+        countryCode: 'CA',
+        source: 'owner',
+        eligibility: 'outside_us',
+        hasIneligiblePublicSelection: true,
+      });
+      expect(switched.timeline.periods.map(p => [p.source, p.choiceKind, p.effectiveFrom, p.effectiveTo])).toEqual([
+        ['estimated', 'owner', '2025-06-01', null],
+        ['manual', 'owner', '2024-01-01', '2024-12-31'],
+      ]);
+
+      const verificationCount = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffSelectionVerification" WHERE selection_id = $1`,
+        [ownerSelectionId]
+      );
+      expect(verificationCount.rows).toEqual([{ n: 1 }]);
+
+      // Owner can review & commit restoring Tesla (or a manual plan) to replace the preserved ineligible public selection.
+      const restorePreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: ownerSelectionId },
+          effectiveFrom: '2025-06-01',
+          effectiveTo: null,
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restorePreview.restoration.canApplyRestoration).toBe(true);
+      const restored = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: ownerSelectionId },
+          effectiveFrom: '2025-06-01',
+          effectiveTo: null,
+          expectedReviewHash: restorePreview.reviewHash,
+          verifiedAgainstBill: false,
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restored.timeline.rateCountry?.hasIneligiblePublicSelection).toBe(false);
+      expect(restored.timeline.periods.map(p => [p.source, p.choiceKind, p.tariffId])).toEqual([
+        ['tesla', 'owner', teslaTariffId],
+        ['manual', 'owner', expect.any(Number)],
+      ]);
     });
   });
 });

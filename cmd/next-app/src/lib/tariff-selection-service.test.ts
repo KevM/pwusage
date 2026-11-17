@@ -39,6 +39,7 @@ import {
   listPublicUtilityPlansForSite,
   previewTariffSelection,
 } from './tariff-selection-service';
+import { PublicPlansIneligibleError } from './rate-plan-eligibility';
 import {
   TariffNotFoundError,
   TariffSelectionConflictError,
@@ -187,6 +188,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSitePublicConversionContext').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -243,6 +246,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSitePublicConversionContext').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -272,6 +277,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'EUR',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       const ratesEffectiveOn = vi.fn();
 
@@ -285,6 +292,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       await expect(
         listPublicUtilityPlansForSite(
@@ -305,6 +314,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -370,6 +381,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
 
       await expect(
@@ -400,6 +413,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'CAD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       await expect(
         previewTariffSelection(
@@ -458,7 +473,7 @@ describe('tariff-selection-service', () => {
         }
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
           events.push('db:LOCK_SITE');
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US' }] };
         }
         if (sql.includes('FROM "SiteUtility"') && sql.includes('updated_at >')) {
           return { rows: [] };
@@ -504,7 +519,7 @@ describe('tariff-selection-service', () => {
 
       dbMocks.queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM "Site" s') && sql.includes('WHERE s.id = $1')) {
-          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' }] };
+          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner', rate_country: 'US', rate_country_source: 'owner' }] };
         }
         if (sql.includes('FROM "Site"') && sql.includes('WHERE id = $1')) {
           return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T06:00:00Z', currency: 'USD' }] };
@@ -575,7 +590,7 @@ describe('tariff-selection-service', () => {
       // Transaction rollback on DB failure inside commit:
       clientQueryHandler = async (sql: string) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US' }] };
         }
         if (sql.includes('FROM "SiteUtility"') && sql.includes('updated_at >')) {
           return { rows: [] };
@@ -633,6 +648,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -661,7 +678,7 @@ describe('tariff-selection-service', () => {
 
       clientQueryHandler = async (sql: string) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US' }] };
         }
         if (sql.includes('FROM "SiteUtility"') && sql.includes('updated_at >')) {
           return { rows: [] };
@@ -768,6 +785,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -801,7 +820,7 @@ describe('tariff-selection-service', () => {
       let siteUtilityUpdatedAt = new Date('2026-11-17T17:00:00Z');
       clientQueryHandler = async (sql: string) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', timeline_revision: siteTimelineRevision }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US', timeline_revision: siteTimelineRevision }] };
         }
         if (sql.includes('SELECT timeline_revision FROM "Site" WHERE id = $1')) {
           return { rows: [{ timeline_revision: siteTimelineRevision }] };
@@ -907,7 +926,7 @@ describe('tariff-selection-service', () => {
       };
       dbMocks.queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM "Site" s') && sql.includes('WHERE s.id = $1')) {
-          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' }] };
+          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner', rate_country: 'US', rate_country_source: 'owner' }] };
         }
         if (sql.includes('FROM "Site"') && sql.includes('WHERE id = $1')) {
           return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T06:00:00Z', currency: 'USD' }] };
@@ -1055,6 +1074,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValueOnce({
         fallbackSellRate: 0.05,
@@ -1137,7 +1158,7 @@ describe('tariff-selection-service', () => {
 
       clientQueryHandler = async (sql: string) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US' }] };
         }
         if (sql.includes('FROM "SiteUtility"') && sql.includes('updated_at >')) {
           return { rows: [] };
@@ -1235,7 +1256,7 @@ describe('tariff-selection-service', () => {
       };
       dbMocks.queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM "Site" s') && sql.includes('WHERE s.id = $1')) {
-          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' }] };
+          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner', rate_country: 'US', rate_country_source: 'owner' }] };
         }
         if (sql.includes('FROM "Site"') && sql.includes('WHERE id = $1')) {
           return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T06:00:00Z', currency: 'USD' }] };
@@ -1423,7 +1444,7 @@ describe('tariff-selection-service', () => {
       ];
       clientQueryHandler = async (sql: string, params?: unknown[]) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', timeline_revision: 2 }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US', timeline_revision: 2 }] };
         }
         if (sql.includes('SELECT timeline_revision FROM "Site" WHERE id = $1')) {
           return { rows: [{ timeline_revision: 2 }] };
@@ -1543,6 +1564,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -1630,6 +1653,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: null,
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0,
@@ -1656,7 +1681,7 @@ describe('tariff-selection-service', () => {
 
       clientQueryHandler = async (sql: string) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US' }] };
         }
         if (sql.includes('COALESCE(MAX(version), 0) + 1')) return { rows: [{ next: 1 }] };
         if (sql.includes('INSERT INTO "Tariff"(')) return { rows: [{ id: 88 }] };
@@ -1714,6 +1739,8 @@ describe('tariff-selection-service', () => {
       timezone: 'America/Chicago',
       currency: 'USD',
       choice: null,
+      rateCountry: 'US',
+      eligibility: 'us',
     });
     await expect(
       listPublicUtilityPlansForSite('site-1', { now: fixedNow() }, { repo, urdb: { ratesEffectiveOn: vi.fn(), rateByLabel: vi.fn() } })
@@ -1724,6 +1751,8 @@ describe('tariff-selection-service', () => {
       timezone: 'America/Chicago',
       currency: 'USD',
       choice: 'owner',
+      rateCountry: 'US',
+      eligibility: 'us',
     });
     await expect(
       listPublicUtilityPlansForSite(
@@ -1750,6 +1779,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0,
@@ -1801,6 +1832,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
 
       const rateForeignCurrency = { ...makePublishedRate(), currency: 'CAD' } as UrdbRate;
@@ -1860,6 +1893,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValueOnce({
         fallbackSellRate: 0,
@@ -1919,6 +1954,8 @@ describe('tariff-selection-service', () => {
         timezone: 'America/Chicago',
         currency: 'USD',
         choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
       });
       vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
         fallbackSellRate: 0.05,
@@ -1947,7 +1984,7 @@ describe('tariff-selection-service', () => {
 
       clientQueryHandler = async (sql: string) => {
         if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD' }] };
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'US' }] };
         }
         if (sql.includes('FROM "SiteUtility"') && sql.includes('updated_at >')) {
           return { rows: [] };
@@ -1959,7 +1996,7 @@ describe('tariff-selection-service', () => {
       };
       dbMocks.queryMock.mockImplementation(async (sql: string) => {
         if (sql.includes('FROM "Site" s') && sql.includes('WHERE s.id = $1')) {
-          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' }] };
+          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner', rate_country: 'US', rate_country_source: 'owner' }] };
         }
         return { rows: [] };
       });
@@ -1982,6 +2019,180 @@ describe('tariff-selection-service', () => {
             urdb: { rateByLabel: async () => rate, ratesEffectiveOn: async () => [rate] },
             monthlyUsage: async () => 950,
           }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+    });
+
+    it('blocks public plans with zero URDB calls for outside-US and unknown sites even in America/Chicago + USD, while keeping manual and restore_tesla available', async () => {
+      for (const ctx of [
+        { name: 'We Energies', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' as const, rateCountry: 'CA', rateCountrySource: 'owner' as const, eligibility: 'outside_us' as const },
+        { name: 'We Energies', timezone: 'America/Chicago', currency: 'USD', choice: 'auto' as const, rateCountry: null, rateCountrySource: null, eligibility: 'unknown' as const },
+      ]) {
+        const repo = new TariffTimelineRepo();
+        vi.spyOn(repo, 'getSiteUtilityContext').mockResolvedValue(ctx);
+        vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
+          fallbackSellRate: 0.04,
+          hasTeslaSellFallback: true,
+          existingSpans: [],
+          restorationTargets: [],
+          manualNameTaken: false,
+        });
+        const ratesEffectiveOn = vi.fn(async () => []);
+        const rateByLabel = vi.fn(async () => makePublishedRate());
+
+        await expect(
+          listPublicUtilityPlansForSite('site-1', { now: fixedNow() }, { repo, urdb: { ratesEffectiveOn, rateByLabel } })
+        ).rejects.toThrow(UtilityChangedError);
+
+        await expect(
+          previewTariffSelection(
+            'site-1',
+            'user-1',
+            { scope: 'actual', candidate: { kind: 'public', label: 'urdb-published-flat' }, effectiveFrom: '2025-01-01', effectiveTo: null },
+            { now: fixedNow, repo, urdb: { ratesEffectiveOn, rateByLabel }, monthlyUsage: async () => null }
+          )
+        ).rejects.toThrow(UtilityChangedError);
+
+        await expect(
+          commitTariffSelection(
+            'site-1',
+            'user-1',
+            {
+              scope: 'actual',
+              candidate: { kind: 'public', label: 'urdb-published-flat' },
+              effectiveFrom: '2025-01-01',
+              effectiveTo: null,
+              expectedReviewHash: 'a'.repeat(64),
+              verifiedAgainstBill: false,
+            },
+            { now: fixedNow, repo, urdb: { ratesEffectiveOn, rateByLabel }, monthlyUsage: async () => null }
+          )
+        ).rejects.toThrow(UtilityChangedError);
+
+        expect(ratesEffectiveOn).not.toHaveBeenCalled();
+        expect(rateByLabel).not.toHaveBeenCalled();
+
+        // Manual and restore_tesla remain available for both outside-US and unknown sites.
+        const manualPreview = await previewTariffSelection(
+          'site-1',
+          'user-1',
+          { scope: 'actual', candidate: { kind: 'manual', name: 'Local Plan', seasons: sampleSeasons }, effectiveFrom: '2025-01-01', effectiveTo: null },
+          { now: fixedNow, repo }
+        );
+        expect(manualPreview.reviewHash).toMatch(/^[a-f0-9]{64}$/);
+
+        const tesla = makeTeslaSnapshot(10, 'Tesla Backup', 1, teslaSeasons);
+        vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValueOnce({
+          fallbackSellRate: 0.05,
+          hasTeslaSellFallback: true,
+          existingSpans: [{ effectiveFrom: '2025-01-01', effectiveTo: null, plan: makeTeslaSnapshot(20, 'Manual Override', 1, sampleSeasons) }],
+          restorationTargets: [{
+            effectiveFrom: '2025-01-01',
+            effectiveTo: null,
+            original: {
+              originalSelectionId: 300,
+              tariffId: 10,
+              name: 'Tesla Backup',
+              version: 1,
+              contentHash: tesla.contentHash,
+              effectiveFrom: '2025-01-01',
+              effectiveTo: null,
+            },
+            plan: tesla,
+          }],
+          manualNameTaken: false,
+        });
+        const restorePreview = await previewTariffSelection(
+          'site-1',
+          'user-1',
+          { scope: 'actual', candidate: { kind: 'restore_tesla', originalSelectionId: 300 }, effectiveFrom: '2025-01-01', effectiveTo: null },
+          { now: fixedNow, repo }
+        );
+        expect(restorePreview.reviewHash).toMatch(/^[a-f0-9]{64}$/);
+      }
+    });
+
+    it('rejects with 409 when site rate-country eligibility changes between review and commit', async () => {
+      const rate = makePublishedRate();
+      const repo = new TariffTimelineRepo();
+      vi.spyOn(repo, 'getSiteUtilityContext').mockResolvedValue({
+        name: 'Wisconsin Electric Power Co',
+        timezone: 'America/Chicago',
+        currency: 'USD',
+        choice: 'owner',
+        rateCountry: 'US',
+        eligibility: 'us',
+      });
+      vi.spyOn(repo, 'loadSelectionTimelineSnapshot').mockResolvedValue({
+        fallbackSellRate: 0.05,
+        hasTeslaSellFallback: true,
+        existingSpans: [],
+        restorationTargets: [],
+        manualNameTaken: false,
+      });
+
+      const publicPreview = await previewTariffSelection(
+        'site-1',
+        'user-1',
+        { scope: 'actual', candidate: { kind: 'public', label: rate.label }, effectiveFrom: '2025-01-01', effectiveTo: null },
+        { now: fixedNow, repo, urdb: { rateByLabel: async () => rate, ratesEffectiveOn: async () => [rate] }, monthlyUsage: async () => null }
+      );
+      const manualPreview = await previewTariffSelection(
+        'site-1',
+        'user-1',
+        { scope: 'actual', candidate: { kind: 'manual', name: 'Manual Plan', seasons: sampleSeasons }, effectiveFrom: '2025-01-01', effectiveTo: null },
+        { now: fixedNow, repo }
+      );
+
+      // Under lock, the site rate_country changed from US -> CA between preview and commit.
+      clientQueryHandler = async (sql: string) => {
+        if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', currency: 'USD', rate_country: 'CA' }] };
+        }
+        if (sql.includes('FROM "SiteUtility"') && sql.includes('updated_at >')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM "SiteUtility"')) {
+          return { rows: [{ urdb_utility: 'Wisconsin Electric Power Co', choice: 'owner' }] };
+        }
+        return { rows: [] };
+      };
+      dbMocks.queryMock.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM "Site" s') && sql.includes('WHERE s.id = $1')) {
+          return { rows: [{ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner', rate_country: 'CA', rate_country_source: 'owner' }] };
+        }
+        return { rows: [] };
+      });
+
+      await expect(
+        commitTariffSelection(
+          'site-1',
+          'user-1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'public', label: rate.label },
+            effectiveFrom: '2025-01-01',
+            effectiveTo: null,
+            expectedReviewHash: publicPreview.reviewHash,
+            verifiedAgainstBill: false,
+          },
+          { now: fixedNow, repo, urdb: { rateByLabel: async () => rate, ratesEffectiveOn: async () => [rate] }, monthlyUsage: async () => null }
+        )
+      ).rejects.toThrow(PublicPlansIneligibleError);
+
+      await expect(
+        commitTariffSelection(
+          'site-1',
+          'user-1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'manual', name: 'Manual Plan', seasons: sampleSeasons },
+            effectiveFrom: '2025-01-01',
+            effectiveTo: null,
+            expectedReviewHash: manualPreview.reviewHash,
+            verifiedAgainstBill: false,
+          },
+          { now: fixedNow, repo }
         )
       ).rejects.toThrow(TariffSelectionConflictError);
     });

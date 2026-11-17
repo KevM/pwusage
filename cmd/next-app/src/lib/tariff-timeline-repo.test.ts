@@ -1249,4 +1249,123 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
       effectiveTo: '2025-08-31',
     });
   });
+
+  it('suppresses US utility prompts on unknown sites and surfaces country confirmation and ineligible public warning', async () => {
+    const repo = new TariffTimelineRepo();
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return {
+          rows: [{
+            id: 's-unknown',
+            timezone: 'America/Chicago',
+            installed: '2024-01-01T00:00:00Z',
+            currency: 'USD',
+            rate_country: null,
+            rate_country_source: null,
+            rate_country_updated_at: null,
+          }],
+        };
+      }
+      if (sql.includes('FROM "SiteUtility"')) {
+        return {
+          rows: [{
+            site_id: 's-unknown',
+            choice: 'auto',
+            status: 'needs_utility',
+            urdb_utility: null,
+            urdb_plan_label: null,
+            checked_at: null,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const unknownTimeline = await repo.getTimeline('s-unknown', 'u1');
+    expect(unknownTimeline.rateCountry).toEqual({
+      countryCode: null,
+      source: null,
+      updatedAt: null,
+      eligibility: 'unknown',
+      hasIneligiblePublicSelection: false,
+    });
+    expect(unknownTimeline.estimates).toMatchObject({
+      status: 'ready',
+      utilityName: null,
+      eligibility: 'unknown',
+      needsCountryConfirmation: true,
+      historyGuide: null,
+    });
+
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return {
+          rows: [{
+            id: 's-ca',
+            timezone: 'America/Toronto',
+            installed: '2024-01-01T00:00:00Z',
+            currency: 'CAD',
+            rate_country: 'CA',
+            rate_country_source: 'owner',
+            rate_country_updated_at: new Date('2026-11-17T18:00:00Z'),
+          }],
+        };
+      }
+      if (sql.includes('FROM "SiteUtility"')) {
+        return {
+          rows: [{
+            site_id: 's-ca',
+            choice: 'owner',
+            status: 'needs_plan',
+            urdb_utility: 'Legacy US Utility',
+            urdb_plan_label: 'urdb-1',
+            checked_at: null,
+          }],
+        };
+      }
+      if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 1,
+            tariff_id: 77,
+            effective_from: '2025-01-01',
+            effective_to: null,
+            source: 'estimated',
+            updated_by_user_id: 'u1',
+            updated_by_email: 'owner@example.com',
+            name: 'Owner Public Plan',
+            version: 1,
+            content_hash: 'h-pub',
+            selection_id: 501,
+            choice_kind: 'owner',
+            candidate_kind: 'public',
+            selected_by_user_id: 'u1',
+            urdb_label: 'urdb-1',
+            utility_name: 'Legacy US Utility',
+            revision_start: '2025-01-01',
+            export_rate_provenance: 'published',
+            holidays_use_weekend: true,
+            approximation_notes: [],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const caTimeline = await repo.getTimeline('s-ca', 'u1');
+    expect(caTimeline.rateCountry).toEqual({
+      countryCode: 'CA',
+      source: 'owner',
+      updatedAt: '2026-11-17T18:00:00.000Z',
+      eligibility: 'outside_us',
+      hasIneligiblePublicSelection: true,
+    });
+    expect(caTimeline.estimates).toMatchObject({
+      status: 'ready',
+      utilityName: null,
+      eligibility: 'outside_us',
+      needsCountryConfirmation: false,
+      historyGuide: null,
+    });
+  });
 });

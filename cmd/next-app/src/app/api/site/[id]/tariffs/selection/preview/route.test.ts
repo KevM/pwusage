@@ -36,6 +36,7 @@ vi.mock('@/lib/tariff-selection-service', async importOriginal => ({
 }));
 
 import { POST } from './route';
+import { PublicPlansIneligibleError } from '@/lib/rate-plan-eligibility';
 import { TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, UtilityChangedError } from '@/lib/tariff-timeline-repo';
 import { UrdbUnavailableError } from '@/lib/urdb/client';
@@ -130,6 +131,14 @@ describe('POST /api/site/[id]/tariffs/selection/preview', () => {
 
     mocks.previewTariffSelection.mockRejectedValueOnce(new UtilityChangedError('Choose a utility first.'));
     expect((await POST(post({}), context)).status).toBe(409);
+
+    mocks.previewTariffSelection.mockRejectedValueOnce(new PublicPlansIneligibleError('outside_us'));
+    const ineligibleRes = await POST(post({}), context);
+    expect(ineligibleRes.status).toBe(409);
+    expect(await ineligibleRes.json()).toMatchObject({
+      code: 'PUBLIC_PLANS_UNAVAILABLE',
+      eligibility: 'outside_us',
+    });
 
     mocks.previewTariffSelection.mockRejectedValueOnce(new UrdbUnavailableError('timeout'));
     expect((await POST(post({}), context)).status).toBe(503);

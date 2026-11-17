@@ -49,7 +49,13 @@ describe('GET /api/site/[id]/utility/history', () => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.verifySiteAccess.mockResolvedValue(true);
-    mocks.getSiteUtilityContext.mockResolvedValue({ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago' });
+    mocks.getSiteUtilityContext.mockResolvedValue({
+      name: 'Wisconsin Electric Power Co',
+      timezone: 'America/Chicago',
+      rateCountry: 'US',
+      rateCountrySource: 'owner',
+      eligibility: 'us',
+    });
     mocks.getRatePlanHistoryInputs.mockResolvedValue({ window, tesla: null });
     mocks.ratesEffectiveOn.mockResolvedValue(y2025);
     mocks.defaultRates.mockResolvedValue(weDefaults);
@@ -59,7 +65,13 @@ describe('GET /api/site/[id]/utility/history', () => {
     expect((await GET(request(), context)).status).toBe(401);
   });
   it('requiresUtility', async () => {
-    mocks.getSiteUtilityContext.mockResolvedValueOnce({ name: null, timezone: 'America/Chicago' });
+    mocks.getSiteUtilityContext.mockResolvedValueOnce({
+      name: null,
+      timezone: 'America/Chicago',
+      rateCountry: 'US',
+      rateCountrySource: 'owner',
+      eligibility: 'us',
+    });
     const response = await GET(request(), context);
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ error: 'Choose a utility first.' });
@@ -99,7 +111,13 @@ describe('PUT /api/site/[id]/utility/history', () => {
     mocks.isCrossOriginRequest.mockReturnValue(false);
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.verifySiteAccess.mockResolvedValue(true);
-    mocks.getSiteUtilityContext.mockResolvedValue({ name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago' });
+    mocks.getSiteUtilityContext.mockResolvedValue({
+      name: 'Wisconsin Electric Power Co',
+      timezone: 'America/Chicago',
+      rateCountry: 'US',
+      rateCountrySource: 'owner',
+      eligibility: 'us',
+    });
     mocks.getRatePlanHistoryInputs.mockResolvedValue({ window, tesla: null });
     mocks.ratesEffectiveOn.mockResolvedValue(y2025);
     mocks.rateByLabel.mockImplementation(async (label: string) => [...optionBChain, ...y2025].find(rate => rate.label === label) ?? null);
@@ -187,5 +205,31 @@ describe('PUT /api/site/[id]/utility/history', () => {
     expect(openLabel).toBe(OPTION_B);
     // The open period's closed revisions stay saved, so days before its oldest URDB revision keep their prices.
     expect(revisions.map((r: { from: string; to: string | null }) => [r.from, r.to])).toEqual([['2024-01-01', '2024-12-31'], ['2025-01-01', '2025-05-31']]);
+  });
+
+  it('gates GET and PUT /utility/history for outside-US and unknown sites with zero OpenEI calls', async () => {
+    for (const ctx of [
+      { name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' as const, rateCountry: 'CA', rateCountrySource: 'owner' as const, eligibility: 'outside_us' as const },
+      { name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'auto' as const, rateCountry: null, rateCountrySource: null, eligibility: 'unknown' as const },
+    ]) {
+      vi.clearAllMocks();
+      mocks.isCrossOriginRequest.mockReturnValue(false);
+      mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+      mocks.verifySiteAccess.mockResolvedValue(true);
+      mocks.getSiteUtilityContext.mockResolvedValue(ctx);
+
+      const getRes = await GET(request(), context);
+      expect(getRes.status).toBe(409);
+
+      const putRes = await PUT(
+        put({ periods: [{ label: OPTION_B, from: '2025-06-01', to: '2026-04-27' }] }),
+        context
+      );
+      expect(putRes.status).toBe(409);
+      expect(mocks.ratesEffectiveOn).not.toHaveBeenCalled();
+      expect(mocks.defaultRates).not.toHaveBeenCalled();
+      expect(mocks.rateByLabel).not.toHaveBeenCalled();
+      expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+    }
   });
 });

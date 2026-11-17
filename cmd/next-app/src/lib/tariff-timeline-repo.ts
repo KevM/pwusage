@@ -4,6 +4,8 @@ import type { PoolClient } from 'pg';
 import { pool } from './db';
 import type {
   ExportRateProvenance,
+  RateCountrySource,
+  RatePlanEligibility,
   SiteTariffReattributionRow,
   Tariff,
   TariffSchedule,
@@ -34,6 +36,7 @@ import type { UrdbRate } from './urdb/types';
 import type {
   ReattributionStatusDTO,
   SiteBatteryDTO,
+  SiteRateCountryDTO,
   SiteTariffsTimelineResponse,
   TariffApproximationNote,
   TariffPeriodDTO,
@@ -45,6 +48,14 @@ import type {
   TariffSelectionRequest,
   TariffVerificationSummary,
 } from './tariff-contract';
+import {
+  assertUsRatePlanEligibility,
+  deriveRatePlanEligibility,
+  PublicPlansIneligibleError,
+  shouldApplyRateCountryWrite,
+  UtilityChangedError,
+  validateSiteRateCountryInput,
+} from './rate-plan-eligibility';
 import {
   addCalendarDays,
   compileSeasonsToParsedTariff,
@@ -63,9 +74,7 @@ import {
   type TariffPlanWriteInput,
 } from './tariff-timeline';
 
-export class UtilityChangedError extends Error {
-  readonly status = 409;
-}
+export { PublicPlansIneligibleError, UtilityChangedError };
 
 export class TariffNotFoundError extends Error {
   readonly status = 404;
@@ -143,6 +152,9 @@ export interface BuildSiteTariffsTimelineInput {
   systemCostRows?: SystemCostRow[];
   reattribution?: SiteTariffReattributionRow;
   latestTesla?: LatestTeslaTariffSummary;
+  rateCountry?: string | null;
+  rateCountrySource?: RateCountrySource | null;
+  rateCountryUpdatedAt?: Date | string | null;
 }
 
 /**
@@ -282,6 +294,9 @@ export function buildSiteTariffsTimelineResponse(
     systemCostRows = [],
     reattribution,
     latestTesla,
+    rateCountry,
+    rateCountrySource = null,
+    rateCountryUpdatedAt = null,
   } = input;
 
   const periods: TariffPeriodDTO[] = periodRows.map(r => mapPeriodRowToDTO(r, viewerUserId, tariffMap));
@@ -314,6 +329,21 @@ export function buildSiteTariffsTimelineResponse(
     holidayYears.push(y);
   }
 
+  let rateCountryDTO: SiteRateCountryDTO | undefined;
+  if (rateCountry !== undefined) {
+    const eligibility = deriveRatePlanEligibility(rateCountry);
+    const hasIneligiblePublicSelection =
+      eligibility === 'outside_us' &&
+      [...periods, ...referencePeriods].some(p => p.source === 'estimated');
+    rateCountryDTO = {
+      countryCode: rateCountry ?? null,
+      source: rateCountry ? (rateCountrySource ?? null) : null,
+      updatedAt: toIsoOrNull(rateCountryUpdatedAt),
+      eligibility,
+      hasIneligiblePublicSelection,
+    };
+  }
+
   return {
     version: 2,
     siteId,
@@ -322,6 +352,7 @@ export function buildSiteTariffsTimelineResponse(
     periods,
     referencePeriods,
     estimates: null,
+    ...(rateCountryDTO ? { rateCountry: rateCountryDTO } : {}),
     battery,
     systemCosts: { siteInstalled, ...mapSystemCostRows(systemCostRows) },
     reattribution: toReattributionDTO(reattribution),
@@ -1874,6 +1905,10 @@ export interface SiteUtilityContextResult {
   timezone: string;
   currency?: string;
   choice?: 'auto' | 'owner' | 'skipped' | null;
+  rateCountry?: string | null;
+  rateCountrySource?: RateCountrySource | null;
+  rateCountryUpdatedAt?: string | null;
+  eligibility?: RatePlanEligibility;
 }
 
 export interface SitePublicConversionContext {
@@ -1914,11 +1949,9 @@ export interface CommitReviewedSelectionInput {
     fallbackSellRate: number;
     hasTeslaSellFallback: boolean;
   }) => ResolvedPublicCandidatePlan;
-  deriveEligibility: (ctx: {
-    timezone: string;
-    currency: string;
-    utilityChoice: 'auto' | 'owner' | 'skipped' | null;
-  }) => string;
+  deriveEligibility?: (ctx: {
+    rateCountry: string | null;
+  }) => RatePlanEligibility;
   now?: Date;
 }
 
@@ -2116,9 +2149,11 @@ async function hasNewerTimelineActivityOnClient(
     return true;
   }
 
-  const createdIso = selectionCreatedAt instanceof Date
-    ? selectionCreatedAt.toISOString()
-    : new Date(selectionCreatedAt).toISOString();
+  const createdIso = typeof selectionCreatedAt === 'string'
+    ? selectionCreatedAt
+    : selectionCreatedAt instanceof Date
+      ? selectionCreatedAt.toISOString()
+      : new Date(selectionCreatedAt).toISOString();
 
   const periodTable = scope === 'actual' ? '"TariffEffectivePeriod"' : '"TariffReferencePeriod"';
   const newerPeriod = await client.query<{ id: number }>(
@@ -2229,12 +2264,12 @@ async function findIdempotentRetryOnClient(
     }
 
     const matchedSelectionIds = [...new Set(matchedSpans.map(m => Number(m.span.selectionId)))];
-    const selRes = await client.query<TariffSelectionRow>(
+    const selRes = await client.query<TariffSelectionRow & { created_at_text?: string | null }>(
       `SELECT id, site_id, scope, tariff_id, effective_from::text, effective_to::text,
               source, choice_kind, candidate_kind, selected_by_user_id,
               urdb_label, utility_name, revision_start::text, export_rate_provenance,
               holidays_use_weekend, approximation_notes, selected_content_hash,
-              restored_from_selection_id, review_hash, timeline_revision, created_at
+              restored_from_selection_id, review_hash, timeline_revision, created_at, created_at::text AS created_at_text
        FROM "TariffSelection"
        WHERE site_id = $1 AND scope = $2 AND id = ANY($3::int[])`,
       [siteId, scope, matchedSelectionIds]
@@ -2304,7 +2339,7 @@ async function findIdempotentRetryOnClient(
         siteId,
         scope,
         maxSelectionId,
-        selRes.rows[0].created_at,
+        selRes.rows[0].created_at_text ?? selRes.rows[0].created_at,
         matchedSelectionIds,
         firstTimelineRevision
       )
@@ -2338,12 +2373,12 @@ async function findIdempotentRetryOnClient(
     return null;
   }
 
-  const selRes = await client.query<TariffSelectionRow>(
+  const selRes = await client.query<TariffSelectionRow & { created_at_text?: string | null }>(
     `SELECT id, site_id, scope, tariff_id, effective_from::text, effective_to::text,
             source, choice_kind, candidate_kind, selected_by_user_id,
             urdb_label, utility_name, revision_start::text, export_rate_provenance,
             holidays_use_weekend, approximation_notes, selected_content_hash,
-            restored_from_selection_id, review_hash, timeline_revision, created_at
+            restored_from_selection_id, review_hash, timeline_revision, created_at, created_at::text AS created_at_text
      FROM "TariffSelection"
      WHERE site_id = $1 AND scope = $2 AND id = ANY($3::int[])`,
     [siteId, scope, [coalesced.selectionId]]
@@ -2408,7 +2443,7 @@ async function findIdempotentRetryOnClient(
       siteId,
       scope,
       coalesced.selectionId,
-      sel.created_at,
+      sel.created_at_text ?? sel.created_at,
       [coalesced.selectionId],
       selectionTimelineRevision
     )
@@ -2425,6 +2460,52 @@ async function findIdempotentRetryOnClient(
   };
 }
 
+async function hasUnprotectedPublicStateOnClient(
+  client: Pick<PoolClient, 'query'>,
+  siteId: string
+): Promise<boolean> {
+  const res = await client.query<{ found: number }>(
+    `SELECT 1 AS found
+     FROM "TariffEffectivePeriod" p
+     LEFT JOIN "TariffSelection" sel ON sel.id = p.selection_id
+     WHERE p.site_id = $1 AND p.source = 'estimated'
+       AND p.updated_by_user_id IS NULL
+       AND COALESCE(sel.choice_kind, 'automatic') <> 'owner'
+     UNION ALL
+     SELECT 1 AS found
+     FROM "TariffReferencePeriod" rp
+     LEFT JOIN "TariffSelection" sel ON sel.id = rp.selection_id
+     WHERE rp.site_id = $1 AND rp.source = 'estimated'
+       AND rp.updated_by_user_id IS NULL
+       AND COALESCE(sel.choice_kind, 'automatic') <> 'owner'
+     UNION ALL
+     SELECT 1 AS found
+     FROM "TariffUrdbSource" u
+     WHERE u.site_id = $1
+       AND (
+         u.role = 'tesla_anchor'
+         OR (
+           u.role IN ('estimated_actual', 'estimated_reference')
+           AND NOT EXISTS (
+             SELECT 1 FROM "TariffSelection" s
+             WHERE s.tariff_id = u.tariff_id AND s.site_id = u.site_id AND s.choice_kind = 'owner'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM "TariffEffectivePeriod" p
+             WHERE p.tariff_id = u.tariff_id AND p.site_id = u.site_id AND p.updated_by_user_id IS NOT NULL
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM "TariffReferencePeriod" rp
+             WHERE rp.tariff_id = u.tariff_id AND rp.site_id = u.site_id AND rp.updated_by_user_id IS NOT NULL
+           )
+         )
+       )
+     LIMIT 1`,
+    [siteId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export class TariffTimelineRepo {
   async getSiteUtilityContext(siteId: string): Promise<SiteUtilityContextResult | null> {
     const result = await pool.query<{
@@ -2432,17 +2513,192 @@ export class TariffTimelineRepo {
       timezone: string;
       currency: string;
       choice: 'auto' | 'owner' | 'skipped' | null;
+      rate_country: string | null;
+      rate_country_source: RateCountrySource | null;
+      rate_country_updated_at: Date | string | null;
     }>(
       `SELECT u.urdb_utility AS name,
               s.timezone,
               COALESCE(s.json -> 'tariff_content_v2' ->> 'currency', s.json ->> 'currency', 'USD') AS currency,
-              u.choice
+              u.choice,
+              s.rate_country,
+              s.rate_country_source,
+              s.rate_country_updated_at
        FROM "Site" s
        LEFT JOIN "SiteUtility" u ON u.site_id = s.id
        WHERE s.id = $1`,
       [siteId]
     );
-    return result.rows[0] ?? null;
+    const row = result.rows[0];
+    if (!row) return null;
+    const rateCountry = row.rate_country ?? null;
+    return {
+      name: row.name,
+      timezone: row.timezone,
+      currency: row.currency,
+      choice: row.choice,
+      rateCountry,
+      rateCountrySource: row.rate_country_source ?? null,
+      rateCountryUpdatedAt: toIsoOrNull(row.rate_country_updated_at),
+      eligibility: deriveRatePlanEligibility(rateCountry),
+    };
+  }
+
+  async getSiteRateCountry(siteId: string): Promise<SiteRateCountryDTO> {
+    const res = await pool.query<{
+      rate_country: string | null;
+      rate_country_source: RateCountrySource | null;
+      rate_country_updated_at: Date | string | null;
+    }>(
+      `SELECT rate_country, rate_country_source, rate_country_updated_at
+       FROM "Site" WHERE id = $1`,
+      [siteId]
+    );
+    const row = res.rows[0];
+    if (!row) throw new TariffNotFoundError('Site not found');
+    const countryCode = row.rate_country ?? null;
+    return {
+      countryCode,
+      source: countryCode ? (row.rate_country_source ?? null) : null,
+      updatedAt: toIsoOrNull(row.rate_country_updated_at),
+      eligibility: deriveRatePlanEligibility(countryCode),
+    };
+  }
+
+  async setSiteRateCountry(
+    siteId: string,
+    userId: string,
+    rawInput: unknown
+  ): Promise<{
+    timeline: SiteTariffsTimelineResponse;
+    reattributionRange: { fromDate: string; toDate: string | null } | null;
+  }> {
+    const input = validateSiteRateCountryInput(rawInput);
+    const client = await pool.connect();
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
+    let applied = false;
+    let anyChange = false;
+    let finalCountryCode: string | null = null;
+    let finalEligibility: RatePlanEligibility = 'unknown';
+
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{
+        id: string;
+        timezone: string;
+        rate_country: string | null;
+        rate_country_source: RateCountrySource | null;
+      }>(
+        `SELECT id, timezone, rate_country, rate_country_source
+         FROM "Site" WHERE id = $1 FOR UPDATE`,
+        [siteId]
+      );
+      const site = siteRes.rows[0];
+      if (!site) throw new TariffNotFoundError('Site not found');
+
+      const currentEligibility = deriveRatePlanEligibility(site.rate_country ?? null);
+      const decision = shouldApplyRateCountryWrite(
+        {
+          countryCode: site.rate_country ?? null,
+          source: site.rate_country_source ?? null,
+        },
+        input
+      );
+      applied = decision.apply;
+      finalCountryCode = decision.nextCountryCode;
+      finalEligibility = deriveRatePlanEligibility(decision.nextCountryCode);
+      const timezone = site.timezone || 'UTC';
+      const today = siteLocalDateString(new Date(), timezone);
+
+      if (decision.apply) {
+        await client.query(
+          `UPDATE "Site"
+           SET rate_country = $2,
+               rate_country_source = $3,
+               rate_country_updated_at = now()
+           WHERE id = $1`,
+          [siteId, decision.nextCountryCode, decision.nextSource]
+        );
+        anyChange = true;
+      }
+
+      if (finalEligibility === 'us') {
+        if (currentEligibility !== 'us') {
+          await client.query(
+            `INSERT INTO "SiteUtility" (site_id, choice, status, next_check_at, updated_at)
+             VALUES ($1, 'auto', 'pending', NULL, clock_timestamp())
+             ON CONFLICT (site_id) DO UPDATE
+             SET status = CASE WHEN "SiteUtility".choice = 'skipped' THEN 'ready' ELSE 'pending' END,
+                 next_check_at = NULL,
+                 attempt_count = 0,
+                 last_error = NULL,
+                 updated_at = clock_timestamp()`,
+            [siteId]
+          );
+          anyChange = true;
+        }
+      } else if (
+        decision.apply ||
+        currentEligibility === 'us' ||
+        (await hasUnprotectedPublicStateOnClient(client, siteId))
+      ) {
+        await clearUnprotectedUrdbSourcesOnClient(client, siteId);
+        const { changed } = await applyEstimatesOnClient(client, siteId, today);
+        if (changed.length > 0) {
+          reattribution = {
+            siteId,
+            fromDate: changed.reduce((min, range) => minDate(min, range.from), changed[0].from),
+            toDate: changed.reduce<string | null>((max, range) => maxEnd(max, range.to), changed[0].to),
+            requestedByUserId: userId,
+            trigger: 'estimate',
+          };
+          queued = await enqueueReattributionOnClient(client, reattribution);
+          anyChange = true;
+        }
+        await client.query(
+          `UPDATE "SiteUtility"
+           SET urdb_utility = CASE WHEN choice = 'auto' AND $2 = 'outside_us' THEN NULL ELSE urdb_utility END,
+               status = 'ready',
+               attempt_count = 0,
+               last_error = NULL,
+               next_check_at = NULL,
+               updated_at = clock_timestamp()
+           WHERE site_id = $1`,
+          [siteId, finalEligibility]
+        );
+      }
+
+      if (anyChange) {
+        await bumpSiteTimelineRevisionOnClient(client, siteId);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    if (anyChange) {
+      new SiteRepo().invalidateCache(siteId);
+    }
+    if (reattribution && queued) {
+      logReattributionEnqueued(reattribution, queued);
+    }
+    logEvent('info', 'site.rate_country.updated', {
+      countryCode: finalCountryCode,
+      source: input.source,
+      eligibility: finalEligibility,
+      applied,
+      reattributed: reattribution !== null,
+      accountId: accountFingerprint(userId),
+    });
+
+    return {
+      timeline: await this.getTimeline(siteId, userId),
+      reattributionRange: reattribution ? { fromDate: reattribution.fromDate, toDate: reattribution.toDate } : null,
+    };
   }
 
   async loadSitePublicConversionContext(
@@ -2525,15 +2781,22 @@ export class TariffTimelineRepo {
     let queued: EnqueuedReattribution | null = null;
     try {
       await client.query('BEGIN');
-      const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
-      if (!site.rowCount) throw new TariffNotFoundError('Site not found');
+      const site = await client.query<{ id: string; timezone?: string | null; rate_country?: string | null }>(
+        'SELECT id, timezone, rate_country FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      const siteRow = site.rows[0];
+      if (!siteRow) throw new TariffNotFoundError('Site not found');
       const skipped = 'skipped' in input;
+      if (!skipped) {
+        assertUsRatePlanEligibility(deriveRatePlanEligibility(siteRow.rate_country ?? null));
+      }
       await client.query(`INSERT INTO "SiteUtility" (site_id, urdb_utility, choice, status, updated_by_user_id)
         VALUES ($1, $2, $3, 'pending', $4) ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`,
       [siteId, skipped ? null : input.name, skipped ? 'skipped' : 'owner', userId]);
       if (skipped) {
         // Removing estimates needs no OpenEI call, so do it now rather than on the next cron run.
-        const timezone = (await client.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone || 'UTC';
+        const timezone = siteRow.timezone || 'UTC';
         // Protect owner-selected public source records and owner_history while removing automatic estimate sources.
         await clearUnprotectedUrdbSourcesOnClient(client, siteId);
         const { changed } = await applyEstimatesOnClient(client, siteId, siteLocalDateString(new Date(), timezone));
@@ -2561,8 +2824,12 @@ export class TariffTimelineRepo {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const site = await client.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
-      if (!site.rowCount) throw new TariffNotFoundError('Site not found');
+      const site = await client.query<{ id: string; rate_country?: string | null }>(
+        'SELECT id, rate_country FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      if (!site.rows[0]) throw new TariffNotFoundError('Site not found');
+      assertUsRatePlanEligibility(deriveRatePlanEligibility(site.rows[0].rate_country ?? null));
       if (!(await setPlanLabelOnClient(client, siteId, userId, label, expectedUtility))) throw new UtilityChangedError('Utility changed. Choose a rate plan again.');
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
@@ -2581,8 +2848,12 @@ export class TariffTimelineRepo {
     let savedCount = 0;
     try {
       await client.query('BEGIN');
-      const siteRes = await client.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      const siteRes = await client.query<{ timezone: string; rate_country?: string | null }>(
+        'SELECT timezone, rate_country FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
       if (!siteRes.rows[0]) throw new TariffNotFoundError('Site not found');
+      assertUsRatePlanEligibility(deriveRatePlanEligibility(siteRes.rows[0].rate_country ?? null));
       const today = siteLocalDateString(new Date(), siteRes.rows[0].timezone || 'UTC');
       const utility = await client.query(`SELECT 1 FROM "SiteUtility" WHERE site_id = $1 AND urdb_utility = $2 AND choice <> 'skipped'`, [siteId, expectedUtility]);
       if (!utility.rowCount) throw new UtilityChangedError('Utility changed. Start again.');
@@ -2706,12 +2977,18 @@ export class TariffTimelineRepo {
       timezone: string;
       installed: Date | string;
       currency: string | null;
+      rate_country?: string | null;
+      rate_country_source?: RateCountrySource | null;
+      rate_country_updated_at?: Date | string | null;
       nameplate_energy: string | number | null;
       nameplate_power: string | number | null;
       backup_reserve_percent: string | number | null;
     }>(
       `SELECT id, timezone, installed,
               COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
+              rate_country,
+              rate_country_source,
+              rate_country_updated_at,
               json ->> 'nameplate_energy' AS nameplate_energy,
               json ->> 'nameplate_power' AS nameplate_power,
               json ->> 'backup_reserve_percent' AS backup_reserve_percent
@@ -2775,28 +3052,51 @@ export class TariffTimelineRepo {
       systemCostRows: systemCostRes.rows,
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
+      rateCountry: siteRow.rate_country ?? null,
+      rateCountrySource: siteRow.rate_country_source ?? null,
+      rateCountryUpdatedAt: siteRow.rate_country_updated_at ?? null,
     });
     if (utility) {
       const skipped = utility.choice === 'skipped';
+      const eligibility = timeline.rateCountry?.eligibility ?? deriveRatePlanEligibility(siteRow.rate_country ?? null);
+      const hasIneligiblePublicSelection = timeline.rateCountry?.hasIneligiblePublicSelection ?? false;
       const freshness = skipped ? { newestRevisionStart: null, mayBeOutdated: false } : estimateFreshness({
         today,
         periodRows: periodsRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), source: row.source, effective_from: row.effective_from, effective_to: row.effective_to })),
         referencePeriodRows: referencePeriodsRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), source: row.source, effective_from: row.effective_from, effective_to: row.effective_to })),
         sources: estimateSourceRes.rows.map(row => ({ tariff_id: Number(row.tariff_id), role: row.role, start_date: row.start_date, revision_start: row.revision_start })),
       });
-      timeline.estimates = {
-        status: skipped ? 'skipped' : utility.status === 'running' ? 'pending' : utility.status as Exclude<import('./tariff-contract').EstimatesStatusDTO['status'], 'skipped'>,
-        utilityName: utility.urdb_utility,
-        teslaPlanOutOfDate: !skipped && utility.newer_urdb_name !== null,
-        newerPlanName: skipped ? null : utility.newer_urdb_name,
-        newerPlanStart: skipped ? null : utility.newer_urdb_start,
-        ...freshness,
-        historyGuide: null,
-      };
-      // The guide lists the utility's public plans, so a site with no utility (outside the US) gets none.
-      if (!skipped && utility.urdb_utility !== null && (utility.status === 'ready' || utility.status === 'needs_plan')) {
-        const window = await loadHistoryWindow(pool, siteId, today);
-        if (window) timeline.estimates.historyGuide = { historyStart: window.historyStart, fillThrough: window.fillThrough, unconfirmedDays: window.unconfirmedDays };
+      if (eligibility === 'us') {
+        timeline.estimates = {
+          status: skipped ? 'skipped' : utility.status === 'running' ? 'pending' : utility.status as Exclude<import('./tariff-contract').EstimatesStatusDTO['status'], 'skipped'>,
+          utilityName: utility.urdb_utility,
+          teslaPlanOutOfDate: !skipped && utility.newer_urdb_name !== null,
+          newerPlanName: skipped ? null : utility.newer_urdb_name,
+          newerPlanStart: skipped ? null : utility.newer_urdb_start,
+          ...freshness,
+          historyGuide: null,
+          eligibility,
+          needsCountryConfirmation: false,
+          hasIneligiblePublicSelection: false,
+        };
+        if (!skipped && utility.urdb_utility !== null && (utility.status === 'ready' || utility.status === 'needs_plan')) {
+          const window = await loadHistoryWindow(pool, siteId, today);
+          if (window) timeline.estimates.historyGuide = { historyStart: window.historyStart, fillThrough: window.fillThrough, unconfirmedDays: window.unconfirmedDays };
+        }
+      } else {
+        // Existing unresolved ('unknown') and 'outside_us' sites must not be routed to a US utility search.
+        timeline.estimates = {
+          status: skipped ? 'skipped' : 'ready',
+          utilityName: null,
+          teslaPlanOutOfDate: false,
+          newerPlanName: null,
+          newerPlanStart: null,
+          ...freshness,
+          historyGuide: null,
+          eligibility,
+          needsCountryConfirmation: eligibility === 'unknown',
+          hasIneligiblePublicSelection,
+        };
       }
     }
     return timeline;
@@ -3551,9 +3851,11 @@ export class TariffTimelineRepo {
         id: string;
         timezone: string;
         currency: string;
+        rate_country?: string | null;
       }>(
         `SELECT id, timezone,
-                COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency
+                COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
+                rate_country
          FROM "Site" WHERE id = $1 FOR UPDATE`,
         [siteId]
       );
@@ -3568,6 +3870,13 @@ export class TariffTimelineRepo {
         throw new TariffValidationError('Tesla restoration is only available for your rate plan.');
       }
 
+      const eligibility = deriveEligibility
+        ? deriveEligibility({ rateCountry: site.rate_country ?? null })
+        : deriveRatePlanEligibility(site.rate_country ?? null);
+      if (commit.candidate.kind === 'public') {
+        assertUsRatePlanEligibility(eligibility);
+      }
+
       const utilityRes = await client.query<{
         urdb_utility: string | null;
         choice: 'auto' | 'owner' | 'skipped' | null;
@@ -3578,7 +3887,6 @@ export class TariffTimelineRepo {
       const utilityRow = utilityRes.rows[0];
       const utilityName = utilityRow?.urdb_utility ?? null;
       const utilityChoice = utilityRow?.choice ?? null;
-      const eligibility = deriveEligibility({ timezone, currency, utilityChoice });
 
       const existingSpans = await loadScopeSelectionSpans(client, siteId, commit.scope, userId);
       const restorationTargets = commit.candidate.kind === 'restore_tesla'

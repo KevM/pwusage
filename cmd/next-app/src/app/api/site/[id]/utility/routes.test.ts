@@ -69,7 +69,15 @@ describe('utility and plan routes', () => {
     mocks.isCrossOriginRequest.mockReturnValue(false);
     mocks.utilityNames.mockResolvedValue(['We Energies']);
     mocks.ratesEffectiveOn.mockResolvedValue([allDayRate]);
-    mocks.getSiteUtilityContext.mockResolvedValue({ name: 'We Energies', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' });
+    mocks.getSiteUtilityContext.mockResolvedValue({
+      name: 'We Energies',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      choice: 'owner',
+      rateCountry: 'US',
+      rateCountrySource: 'owner',
+      eligibility: 'us',
+    });
     mocks.loadSitePublicConversionContext.mockResolvedValue({ fallbackSellRate: 0.04, hasTeslaSellFallback: true });
     mocks.setSiteUtility.mockResolvedValue({ version: 2, periods: [] });
     mocks.setSitePlanLabel.mockResolvedValue({ version: 2, periods: [] });
@@ -121,7 +129,7 @@ describe('utility and plan routes', () => {
   });
 
   it('requires a utility before listing or saving a plan', async () => {
-    mocks.getSiteUtilityContext.mockResolvedValue({ name: null, timezone: 'UTC' });
+    mocks.getSiteUtilityContext.mockResolvedValue({ name: null, timezone: 'UTC', rateCountry: 'US', rateCountrySource: 'owner', eligibility: 'us' });
     const listed = await listPlans(new NextRequest('https://app.test/api/site/site-1/utility/plans'), context);
     expect(listed.status).toBe(409);
     const saved = await savePlan(new NextRequest('https://app.test/api/site/site-1/utility/plan', {
@@ -203,7 +211,15 @@ describe('utility and plan routes', () => {
     );
     expect(badDate.status).toBe(400);
 
-    mocks.getSiteUtilityContext.mockResolvedValueOnce({ name: 'We Energies', timezone: 'America/Chicago', currency: 'EUR', choice: 'owner' });
+    mocks.getSiteUtilityContext.mockResolvedValueOnce({
+      name: 'We Energies',
+      timezone: 'America/Chicago',
+      currency: 'EUR',
+      choice: 'owner',
+      rateCountry: 'US',
+      rateCountrySource: 'owner',
+      eligibility: 'us',
+    });
     const badCurrency = await listPlans(
       new NextRequest('https://app.test/api/site/site-1/utility/plans'),
       context
@@ -231,8 +247,8 @@ describe('utility and plan routes', () => {
     const fakeClient = {
       query: vi.fn(async (sql: string) => {
         clientQueries.push(sql);
-        if (sql.includes('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE')) {
-          return { rows: [{ id: 'site-1' }], rowCount: 1 };
+        if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
+          return { rows: [{ id: 'site-1', timezone: 'America/Chicago', rate_country: 'US' }], rowCount: 1 };
         }
         if (sql.includes('UPDATE "SiteUtility" SET urdb_plan_label = $2')) {
           return { rows: [], rowCount: 1 };
@@ -254,7 +270,7 @@ describe('utility and plan routes', () => {
     mocks.poolConnect.mockResolvedValue(fakeClient);
     mocks.poolQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM "Site"') && sql.includes('WHERE id = $1')) {
-        return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T00:00:00Z', currency: 'USD' }] };
+        return { rows: [{ id: 'site-1', timezone: 'America/Chicago', installed: '2024-01-01T00:00:00Z', currency: 'USD', rate_country: 'US', rate_country_source: 'owner', rate_country_updated_at: null }] };
       }
       if (sql.includes('FROM "TariffEffectivePeriod" p')) {
         return {
@@ -322,5 +338,65 @@ describe('utility and plan routes', () => {
       source: 'estimated',
       choiceKind: 'owner',
     });
+  });
+
+  it('blocks all public utility searches, selections, and plans without OpenEI calls for outside-US and unknown sites', async () => {
+    for (const ctx of [
+      { name: 'We Energies', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' as const, rateCountry: 'CA', rateCountrySource: 'owner' as const, eligibility: 'outside_us' as const },
+      { name: 'We Energies', timezone: 'America/Chicago', currency: 'USD', choice: 'auto' as const, rateCountry: null, rateCountrySource: null, eligibility: 'unknown' as const },
+    ]) {
+      vi.clearAllMocks();
+      mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+      mocks.verifySiteAccess.mockResolvedValue(true);
+      mocks.isCrossOriginRequest.mockReturnValue(false);
+      mocks.getSiteUtilityContext.mockResolvedValue(ctx);
+      mocks.setSiteUtility.mockResolvedValue({ version: 2, periods: [] });
+
+      const searchRes = await searchUtilities(
+        new NextRequest('https://app.test/api/site/site-1/utility/search?q=we'),
+        context
+      );
+      expect(searchRes.status).toBe(409);
+
+      const putUtilityRes = await saveUtility(
+        new NextRequest('https://app.test/api/site/site-1/utility', {
+          method: 'PUT',
+          body: JSON.stringify({ name: 'We Energies' }),
+        }),
+        context
+      );
+      expect(putUtilityRes.status).toBe(409);
+      expect(mocks.setSiteUtility).not.toHaveBeenCalled();
+
+      const plansRes = await listPlans(
+        new NextRequest('https://app.test/api/site/site-1/utility/plans'),
+        context
+      );
+      expect(plansRes.status).toBe(409);
+
+      const putPlanRes = await savePlan(
+        new NextRequest('https://app.test/api/site/site-1/utility/plan', {
+          method: 'PUT',
+          body: JSON.stringify({ label: 'valid-plan' }),
+        }),
+        context
+      );
+      expect(putPlanRes.status).toBe(409);
+      expect(mocks.setSitePlanLabel).not.toHaveBeenCalled();
+
+      expect(mocks.utilityNames).not.toHaveBeenCalled();
+      expect(mocks.ratesEffectiveOn).not.toHaveBeenCalled();
+
+      // Explicit user opt-out ({ skipped: true }) still makes zero OpenEI calls and succeeds.
+      const skipRes = await saveUtility(
+        new NextRequest('https://app.test/api/site/site-1/utility', {
+          method: 'PUT',
+          body: JSON.stringify({ skipped: true }),
+        }),
+        context
+      );
+      expect(skipRes.status).toBe(200);
+      expect(mocks.utilityNames).not.toHaveBeenCalled();
+    }
   });
 });
