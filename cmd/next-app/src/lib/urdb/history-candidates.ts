@@ -88,7 +88,8 @@ export function historyPlans(rates: UrdbRate[], tesla: Tariff | null, defaults: 
 
 export async function buildRatePlanHistory(input: { api: UrdbApi; utilityName: string; timeZone: string; today: string; window: HistoryWindow; tesla: Tariff | null }): Promise<RatePlanHistoryResponse> {
   const { api, utilityName, timeZone, today, window, tesla } = input;
-  const dates = [today, ...window.askYears.map(year => askDate(year, window, today))];
+  // The current plan is the one in effect where the fill ends: a switch after the Tesla start isn't asked about.
+  const dates = [window.fillThrough ?? today, ...window.askYears.map(year => askDate(year, window, today))];
   // One call per date plus the utility's defaults, at most four at a time.
   const tasks: Array<() => Promise<UrdbRate[]>> = [() => api.defaultRates(utilityName), ...dates.map(date => () => api.ratesEffectiveOn(utilityName, date, timeZone))];
   const [defaultList, ...lists] = await mapWithConcurrency(tasks, MAX_CONCURRENT_URDB_CALLS, task => task());

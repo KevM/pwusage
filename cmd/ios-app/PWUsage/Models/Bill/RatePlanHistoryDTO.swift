@@ -51,6 +51,7 @@ struct RatePlanHistoryDTO: Decodable, Sendable, Equatable {
     let historyStart: String
     let fillThrough: String?
     let teslaShape: RatePlanKind?
+    /// Plans in effect on `fillThrough` (today when nil): the newest plan the guide fills.
     let current: [RatePlanHistoryPlanDTO]
     /// Newest first.
     let years: [RatePlanHistoryYearDTO]

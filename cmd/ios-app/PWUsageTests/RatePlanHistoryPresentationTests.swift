@@ -90,7 +90,8 @@ struct RatePlanHistoryPresentationTests {
 
     @Test func questionsAndTitles() {
         var flow = RatePlanHistoryFlow(history: Self.history(), hasTeslaPlan: true)
-        #expect(RatePlanHistoryPresentation.question(flow) == "What kind of rate plan are you on now?")
+        // With a Tesla plan the guide fills up to its start, so it asks about the plan there.
+        #expect(RatePlanHistoryPresentation.question(flow) == "What kind of rate plan were you on in Apr 2026?")
         #expect(RatePlanHistoryPresentation.navigationTitle(flow) == "Your Rate Plans")
         flow.chooseKind(.fixed)
         #expect(flow.step == .sinceStart)
@@ -112,6 +113,7 @@ struct RatePlanHistoryPresentationTests {
             )]
         )
         var flow = RatePlanHistoryFlow(history: history, hasTeslaPlan: false, today: "2026-11-16")
+        #expect(RatePlanHistoryPresentation.question(flow) == "What kind of rate plan are you on now?")
         flow.chooseKind(.fixed)
         flow.answerSinceStart(false)
         #expect(RatePlanHistoryPresentation.question(flow) == "When did you switch to Current Plan?")

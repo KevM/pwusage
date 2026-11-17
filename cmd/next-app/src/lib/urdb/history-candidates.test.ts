@@ -96,7 +96,7 @@ describe('historyPlans', () => {
 
 const window: HistoryWindow = { historyStart: '2023-11-14', fillThrough: '2026-04-27', unconfirmedDays: 900, askYears: [2025, 2024, 2023] };
 function fakeApi(delay = 0) {
-  const byDate: Record<string, unknown> = { '2023-11-14': y2023, '2024-07-01': y2024, '2025-07-01': y2025, '2026-11-16': y2026 };
+  const byDate: Record<string, unknown> = { '2023-11-14': y2023, '2024-07-01': y2024, '2025-07-01': y2025, '2026-04-27': y2026, '2026-11-16': y2026 };
   let active = 0;
   let peak = 0;
   const call = async <T>(value: T): Promise<T> => { active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, delay)); active--; return value; };
@@ -112,6 +112,16 @@ describe('buildRatePlanHistory', () => {
     expect(result).toMatchObject({ utilityName: 'Wisconsin Electric Power Co', historyStart: '2023-11-14', fillThrough: '2026-04-27', teslaShape: 'time_of_use' });
     expect(result.current.length).toBe(3);
     expect(result.years[0].plans[0].closestWindow).toBe(OPTION_B);
+  });
+  it('currentListsThePlansInEffectWhereTheFillEnds', async () => {
+    // The owner's answer covers the days up to the Tesla start, so a later switch must not leak in.
+    const { api, ratesEffectiveOn } = fakeApi();
+    await buildRatePlanHistory({ api, utilityName: 'U', timeZone: 'America/Chicago', today: '2026-11-16', window, tesla: harrisonTesla() });
+    expect(ratesEffectiveOn.mock.calls.map(call => call[1])).toContain('2026-04-27');
+    expect(ratesEffectiveOn.mock.calls.map(call => call[1])).not.toContain('2026-11-16');
+    const open = fakeApi();
+    await buildRatePlanHistory({ api: open.api, utilityName: 'U', timeZone: 'America/Chicago', today: '2026-11-16', window: { ...window, fillThrough: null }, tesla: null });
+    expect(open.ratesEffectiveOn.mock.calls.map(call => call[1])).toContain('2026-11-16');
   });
   it('callsUrdbOncePerYearPlusTodayAndDefaults', async () => {
     const { api, ratesEffectiveOn, defaultRates } = fakeApi();

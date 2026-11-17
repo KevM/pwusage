@@ -37,8 +37,8 @@ enum RatePlanHistoryPresentation {
         // The plan the walk is asking about starts here; the one before it ends the day before.
         let before = flow.spans.last.map { monthYear($0.from) } ?? ""
         switch flow.step {
-        case .currentKind: return "What kind of rate plan are you on now?"
-        case .currentPlan: return "Which plan are you on now?"
+        case .currentKind: return currentQuestion(flow, kind: true)
+        case .currentPlan: return currentQuestion(flow, kind: false)
         case .sinceStart:
             guard flow.spans.count > 1 else { return "Have you been on \(plan) since \(start)?" }
             let newer = monthYear(flow.spans[flow.spans.count - 2].from)
@@ -49,6 +49,13 @@ enum RatePlanHistoryPresentation {
         case .peakHours: return "When does your Peak start and stop?"
         case .review: return reviewHeading(historyStart: flow.history.historyStart)
         }
+    }
+
+    /// With a Tesla plan the guide fills up to its start, so it asks about the plan there.
+    private static func currentQuestion(_ flow: RatePlanHistoryFlow, kind: Bool) -> String {
+        let subject = kind ? "What kind of rate plan" : "Which plan"
+        guard let end = flow.history.fillThrough else { return "\(subject) are you on now?" }
+        return "\(subject) were you on in \(monthYear(end))?"
     }
 
     // MARK: Buttons and pills

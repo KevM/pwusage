@@ -83,6 +83,7 @@ export interface RatePlanHistoryResponse {
   historyStart: string;
   fillThrough: string | null;
   teslaShape: RatePlanKind | null;
+  /** Plans in effect on `fillThrough` (today when null): the newest plan the guide fills. */
   current: RatePlanHistoryPlan[];
   /** Newest first. */
   years: RatePlanHistoryYear[];
