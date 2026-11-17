@@ -40,6 +40,10 @@ final class RateEstimatesAccessoryDismissals {
     static let defaultsKey = "rateEstimates.accessoryDismissedSiteIDs"
     static let historyOfferDefaultsKey = "rateHistory.offerDismissedSiteIDs"
 
+    /// The one history-offer store the Home accessory and the Rate Plans card both read, so a Not Now on
+    /// either hides both at once.
+    static let sharedHistoryOffer = historyOffer()
+
     static func historyOffer(defaults: UserDefaults = .standard) -> RateEstimatesAccessoryDismissals {
         RateEstimatesAccessoryDismissals(defaults: defaults, key: historyOfferDefaultsKey)
     }

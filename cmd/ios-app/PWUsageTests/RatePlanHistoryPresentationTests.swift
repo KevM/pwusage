@@ -172,4 +172,25 @@ struct RatePlanHistoryPresentationTests {
             for: PWUsageAPIError.requestRejected(statusCode: 400, message: nil))
             == "Couldn’t save your rate plans. Check your connection and try again.")
     }
+
+    @Test func teslaRowStartsTheDayAfterTheFilledSpans() {
+        let row = RatePlanHistoryPresentation.teslaRow(history: Self.history(), teslaPlanName: "CGS NM (edited)")
+        #expect(row == RatePlanHistoryPresentation.TeslaRow(name: "CGS NM (edited)", range: "Apr 28, 2026 – Present"))
+        let monthEnd = RatePlanHistoryDTO(
+            utilityName: "We Energies", historyStart: "2023-11-14", fillThrough: "2025-12-31",
+            teslaShape: nil, current: [], years: []
+        )
+        #expect(RatePlanHistoryPresentation.teslaRow(history: monthEnd, teslaPlanName: "Tesla")?.range
+            == "Jan 1, 2026 – Present")
+    }
+
+    @Test func teslaRowIsAbsentWithoutATeslaPlanOrFilledSpans() {
+        #expect(RatePlanHistoryPresentation.teslaRow(history: Self.history(), teslaPlanName: nil) == nil)
+        #expect(RatePlanHistoryPresentation.teslaRow(history: Self.history(), teslaPlanName: "") == nil)
+        let open = RatePlanHistoryDTO(
+            utilityName: "We Energies", historyStart: "2023-11-14", fillThrough: nil,
+            teslaShape: nil, current: [], years: []
+        )
+        #expect(RatePlanHistoryPresentation.teslaRow(history: open, teslaPlanName: "Tesla") == nil)
+    }
 }

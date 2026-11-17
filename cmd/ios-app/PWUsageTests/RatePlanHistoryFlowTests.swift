@@ -270,4 +270,39 @@ struct RatePlanHistoryFlowTests {
         flow.back()
         #expect(flow.step == .currentKind)
     }
+
+    private static func reviewedWithOneSwitch() -> RatePlanHistoryFlow {
+        var flow = onOptionB()
+        flow.answerStillOn(true)
+        flow.answerStillOn(false)
+        flow.chooseKind(.fixed)
+        flow.chooseSwitchMonth("2025-01")
+        flow.answerStillOn(true)
+        return flow
+    }
+
+    @Test func changeOnTheOlderSpanReopensItsSwitchMonth() {
+        var flow = Self.reviewedWithOneSwitch()
+        #expect(flow.step == .review)
+        #expect(flow.spans.count == 2)
+        flow.reopenSpan(at: 1)
+        #expect(flow.step == .switchMonth(year: 2024))
+        #expect(flow.spans.count == 1)
+    }
+
+    @Test func changeOnTheCurrentSpanStartsOver() {
+        var flow = Self.reviewedWithOneSwitch()
+        flow.reopenSpan(at: 0)
+        #expect(flow.spans.isEmpty)
+        #expect(flow.step == .currentKind || flow.step == .peakHours(year: 2026))
+        flow.reopenSpan(at: 0)
+        #expect(flow.spans.isEmpty)
+    }
+
+    @Test func changeIgnoresAnIndexPastTheSpans() {
+        var flow = Self.reviewedWithOneSwitch()
+        let before = flow
+        flow.reopenSpan(at: 2)
+        #expect(flow == before)
+    }
 }

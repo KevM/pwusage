@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// The Home tab bar accessory that offers one estimate setup step. Opens that step's picker;
-/// Not now hides the accessory for this site (Bill and Solar System keep the setup).
+/// The Home tab bar accessory that offers one estimate setup step, or the rate plan history guide.
+/// Opens that step's picker or the guide; Not now hides the accessory for this site (Bill and Solar System
+/// keep the setup, Rate Plans keeps the guide's offer until it is dismissed there too).
 @available(iOS 26.0, *)
 struct RateEstimatesAccessory: View {
-    let prompt: RateEstimatesPrompt
+    let kind: RateEstimatesAccessoryKind
     let utilityName: String?
+    /// The history guide's first day, for the offer's subtitle.
+    var historyStart: String?
     let onOpen: () -> Void
     let onDismiss: () -> Void
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
@@ -17,10 +20,10 @@ struct RateEstimatesAccessory: View {
                     Image(systemName: symbol)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(RateEstimatesPresentation.accessoryTitle(prompt))
+                        Text(title)
                             .font(.subheadline.weight(.semibold))
                         if placement != .inline {
-                            Text(RateEstimatesPresentation.accessorySubtitle(prompt, utilityName: utilityName))
+                            Text(subtitle)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -44,10 +47,26 @@ struct RateEstimatesAccessory: View {
         .padding(.horizontal, 16)
     }
 
+    private var title: String {
+        switch kind {
+        case .setup(let prompt): RateEstimatesPresentation.accessoryTitle(prompt)
+        case .historyOffer: RatePlanHistoryPresentation.accessoryTitle
+        }
+    }
+
+    private var subtitle: String {
+        switch kind {
+        case .setup(let prompt): RateEstimatesPresentation.accessorySubtitle(prompt, utilityName: utilityName)
+        case .historyOffer:
+            RatePlanHistoryPresentation.accessorySubtitle(utilityName: utilityName, historyStart: historyStart ?? "")
+        }
+    }
+
     private var symbol: String {
-        switch prompt {
-        case .pickUtility: "building.columns"
-        case .pickPlan: "list.bullet.rectangle"
+        switch kind {
+        case .setup(.pickUtility): "building.columns"
+        case .setup(.pickPlan): "list.bullet.rectangle"
+        case .historyOffer: RatePlanHistoryPresentation.accessorySymbol
         }
     }
 }

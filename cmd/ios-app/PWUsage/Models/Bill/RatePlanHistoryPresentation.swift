@@ -200,6 +200,24 @@ enum RatePlanHistoryPresentation {
         RatePlanTimelineFormatting.displayRange(from: start, to: nil)
     }
 
+    /// The greyed Tesla row in review: the plan Tesla reports, from the day after the last span the
+    /// guide fills. Absent without a Tesla plan name or a `fillThrough` (nothing marks where Tesla starts).
+    struct TeslaRow: Equatable {
+        let name: String
+        let range: String
+    }
+
+    static func teslaRow(history: RatePlanHistoryDTO, teslaPlanName: String?) -> TeslaRow? {
+        guard let teslaPlanName, !teslaPlanName.isEmpty,
+              let fillThrough = history.fillThrough,
+              let last = RatePlanTimelineFormatting.parseYMD(fillThrough) else {
+            return nil
+        }
+        // `parseYMD` is UTC midnight, so one day is exactly 86,400 seconds.
+        let first = RatePlanTimelineFormatting.formatYMD(last.addingTimeInterval(86_400))
+        return TeslaRow(name: teslaPlanName, range: teslaRange(from: first))
+    }
+
     /// `Residential Rg 2 · Peak 8 AM – 8 PM` (the window when the span has one).
     static func spanTitle(_ span: RatePlanHistoryFlow.Span) -> String {
         let name = displayName(span.plan.name)

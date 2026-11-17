@@ -31,4 +31,26 @@ extension TariffSheet {
         .padding(12)
         .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
+
+    func teslaDivergenceBanner(_ sync: TeslaSyncDTO, isSyncing: Bool, onSync: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bolt.badge.clock")
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                let copy = TeslaDivergenceCopy(sync: sync)
+                Text(copy.title)
+                    .font(.subheadline.weight(.medium))
+                Text(copy.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("Sync", action: onSync)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isSyncing)
+        }
+        .padding(14)
+        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
 }

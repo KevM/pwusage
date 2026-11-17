@@ -4,12 +4,14 @@ private enum TariffSheetModal: Identifiable, Equatable {
     case effectiveDates(TariffPeriodDTO)
     case editor(RatePlanEditorMode)
     case estimates(RateEstimatesPrompt)
+    case rateHistory
 
     var id: String {
         switch self {
         case .effectiveDates(let period): "dates-\(period.periodId)"
         case .editor(let mode): "editor-\(mode.id)"
         case .estimates(let prompt): "estimates-\(prompt)"
+        case .rateHistory: "rate-history"
         }
     }
 }
@@ -32,6 +34,7 @@ struct TariffSheet: View {
     @State private var pendingDeletion: TariffPeriodDTO?
     @State private var minuteTick = Date()
     @State private var didOpenStartingAddForm = false
+    private let historyOfferDismissals = RateEstimatesAccessoryDismissals.sharedHistoryOffer
 
     var body: some View {
         contentView
@@ -110,6 +113,9 @@ struct TariffSheet: View {
     private func headerBannerSection(_ data: SiteTariffsTimelineResponse) -> some View {
         RateEstimatesRatePlanSection(
             estimates: data.estimates,
+            historyStart: historyOfferStart(data),
+            onFindHistory: { activeModal = .rateHistory },
+            onDismissHistory: { historyOfferDismissals.dismiss(siteID: site.id) },
             onAddRatePlan: { activeModal = .editor(.add) },
             onChooseUtility: { activeModal = .estimates(.pickUtility) },
             onChoosePlan: { activeModal = .estimates(.pickPlan) }
@@ -132,7 +138,7 @@ struct TariffSheet: View {
                 .padding(.horizontal, 4)
         }
         if data.teslaSync.differsFromActiveManual {
-            teslaDivergenceBanner(data.teslaSync)
+            teslaDivergenceBanner(data.teslaSync, isSyncing: isSyncing, onSync: syncFromTesla)
         }
         ActiveRatePlanCardView(timeline: data, now: minuteTick)
     }
@@ -173,28 +179,6 @@ struct TariffSheet: View {
         }
     }
 
-    private func teslaDivergenceBanner(_ sync: TeslaSyncDTO) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "bolt.badge.clock")
-                .foregroundStyle(.blue)
-            VStack(alignment: .leading, spacing: 2) {
-                let copy = TeslaDivergenceCopy(sync: sync)
-                Text(copy.title)
-                    .font(.subheadline.weight(.medium))
-                Text(copy.detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Button("Sync") { syncFromTesla() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isSyncing)
-        }
-        .padding(14)
-        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
     private var addPlanButton: some View {
         Button {
             activeModal = .editor(.add)
@@ -218,6 +202,8 @@ struct TariffSheet: View {
             }
         case .estimates(let prompt):
             RateEstimatesSetupSheet(prompt: prompt, utilityName: timeline?.estimates?.utilityName, actions: actions)
+        case .rateHistory:
+            rateHistorySheet
         case .editor(let mode):
             RatePlanEditorFlow(
                 mode: mode,
@@ -232,6 +218,21 @@ struct TariffSheet: View {
                 }
             )
         }
+    }
+
+    /// The history guide's first day while the offer shows: a guide the owner hasn't dismissed for this site.
+    private func historyOfferStart(_ data: SiteTariffsTimelineResponse) -> String? {
+        guard !historyOfferDismissals.isDismissed(siteID: site.id) else { return nil }
+        return data.estimates?.historyGuide?.historyStart
+    }
+
+    private var rateHistorySheet: some View {
+        RatePlanHistorySheet(
+            hasTeslaPlan: timeline?.teslaSync.latestTariffId != nil,
+            teslaPlanName: timeline?.teslaSync.latestTariffName,
+            load: { try await actions.loadRateHistory() },
+            save: { timeline = try await actions.saveRateHistory($0) }
+        )
     }
 
     private func openStartingAddFormIfNeeded(_ timelineLoaded: Bool) {
