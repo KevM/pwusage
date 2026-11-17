@@ -12,6 +12,8 @@ struct TariffTimelineActions: Sendable {
     var skipUtility: @MainActor () async throws -> Void
     var utilityPlans: @MainActor () async throws -> [UtilityPlanDTO]
     var setUtilityPlan: @MainActor (String) async throws -> Void
+    var loadRateHistory: @MainActor () async throws -> RatePlanHistoryDTO
+    var saveRateHistory: @MainActor ([RatePlanHistoryPeriod]) async throws -> SiteTariffsTimelineResponse
 
     @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
         Self(
@@ -25,7 +27,9 @@ struct TariffTimelineActions: Sendable {
             setUtility: { _ = try await coordinator.setUtility(name: $0) },
             skipUtility: { _ = try await coordinator.skipUtility() },
             utilityPlans: { try await coordinator.utilityPlans() },
-            setUtilityPlan: { _ = try await coordinator.setUtilityPlan(label: $0) }
+            setUtilityPlan: { _ = try await coordinator.setUtilityPlan(label: $0) },
+            loadRateHistory: { try await coordinator.loadRateHistory() },
+            saveRateHistory: { try await coordinator.saveRateHistory($0) }
         )
     }
 }

@@ -67,7 +67,7 @@ export interface SiteUtilityRow {
 export interface TariffUrdbSourceRow {
   tariff_id: number;
   site_id: string;
-  role: 'tesla_anchor' | 'estimated_actual' | 'estimated_reference';
+  role: 'tesla_anchor' | 'estimated_actual' | 'estimated_reference' | 'owner_history';
   urdb_label: string | null;
   start_date: string;
   end_date: string | null;

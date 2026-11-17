@@ -81,6 +81,16 @@ extension DashboardCoordinator {
         try await runTariffRequest { api, siteID in try await api.setUtilityPlan(siteID: siteID, label: label) }
     }
 
+    func loadRateHistory() async throws -> RatePlanHistoryDTO {
+        try await runTariffQuery { api, siteID in try await api.rateHistory(siteID: siteID) }
+    }
+
+    func saveRateHistory(_ periods: [RatePlanHistoryPeriod]) async throws -> SiteTariffsTimelineResponse {
+        try await runTariffRequest { api, siteID in
+            try await api.saveRateHistory(siteID: siteID, periods: periods)
+        }
+    }
+
     private func runTariffFetch(knownETag: String?) async throws -> SiteTariffsTimelineResponse? {
         guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
