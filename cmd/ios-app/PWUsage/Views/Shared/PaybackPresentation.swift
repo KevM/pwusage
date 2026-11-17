@@ -23,7 +23,7 @@ enum PaybackPresentation {
         case let .paidOff(month), let .projected(month):
             "Paid off around \(seasonText(month: month, timeZone: timeZone))"
         case .notWithinHorizon:
-            neverText
+            "Not within \(PaybackCalculator.horizonYears) years"
         case let .needsFullYear(countedDays):
             "We’ll estimate when it pays for itself once a full year of savings is counted "
                 + "(\(countedDays) of \(PaybackCalculator.minimumCountedDays) days so far)."

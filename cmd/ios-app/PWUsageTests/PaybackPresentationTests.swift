@@ -66,7 +66,7 @@ struct PaybackPresentationTests {
             PaybackPresentation.breakEvenLine(.paidOff(month: Self.monthStart(2024, 10)), timeZone: utc)
                 == "Paid off around fall 2024"
         )
-        #expect(PaybackPresentation.breakEvenLine(.notWithinHorizon, timeZone: utc) == "not within 30 years")
+        #expect(PaybackPresentation.breakEvenLine(.notWithinHorizon, timeZone: utc) == "Not within 30 years")
         #expect(
             PaybackPresentation.breakEvenLine(.needsFullYear(countedDays: 214), timeZone: utc)
                 == "We’ll estimate when it pays for itself once a full year of savings is counted "
