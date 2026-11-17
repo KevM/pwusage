@@ -140,3 +140,194 @@ export interface SiteTariffsTimelineResponse {
     differsFromActiveManual: boolean;
   };
 }
+
+export type TariffSelectionScope = 'actual' | 'reference';
+
+export type TariffSelectionCandidate =
+  | { kind: 'public'; label: string }
+  | { kind: 'manual'; name: string; seasons: TariffSeasonInput[] }
+  | { kind: 'restore_tesla'; originalSelectionId: number };
+
+export interface TariffSelectionRequest {
+  scope: TariffSelectionScope;
+  candidate: TariffSelectionCandidate;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export interface TariffSelectionCommit extends TariffSelectionRequest {
+  expectedReviewHash: string;
+  verifiedAgainstBill: boolean;
+}
+
+export type TariffSelectionChoiceKind = 'automatic' | 'owner';
+
+export type ExportRateProvenance = 'published' | 'net_metering' | 'inherited' | 'manual' | 'tesla';
+
+export type TariffApproximationKind =
+  | 'tier_blended'
+  | 'export_inherited_from_tesla'
+  | 'export_net_metering_assumed'
+  | 'export_fallback_zero'
+  | 'holiday_weekend_schedule'
+  | 'other';
+
+export interface TariffApproximationNote {
+  kind: TariffApproximationKind;
+  message: string;
+}
+
+export interface TariffVerificationSummary {
+  verifiedAt: string;
+  verifiedByEmail: string | null;
+  verifiedByCurrentUser: boolean;
+}
+
+export interface TariffReviewPlanSnapshot {
+  /** Stored Tariff.id when backed by a saved version; null for an unsaved candidate. */
+  tariffId: number | null;
+  /** Stored Tariff.version when backed by a saved version; null for an unsaved candidate. */
+  version: number | null;
+  /** Stored TariffEffectivePeriod.id when representing an existing timeline span; null for a candidate. */
+  periodId: number | null;
+  /** Stored selection record id when backed by a selection provenance row. */
+  selectionId: number | null;
+  name: string;
+  utilityName: string | null;
+  source: TariffSource;
+  choiceKind: TariffSelectionChoiceKind;
+  /** URDB label when source is 'estimated' (public utility rates). */
+  urdbLabel: string | null;
+  /** Informational revision start date (YYYY-MM-DD) for public utility rates; never a default effective date. */
+  revisionStart: string | null;
+  contentHash: string | null;
+  exportRateProvenance: ExportRateProvenance;
+  holidaysUseWeekendSchedule: boolean;
+  seasons: TariffSeasonInput[];
+  approximationNotes: TariffApproximationNote[];
+  verification: TariffVerificationSummary | null;
+}
+
+export interface TariffComparisonSlotRate {
+  touName: TariffPeriodName;
+  buyRate: number;
+  sellRate: number;
+}
+
+export interface TariffAlignedTimeRow {
+  fromHour: number;
+  fromMinute: number;
+  toHour: number;
+  toMinute: number;
+  before: TariffComparisonSlotRate | null;
+  after: TariffComparisonSlotRate | null;
+  buyRateDelta: number | null;
+  sellRateDelta: number | null;
+  buyRateChanged: boolean;
+  sellRateChanged: boolean;
+  rateChanged: boolean;
+  periodNameChanged: boolean;
+}
+
+export interface TariffAlignedSeasonComparison {
+  fromMonth: number;
+  fromDay: number;
+  toMonth: number;
+  toDay: number;
+  beforeSeasonName: string | null;
+  afterSeasonName: string | null;
+  weekdayRows: TariffAlignedTimeRow[];
+  weekendRows: TariffAlignedTimeRow[];
+  hasBuyRateChanges: boolean;
+  hasSellRateChanges: boolean;
+  hasRateChanges: boolean;
+  hasPeriodNameChanges: boolean;
+}
+
+export interface TariffRestorationOriginalRef {
+  originalSelectionId: number | null;
+  tariffId: number;
+  name: string;
+  version: number | null;
+  contentHash: string | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export type TariffIntervalRestorationProvenance =
+  | { status: 'not_applicable' }
+  | { status: 'preserves_tesla_original'; original: TariffRestorationOriginalRef }
+  | { status: 'restoring_original'; original: TariffRestorationOriginalRef }
+  | { status: 'unavailable'; reason: string };
+
+export type TariffReviewAffectedIntervalKind =
+  | 'replace'
+  | 'fill_gap'
+  | 'restore'
+  | 'restore_unavailable';
+
+export interface TariffReviewAffectedInterval {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  kind: TariffReviewAffectedIntervalKind;
+  before: TariffReviewPlanSnapshot | null;
+  after: TariffReviewPlanSnapshot | null;
+  seasons: TariffAlignedSeasonComparison[];
+  hasBuyRateChanges: boolean;
+  hasSellRateChanges: boolean;
+  hasRateChanges: boolean;
+  hasPeriodNameChanges: boolean;
+  restoration: TariffIntervalRestorationProvenance;
+}
+
+export interface TariffReviewUnchangedPeriod {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  relation: 'before_range' | 'after_range';
+  wasTrimmed: boolean;
+  originalEffectiveFrom: string;
+  originalEffectiveTo: string | null;
+  plan: TariffReviewPlanSnapshot;
+}
+
+export interface TariffReviewRestorationSummary {
+  preservedOriginals: TariffRestorationOriginalRef[];
+  restoredOriginals: TariffRestorationOriginalRef[];
+  unavailableRanges: Array<{
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    reason: string;
+  }>;
+  canApplyRestoration: boolean;
+}
+
+export interface TariffSelectionPreviewResponse {
+  reviewHash: string;
+  siteId: string;
+  scope: TariffSelectionScope;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  currency: string;
+  unit: 'kWh';
+  timezone: string;
+  holidaysUseWeekendSchedule: boolean;
+  recalculatesHistory: boolean;
+  recalculationRange: {
+    fromDate: string;
+    toDate: string | null;
+  } | null;
+  affectsPowerwallPlan: false;
+  candidatePlan: TariffReviewPlanSnapshot | null;
+  affectedIntervals: TariffReviewAffectedInterval[];
+  unchangedOutsidePeriods: TariffReviewUnchangedPeriod[];
+  restoration: TariffReviewRestorationSummary;
+  approximationNotes: TariffApproximationNote[];
+  summary: {
+    hasBuyRateChanges: boolean;
+    hasSellRateChanges: boolean;
+    hasRateChanges: boolean;
+    hasPeriodNameChanges: boolean;
+    fillsGap: boolean;
+    replacesExistingPlan: boolean;
+  };
+}
