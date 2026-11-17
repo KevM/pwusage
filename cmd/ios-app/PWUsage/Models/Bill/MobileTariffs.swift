@@ -395,11 +395,4 @@ extension MobileTariffDataAPI {
     func deleteReferenceRatePlan(siteID _: String, periodID _: Int) async throws -> SiteTariffsTimelineResponse {
         throw PWUsageAPIError.invalidResponse
     }
-
-    func saveSystemCosts(
-        siteID _: String,
-        body _: SystemCostsWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
 }

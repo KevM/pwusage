@@ -43,3 +43,12 @@ struct SystemCostsWriteRequest: Encodable, Sendable {
         try container.encode(powerwall, forKey: .powerwall)
     }
 }
+
+extension MobileTariffDataAPI {
+    func saveSystemCosts(
+        siteID _: String,
+        body _: SystemCostsWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+}
