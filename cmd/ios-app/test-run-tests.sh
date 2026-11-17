@@ -259,6 +259,17 @@ grep -qE '/pwusage-ios-tests\.[^/]+/DerivedData$' "$PWUSAGE_TEST_ARGS" || {
   exit 1
 }
 
+# --build-only (CI on main) builds the default Debug tests without running them, so pull requests
+# can start from main's build products; it reads no test result bundle and takes no filters.
+PWUSAGE_TEST_EXECUTED=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/run-tests.sh' "$script_dir/run-tests.sh" --build-only
+grep -qE '^build-for-testing$' "$PWUSAGE_TEST_ARGS"
+if grep -qE '^(test|SWIFT_OPTIMIZATION_LEVEL=.*|-skip-testing:.*)$' "$PWUSAGE_TEST_ARGS"; then
+  echo '--build-only ran tests, built optimized or filtered suites' >&2
+  exit 1
+fi
+grep -qE '^COMPILER_INDEX_STORE_ENABLE=NO$' "$PWUSAGE_TEST_ARGS"
+expect_failure 2 'takes no test filters' -- --build-only AppConfigurationTests
+
 export PWUSAGE_TEST_HANG=1
 export PWUSAGE_TEST_TIMEOUT_SECONDS=1
 started=$SECONDS

@@ -85,8 +85,9 @@ jobs:
 
       # Pull requests build Debug and main builds optimized, so each keeps its own cache. A run starts from
       # the newest cache for its kind and saves its own when the tests pass.
-      - name: Cache build products
-        uses: actions/cache@v6.1.0
+      - name: Restore build products
+        id: build-cache
+        uses: actions/cache/restore@v6.1.0
         with:
           path: /tmp/pwusage-derived-data
           key: ios-derived-data-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'full' }}-${{ hashFiles('cmd/ios-app/project.yml') }}-${{ github.sha }}
@@ -104,6 +105,45 @@ jobs:
           PWUSAGE_DETECTOR_PARITY: ${{ github.event_name != 'pull_request' && '1' || '' }}
         # --auto: promotes to --full (-O + year fixtures) on detector changes; runs default fast suite otherwise.
         run: ./run-tests.sh --auto
+
+      - name: Save build products
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: /tmp/pwusage-derived-data
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
+      # A pull request can only restore caches saved on its own branch or on main, and main builds
+      # optimized. Without a Debug cache from main, the first run of every new pull request rebuilds
+      # everything. Replace the optimized products with a Debug build and save it under the
+      # pull-request key, starting from the last one main saved.
+      - name: Clear optimized build products
+        if: github.event_name != 'pull_request'
+        run: rm -rf /tmp/pwusage-derived-data
+
+      - name: Restore Debug build products for pull requests
+        if: github.event_name != 'pull_request'
+        id: pr-build-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: /tmp/pwusage-derived-data
+          key: ios-derived-data-${{ runner.os }}-pr-${{ hashFiles('cmd/ios-app/project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ios-derived-data-${{ runner.os }}-pr-${{ hashFiles('cmd/ios-app/project.yml') }}-
+
+      - name: Build Debug tests for pull requests
+        if: github.event_name != 'pull_request'
+        env:
+          TMPDIR: /tmp
+          PWUSAGE_DERIVED_DATA: /tmp/pwusage-derived-data
+          PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
+        run: ./run-tests.sh --build-only
+
+      - name: Save Debug build products for pull requests
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: /tmp/pwusage-derived-data
+          key: ${{ steps.pr-build-cache.outputs.cache-primary-key }}
 
       - name: Upload Test Artifacts
         if: failure()
