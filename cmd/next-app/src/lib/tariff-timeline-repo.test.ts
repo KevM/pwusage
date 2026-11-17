@@ -35,6 +35,7 @@ import {
   TariffTimelineRepo,
 } from './tariff-timeline-repo';
 import { TariffValidationError } from './tariff-timeline';
+import { buildTariffSelectionPreview } from './tariff-selection';
 import type { TariffSeasonInput } from './tariff-contract';
 import type { PoolClient } from 'pg';
 
@@ -810,7 +811,7 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     const spans = await loadScopeSelectionSpans(fakeClient, 's1', 'actual', 'u1');
     expect(spans).toHaveLength(1);
     expect(spans[0].preservedTeslaOriginal).toEqual({
-      originalSelectionId: 300,
+      originalSelectionId: 600,
       tariffId: 42,
       name: 'Original Tesla TOU',
       version: 2,
@@ -818,6 +819,201 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
       effectiveFrom: '2025-03-01',
       effectiveTo: '2025-06-30',
     });
+  });
+
+  it('loadScopeSelectionSpans partitions multi-interval and partial-gap TariffSelectionOriginal rows without stretching or hiding originals', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "TariffEffectivePeriod" p')) {
+        return {
+          rows: [{
+            period_id: 21,
+            tariff_id: 88,
+            effective_from: '2025-01-01',
+            effective_to: null,
+            source: 'estimated',
+            updated_by_user_id: 'u1',
+            updated_by_email: 'owner@example.com',
+            name: 'Public Full Year',
+            version: 1,
+            content_hash: 'hash-pub',
+            selection_id: 600,
+            choice_kind: 'owner',
+            urdb_label: 'urdb-tou-1',
+          }],
+        };
+      }
+      if (sql.includes('FROM "Tariff"') && sql.includes('id = ANY')) {
+        return { rows: [{ id: 88, site_id: 's1', version: 1, name: 'Public Full Year', currency: 'USD', is_current: true, updated: new Date(), content_hash: 'hash-pub', source: 'estimated' }] };
+      }
+      if (sql.includes('FROM "TariffSelectionOriginal"')) {
+        return {
+          rows: [
+            {
+              selection_id: 600,
+              effective_from: '2025-03-01',
+              effective_to: '2025-06-30',
+              original_tariff_id: 42,
+              original_selection_id: 301,
+              name: 'Tesla Spring TOU',
+              version: 1,
+              content_hash: 'hash-tesla-1',
+            },
+            {
+              selection_id: 600,
+              effective_from: '2025-09-01',
+              effective_to: null,
+              original_tariff_id: 43,
+              original_selection_id: 302,
+              name: 'Tesla Fall TOU',
+              version: 2,
+              content_hash: 'hash-tesla-2',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+
+    const spans = await loadScopeSelectionSpans(fakeClient, 's1', 'actual', 'u1');
+    expect(
+      spans.map(s => ({
+        from: s.effectiveFrom,
+        to: s.effectiveTo,
+        orig: s.preservedTeslaOriginal ?? null,
+      }))
+    ).toEqual([
+      { from: '2025-01-01', to: '2025-02-28', orig: null },
+      {
+        from: '2025-03-01',
+        to: '2025-06-30',
+        orig: {
+          originalSelectionId: 600,
+          tariffId: 42,
+          name: 'Tesla Spring TOU',
+          version: 1,
+          contentHash: 'hash-tesla-1',
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-06-30',
+        },
+      },
+      { from: '2025-07-01', to: '2025-08-31', orig: null },
+      {
+        from: '2025-09-01',
+        to: null,
+        orig: {
+          originalSelectionId: 600,
+          tariffId: 43,
+          name: 'Tesla Fall TOU',
+          version: 2,
+          contentHash: 'hash-tesla-2',
+          effectiveFrom: '2025-09-01',
+          effectiveTo: null,
+        },
+      },
+    ]);
+
+    const preview = buildTariffSelectionPreview({
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-17',
+      request: {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        candidate: { kind: 'manual', name: 'New Manual Plan', seasons: sampleSeasons },
+      },
+      existingSpans: spans,
+      candidatePlan: {
+        ...spans[0].plan,
+        name: 'New Manual Plan',
+        source: 'manual',
+      },
+    });
+    expect(preview.restoration.preservedOriginals).toEqual([
+      {
+        originalSelectionId: 600,
+        tariffId: 42,
+        name: 'Tesla Spring TOU',
+        version: 1,
+        contentHash: 'hash-tesla-1',
+        effectiveFrom: '2025-03-01',
+        effectiveTo: '2025-06-30',
+      },
+      {
+        originalSelectionId: 600,
+        tariffId: 43,
+        name: 'Tesla Fall TOU',
+        version: 2,
+        contentHash: 'hash-tesla-2',
+        effectiveFrom: '2025-09-01',
+        effectiveTo: '2025-12-31',
+      },
+    ]);
+  });
+
+  it('applyTariffSelectionOnClient and applySelection return unchanged: true and skip cache invalidation when repeating identical restore_tesla', async () => {
+    clientQueryHandler = async (sql: string) => {
+      if (sql.includes('FROM "Site" WHERE id = $1 FOR UPDATE')) {
+        return { rows: [{ timezone: 'America/Chicago' }] };
+      }
+      if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) {
+        return {
+          rows: [{
+            id: 31,
+            tariff_id: 42,
+            source: 'tesla',
+            effective_from: '2025-01-01',
+            effective_to: null,
+            updated_by_user_id: 'u1',
+            selection_id: 710,
+            choice_kind: 'owner',
+          }],
+        };
+      }
+      if (sql.includes('FROM "TariffSelectionOriginal"') && sql.includes('WHERE site_id = $1 AND scope = $2 AND selection_id = $3')) {
+        return {
+          rows: [{
+            selection_id: 600,
+            effective_from: '2025-01-01',
+            effective_to: null,
+            original_tariff_id: 42,
+            original_selection_id: 300,
+          }],
+        };
+      }
+      if (sql.includes('FROM "Tariff"') && sql.includes('id = ANY')) {
+        return { rows: [{ id: 42, site_id: 's1', version: 1, name: 'Saved Tesla', currency: 'USD', is_current: true, updated: new Date(), content_hash: 'hash-tesla-42', source: 'tesla' }] };
+      }
+      if (sql.includes('FROM "TariffSelectionVerification"')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    };
+    mocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site"')) {
+        return { rows: [{ id: 's1', timezone: 'America/Chicago', installed: '2023-11-14T08:00:00Z', currency: 'USD' }] };
+      }
+      return { rows: [] };
+    });
+
+    const repo = new TariffTimelineRepo();
+    const res = await repo.applySelection('s1', {
+      scope: 'actual',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      userId: 'u1',
+      verifiedAgainstBill: false,
+      candidate: { kind: 'restore_tesla', originalSelectionId: 600 },
+    });
+
+    expect(res.unchanged).toBe(true);
+    expect(res.createdNewTariffVersion).toBe(false);
+    expect(res.selectionIds).toEqual([710]);
+    expect(res.reattributionRange).toBeNull();
+    expect(mocks.invalidateCacheMock).not.toHaveBeenCalled();
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "TariffSelection"'))).toBe(false);
+    expect(clientQueries.some(q => q.sql.includes('INSERT INTO "SiteTariffReattribution"'))).toBe(false);
   });
 
   it('loadRestorationTargets coalesces duplicate intervals carried across chained overrides', async () => {

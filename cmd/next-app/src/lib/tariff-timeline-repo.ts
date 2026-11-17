@@ -1198,6 +1198,61 @@ function buildSnapshotFromRow(
   };
 }
 
+interface ScopeSelectionOriginalEntry {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  ref: TariffRestorationOriginalRef;
+}
+
+function partitionPeriodSpanWithOriginals(
+  effectiveFrom: string,
+  effectiveTo: string | null,
+  plan: TariffReviewPlanSnapshot,
+  origCandidates: ScopeSelectionOriginalEntry[]
+): ExistingTimelineSpanInput[] {
+  const overlapping = origCandidates.filter(o =>
+    spansOverlapDates(o.effectiveFrom, o.effectiveTo, effectiveFrom, effectiveTo)
+  );
+  if (overlapping.length === 0) {
+    return [{ effectiveFrom, effectiveTo, plan }];
+  }
+
+  const starts = new Set<string>([effectiveFrom]);
+  for (const orig of overlapping) {
+    const clipFrom = orig.effectiveFrom >= effectiveFrom ? orig.effectiveFrom : effectiveFrom;
+    const clipTo = minNullableEnd(orig.effectiveTo, effectiveTo);
+    if (clipTo !== null && clipFrom > clipTo) continue;
+    starts.add(clipFrom);
+    if (clipTo !== null && (effectiveTo === null || clipTo < effectiveTo)) {
+      starts.add(addCalendarDays(clipTo, 1));
+    }
+  }
+
+  const sortedStarts = [...starts].sort((a, b) => a.localeCompare(b));
+  const out: ExistingTimelineSpanInput[] = [];
+  for (let i = 0; i < sortedStarts.length; i++) {
+    const segFrom = sortedStarts[i];
+    const segTo = i + 1 < sortedStarts.length ? addCalendarDays(sortedStarts[i + 1], -1) : effectiveTo;
+    if (segTo !== null && segFrom > segTo) continue;
+    const matchingOrig = overlapping.find(
+      o => o.effectiveFrom <= segFrom && (o.effectiveTo === null || o.effectiveTo >= segFrom)
+    );
+    out.push({
+      effectiveFrom: segFrom,
+      effectiveTo: segTo,
+      plan,
+      preservedTeslaOriginal: matchingOrig
+        ? {
+            ...matchingOrig.ref,
+            effectiveFrom: segFrom,
+            effectiveTo: segTo,
+          }
+        : null,
+    });
+  }
+  return out;
+}
+
 export async function loadScopeSelectionSpans(
   queryable: Pick<PoolClient, 'query'>,
   siteId: string,
@@ -1239,11 +1294,7 @@ export async function loadScopeSelectionSpans(
   ]);
   const defaultUtilityName = utilityRes.rows[0]?.urdb_utility ?? null;
 
-  const originalsBySelection = new Map<number, Array<{
-    effectiveFrom: string;
-    effectiveTo: string | null;
-    ref: TariffRestorationOriginalRef;
-  }>>();
+  const originalsBySelection = new Map<number, ScopeSelectionOriginalEntry[]>();
   for (const orig of originalsRes.rows) {
     const sid = Number(orig.selection_id);
     const list = originalsBySelection.get(sid) ?? [];
@@ -1253,7 +1304,8 @@ export async function loadScopeSelectionSpans(
       effectiveFrom: from,
       effectiveTo: to,
       ref: {
-        originalSelectionId: orig.original_selection_id === null ? sid : Number(orig.original_selection_id),
+        // Expose the owning override selection_id so restoring always recovers every replaced interval under this override.
+        originalSelectionId: sid,
         tariffId: Number(orig.original_tariff_id),
         name: orig.name,
         version: Number(orig.version),
@@ -1267,25 +1319,12 @@ export async function loadScopeSelectionSpans(
 
   return [...rows]
     .sort((a, b) => a.effective_from.localeCompare(b.effective_from) || Number(a.period_id) - Number(b.period_id))
-    .map(row => {
+    .flatMap(row => {
       const effectiveFrom = row.effective_from.slice(0, 10);
       const effectiveTo = row.effective_to ? row.effective_to.slice(0, 10) : null;
       const plan = buildSnapshotFromRow(row, tariffMap.get(Number(row.tariff_id)), viewerUserId, defaultUtilityName);
       const origCandidates = plan.selectionId !== null ? (originalsBySelection.get(plan.selectionId) ?? []) : [];
-      const matchingOrig = origCandidates.find(o => spansOverlapDates(o.effectiveFrom, o.effectiveTo, effectiveFrom, effectiveTo));
-      const preservedTeslaOriginal: TariffRestorationOriginalRef | null = matchingOrig
-        ? {
-            ...matchingOrig.ref,
-            effectiveFrom: matchingOrig.effectiveFrom >= effectiveFrom ? matchingOrig.effectiveFrom : effectiveFrom,
-            effectiveTo: minNullableEnd(matchingOrig.effectiveTo, effectiveTo),
-          }
-        : null;
-      return {
-        effectiveFrom,
-        effectiveTo,
-        plan,
-        ...(preservedTeslaOriginal ? { preservedTeslaOriginal } : {}),
-      };
+      return partitionPeriodSpanWithOriginals(effectiveFrom, effectiveTo, plan, origCandidates);
     });
 }
 
@@ -1440,7 +1479,8 @@ export async function applyTariffSelectionOnClient(
   }
 
   let existing = await loadScopeSpans(client, siteId, scope);
-  const createdSelectionIds: number[] = [];
+  const selectionIds: number[] = [];
+  let createdSelectionCount = 0;
   const touchedTariffIds: number[] = [];
   let createdNewTariffVersion = false;
   let reattributionFrom: string | null = null;
@@ -1495,7 +1535,7 @@ export async function applyTariffSelectionOnClient(
           ? Boolean(curVer && curVer.verified_by_user_id === userId)
           : !curVer;
         if (verificationMatches) {
-          createdSelectionIds.push(exactExisting.selectionId);
+          selectionIds.push(exactExisting.selectionId);
           continue;
         }
       }
@@ -1514,7 +1554,10 @@ export async function applyTariffSelectionOnClient(
         selectedContentHash: hash,
         restoredFromSelectionId: candidate.originalSelectionId,
       });
-      if (selectionId !== null) createdSelectionIds.push(selectionId);
+      if (selectionId !== null) {
+        selectionIds.push(selectionId);
+        createdSelectionCount += 1;
+      }
       if (verifiedAgainstBill && selectionId !== null) {
         await insertSelectionVerificationOnClient(client, {
           selectionId,
@@ -1528,20 +1571,26 @@ export async function applyTariffSelectionOnClient(
         });
       }
 
-      const plan = computeSpanMutations(existing, {
-        tariffId,
-        source: 'tesla',
-        effectiveFrom: target.effectiveFrom,
-        effectiveTo: target.effectiveTo,
-        updatedByUserId: userId,
-        ...(selectionId !== null ? { selectionId, choiceKind: 'owner' as const } : {}),
-      });
-      if (countProtectedResultingSpans(existing, plan) > MAX_EFFECTIVE_PERIODS_PER_SITE) {
-        throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
-      }
-      await applyScopeSpanMutationPlan(client, siteId, scope, plan);
-      existing = await loadScopeSpans(client, siteId, scope);
-      if (!exactExisting) {
+      if (exactExisting && selectionId !== null) {
+        await client.query(
+          `UPDATE "TariffEffectivePeriod" SET selection_id = $3, updated_by_user_id = $4 WHERE site_id = $1 AND id = $2`,
+          [siteId, exactExisting.id, selectionId, userId]
+        );
+        existing = await loadScopeSpans(client, siteId, scope);
+      } else {
+        const plan = computeSpanMutations(existing, {
+          tariffId,
+          source: 'tesla',
+          effectiveFrom: target.effectiveFrom,
+          effectiveTo: target.effectiveTo,
+          updatedByUserId: userId,
+          ...(selectionId !== null ? { selectionId, choiceKind: 'owner' as const } : {}),
+        });
+        if (countProtectedResultingSpans(existing, plan) > MAX_EFFECTIVE_PERIODS_PER_SITE) {
+          throw new TariffValidationError(`Cannot exceed ${MAX_EFFECTIVE_PERIODS_PER_SITE} effective periods per site`);
+        }
+        await applyScopeSpanMutationPlan(client, siteId, scope, plan);
+        existing = await loadScopeSpans(client, siteId, scope);
         anyTimelineChange = true;
         trackReattribution(target.effectiveFrom, target.effectiveTo);
       }
@@ -1684,7 +1733,10 @@ export async function applyTariffSelectionOnClient(
       approximationNotes: candidate.kind === 'public' ? (candidate.approximationNotes ?? []) : [],
       selectedContentHash: newHash,
     });
-    if (selectionId !== null) createdSelectionIds.push(selectionId);
+    if (selectionId !== null) {
+      selectionIds.push(selectionId);
+      createdSelectionCount += 1;
+    }
     await storeSelectionOriginalsOnClient(client, siteId, scope, selectionId, replacedOriginals);
 
     if (verifiedAgainstBill && selectionId !== null) {
@@ -1742,10 +1794,10 @@ export async function applyTariffSelectionOnClient(
   }
 
   return {
-    selectionIds: createdSelectionIds,
+    selectionIds,
     tariffIds: [...new Set(touchedTariffIds)],
     createdNewTariffVersion,
-    unchanged: !anyTimelineChange && createdSelectionIds.length === 0,
+    unchanged: !anyTimelineChange && createdSelectionCount === 0,
     reattributionRange: reattributionFrom !== null ? { fromDate: reattributionFrom, toDate: reattributionTo } : null,
   };
 }
