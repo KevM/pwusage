@@ -67,9 +67,12 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         for(let run=0;run<2;run++) await pool.query(readFileSync(new URL('../../../db-migrations/20261027180001_drop_legacy_day_record_state.sql',import.meta.url),'utf8'));
         await pool.query("ALTER TABLE \"Site\" ADD COLUMN user_id text DEFAULT 'owner'");
         await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, auth_restored_at timestamptz); INSERT INTO "User" VALUES ('owner', NULL)`);
-        const tariffEffectiveMig = readdirSync(new URL('../../../db-migrations', import.meta.url)).find(f => f.endsWith('_historic_effective_tariffs.sql'));
-        if (tariffEffectiveMig) {
-            await pool.query(readFileSync(new URL(`../../../db-migrations/${tariffEffectiveMig}`, import.meta.url), 'utf8'));
+        const migrationDir = new URL('../../../db-migrations/', import.meta.url);
+        const migrations = readdirSync(migrationDir);
+        for (const suffix of ['_historic_effective_tariffs.sql', '_tariff_reference_periods.sql', '_urdb_estimated_rate_plans.sql']) {
+            const migration = migrations.find(file => file.endsWith(suffix));
+            if (!migration) throw new Error(`Missing migration ${suffix}`);
+            await pool.query(readFileSync(new URL(migration, migrationDir), 'utf8'));
         }
         store = new CompactHistoryStore(pool,15000,async client=>{await client.query('SELECT 1');});
     });

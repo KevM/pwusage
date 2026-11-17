@@ -3,11 +3,15 @@ import SwiftUI
 private enum TariffSheetModal: Identifiable, Equatable {
     case effectiveDates(TariffPeriodDTO)
     case editor(RatePlanEditorMode)
+    case estimates(RateEstimatesPrompt)
+    case rateHistory
 
     var id: String {
         switch self {
         case .effectiveDates(let period): "dates-\(period.periodId)"
         case .editor(let mode): "editor-\(mode.id)"
+        case .estimates(let prompt): "estimates-\(prompt)"
+        case .rateHistory: "rate-history"
         }
     }
 }
@@ -15,6 +19,8 @@ private enum TariffSheetModal: Identifiable, Equatable {
 struct TariffSheet: View {
     let site: MobileSite
     let actions: TariffTimelineActions
+    /// Opened from Bill's setup card: start on the add-plan form.
+    var startsAddingPlan = false
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var timeline: SiteTariffsTimelineResponse?
@@ -27,6 +33,8 @@ struct TariffSheet: View {
     @State private var activeModal: TariffSheetModal?
     @State private var pendingDeletion: TariffPeriodDTO?
     @State private var minuteTick = Date()
+    @State private var didOpenStartingAddForm = false
+    private let historyOfferDismissals = RateEstimatesAccessoryDismissals.sharedHistoryOffer
 
     var body: some View {
         contentView
@@ -36,9 +44,10 @@ struct TariffSheet: View {
         #endif
             .toolbar { toolbarContent }
             .task(id: site.id) { await initialLoad() }
-            .task(id: pollingKey) { await pollReattributionWhileActive() }
+            .task(id: pollingKey) { await pollWhileServerIsWorking() }
             .task(id: scenePhase) { await refreshAndTickMinute() }
-            .sheet(item: $activeModal) { modalView(for: $0) }
+            .onChange(of: timeline != nil, initial: true) { _, loaded in openStartingAddFormIfNeeded(loaded) }
+            .sheet(item: $activeModal, onDismiss: reloadTimeline) { modalView(for: $0) }
             .confirmationDialog(
                 "Delete Rate Plan?",
                 isPresented: isDeletingBinding,
@@ -102,6 +111,15 @@ struct TariffSheet: View {
 
     @ViewBuilder
     private func headerBannerSection(_ data: SiteTariffsTimelineResponse) -> some View {
+        RateEstimatesRatePlanSection(
+            estimates: data.estimates,
+            historyStart: historyOfferStart(data),
+            onFindHistory: { activeModal = .rateHistory },
+            onDismissHistory: { historyOfferDismissals.dismiss(siteID: site.id) },
+            onAddRatePlan: { activeModal = .editor(.add) },
+            onChooseUtility: { activeModal = .estimates(.pickUtility) },
+            onChoosePlan: { activeModal = .estimates(.pickPlan) }
+        )
         if let actionError {
             errorBanner(actionError)
         }
@@ -120,7 +138,7 @@ struct TariffSheet: View {
                 .padding(.horizontal, 4)
         }
         if data.teslaSync.differsFromActiveManual {
-            teslaDivergenceBanner(data.teslaSync)
+            teslaDivergenceBanner(data.teslaSync, isSyncing: isSyncing, onSync: syncFromTesla)
         }
         ActiveRatePlanCardView(timeline: data, now: minuteTick)
     }
@@ -151,6 +169,7 @@ struct TariffSheet: View {
                 TariffPeriodCardView(
                     period: period,
                     currency: data.currency,
+                    estimates: data.estimates,
                     onEditPlan: { activeModal = .editor(.edit(period)) },
                     onCopyPlan: { activeModal = .editor(.copy(period)) },
                     onEditDates: { activeModal = .effectiveDates(period) },
@@ -158,58 +177,6 @@ struct TariffSheet: View {
                 )
             }
         }
-    }
-
-    private func timelineGapRow(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .foregroundStyle(.secondary.opacity(0.4))
-        )
-    }
-
-    private func teslaDivergenceBanner(_ sync: TeslaSyncDTO) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "bolt.badge.clock")
-                .foregroundStyle(.blue)
-            VStack(alignment: .leading, spacing: 2) {
-                let copy = TeslaDivergenceCopy(sync: sync)
-                Text(copy.title)
-                    .font(.subheadline.weight(.medium))
-                Text(copy.detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Button("Sync") { syncFromTesla() }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isSyncing)
-        }
-        .padding(14)
-        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-            Text(message).font(.caption).foregroundStyle(.red)
-            Spacer()
-        }
-        .padding(12)
-        .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var addPlanButton: some View {
@@ -233,6 +200,10 @@ struct TariffSheet: View {
                 let updated = try await actions.updatePeriod(periodID, patch)
                 timeline = updated
             }
+        case .estimates(let prompt):
+            RateEstimatesSetupSheet(prompt: prompt, utilityName: timeline?.estimates?.utilityName, actions: actions)
+        case .rateHistory:
+            rateHistorySheet
         case .editor(let mode):
             RatePlanEditorFlow(
                 mode: mode,
@@ -247,6 +218,35 @@ struct TariffSheet: View {
                 }
             )
         }
+    }
+
+    /// The history guide's first day while the offer shows: a guide the owner hasn't dismissed for this site.
+    private func historyOfferStart(_ data: SiteTariffsTimelineResponse) -> String? {
+        guard !historyOfferDismissals.isDismissed(siteID: site.id) else { return nil }
+        return data.estimates?.historyGuide?.historyStart
+    }
+
+    private var rateHistorySheet: some View {
+        RatePlanHistorySheet(
+            teslaPlanName: timeline?.teslaSync.latestTariffName,
+            load: { try await actions.loadRateHistory() },
+            save: { timeline = try await actions.saveRateHistory($0) }
+        )
+    }
+
+    private func openStartingAddFormIfNeeded(_ timelineLoaded: Bool) {
+        guard RatePlanAddFormRule.shouldOpen(
+            startsAddingPlan: startsAddingPlan,
+            timelineLoaded: timelineLoaded,
+            alreadyOpened: didOpenStartingAddForm
+        ) else { return }
+        didOpenStartingAddForm = true
+        activeModal = .editor(.add)
+    }
+
+    /// Estimate and editor sheets can change the plans they show, so reload when one closes.
+    private func reloadTimeline() {
+        Task { await performLoad(showSpinner: false) }
     }
 
     private var isDeletingBinding: Binding<Bool> {
@@ -276,14 +276,18 @@ struct TariffSheet: View {
 
     private var isPresentingEditor: Bool { activeModal != nil }
 
-    private var shouldPollReattribution: Bool {
-        guard let status = timeline?.reattribution?.status else { return false }
-        return status == .pending || status == .running
+    /// Re-pricing or a pending estimate job still running on the server; nil once both settle.
+    private var pollInterval: Duration? {
+        RatePlansPolling.interval(
+            reattribution: timeline?.reattribution?.status,
+            estimates: timeline?.estimates?.status
+        )
     }
 
     private var pollingKey: String {
         let token = timeline?.reattribution?.updatedAt ?? "none"
-        return "\(site.id)-\(isPresentingEditor)-\(shouldPollReattribution)-\(token)"
+        let estimates = timeline?.estimates?.status.rawValue ?? "none"
+        return "\(site.id)-\(isPresentingEditor)-\(pollInterval != nil)-\(token)-\(estimates)"
     }
 
     private func initialLoad() async {
@@ -308,11 +312,10 @@ struct TariffSheet: View {
         }
     }
 
-    private func pollReattributionWhileActive() async {
-        guard !isPresentingEditor, shouldPollReattribution else { return }
-        while !Task.isCancelled && !isPresentingEditor && shouldPollReattribution {
+    private func pollWhileServerIsWorking() async {
+        while !Task.isCancelled && !isPresentingEditor, let interval = pollInterval {
             do {
-                try await Task.sleep(for: .seconds(3))
+                try await Task.sleep(for: interval)
                 guard !Task.isCancelled, !isPresentingEditor else { return }
                 timeline = try await actions.load()
             } catch is CancellationError {

@@ -188,6 +188,24 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         expect(await rows(`SELECT count(*)::int AS n FROM public."MobileLoginHandoff"`)).toEqual([{ n: 0 }]);
     });
 
+    it('parks rate estimate checks for every copied site except Harrison', async () => {
+        await target!.query(`${MARK_DEV}
+            INSERT INTO public."Site" (id) VALUES ('${PINNED_SITE}'), ('s-pending'), ('s-ready');
+            CREATE TABLE public."SiteUtility" (site_id text PRIMARY KEY REFERENCES public."Site"(id), choice text NOT NULL,
+                status text NOT NULL, next_check_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now());
+            INSERT INTO public."SiteUtility" (site_id, choice, status, next_check_at) VALUES
+                ('${PINNED_SITE}', 'auto', 'pending', NULL), ('s-pending', 'auto', 'running', NULL),
+                ('s-ready', 'owner', 'needs_plan', now());`);
+        expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
+        expect(await rows(`SELECT site_id, choice, status, next_check_at = 'infinity' AS parked FROM public."SiteUtility" ORDER BY site_id`)).toEqual([
+            { site_id: PINNED_SITE, choice: 'auto', status: 'pending', parked: null },
+            { site_id: 's-pending', choice: 'auto', status: 'ready', parked: true },
+            { site_id: 's-ready', choice: 'owner', status: 'needs_plan', parked: true },
+            { site_id: 's1', choice: 'auto', status: 'ready', parked: true },
+        ]);
+        expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
+    });
+
     it('skips rules for tables that do not exist yet', async () => {
         await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."User"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
@@ -203,14 +221,15 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
                 ('live6', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
                 ('live6', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288),
                 ('live1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
-                ('${PINNED_SITE}', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288);
             INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
         const result = await run('psql', [targetUrl(), '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', script('scripts/export-dev-energy-data.sql')], { cwd: work });
         expect(result.stdout).toBe('');
         const csvSites = async (file: string) => (await readFile(join(work, file), 'utf8')).trim().split('\n').slice(1).map((line) => line.split(',')[0]);
-        // live1 is not among the 5 most recently live; live6's 50-day-old record is outside the window.
-        expect(await csvSites('dev-day-archive.csv')).toEqual([PINNED_SITE, 'live6']);
-        expect(await csvSites('dev-day-summary.csv')).toEqual([PINNED_SITE, 'live6']);
+        // live1 is not among the 5 most recently live; live6's 50-day-old record is outside the window, while Harrison keeps full history.
+        expect(await csvSites('dev-day-archive.csv')).toEqual([PINNED_SITE, PINNED_SITE, 'live6']);
+        expect(await csvSites('dev-day-summary.csv')).toEqual([PINNED_SITE, PINNED_SITE, 'live6']);
         expect((await readFile(join(work, 'dev-day-archive.csv'), 'utf8')).split('\n')[0] + '\n').toBe(ARCHIVE_HEADER);
     });
 
@@ -246,16 +265,18 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         expect(result.code).not.toBe(0);
     });
 
-    it('prunes day records older than 45 days on a marked dev copy, with their summaries', async () => {
+    it('prunes day records older than 45 days on a marked dev copy, keeping Harrison full history', async () => {
         await target!.query(`${MARK_DEV} DELETE FROM public."EnergyDayArchive";
+            INSERT INTO public."Site" (id) VALUES ('${PINNED_SITE}') ON CONFLICT (id) DO NOTHING;
             INSERT INTO public."EnergyDayArchive" (site_id, day_start, day_end, sample_count) VALUES
                 ('s1', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288),
-                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288);
+                ('s1', date_trunc('day', now()) - interval '2 days', date_trunc('day', now()) - interval '1 day', 288),
+                ('${PINNED_SITE}', date_trunc('day', now()) - interval '50 days', date_trunc('day', now()) - interval '49 days', 288);
             INSERT INTO public."EnergyDaySummary" SELECT site_id, day_start, revision, 1, 1 FROM public."EnergyDayArchive";`);
         const result = await psql('scripts/prune-dev-copy.sql');
         expect(result.code, result.out).toBe(0);
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
-        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDaySummary"`)).toEqual([{ n: 1 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 2 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDaySummary"`)).toEqual([{ n: 2 }]);
         // The marker survives; the scripts never touch it.
         expect(await rows(`SELECT name FROM pwusage_env.environment`)).toEqual([{ name: 'dev' }]);
     });

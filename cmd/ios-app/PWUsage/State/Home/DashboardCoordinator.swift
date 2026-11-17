@@ -87,6 +87,8 @@ final class DashboardCoordinator: ObservableObject {
     /// The automatic provider's published forecast, already corrected.
     @Published var solarForecastPublication: SolarForecastPublication?
     @Published var solarForecastAttempt: SolarForecastPublicationAttempt?
+    @Published var savings: SavingsState = .notReady(.noTimeline)
+    @Published var savingsTimeline: SiteTariffsTimelineResponse?
 
     var pollingTimerIsActive: Bool { timerTask != nil }
     /// Whichever endpoint supplies Home's power readings owns their availability:
@@ -99,7 +101,12 @@ final class DashboardCoordinator: ObservableObject {
     let forecastService: (any SolarForecastServing)?
     let history: SolarHistoryStore
     let records: SolarLayoutRecordStore
+    let ratePlanTimelines: RatePlanTimelineStore
+    let savingsModel: SavingsModel
+    let billPricingMode: BillPricingMode
+    let shadowDedup: BillShadowDedupTracker
     let runner: SolarLayoutDetectionRunner?
+    var billingDay: Int = 1
     var historyEnabled = true
     var layoutInvalidated = false
     var activeSolarLayoutLookups = 0
@@ -137,6 +144,9 @@ final class DashboardCoordinator: ObservableObject {
     var livePowerIsVisible = true
     var usesLivePowerEndpoint: Bool { livePowerEndpointAvailable && api is any MobileLivePowerDataAPI }
     var billTask: Task<Void, Never>?
+    var flowSyncTask: Task<Void, Never>?
+    var lastLocalTimelineFingerprint: [String: String] = [:]
+    var isPerformingLocalBill = false
     var siteGeneration = 0
     var forecastGeneration = 0
     var billSuccessGeneration = 0
@@ -179,7 +189,10 @@ final class DashboardCoordinator: ObservableObject {
         forecastService: (any SolarForecastServing)? = nil,
         history: SolarHistoryStore = .shared,
         records: SolarLayoutRecordStore = .shared,
-        runner: SolarLayoutDetectionRunner? = nil
+        ratePlanTimelines: RatePlanTimelineStore = .shared,
+        runner: SolarLayoutDetectionRunner? = nil,
+        billPricingMode: BillPricingMode = .defaultMode,
+        shadowDedup: BillShadowDedupTracker = BillShadowDedupTracker()
     ) {
         selectedSiteID = siteID
         self.api = api
@@ -192,7 +205,11 @@ final class DashboardCoordinator: ObservableObject {
         self.forecastService = forecastService
         self.history = history
         self.records = records
+        self.ratePlanTimelines = ratePlanTimelines
+        self.savingsModel = SavingsModel(store: history)
         self.runner = runner
+        self.billPricingMode = billPricingMode
+        self.shadowDedup = shadowDedup
         configureRunner()
         if sessionVerified { cache?.selectWidgetSite(selectedSiteID) }
         restoreCachedReadings()
@@ -234,6 +251,7 @@ final class DashboardCoordinator: ObservableObject {
     /// delivers the backstop.
     deinit {
         timerTask?.cancel()
+        flowSyncTask?.cancel()
     }
 
     /// Attach the app-owned snapshot even when a custom coordinator factory is used.
@@ -328,6 +346,7 @@ final class DashboardCoordinator: ObservableObject {
         power.reset()
         bill.response = nil
         bill.isRestored = false
+        lastLocalTimelineFingerprint.removeAll()
         requiresSignIn = true
         resetForecastEnhancement(state: .basic, connection: .notConnected)
         householdPattern = nil
@@ -336,6 +355,9 @@ final class DashboardCoordinator: ObservableObject {
         historyEnabled = true
         layoutInvalidated = false
         runner?.cancel()
+        savingsModel.reset()
+        savings = .notReady(.noTimeline)
+        savingsTimeline = nil
     }
 
     func selectSite(_ siteID: String) {
@@ -365,6 +387,9 @@ final class DashboardCoordinator: ObservableObject {
         // Solcast leaves it in place.
         householdPattern = nil
         forecastLoadSettled = false
+        savingsModel.reset()
+        savings = .notReady(.noTimeline)
+        savingsTimeline = nil
         guard isForeground, canRequestAccountData else { return }
         Task { await refreshDue() }
         // The destination view is not re-inserted on a site switch, so re-run the

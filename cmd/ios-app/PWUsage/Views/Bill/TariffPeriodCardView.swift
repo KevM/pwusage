@@ -47,15 +47,28 @@ struct DayStripBarView: View {
 struct TariffPeriodCardView: View {
     let period: TariffPeriodDTO
     let currency: String
+    var estimates: SiteRateEstimatesDTO?
     let onEditPlan: () -> Void
     let onCopyPlan: () -> Void
     let onEditDates: () -> Void
     let onDelete: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// At accessibility text sizes, rows stack so labels and badges wrap at word boundaries.
+    private var isStacked: Bool { dynamicTypeSize.isAccessibilitySize }
+
+    private func rowLayout(spacing: CGFloat) -> AnyLayout {
+        isStacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing / 2))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: spacing))
+    }
 
     var body: some View {
         CardContainer(padding: 15, cornerRadius: 16, spacing: 10) {
             headerRow
             metadataRow
+            startSourceRow
+            estimateNotes
             Divider()
             ForEach(Array(period.seasons.enumerated()), id: \.offset) { _, season in
                 seasonSummary(season)
@@ -64,16 +77,38 @@ struct TariffPeriodCardView: View {
     }
 
     private var headerRow: some View {
-        HStack(alignment: .center, spacing: 8) {
+        rowLayout(spacing: 8).callAsFunction {
             Text(period.name)
                 .font(.headline)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            if period.isCurrentToday {
-                badge("Current", tint: .green)
+                .lineLimit(isStacked ? nil : 2)
+            if !isStacked {
+                Spacer(minLength: 8)
             }
-            badge(period.source == .manual ? "Custom" : "Tesla", tint: period.source == .manual ? .blue : .secondary)
-            actionsMenu
+            HStack(alignment: .top, spacing: 8) {
+                badgeLayout.callAsFunction { badges }
+                if isStacked {
+                    Spacer(minLength: 8)
+                }
+                actionsMenu
+            }
+        }
+    }
+
+    /// Badges sit in a row, or in a column at accessibility sizes so each keeps its whole word.
+    private var badgeLayout: AnyLayout {
+        isStacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+    }
+
+    @ViewBuilder private var badges: some View {
+        if period.isCurrentToday {
+            badge("Current", tint: .green)
+        }
+        switch period.source {
+        case .manual: badge("Custom", tint: .blue)
+        case .tesla: badge("Tesla", tint: .secondary)
+        case .estimated: badge("Estimated", tint: .orange)
         }
     }
 
@@ -103,6 +138,28 @@ struct TariffPeriodCardView: View {
             .foregroundStyle(.secondary)
     }
 
+    @ViewBuilder private var startSourceRow: some View {
+        if let label = RateEstimatesPresentation.startSourceLabel(period.startSource) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var estimateNotes: some View {
+        if let note = RateEstimatesPresentation.estimateNote(for: period) {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if period.isCurrentToday, let note = RateEstimatesPresentation.mayBeOutdatedNote(estimates),
+           period.source == .estimated {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var metadataLine: String {
         let range = RatePlanTimelineFormatting.displayRange(from: period.effectiveFrom, to: period.effectiveTo)
         guard let updated = period.updatedBy else { return range }
@@ -118,6 +175,8 @@ struct TariffPeriodCardView: View {
     private func badge(_ title: String, tint: Color) -> some View {
         Text(title)
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .foregroundStyle(tint)
@@ -126,9 +185,11 @@ struct TariffPeriodCardView: View {
 
     private func seasonSummary(_ season: TariffSeasonInput) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            rowLayout(spacing: 8).callAsFunction {
                 Text(season.name).font(.subheadline.weight(.semibold))
-                Spacer()
+                if !isStacked {
+                    Spacer()
+                }
                 Text(RatePlanTimelineFormatting.seasonMonthLabel(fromMonth: season.fromMonth, toMonth: season.toMonth))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -141,11 +202,11 @@ struct TariffPeriodCardView: View {
     }
 
     private func stripRow(label: String, windows: [TimePeriodWindowInput]) -> some View {
-        HStack(spacing: 8) {
+        rowLayout(spacing: 8).callAsFunction {
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-                .frame(width: 60, alignment: .leading)
+                .frame(width: isStacked ? nil : 60, alignment: .leading)
             DayStripBarView(windows: windows)
         }
     }
@@ -154,10 +215,14 @@ struct TariffPeriodCardView: View {
         let distinctRates = uniqueRates(from: season)
         return VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(distinctRates.enumerated()), id: \.offset) { _, item in
-                HStack(spacing: 6) {
-                    Circle().fill(item.touName.tintColor).frame(width: 7, height: 7)
-                    Text(item.touName.displayName).font(.caption)
-                    Spacer()
+                rowLayout(spacing: 6).callAsFunction {
+                    HStack(spacing: 6) {
+                        Circle().fill(item.touName.tintColor).frame(width: 7, height: 7)
+                        Text(item.touName.displayName).font(.caption)
+                    }
+                    if !isStacked {
+                        Spacer()
+                    }
                     let buy = RateFormatting.formatRate(item.buyRate, currency: currency)
                     let sell = RateFormatting.formatRate(item.sellRate, currency: currency)
                     Text("Buy \(buy) · Sell \(sell)")

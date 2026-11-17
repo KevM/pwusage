@@ -261,7 +261,7 @@ enum DemoFixtures {
         )
     }
 
-    static func tariffs(asOf _: Date) -> SiteTariffsTimelineResponse {
+    static func tariffs(asOf: Date) -> SiteTariffsTimelineResponse {
         SiteTariffsTimelineResponse(
             version: 2,
             siteId: site.id,
@@ -275,9 +275,27 @@ enum DemoFixtures {
                 latestUpdatedAt: "2025-01-01T00:00:00Z",
                 activeManualUpdatedAt: nil,
                 differsFromActiveManual: false
-            )
+            ),
+            estimates: SiteRateEstimatesDTO(
+                status: .ready,
+                utilityName: demoUtilityName,
+                teslaPlanOutOfDate: false,
+                newerPlanName: nil,
+                newerPlanStart: nil,
+                newestRevisionStart: nil,
+                mayBeOutdated: false,
+                historyGuide: RatePlanHistoryGuideDTO(
+                    historyStart: isoDay(yearsAgo: 3, asOf: asOf),
+                    fillThrough: nil,
+                    unconfirmedDays: 3 * 365
+                )
+            ),
+            systemCosts: SystemCostsDTO(siteInstalled: siteInstalled, solar: nil, powerwall: nil)
         )
     }
+
+    /// The demo site's install date, the same one the server would report for `Site.installed`.
+    static let siteInstalled = "2024-02-14"
 
     private static func demoCurrentPeriod() -> TariffPeriodDTO {
         let peakWindow = demoWindow(.onPeak, startHour: 8, endHour: 20, buy: onPeak.buy, sell: onPeak.sell)
@@ -312,7 +330,7 @@ enum DemoFixtures {
             tariffId: 10,
             name: tariffName,
             version: 1,
-            source: .tesla,
+            source: .estimated,
             effectiveFrom: "2025-01-01",
             effectiveTo: "2025-12-31",
             isCurrentToday: false,
@@ -325,7 +343,8 @@ enum DemoFixtures {
                     weekdayPeriods: [priorWindow],
                     weekendPeriods: [priorWindow]
                 )
-            ]
+            ],
+            startSource: .urdb
         )
     }
 

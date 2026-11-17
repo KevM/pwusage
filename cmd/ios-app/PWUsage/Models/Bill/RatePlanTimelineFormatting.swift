@@ -1,6 +1,23 @@
 import Foundation
 
 enum RatePlanTimelineFormatting {
+    enum MonthBoundary {
+        case first
+        case last
+
+        func date(inMonthOf date: Date, timeZone: TimeZone) -> Date? {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            guard let month = calendar.dateInterval(of: .month, for: date) else { return nil }
+            switch self {
+            case .first:
+                return month.start
+            case .last:
+                return calendar.date(byAdding: .day, value: -1, to: month.end)
+            }
+        }
+    }
+
     private static func utcCalendar() -> Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
@@ -43,6 +60,14 @@ enum RatePlanTimelineFormatting {
         let start = displayDate(startYMD)
         let end = endYMD.map(displayDate) ?? "Present"
         return "\(start) – \(end)"
+    }
+
+    /// The calendar day after `ymd`, or nil when it is not a date.
+    static func dayAfter(_ ymd: String) -> String? {
+        guard let date = parseYMD(ymd), let next = utcCalendar().date(byAdding: .day, value: 1, to: date) else {
+            return nil
+        }
+        return formatYMD(next)
     }
 
     static func gapDescription(newer: TariffPeriodDTO, older: TariffPeriodDTO) -> String? {

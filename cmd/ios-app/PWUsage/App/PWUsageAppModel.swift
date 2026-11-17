@@ -74,6 +74,7 @@ final class PWUsageAppModel: ObservableObject {
     let solarCloudSync: SolarLayoutCloudSync
     let solarSessionCleanup: SolarSessionCleanup
     let coordinatorFactory: CoordinatorFactory
+    let shadowDedup = BillShadowDedupTracker()
     var coordinatorAuthSubscription: AnyCancellable?
     var sceneIsActive = false
 
@@ -120,24 +121,20 @@ final class PWUsageAppModel: ObservableObject {
         self.historyOnboarding = isDemo ? nil : historyOnboarding
         self.demoSolarHealth = isDemo ? demoSolarHealth : nil
         selectedTab = userDefaults.string(forKey: Self.selectedTabDefaultsKey).flatMap(AppTab.init(rawValue:)) ?? .home
-        if let coordinatorFactory {
-            self.coordinatorFactory = coordinatorFactory
-        } else {
-            self.coordinatorFactory = { [solarHistory, solarRecords, runner] siteID, accountScopeID in
-                DashboardCoordinator(
-                    siteID: siteID,
-                    api: api,
-                    planningAPI: api,
-                    accountScopeID: accountScopeID,
-                    now: now,
-                    cadenceNow: cadenceNow,
-                    forecastService: forecastService,
-                    history: solarHistory,
-                    records: solarRecords,
-                    runner: runner
-                )
-            }
-        }
+        let billPricingMode = BillPricingMode(configuration: configuration, defaults: userDefaults)
+        self.coordinatorFactory = coordinatorFactory ?? Self.makeDefaultCoordinatorFactory(
+            DefaultCoordinatorDependencies(
+                api: api,
+                now: now,
+                cadenceNow: cadenceNow,
+                forecastService: forecastService,
+                solarHistory: solarHistory,
+                solarRecords: solarRecords,
+                runner: runner,
+                billPricingMode: billPricingMode,
+                shadowDedup: shadowDedup
+            )
+        )
         var cleanup = sessionCleanup ?? SolarSessionCleanup(
             service: forecastService,
             historyStore: solarHistory, layoutRecordStore: solarRecords,
@@ -285,6 +282,12 @@ final class PWUsageAppModel: ObservableObject {
             await historyOnboarding?.resumePaused(accountScopeID: accountScopeID, reason: .reconnectTesla)
         }
         await reloadSitesAfterSignIn()
+        // Only a fresh reading clears the reconnect screen. Stay "Connecting…" until it
+        // lands, or the screen offers its button again after the auth sheet closes.
+        // The app is asking, not the person: recovery joins the restored poll and imports no history.
+        if let coordinator, coordinator.requiresTeslaReconnect, coordinator.canRequestAccountData {
+            await coordinator.refreshAll(trigger: .automaticRecovery)
+        }
     }
 
     func reloadSitesAfterSignIn() async {

@@ -1,0 +1,144 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
+
+const mocks = vi.hoisted(() => ({
+  getCurrentUser: vi.fn(), verifySiteAccess: vi.fn(), isCrossOriginRequest: vi.fn(),
+  utilityNames: vi.fn(), ratesEffectiveOn: vi.fn(),
+  getSiteUtilityContext: vi.fn(), setSiteUtility: vi.fn(), setSitePlanLabel: vi.fn(),
+}));
+
+vi.mock('@/lib/auth-checks', () => ({
+  getCurrentUser: mocks.getCurrentUser, verifySiteAccess: mocks.verifySiteAccess,
+}));
+vi.mock('@/lib/request-security', () => ({ isCrossOriginRequest: mocks.isCrossOriginRequest }));
+vi.mock('@/lib/io-deadline', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/io-deadline')>(),
+  withIoDeadline: (_ms: number, action: () => Promise<unknown>) => action(),
+}));
+vi.mock('@/lib/observability', () => ({
+  observeRoute: (_name: string, handler: (request: NextRequest, context: unknown) => Promise<Response>) => handler,
+  errorFields: () => ({}), flushLogEvents: vi.fn(), logEvent: vi.fn(), setLogContext: vi.fn(),
+}));
+vi.mock('@/lib/urdb/client', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/urdb/client')>(),
+  utilityNames: mocks.utilityNames,
+  ratesEffectiveOn: mocks.ratesEffectiveOn,
+}));
+vi.mock('@/lib/tariff-timeline-repo', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/tariff-timeline-repo')>();
+  return {
+    ...actual,
+    TariffTimelineRepo: class {
+      getSiteUtilityContext = mocks.getSiteUtilityContext;
+      setSiteUtility = mocks.setSiteUtility;
+      setSitePlanLabel = mocks.setSitePlanLabel;
+    },
+  };
+});
+
+import { PUT as saveUtility } from './route';
+import { GET as searchUtilities } from './search/route';
+import { GET as listPlans } from './plans/route';
+import { PUT as savePlan } from './plan/route';
+import { UrdbUnavailableError } from '@/lib/urdb/client';
+
+const context = { params: Promise.resolve({ id: 'site-1' }) };
+const allDayRate = {
+  label: 'valid-plan', name: 'Residential', utility: 'We Energies', startdate: 1_767_225_600,
+  energyratestructure: [[{ rate: 0.2 }]],
+  energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+  energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+};
+
+describe('utility and plan routes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.verifySiteAccess.mockResolvedValue(true);
+    mocks.isCrossOriginRequest.mockReturnValue(false);
+    mocks.utilityNames.mockResolvedValue(['We Energies']);
+    mocks.ratesEffectiveOn.mockResolvedValue([allDayRate]);
+    mocks.getSiteUtilityContext.mockResolvedValue({ name: 'We Energies', timezone: 'America/Chicago' });
+    mocks.setSiteUtility.mockResolvedValue({ version: 2, periods: [] });
+    mocks.setSitePlanLabel.mockResolvedValue({ version: 2, periods: [] });
+  });
+
+  it('requires site access for utility search', async () => {
+    mocks.getCurrentUser.mockResolvedValueOnce(null);
+    const response = await searchUtilities(new NextRequest('https://app.test/api/site/site-1/utility/search?q=we'), context);
+    expect(response.status).toBe(401);
+    expect(mocks.utilityNames).not.toHaveBeenCalled();
+  });
+
+  it('rejects cross-origin utility writes and short search queries', async () => {
+    mocks.isCrossOriginRequest.mockReturnValueOnce(true);
+    const crossOrigin = await saveUtility(new NextRequest('https://app.test/api/site/site-1/utility', {
+      method: 'PUT', body: JSON.stringify({ skipped: true }),
+    }), context);
+    expect(crossOrigin.status).toBe(403);
+
+    const shortQuery = await searchUtilities(new NextRequest('https://app.test/api/site/site-1/utility/search?q=w'), context);
+    expect(shortQuery.status).toBe(400);
+  });
+
+  it('validates and saves a selected utility', async () => {
+    const response = await saveUtility(new NextRequest('https://app.test/api/site/site-1/utility', {
+      method: 'PUT', body: JSON.stringify({ name: 'We Energies' }),
+    }), context);
+    expect(response.status).toBe(200);
+    expect(mocks.setSiteUtility).toHaveBeenCalledWith('site-1', 'user-1', { name: 'We Energies' });
+
+    const skipped = await saveUtility(new NextRequest('https://app.test/api/site/site-1/utility', {
+      method: 'PUT', body: JSON.stringify({ skipped: true }),
+    }), context);
+    expect(skipped.status).toBe(200);
+    expect(mocks.setSiteUtility).toHaveBeenLastCalledWith('site-1', 'user-1', { skipped: true });
+  });
+
+  it('rejects an invalid utility and maps unavailable URDB to 503', async () => {
+    const invalid = await saveUtility(new NextRequest('https://app.test/api/site/site-1/utility', {
+      method: 'PUT', body: JSON.stringify({ name: 'Not Listed' }),
+    }), context);
+    expect(invalid.status).toBe(400);
+
+    mocks.utilityNames.mockRejectedValueOnce(new UrdbUnavailableError('No key'));
+    const unavailable = await saveUtility(new NextRequest('https://app.test/api/site/site-1/utility', {
+      method: 'PUT', body: JSON.stringify({ name: 'We Energies' }),
+    }), context);
+    expect(unavailable.status).toBe(503);
+  });
+
+  it('requires a utility before listing or saving a plan', async () => {
+    mocks.getSiteUtilityContext.mockResolvedValue({ name: null, timezone: 'UTC' });
+    const listed = await listPlans(new NextRequest('https://app.test/api/site/site-1/utility/plans'), context);
+    expect(listed.status).toBe(409);
+    const saved = await savePlan(new NextRequest('https://app.test/api/site/site-1/utility/plan', {
+      method: 'PUT', body: JSON.stringify({ label: 'valid-plan' }),
+    }), context);
+    expect(saved.status).toBe(409);
+    expect(mocks.ratesEffectiveOn).not.toHaveBeenCalled();
+  });
+
+  it('lists selectable plans and saves a valid selection', async () => {
+    const listed = await listPlans(new NextRequest('https://app.test/api/site/site-1/utility/plans'), context);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({ plans: [{ label: 'valid-plan', name: 'Residential' }] });
+
+    const saved = await savePlan(new NextRequest('https://app.test/api/site/site-1/utility/plan', {
+      method: 'PUT', body: JSON.stringify({ label: 'valid-plan' }),
+    }), context);
+    expect(saved.status).toBe(200);
+    expect(mocks.setSitePlanLabel).toHaveBeenCalledWith('site-1', 'user-1', 'valid-plan', 'We Energies');
+  });
+
+  it('rejects unlisted plans and maps plan lookup failure to 503', async () => {
+    const invalid = await savePlan(new NextRequest('https://app.test/api/site/site-1/utility/plan', {
+      method: 'PUT', body: JSON.stringify({ label: 'unknown-label' }),
+    }), context);
+    expect(invalid.status).toBe(400);
+
+    mocks.ratesEffectiveOn.mockRejectedValueOnce(new UrdbUnavailableError('OpenEI unavailable'));
+    const unavailable = await listPlans(new NextRequest('https://app.test/api/site/site-1/utility/plans'), context);
+    expect(unavailable.status).toBe(503);
+  });
+});

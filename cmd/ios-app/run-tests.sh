@@ -9,6 +9,9 @@
 #              and turns on the opt-in year-fixture parity suite.
 #   --auto     What CI runs: promotes to --full when the branch changes the detector or its
 #              fixtures; stays default (fast Debug build, skips parity suites) otherwise.
+#   --build-only
+#              Builds the default Debug tests without running them. CI runs it on main so pull
+#              requests, which can only restore caches saved on main, start from Debug products.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -18,7 +21,13 @@ case "${1:-}" in
   --quick) mode=quick; shift ;;
   --full) mode=full; shift ;;
   --auto) mode=auto; shift ;;
+  --build-only) mode=build; shift ;;
 esac
+
+if [[ "$mode" == build && "$#" -gt 0 ]]; then
+  echo '--build-only takes no test filters' >&2
+  exit 2
+fi
 
 timeout_seconds="${PWUSAGE_TEST_TIMEOUT_SECONDS:-600}"
 if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
@@ -157,7 +166,16 @@ if [[ "$mode" == default && "$#" -eq 0 ]]; then
     test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutFitTests")
     test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassTests")
     test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassCacheTests")
+    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthClassifierPassTests")
   fi
+fi
+
+xcodebuild_action=test
+test_options=(-parallel-testing-enabled NO -collect-test-diagnostics on-failure)
+if [[ "$mode" == build ]]; then
+  # Same build settings as the default run, so its products are valid for that run's incremental build.
+  xcodebuild_action=build-for-testing
+  test_options=()
 fi
 
 artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/pwusage-ios-tests.XXXXXX")"
@@ -175,8 +193,7 @@ python3 - "$timeout_seconds" xcodebuild \
   -project PWUsage.xcodeproj \
   -scheme PWUsage \
   -destination "id=$simulator_id" \
-  -parallel-testing-enabled NO \
-  -collect-test-diagnostics on-failure \
+  ${test_options[@]+"${test_options[@]}"} \
   -derivedDataPath "$derived_data" \
   -resultBundlePath "$artifacts_dir/TestResults.xcresult" \
   CODE_SIGNING_ALLOWED=NO \
@@ -185,7 +202,7 @@ python3 - "$timeout_seconds" xcodebuild \
   "PWUSAGE_FUZZ_SEED=${PWUSAGE_FUZZ_SEED:-}" \
   ${mode_build_settings[@]+"${mode_build_settings[@]}"} \
   ${test_filter_args[@]+"${test_filter_args[@]}"} \
-  test <<'PY'
+  "$xcodebuild_action" <<'PY'
 import os
 import signal
 import subprocess
@@ -219,7 +236,7 @@ set -e
 
 # xcodebuild reports TEST SUCCEEDED when a filter matches nothing, so a green
 # exit only counts if the result bundle shows tests actually ran.
-if [[ "$status" -eq 0 ]]; then
+if [[ "$status" -eq 0 && "$mode" != build ]]; then
   executed="$(xcrun xcresulttool get test-results summary --path "$artifacts_dir/TestResults.xcresult" --compact 2>/dev/null | python3 -c '
 import json
 import sys

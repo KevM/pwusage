@@ -1,0 +1,26 @@
+import Foundation
+@testable import PWUsage
+import Testing
+
+struct RatePlansPollingTests {
+    @Test func repricingPollsQuickly() {
+        #expect(RatePlansPolling.interval(reattribution: .pending, estimates: nil) == .seconds(3))
+        #expect(RatePlansPolling.interval(reattribution: .running, estimates: .ready) == .seconds(3))
+    }
+
+    @Test func pendingEstimatesKeepPollingAtTheSlowerPace() {
+        let interval = RatePlansPolling.interval(reattribution: nil, estimates: .pending)
+        #expect(interval == RatePlansPolling.estimatesInterval)
+    }
+
+    @Test func repricingWinsOverPendingEstimates() {
+        #expect(RatePlansPolling.interval(reattribution: .pending, estimates: .pending) == .seconds(3))
+    }
+
+    @Test func settledStatesStopPolling() {
+        #expect(RatePlansPolling.interval(reattribution: nil, estimates: nil) == nil)
+        for status: SiteRateEstimatesDTO.Status in [.ready, .needsPlan, .needsUtility, .skipped, .failed] {
+            #expect(RatePlansPolling.interval(reattribution: nil, estimates: status) == nil)
+        }
+    }
+}

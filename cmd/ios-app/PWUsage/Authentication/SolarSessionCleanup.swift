@@ -14,6 +14,7 @@ struct SolarSessionCleanup: SolarForecastSessionCleanup {
     var onboardingStore: SiteHistoryOnboardingStore = .shared
     var deepHistoryStore: SiteDeepHistoryStore = .shared
     var dayLedgerStore: SiteHistoryDayLedgerStore = .shared
+    var ratePlanTimelineStore: RatePlanTimelineStore = .shared
     var additionalCleanup: (@Sendable () async throws -> Void)?
 
     /// Runs behind the synchronization actor's cleanup barrier, so a replacement session
@@ -31,6 +32,7 @@ struct SolarSessionCleanup: SolarForecastSessionCleanup {
         do { try await onboardingStore.removeAll() } catch { firstError = firstError ?? error }
         do { try await deepHistoryStore.removeAll() } catch { firstError = firstError ?? error }
         do { try await dayLedgerStore.removeAll() } catch { firstError = firstError ?? error }
+        do { try await ratePlanTimelineStore.removeAll() } catch { firstError = firstError ?? error }
         if let additionalCleanup {
             do { try await additionalCleanup() } catch { firstError = firstError ?? error }
         }

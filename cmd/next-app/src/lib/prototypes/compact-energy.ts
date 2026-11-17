@@ -126,6 +126,21 @@ export function decodeDaySolar(archive: DayArchive, identity?: Identity): { time
     return rows.map(row => ({ timestamp: row.timestamp, solarWh: row.solar_power }));
 }
 
+/** Read all five flow channels of a day archive, with the same integrity checks as `decodeDaySamples`. */
+export function decodeDayFlows(
+    archive: DayArchive,
+    identity?: Identity,
+): { timestamp: Date; solarWh: number; loadWh: number; gridWh: number; batteryWh: number; batterySoc: number | null }[] {
+    return decode(archive, identity).map(row => ({
+        timestamp: row.timestamp,
+        solarWh: row.solar_power,
+        loadWh: row.load_power,
+        gridWh: row.grid_power,
+        batteryWh: row.battery_power,
+        batterySoc: row.battery_soc ?? null,
+    }));
+}
+
 export function rollupDay(rows: EnergyData[], day: Date): DayRollup[] {
     const groups = new Map<string, DayRollup>();
     for (const row of rows) {

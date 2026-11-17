@@ -39,6 +39,10 @@ protocol MobileBatteryHoldDataAPI: Sendable {
     func sendBatteryHoldCommand(siteID: String, command: BatteryHoldCommand) async throws -> BatteryHoldCommandResult
 }
 
+protocol MobileBillShadowAPI: Sendable {
+    func reportBillShadow(_ report: BillShadowReport) async throws
+}
+
 enum SolarForecastEnhancementState: Equatable {
     case basic
     case loadingWithBasic
@@ -127,11 +131,17 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
     }
 }
 
-/// The sheet the dashboard itself owns. There is only one, but it stays a
+/// The sheets the dashboard itself owns. Only one is up at a time, and it stays a
 /// value so an external launch can clear whatever is up in a single write.
-/// Rate Plans and About are pages pushed from Settings, not sheets.
+/// Rate Plans and About are pages pushed from Settings, not sheets; the estimate
+/// setup pickers are the sheets added for estimated rate plans.
 enum DashboardSheet: String, Identifiable, CaseIterable {
     case batteryHold
+    /// Estimate setup: the utility, or the rate plan on the chosen utility.
+    case chooseUtility
+    case choosePlan
+    /// The rate plan history guide, from the Home accessory.
+    case rateHistory
 
     var id: String { rawValue }
 }

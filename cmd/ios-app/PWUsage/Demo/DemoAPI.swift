@@ -49,6 +49,35 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         DemoFixtures.planningContext(asOf: currentSource())
     }
 
+    func searchUtilities(siteID _: String, query: String) async throws -> [String] {
+        [DemoFixtures.site.utility].filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    func setUtility(siteID: String, name _: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func utilityPlans(siteID _: String) async throws -> [UtilityPlanDTO] { [] }
+
+    func setUtilityPlan(siteID: String, label _: String) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func rateHistory(siteID _: String) async throws -> RatePlanHistoryDTO {
+        DemoFixtures.rateHistory(asOf: now())
+    }
+
+    func saveRateHistory(
+        siteID: String,
+        periods _: [RatePlanHistoryPeriod]
+    ) async throws -> SiteTariffsTimelineResponse {
+        try await fetchTariffTimeline(siteID: siteID)
+    }
+
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
         let current = demoTimeline ?? DemoFixtures.tariffs(asOf: now())
         demoTimeline = current
@@ -85,7 +114,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             currency: current.currency,
             periods: periods,
             reattribution: current.reattribution,
-            teslaSync: current.teslaSync
+            teslaSync: current.teslaSync,
+            systemCosts: current.systemCosts
         )
         demoTimeline = current
         return current
@@ -108,7 +138,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
                 tariffId: period.tariffId + 1,
                 name: body.name ?? period.name,
                 version: period.version + 1,
-                source: period.source,
+                source: period.source == .estimated ? .manual : period.source,
                 effectiveFrom: body.effectiveFrom ?? period.effectiveFrom,
                 effectiveTo: nextTo,
                 isCurrentToday: period.isCurrentToday,
@@ -123,7 +153,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             currency: current.currency,
             periods: updatedPeriods.sorted { $0.effectiveFrom > $1.effectiveFrom },
             reattribution: current.reattribution,
-            teslaSync: current.teslaSync
+            teslaSync: current.teslaSync,
+            systemCosts: current.systemCosts
         )
         demoTimeline = next
         return next
@@ -139,7 +170,8 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             currency: current.currency,
             periods: remaining,
             reattribution: current.reattribution,
-            teslaSync: current.teslaSync
+            teslaSync: current.teslaSync,
+            systemCosts: current.systemCosts
         )
         demoTimeline = next
         return next
@@ -147,6 +179,111 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
 
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse {
         try await fetchTariffTimeline(siteID: siteID)
+    }
+
+    func createReferenceRatePlan(
+        siteID: String,
+        body: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        nextPeriodID += 1
+        let created = TariffPeriodDTO(
+            periodId: nextPeriodID,
+            tariffId: nextPeriodID * 10,
+            name: body.name,
+            version: 1,
+            source: .manual,
+            effectiveFrom: body.effectiveFrom,
+            effectiveTo: body.effectiveTo,
+            isCurrentToday: body.effectiveTo == nil,
+            updatedBy: TariffUpdatedByDTO(email: nil, isCurrentUser: true),
+            seasons: body.seasons
+        )
+        let refPeriods = ([created] + current.referencePeriods).sorted { $0.effectiveFrom < $1.effectiveFrom }
+        let next = replacingReferencePeriods(in: current, with: refPeriods)
+        demoTimeline = next
+        return next
+    }
+
+    func updateReferenceRatePlan(
+        siteID: String,
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        let updated = current.referencePeriods.map { period -> TariffPeriodDTO in
+            guard period.periodId == periodID else { return period }
+            let nextTo: String? = switch body.effectiveTo {
+            case .unchanged: period.effectiveTo
+            case .set(let date): date
+            }
+            return TariffPeriodDTO(
+                periodId: period.periodId,
+                tariffId: period.tariffId + 1,
+                name: body.name ?? period.name,
+                version: period.version + 1,
+                source: .manual,
+                effectiveFrom: body.effectiveFrom ?? period.effectiveFrom,
+                effectiveTo: nextTo,
+                isCurrentToday: period.isCurrentToday,
+                updatedBy: TariffUpdatedByDTO(email: nil, isCurrentUser: true),
+                seasons: body.seasons ?? period.seasons
+            )
+        }
+        let next = replacingReferencePeriods(in: current, with: updated.sorted { $0.effectiveFrom < $1.effectiveFrom })
+        demoTimeline = next
+        return next
+    }
+
+    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        let remaining = current.referencePeriods.filter { $0.periodId != periodID }
+        let next = replacingReferencePeriods(in: current, with: remaining)
+        demoTimeline = next
+        return next
+    }
+
+    func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse {
+        let current = try await fetchTariffTimeline(siteID: siteID)
+        let costs = SystemCostsDTO(
+            siteInstalled: current.systemCosts?.siteInstalled ?? DemoFixtures.siteInstalled,
+            solar: body.solar,
+            powerwall: body.powerwall
+        )
+        let next = SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: current.siteId,
+            timezone: current.timezone,
+            currency: current.currency,
+            periods: current.periods,
+            referencePeriods: current.referencePeriods,
+            battery: current.battery,
+            reattribution: current.reattribution,
+            holidayDates: current.holidayDates,
+            teslaSync: current.teslaSync,
+            systemCosts: costs
+        )
+        demoTimeline = next
+        return next
+    }
+
+    private func replacingReferencePeriods(
+        in timeline: SiteTariffsTimelineResponse,
+        with referencePeriods: [TariffPeriodDTO]
+    ) -> SiteTariffsTimelineResponse {
+        SiteTariffsTimelineResponse(
+            version: 2,
+            siteId: timeline.siteId,
+            timezone: timeline.timezone,
+            currency: timeline.currency,
+            periods: timeline.periods,
+            referencePeriods: referencePeriods,
+            battery: timeline.battery,
+            reattribution: timeline.reattribution,
+            holidayDates: timeline.holidayDates,
+            teslaSync: timeline.teslaSync,
+            systemCosts: timeline.systemCosts
+        )
     }
 
     func fetchSolarHistory(

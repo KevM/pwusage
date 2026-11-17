@@ -441,7 +441,7 @@ export class Importer {
                 const parsed = info.tariff_content_v2
                     ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
                     : buildDefaultTariff('Default Rate');
-                await this.tariffRepo.addTariffVersion(siteId, parsed);
+                await this.tariffRepo.addTariffVersion(siteId, parsed, info.tariff_content_v2 ? { name: info.tariff_content_v2.name ?? null, code: info.tariff_content_v2.code ?? null } : undefined);
             } else {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }

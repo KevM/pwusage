@@ -4,6 +4,22 @@ import Testing
 
 @Suite("RatePlanDraft validation and editing math")
 struct RatePlanDraftTests {
+    @Test(arguments: [
+        ("2024-02-15", "2024-02-01", "2024-02-29"),
+        ("2025-02-15", "2025-02-01", "2025-02-28"),
+        ("2026-03-08", "2026-03-01", "2026-03-31"),
+        ("2026-12-01", "2026-12-01", "2026-12-31")
+    ])
+    func monthShortcutsUseCivilMonth(day: String, first: String, last: String) throws {
+        let zone = try #require(TimeZone(identifier: "Pacific/Auckland"))
+        let selected = try #require(RatePlanTimelineFormatting.parseYMD(day, in: zone))
+        let boundary = RatePlanTimelineFormatting.MonthBoundary.self
+        let start = try #require(boundary.first.date(inMonthOf: selected, timeZone: zone))
+        let end = try #require(boundary.last.date(inMonthOf: selected, timeZone: zone))
+        #expect(RatePlanTimelineFormatting.formatYMD(start, in: zone) == first)
+        #expect(RatePlanTimelineFormatting.formatYMD(end, in: zone) == last)
+    }
+
     @Test("Adding, moving, and removing seasons keeps all 12 months covered without gaps")
     func seasonsMaintainFullYearCoverage() {
         let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt

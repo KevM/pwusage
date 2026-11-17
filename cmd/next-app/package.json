@@ -21,7 +21,8 @@
     "test:backup:postgres": "bash scripts/test-db-backup-restore.sh",
     "test:dev-copy:postgres": "bash scripts/test-dev-copy-scripts.sh",
     "test:dev-history:postgres": "bash scripts/test-dev-history-scripts.sh",
-    "test:hold:timing": "BATTERY_HOLD_TIMING_REALTIME=1 vitest --run src/lib/battery-hold-monitor-timing.test.ts"
+    "test:hold:timing": "BATTERY_HOLD_TIMING_REALTIME=1 vitest --run src/lib/battery-hold-monitor-timing.test.ts",
+    "fixtures:bill-pricing": "tsx scripts/bill-pricing-fixtures.ts"
   },
   "dependencies": {
     "@axiomhq/js": "^2.0.0",
@@ -33,7 +34,7 @@
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^4.1.0",
     "marked": "^18.0.5",
-    "next": "^16.4.3",
+    "next": "^16.4.5",
     "pg": "^8.16.3",
     "qrcode": "^1.5.4",
     "react": "^19.2.1",

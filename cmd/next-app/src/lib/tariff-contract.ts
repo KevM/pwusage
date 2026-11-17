@@ -1,4 +1,4 @@
-import type { TariffReattributionStatus, TariffSource } from './db-types';
+import type { TariffReattributionStatus, TariffSource, TariffStartSource } from './db-types';
 
 export type TariffPeriodName = 'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK';
 
@@ -35,6 +35,7 @@ export interface TariffPeriodDTO {
   name: string;
   version: number;
   source: TariffSource;
+  startSource: TariffStartSource | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   isCurrentToday: boolean;
@@ -53,12 +54,80 @@ export interface ReattributionStatusDTO {
   updatedAt: string;
 }
 
+export interface SystemCostDTO {
+  installDate: string | null;
+  price: number;
+  taxCreditPercent: number | null;
+  incentives: number;
+}
+
+export interface SystemCostsDTO {
+  /** Site.installed as a site-local YYYY-MM-DD. */
+  siteInstalled: string;
+  solar: SystemCostDTO | null;
+  powerwall: SystemCostDTO | null;
+}
+
+export interface SiteBatteryDTO {
+  nameplateEnergyWh: number;
+  nameplatePowerW: number;
+  backupReservePercent: number;
+}
+
+export type RatePlanKind = 'fixed' | 'time_of_use';
+
+export interface RatePlanPeakWindow { label: string; fromHour: number; toHour: number }
+export interface RatePlanHistoryPlan {
+  name: string;
+  startDate: string;
+  kind: RatePlanKind;
+  isDefault: boolean;
+  closest: boolean;
+  lowRate: number;
+  highRate: number;
+  peakWindows: RatePlanPeakWindow[];
+  /** Label of the window closest to the Tesla plan (Time of Use only). */
+  closestWindow: string | null;
+  /** Fixed plans: the URDB label to save. */
+  fixedLabel: string | null;
+}
+export interface RatePlanHistoryYear { year: number; askDate: string; plans: RatePlanHistoryPlan[] }
+export interface RatePlanHistoryResponse {
+  utilityName: string;
+  historyStart: string;
+  fillThrough: string | null;
+  teslaShape: RatePlanKind | null;
+  /** Plans in effect on `fillThrough` (today when null): the newest plan the guide fills. */
+  current: RatePlanHistoryPlan[];
+  /** Newest first. */
+  years: RatePlanHistoryYear[];
+}
+
+export interface EstimatesStatusDTO {
+  status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
+  utilityName: string | null;
+  teslaPlanOutOfDate: boolean;
+  newerPlanName: string | null;
+  /** YYYY-MM-DD start of the newer URDB revision behind teslaPlanOutOfDate. */
+  newerPlanStart: string | null;
+  /** YYYY-MM-DD start of the newest URDB revision behind the estimate covering today. */
+  newestRevisionStart: string | null;
+  /** True when that newest revision is old enough that URDB may have missed a change. */
+  mayBeOutdated: boolean;
+  /** Offer to walk the owner through past rate plans; null when there is nothing to fill. */
+  historyGuide: { historyStart: string; fillThrough: string | null; unconfirmedDays: number } | null;
+}
+
 export interface SiteTariffsTimelineResponse {
   version: 2;
   siteId: string;
   timezone: string;
   currency: string;
   periods: TariffPeriodDTO[];
+  referencePeriods: TariffPeriodDTO[];
+  estimates: EstimatesStatusDTO | null;
+  battery: SiteBatteryDTO | null;
+  systemCosts: SystemCostsDTO;
   reattribution: ReattributionStatusDTO | null;
   /** Observed holidays this year and next (site-local YYYY-MM-DD): holidays use the weekend schedule. */
   holidayDates: string[];

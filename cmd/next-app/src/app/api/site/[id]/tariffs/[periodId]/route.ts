@@ -7,6 +7,7 @@ import {
   REATTRIBUTION_AFTER_MAX_TIME_MS,
   runSiteReattribution,
 } from '@/lib/tariff-reattribution';
+import { jsonWithETag } from '@/lib/tariff-etag';
 import { TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 
@@ -49,7 +50,7 @@ export function PATCH(req: NextRequest, context: { params: Promise<{ id: string;
           flushLogEvents();
         }
       });
-      return json(timeline);
+      return jsonWithETag(timeline);
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);
@@ -85,7 +86,7 @@ export function DELETE(req: NextRequest, context: { params: Promise<{ id: string
           flushLogEvents();
         }
       });
-      return json(timeline);
+      return jsonWithETag(timeline);
     } catch (error) {
       if (error instanceof TariffValidationError) return json({ error: error.message }, 400);
       if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);

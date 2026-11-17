@@ -21,6 +21,7 @@ final class SolarHealthModel {
 
     @ObservationIgnored private var runTask: Task<Void, Never>?
     @ObservationIgnored private var runID: UInt64 = 0
+    @ObservationIgnored private var lastAnalyzedSampleCount: Int?
     private(set) var scope: SolarForecastSiteScope?
     private(set) var report: SolarHealthReport?
     private(set) var result: SolarHealthResult?
@@ -56,8 +57,21 @@ final class SolarHealthModel {
         scope = next
         report = nil
         result = nil
+        lastAnalyzedSampleCount = nil
         hasUnreadFinding = false
         reload()
+    }
+
+    func reloadIfNeeded() async {
+        guard let scope, !isRunning else { return }
+        if report == nil {
+            reload()
+            return
+        }
+        let currentCount = (try? await history.allSamples(scope: scope).count) ?? 0
+        if lastAnalyzedSampleCount != currentCount {
+            reload()
+        }
     }
 
     func reload() {
@@ -85,6 +99,7 @@ final class SolarHealthModel {
         scope = nil
         report = nil
         result = nil
+        lastAnalyzedSampleCount = nil
         isRunning = false
         hasUnreadFinding = false
     }
@@ -102,6 +117,7 @@ final class SolarHealthModel {
                 runTask = nil
             }
         }
+        let sampleCount = (try? await history.allSamples(scope: target).count) ?? 0
         guard let record = try? await records.record(scope: target),
               let result = try? await runner(target, history, record, cache, now()),
               !Task.isCancelled, scope == target, runID == id else {
@@ -109,6 +125,7 @@ final class SolarHealthModel {
         }
         let classified = SolarHealthClassifier.classify(
             result, manual: record.manualLayout, now: now(), rainDays: result.weather.rainDays)
+        lastAnalyzedSampleCount = sampleCount
         self.result = result
         report = classified
         let seen = Set(defaults.stringArray(forKey: Self.seenKeyPrefix + target.storageHash) ?? [])

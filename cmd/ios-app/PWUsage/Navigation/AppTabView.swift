@@ -13,6 +13,8 @@ struct AppTabView: View {
     }
     /// The banner's motion outlives its content, which the tab bar recreates as it updates.
     @State private var bannerClocks = SolarSystemBannerClocks()
+    @State private var accessoryDismissals = RateEstimatesAccessoryDismissals()
+    private let historyOfferDismissals = RateEstimatesAccessoryDismissals.sharedHistoryOffer
 
     var body: some View {
         Group {
@@ -54,15 +56,34 @@ struct AppTabView: View {
                 $0.status.isLoading && !model.isDemo && !model.isShowingSolarSystem
                     ? SiteDeepHistoryPresentation(status: $0.status) : nil
             }
-            tabView.tabViewBottomAccessory(isEnabled: hold != nil || deep != nil || showsBanner) {
+            // Setup for estimated rate plans comes last: it yields to every history accessory.
+            let guide = coordinator.savingsTimeline?.estimates?.historyGuide
+            let estimate = RateEstimatesAccessoryRule.prompt(
+                RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
+                historyOffer: guide != nil,
+                selectedTab: model.selectedTab,
+                isDemo: model.isDemo,
+                isDismissed: accessoryDismissals.isDismissed(siteID: site.id),
+                isHistoryOfferDismissed: historyOfferDismissals.isDismissed(siteID: site.id),
+                yieldsTo: hold != nil || deep != nil || showsBanner
+            )
+            tabView.tabViewBottomAccessory(isEnabled: hold != nil || deep != nil || showsBanner || estimate != nil) {
                 if let hold {
                     BatteryHoldAccessory(model: hold) { coordinator.isBatteryHoldSheetPresented = true }
                 } else if let deep {
                     SiteDeepHistoryAccessory(presentation: deep) { model.openSolarSystem() }
-                } else {
+                } else if showsBanner {
                     SolarSystemBanner(model: banner, clocks: bannerClocks) {
                         model.openSolarSystem(focusingLocation: banner.mode == .needsLocation)
                     }
+                } else if let estimate {
+                    RateEstimatesAccessory(
+                        kind: estimate,
+                        utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                        historyStart: guide?.historyStart,
+                        onOpen: { open(estimate) },
+                        onDismiss: { dismiss(estimate) }
+                    )
                 }
             }
             .onChange(of: banner.days, initial: true) { bannerClocks.observe(days: banner.days, now: .now) }
@@ -90,6 +111,12 @@ struct AppTabView: View {
             switch sheet {
             case .batteryHold:
                 BatteryHoldSheet(coordinator: coordinator, site: site)
+            case .chooseUtility:
+                estimateSetupSheet(.pickUtility)
+            case .choosePlan:
+                estimateSetupSheet(.pickPlan)
+            case .rateHistory:
+                rateHistorySheet
             }
         }
         .sheet(isPresented: $model.isSitePickerPresented) {
@@ -150,6 +177,37 @@ struct AppTabView: View {
                              ? nil : (model.historyOnboarding?.solarHealth ?? model.demoSolarHealth),
                          trmnl: model.isDemo ? nil : TrmnlSettingsAccess(api: model.api))
         }
+    }
+
+    private func open(_ accessory: RateEstimatesAccessoryKind) {
+        switch accessory {
+        case .setup(let prompt): coordinator.presentedSheet = .rateEstimates(prompt)
+        case .historyOffer: coordinator.presentedSheet = .rateHistory
+        }
+    }
+
+    private func dismiss(_ accessory: RateEstimatesAccessoryKind) {
+        switch accessory {
+        case .setup: accessoryDismissals.dismiss(siteID: site.id)
+        case .historyOffer: historyOfferDismissals.dismiss(siteID: site.id)
+        }
+    }
+
+    private var rateHistorySheet: some View {
+        let sync = coordinator.savingsTimeline?.teslaSync
+        return RatePlanHistorySheet(
+            teslaPlanName: sync?.latestTariffName,
+            load: { try await coordinator.loadRateHistory() },
+            save: { _ = try await coordinator.saveRateHistory($0) }
+        )
+    }
+
+    private func estimateSetupSheet(_ prompt: RateEstimatesPrompt) -> RateEstimatesSetupSheet {
+        RateEstimatesSetupSheet(
+            prompt: prompt,
+            utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+            actions: .live(coordinator)
+        )
     }
 
     /// A swipe down is the same as Not now: the sheet clears the prompt for this run.

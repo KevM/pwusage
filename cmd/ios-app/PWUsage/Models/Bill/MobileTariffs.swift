@@ -3,6 +3,21 @@ import Foundation
 enum TariffSource: String, Codable, Equatable, Sendable {
     case tesla
     case manual
+    case estimated
+}
+
+enum TariffStartSource: String, Codable, Equatable, Sendable {
+    case urdb
+    case teslaFirstSeen = "tesla_first_seen"
+    case assumedJan1 = "assumed_jan_1"
+    case historyStart = "history_start"
+}
+
+struct UtilityPlanDTO: Decodable, Equatable, Sendable, Identifiable {
+    let label: String
+    let name: String
+    let startDate: String
+    var id: String { label }
 }
 
 enum TariffPeriodName: String, Codable, Equatable, Sendable, CaseIterable, Hashable {
@@ -60,6 +75,7 @@ struct TariffPeriodDTO: Codable, Equatable, Sendable, Identifiable {
     let isCurrentToday: Bool
     let updatedBy: TariffUpdatedByDTO?
     let seasons: [TariffSeasonInput]
+    var startSource: TariffStartSource?
 
     var id: Int { periodId }
 }
@@ -123,83 +139,109 @@ struct ActiveTariffPeriodMatch: Equatable, Sendable {
     let window: TimePeriodWindowInput
 }
 
+struct SiteBatteryDTO: Codable, Equatable, Sendable {
+    let nameplateEnergyWh: Double
+    let nameplatePowerW: Double
+    let backupReservePercent: Double
+}
+
 struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
     let version: Int
     let siteId: String
     let timezone: String
     let currency: String
     let periods: [TariffPeriodDTO]
+    let referencePeriods: [TariffPeriodDTO]
+    let battery: SiteBatteryDTO?
     let reattribution: ReattributionStatusDTO?
     /// Observed holidays (site-local YYYY-MM-DD); they follow the weekend schedule. Nil from older servers.
     var holidayDates: [String]?
     let teslaSync: TeslaSyncDTO
+    var estimates: SiteRateEstimatesDTO?
+    var systemCosts: SystemCostsDTO?
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case siteId
+        case timezone
+        case currency
+        case periods
+        case referencePeriods
+        case battery
+        case reattribution
+        case holidayDates
+        case teslaSync
+        case estimates
+        case systemCosts
+    }
+
+    init(
+        version: Int,
+        siteId: String,
+        timezone: String,
+        currency: String,
+        periods: [TariffPeriodDTO],
+        referencePeriods: [TariffPeriodDTO] = [],
+        battery: SiteBatteryDTO? = nil,
+        reattribution: ReattributionStatusDTO?,
+        holidayDates: [String]? = nil,
+        teslaSync: TeslaSyncDTO,
+        estimates: SiteRateEstimatesDTO? = nil,
+        systemCosts: SystemCostsDTO? = nil
+    ) {
+        self.version = version
+        self.siteId = siteId
+        self.timezone = timezone
+        self.currency = currency
+        self.periods = periods
+        self.referencePeriods = referencePeriods
+        self.battery = battery
+        self.reattribution = reattribution
+        self.holidayDates = holidayDates
+        self.teslaSync = teslaSync
+        self.estimates = estimates
+        self.systemCosts = systemCosts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        siteId = try container.decode(String.self, forKey: .siteId)
+        timezone = try container.decode(String.self, forKey: .timezone)
+        currency = try container.decode(String.self, forKey: .currency)
+        periods = try container.decode([TariffPeriodDTO].self, forKey: .periods)
+        referencePeriods = try container.decodeIfPresent([TariffPeriodDTO].self, forKey: .referencePeriods) ?? []
+        battery = try container.decodeIfPresent(SiteBatteryDTO.self, forKey: .battery)
+        reattribution = try container.decodeIfPresent(ReattributionStatusDTO.self, forKey: .reattribution)
+        holidayDates = try container.decodeIfPresent([String].self, forKey: .holidayDates)
+        teslaSync = try container.decode(TeslaSyncDTO.self, forKey: .teslaSync)
+        estimates = try container.decodeIfPresent(SiteRateEstimatesDTO.self, forKey: .estimates)
+        systemCosts = try container.decodeIfPresent(SystemCostsDTO.self, forKey: .systemCosts)
+    }
 
     func validating(siteID: String) throws -> Self {
-        let ratesAreFinite = periods.allSatisfy { period in
+        let allPeriods = periods + referencePeriods
+        let ratesAreFinite = allPeriods.allSatisfy { period in
             period.seasons.allSatisfy { season in
-                let allPeriods = season.weekdayPeriods + season.weekendPeriods
-                return allPeriods.allSatisfy { $0.buyRate.isFinite && $0.sellRate.isFinite }
+                let windows = season.weekdayPeriods + season.weekendPeriods
+                return windows.allSatisfy { $0.buyRate.isFinite && $0.sellRate.isFinite }
             }
         }
-        guard version == 2, siteId == siteID, TimeZone(identifier: timezone) != nil, ratesAreFinite else {
+        let batteryValid = battery.map {
+            $0.nameplateEnergyWh.isFinite && $0.nameplatePowerW.isFinite && $0.backupReservePercent.isFinite
+        } ?? true
+        guard version == 2,
+              siteId == siteID,
+              TimeZone(identifier: timezone) != nil,
+              ratesAreFinite,
+              batteryValid else {
             throw PWUsageAPIError.invalidResponse
         }
         return self
     }
 
     func activePeriodNow(at now: Date = .now) -> ActiveTariffPeriodMatch? {
-        guard let timeZone = TimeZone(identifier: timezone) else { return nil }
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = timeZone
-        let comps = cal.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: now)
-        guard let year = comps.year, let month = comps.month, let day = comps.day,
-              let weekday = comps.weekday, let hour = comps.hour, let minute = comps.minute else {
-            return nil
-        }
-        let today = String(format: "%04d-%02d-%02d", year, month, day)
-        guard let period = period(on: today) else { return nil }
-        guard let season = period.seasons.first(where: {
-            Self.seasonMatches(month: month, day: day, season: $0)
-        }) else {
-            return nil
-        }
-        let isWeekend = weekday == 1 || weekday == 7 || (holidayDates?.contains(today) ?? false)
-        let windows = isWeekend ? season.weekendPeriods : season.weekdayPeriods
-        let minuteOfDay = hour * 60 + minute
-        guard let window = windows.first(where: { Self.windowMatches(minuteOfDay: minuteOfDay, window: $0) }) else {
-            return nil
-        }
-        return ActiveTariffPeriodMatch(period: period, season: season, window: window)
-    }
-
-    /// The plan the server prices `day` with: the one covering it, else (in a gap) the nearest
-    /// earlier plan by end date, else (before every plan) the earliest. Mirrors `resolveTariffForDate`.
-    private func period(on day: String) -> TariffPeriodDTO? {
-        if let exact = periods.first(where: {
-            $0.effectiveFrom <= day && ($0.effectiveTo == nil || day <= ($0.effectiveTo ?? ""))
-        }) {
-            return exact
-        }
-        if let earlier = periods.filter({ ($0.effectiveTo ?? "") != "" && ($0.effectiveTo ?? "") < day })
-            .max(by: { ($0.effectiveTo ?? "") < ($1.effectiveTo ?? "") }) {
-            return earlier
-        }
-        return periods.min(by: { $0.effectiveFrom < $1.effectiveFrom })
-    }
-
-    private static func seasonMatches(month: Int, day: Int, season: TariffSeasonInput) -> Bool {
-        let start = season.fromMonth * 100 + (season.fromDay ?? 1)
-        let end = season.toMonth * 100 + (season.toDay ?? 31)
-        let today = month * 100 + day
-        return start <= end ? today >= start && today <= end : today >= start || today <= end
-    }
-
-    private static func windowMatches(minuteOfDay: Int, window: TimePeriodWindowInput) -> Bool {
-        let start = window.fromHour * 60 + window.fromMinute
-        let end = window.toHour * 60 + window.toMinute
-        if start == 0, end == 1440 || end == 0 { return true }
-        if start < end { return minuteOfDay >= start && minuteOfDay < end }
-        return minuteOfDay >= start || minuteOfDay < end
+        RatePeriodResolver(timeline: self)?.match(at: now)
     }
 }
 
@@ -266,9 +308,25 @@ struct TariffPlanPatchRequest: Encodable, Equatable, Sendable {
     }
 }
 
+enum TimelineFetch: Equatable, Sendable {
+    case unchanged
+    case changed(SiteTariffsTimelineResponse, etag: String?)
+}
+
 @MainActor
 protocol MobileTariffDataAPI: Sendable {
+    func searchUtilities(siteID: String, query: String) async throws -> [String]
+    func setUtility(siteID: String, name: String) async throws -> SiteTariffsTimelineResponse
+    func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse
+    func utilityPlans(siteID: String) async throws -> [UtilityPlanDTO]
+    func setUtilityPlan(siteID: String, label: String) async throws -> SiteTariffsTimelineResponse
+    func rateHistory(siteID: String) async throws -> RatePlanHistoryDTO
+    func saveRateHistory(
+        siteID: String,
+        periods: [RatePlanHistoryPeriod]
+    ) async throws -> SiteTariffsTimelineResponse
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse
+    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch
     func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse
     func createTariffPeriod(
         siteID: String,
@@ -281,4 +339,60 @@ protocol MobileTariffDataAPI: Sendable {
     ) async throws -> SiteTariffsTimelineResponse
     func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse
+    func createReferenceRatePlan(
+        siteID: String,
+        body: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse
+    func updateReferenceRatePlan(
+        siteID: String,
+        periodID: Int,
+        body: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse
+    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
+    func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse
+}
+
+extension MobileTariffDataAPI {
+    func searchUtilities(siteID _: String, query _: String) async throws -> [String] {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func setUtility(siteID _: String, name _: String) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func skipUtility(siteID _: String) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func utilityPlans(siteID _: String) async throws -> [UtilityPlanDTO] {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func setUtilityPlan(siteID _: String, label _: String) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
+        .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
+    }
+
+    func createReferenceRatePlan(
+        siteID _: String,
+        body _: TariffPlanWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func updateReferenceRatePlan(
+        siteID _: String,
+        periodID _: Int,
+        body _: TariffPlanPatchRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func deleteReferenceRatePlan(siteID _: String, periodID _: Int) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
 }

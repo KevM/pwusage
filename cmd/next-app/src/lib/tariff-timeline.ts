@@ -140,9 +140,11 @@ function validateDaySlots(periods: TimePeriodWindowInput[], label: string): Time
   return normalized;
 }
 
+export const MAX_PLAN_NAME_LENGTH = 64;
+
 export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLocal: string): TariffPlanWriteInput {
   const name = typeof input.name === 'string' ? input.name.trim() : '';
-  if (!name || name.length > 64) {
+  if (!name || name.length > MAX_PLAN_NAME_LENGTH) {
     throw new TariffValidationError('Rate plan name must be 1–64 characters');
   }
   validateEffectiveDates(input.effectiveFrom, input.effectiveTo, todaySiteLocal);

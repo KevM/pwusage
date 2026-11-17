@@ -6,6 +6,7 @@ import SwiftUI
 struct SolarSystemView: View {
     @ObservedObject var coordinator: DashboardCoordinator
     /// Nil when the site has no history available; the screen then shows only what is stored.
+    let site: MobileSite
     let status: SiteHistoryStatus?
     var debugActions: SiteHistoryDebugActions?
     /// Opened from the banner's location prompt: go straight to the location step.
@@ -27,7 +28,8 @@ struct SolarSystemView: View {
     @State private var didStartAtLocation = false
     @State private var record: SolarLayoutRecord?
     @State private var isEditingLayout = false
-    @State private var healthState = SolarHouseHealthState()
+    @State private var isShowingFindings = false
+    @State private var savingsSheet: SolarSavingsSheet?
 
     private var stored: (location: SolarHomeLocation?, layout: SolarLayout?)? {
         guard case .enabled(let location, let layout, _)? = coordinator.solarLayoutStatus else { return nil }
@@ -55,24 +57,63 @@ struct SolarSystemView: View {
                 return true
             }
         }
+        .sheet(isPresented: $isShowingFindings) {
+            if let report = solarHealth?.report {
+                SolarHealthFindingsSheet(
+                    report: report,
+                    context: inspectionContext(layout: activeLayout))
+            }
+        }
         .task { record = await coordinator.manualLayoutRecord() }
         .onAppear {
             solarHealth?.markFindingsSeen()
-            if solarHealth?.report == nil, solarHealth?.isRunning == false {
-                solarHealth?.reload()
-            }
             guard startsAtLocation, !didStartAtLocation else { return }
             didStartAtLocation = true
             isConfirmingLocation = true
         }
+        .task { await solarHealth?.reloadIfNeeded() }
         .onChange(of: solarHealth?.hasUnreadFinding) { solarHealth?.markFindingsSeen() }
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
+        .task { await coordinator.refreshSavings() }
+        .sheet(item: $savingsSheet) { sheet in
+            switch sheet {
+            case .fixedRatePlan(let suggestion):
+                let existing = suggestion == nil
+                    ? coordinator.activeReferencePeriod : coordinator.earliestReferencePeriod
+                FixedRatePlanForm(
+                    existing: existing,
+                    defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
+                    suggestedStartDate: suggestion,
+                    estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
+                    timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
+                    currency: coordinator.bill.response?.currentBill.currency ?? "USD",
+                    onSave: { request, editing in
+                        await coordinator.saveFixedRatePlan(request, editing: editing)
+                    },
+                    onDelete: { periodID in
+                        await coordinator.removeFixedRatePlan(periodID: periodID)
+                    }
+                )
+            case .ratePlans:
+                RatePlansSheet(site: site, actions: .live(coordinator))
+            case .rateEstimates(let prompt):
+                RateEstimatesSetupSheet(
+                    prompt: prompt,
+                    utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                    actions: .live(coordinator)
+                )
+            }
+        }
+    }
+
+    private var activeLayout: SolarLayout? {
+        status != nil ? status?.layout : stored?.layout
     }
 
     private func content(_ presentation: SiteHistoryPresentation) -> some View {
         // The status's own layout honors the Debug "Ignore Existing Layout" setting.
-        let layout = status != nil ? status?.layout : stored?.layout
+        let layout = activeLayout
         return ScrollViewReader { proxy in
             list(presentation, layout: layout)
                 // The screen keeps its place between visits, and an owed reveal plays only once.
@@ -88,26 +129,18 @@ struct SolarSystemView: View {
 
     private func list(_ presentation: SiteHistoryPresentation, layout: SolarLayout?) -> some View {
         let overlay = houseHealthOverlay
-        let sceneDate = healthState.selectedYear.map(SolarHouseHealthOverlay.endOfYearDate) ?? .now
         return List {
             if status != nil || layout != nil {
                 Section {
                     SolarSystemVisual(
                         input: SolarSystemSceneInput(
                             status: status, layout: layout, isWaiting: presentation.phase == .waiting,
-                            manualLayout: record?.manualLayout, healthOverlay: overlay, now: sceneDate),
+                            manualLayout: record?.manualLayout, healthOverlay: overlay, now: .now),
                         summary: status == nil && layout != nil
                             ? layout.map(SiteHistoryPresentation.describe) ?? "" : presentation.accessibilitySummary,
                         onRevealSeen: onRevealSeen)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
                         .id(Self.visualID)
-                    if layout != nil, let report = solarHealth?.report, let overlay {
-                        SolarSystemHealthControls(
-                            state: $healthState,
-                            report: report,
-                            overlay: overlay,
-                            shadedMoment: firstShadedMoment)
-                    }
                     if status != nil, !presentation.statusLine.isEmpty { statusRow(presentation) }
                     if let layout {
                         SolarSystemDetailsRows(
@@ -122,12 +155,34 @@ struct SolarSystemView: View {
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
             }
+            SolarSystemSavingsSection(
+                state: coordinator.savings,
+                currency: coordinator.bill.response?.currentBill.currency ?? "USD",
+                hasReferencePlan: coordinator.activeReferencePeriod != nil,
+                onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
+                onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
+                onCaveatAction: routeCaveat,
+                estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
+                estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+                onChooseEstimateSetup: { savingsSheet = .rateEstimates($0) },
+                fixedPlanNote: RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+                    coordinator.savingsTimeline?.estimates,
+                    referencePeriods: coordinator.savingsTimeline?.referencePeriods ?? [],
+                    periods: coordinator.savingsTimeline?.periods ?? []
+                )
+            )
             panelHealthSection
-            if layout != nil, status != nil, let deepHistory { SiteDeepHistorySection(model: deepHistory) }
             if stored != nil || status != nil { locationSection }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    private func routeCaveat(_ action: SavingsCaveat.Action) {
+        switch action {
+        case .editFixedRatePlan(let suggestion): savingsSheet = .fixedRatePlan(suggestion)
+        case .fixRatePlans: savingsSheet = .ratePlans
         }
     }
 
@@ -137,9 +192,10 @@ struct SolarSystemView: View {
             SolarHealthSection(
                 report: report,
                 isLoading: solarHealth?.isRunning ?? false,
-                usedWeather: solarHealth?.result?.weather.hasPrecipitation ?? false,
+                onShowFindings: { isShowingFindings = true },
                 onEditLayout: { isEditingLayout = true },
-                onLoadMoreHistory: deepHistory != nil ? { deepHistory?.start() } : nil)
+                deepHistory: deepHistory,
+                healthResult: solarHealth?.result)
         } else if solarHealth?.isRunning == true {
             Section("Panel Health") {
                 HStack(spacing: 10) {
@@ -193,20 +249,23 @@ struct SolarSystemView: View {
 
     private var location: SolarHomeLocation? { stored?.location }
 
-    private var houseHealthOverlay: SolarHouseHealthOverlay? {
-        guard solarHealth?.report != nil || solarHealth?.result != nil else { return nil }
-        return SolarHouseHealthOverlay(
-            report: solarHealth?.report,
+    private func inspectionContext(layout: SolarLayout?) -> SolarHouseInspectionContext {
+        SolarHouseInspectionContext(
+            layout: layout,
+            manualLayout: record?.manualLayout,
             result: solarHealth?.result,
-            state: healthState,
             latitude: location?.latitude ?? status?.latitude ?? 40.0,
             longitude: location?.longitude ?? 0.0)
     }
 
-    private var firstShadedMoment: (season: SolarSeason, hourOfDay: Double)? {
-        SolarHouseHealthOverlay.firstShadedMoment(
-            in: solarHealth?.result,
-            latitude: location?.latitude ?? status?.latitude ?? 40.0,
+    private var houseHealthOverlay: SolarHouseHealthOverlay? {
+        guard solarHealth?.report != nil || solarHealth?.result != nil else { return nil }
+        let latitude = location?.latitude ?? status?.latitude ?? 40.0
+        return SolarHouseHealthOverlay(
+            report: solarHealth?.report,
+            result: solarHealth?.result,
+            state: SolarHouseHealthState(latitude: latitude),
+            latitude: latitude,
             longitude: location?.longitude ?? 0.0)
     }
 
@@ -243,6 +302,20 @@ struct SolarSystemView: View {
         case .none: "Add Location"
         case .estimated: "Use My Exact Home Location"
         case .exact: "Update Home Location"
+        }
+    }
+}
+
+private enum SolarSavingsSheet: Identifiable {
+    case fixedRatePlan(String?)
+    case ratePlans
+    case rateEstimates(RateEstimatesPrompt)
+
+    var id: String {
+        switch self {
+        case .fixedRatePlan: "fixedRatePlan"
+        case .ratePlans: "ratePlans"
+        case .rateEstimates(let prompt): "rateEstimates-\(prompt)"
         }
     }
 }

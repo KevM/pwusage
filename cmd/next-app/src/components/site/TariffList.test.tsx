@@ -8,6 +8,10 @@ const baseTimeline: SiteTariffsTimelineResponse = {
   siteId: 'site-1',
   timezone: 'America/Chicago',
   currency: 'USD',
+  referencePeriods: [],
+  estimates: null,
+  battery: null,
+  systemCosts: { siteInstalled: '2023-11-14', solar: null, powerwall: null },
   periods: [
     {
       periodId: 2,
@@ -15,6 +19,7 @@ const baseTimeline: SiteTariffsTimelineResponse = {
       name: 'We Energies Time-of-Use',
       version: 2,
       source: 'manual',
+      startSource: null,
       effectiveFrom: '2026-01-01',
       effectiveTo: null,
       isCurrentToday: true,
@@ -64,6 +69,7 @@ const baseTimeline: SiteTariffsTimelineResponse = {
       name: 'We Energies Prior',
       version: 1,
       source: 'tesla',
+      startSource: null,
       effectiveFrom: '2025-01-01',
       effectiveTo: '2025-09-30',
       isCurrentToday: false,

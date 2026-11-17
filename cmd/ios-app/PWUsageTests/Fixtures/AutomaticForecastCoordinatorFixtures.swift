@@ -172,7 +172,8 @@ final class AutomaticForecastHarness {
         coordinator = DashboardCoordinator(
             siteID: siteID, api: api, planningAPI: api, accountScopeID: "account-a",
             now: { clock.now() }, timerInterval: nil, forecastService: service,
-            history: historyStore, records: records, runner: runner
+            history: historyStore, records: records, runner: runner,
+            billPricingMode: .server
         )
         if seedDetected {
             let scope = SolarForecastSiteScope(accountScopeID: "account-a", siteID: siteID)

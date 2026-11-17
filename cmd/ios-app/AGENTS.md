@@ -150,7 +150,9 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   takes more than about 30 s in Debug. `./run-tests.sh --full` builds optimized (`-O`, still
   `@testable`) and runs the opt-in year-fixture parity suite; use it locally to reproduce a
   failure in the parity suite. CI runs `./run-tests.sh --auto`, which promotes to `--full` when
-  the branch touches the detector or its fixtures, and stays default otherwise.
+  the branch touches the detector or its fixtures, and stays default otherwise. On main, CI also
+  runs `./run-tests.sh --build-only` (a Debug build without tests) and caches it, because a new
+  pull request can only restore caches saved on main.
 - **Targeting**: `./run-tests.sh AppConfigurationTests` runs a suite,
   `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin` a method, and
   `./run-tests.sh PWUsageTests` the whole bundle. The script normalizes the target prefix and method

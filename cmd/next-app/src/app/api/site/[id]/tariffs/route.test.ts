@@ -175,9 +175,134 @@ describe('tariff timeline API routes', () => {
       params: Promise.resolve({ id: 'site-1' }),
     });
     expect(res.status).toBe(200);
-    expect(res.headers.get('Cache-Control')).toBe('private, no-store, max-age=0');
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache');
     expect(await res.json()).toEqual(timelineStub);
     expect(getTimelineMock).toHaveBeenCalledWith('site-1', 'user-1');
+  });
+
+  it('GET sends an ETag and answers 304 when If-None-Match matches', async () => {
+    const first = await GET(new NextRequest('https://app.test/api/site/site-1/tariffs'), {
+      params: Promise.resolve({ id: 'site-1' }),
+    });
+    expect(first.status).toBe(200);
+    const etag = first.headers.get('ETag');
+    expect(etag).toMatch(/^"[0-9a-f]{64}"$/);
+    expect(first.headers.get('Cache-Control')).toBe('private, no-cache');
+
+    const exact = await GET(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        headers: { 'If-None-Match': etag ?? '' },
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(exact.status).toBe(304);
+    expect(exact.headers.get('ETag')).toBe(etag);
+    expect(exact.headers.get('Cache-Control')).toBe('private, no-cache');
+    expect(await exact.text()).toBe('');
+
+    const weak = await GET(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        headers: { 'If-None-Match': `W/${etag}` },
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(weak.status).toBe(304);
+    expect(weak.headers.get('ETag')).toBe(etag);
+  });
+
+  it('ETag changes when a rate changes', async () => {
+    const res1 = await GET(new NextRequest('https://app.test/api/site/site-1/tariffs'), {
+      params: Promise.resolve({ id: 'site-1' }),
+    });
+    const etag1 = res1.headers.get('ETag');
+
+    getTimelineMock.mockResolvedValueOnce({
+      ...timelineStub,
+      periods: [
+        {
+          id: 1,
+          source: 'manual',
+          name: 'Updated Plan',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: null,
+          isCurrentToday: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          seasons: [
+            {
+              id: 1,
+              name: 'All Year',
+              fromMonth: 1,
+              fromDay: 1,
+              toMonth: 12,
+              toDay: 31,
+              weekdayPeriods: [
+                {
+                  touName: 'ON_PEAK',
+                  fromHour: 9,
+                  fromMinute: 0,
+                  toHour: 21,
+                  toMinute: 0,
+                  buyRate: 0.35,
+                  sellRate: 0.05,
+                },
+              ],
+              weekendPeriods: [],
+            },
+          ],
+        },
+      ],
+    });
+    const res2 = await GET(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        headers: { 'If-None-Match': etag1 ?? '' },
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(res2.status).toBe(200);
+    expect(res2.headers.get('ETag')).toMatch(/^"[0-9a-f]{64}"$/);
+    expect(res2.headers.get('ETag')).not.toBe(etag1);
+  });
+
+  it('write routes return the ETag of their body', async () => {
+    const { createHash } = await import('node:crypto');
+    const hashOf = (text: string) => `"${createHash('sha256').update(text, 'utf8').digest('hex')}"`;
+
+    const postRes = await POST(
+      new NextRequest('https://app.test/api/site/site-1/tariffs', {
+        method: 'POST',
+        body: JSON.stringify(validPayload),
+      }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(postRes.status).toBe(201);
+    expect(postRes.headers.get('ETag')).toBe(hashOf(await postRes.text()));
+
+    const patchRes = await PATCH(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/5', {
+        method: 'PATCH',
+        body: JSON.stringify({ name: 'Renamed' }),
+      }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '5' }) }
+    );
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.headers.get('ETag')).toBe(hashOf(await patchRes.text()));
+
+    const delRes = await DELETE(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/5', { method: 'DELETE' }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '5' }) }
+    );
+    expect(delRes.status).toBe(200);
+    expect(delRes.headers.get('ETag')).toBe(hashOf(await delRes.text()));
+
+    poolQueryMock
+      .mockResolvedValueOnce({ rows: [{ timezone: 'America/Chicago' }] })
+      .mockResolvedValueOnce({ rows: [{ from_date: '2025-05-01', to_date: null }] });
+    const reattrRes = await REATTRIBUTE_POST(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/reattribute', { method: 'POST', body: '{}' }),
+      { params: Promise.resolve({ id: 'site-1' }) }
+    );
+    expect(reattrRes.status).toBe(200);
+    expect(reattrRes.headers.get('ETag')).toBe(hashOf(await reattrRes.text()));
   });
 
   it('POST / PATCH / DELETE / reattribute reject cross-origin requests with 403', async () => {
@@ -289,5 +414,21 @@ describe('tariff timeline API routes', () => {
       trigger: 'retry',
     });
     expect(afterCallbacks).toHaveLength(1);
+  });
+
+  it('refuses deleting an estimated period with the replacement guidance', async () => {
+    deleteManualPeriodMock.mockRejectedValueOnce(new TariffValidationError(
+      'Estimated rate plans fill days without a plan. Add your rate plan to replace one.'
+    ));
+    const response = await DELETE(
+      new NextRequest('https://app.test/api/site/site-1/tariffs/12', { method: 'DELETE' }),
+      { params: Promise.resolve({ id: 'site-1', periodId: '12' }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Estimated rate plans fill days without a plan. Add your rate plan to replace one.',
+    });
+    expect(afterCallbacks).toHaveLength(0);
   });
 });

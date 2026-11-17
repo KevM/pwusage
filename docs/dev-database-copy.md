@@ -53,8 +53,10 @@ full copy was downloaded only for most of it to be deleted.
    against prod's row count here. Check such migrations against prod's size
    separately.
 5. **Prunes the copy** (`scripts/prune-dev-copy.sql`): deletes day records
-   (summaries by cascade) older than 45 days, then `VACUUM FULL`s both tables. The slice already covers only 45 days, so this is a safety net. A test
-   checks that the export and the prune use the same interval.
+   (summaries by cascade) older than 45 days for sites other than Harrison, then
+   `VACUUM FULL`s both tables. The slice already covers only 45 days (and full
+   history for Harrison), so this is a safety net. A test checks that the export
+   and the prune use the same interval.
 
 ## What the scrub changes
 
@@ -67,6 +69,7 @@ does not exist.
 | `TrmnlInstallation` | `refresh_token` set to NULL | Stored but never used by the app |
 | `BatteryHoldActivity` | All rows deleted | Live Activity push tokens; beta must never push to copied prod registrations |
 | `User` | `access_token`, `refresh_token` set to NULL; `auth_status = 'revoked'` | Tesla refresh tokens are single-use. A copied token is prod's live grant: whichever environment rotates it second presents a consumed token, failing with `invalid_grant` and risking Tesla's reuse detection revoking prod's grant. Beta logs are not sent to Axiom, so this looked like unexplained prod failures |
+| `SiteUtility` | Every site except Harrison gets `next_check_at = 'infinity'` (and `ready` if it was `pending` or `running`); sites without a row get a parked one | Keeps the dev OpenEI estimate cron to Harrison, so a copy does not rerun prod's estimates and queue re-attribution across every site |
 
 Kept on purpose: `TrmnlInstallation.access_token` (inbound-only) and `User`
 emails. Beta's Tesla crons skip users without tokens; sign in on beta to give

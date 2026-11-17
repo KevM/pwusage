@@ -3,6 +3,7 @@ import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { Importer } from '@/lib/importer';
 import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
 import { isCrossOriginRequest } from '@/lib/request-security';
+import { jsonWithETag } from '@/lib/tariff-etag';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
 
@@ -48,7 +49,7 @@ export function POST(
         timeline.teslaSync.latestTariffId !== null &&
         timeline.teslaSync.latestTariffId !== beforeTimeline.teslaSync.latestTariffId;
 
-      return json({
+      return jsonWithETag({
         success: true,
         message: 'Rate plan refreshed',
         updatedFromTesla,
