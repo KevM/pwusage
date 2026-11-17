@@ -196,7 +196,6 @@ struct AppTabView: View {
     private var rateHistorySheet: some View {
         let sync = coordinator.savingsTimeline?.teslaSync
         return RatePlanHistorySheet(
-            hasTeslaPlan: sync?.latestTariffId != nil,
             teslaPlanName: sync?.latestTariffName,
             load: { try await coordinator.loadRateHistory() },
             save: { _ = try await coordinator.saveRateHistory($0) }

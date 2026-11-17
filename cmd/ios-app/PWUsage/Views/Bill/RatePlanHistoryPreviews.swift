@@ -86,7 +86,6 @@
     @MainActor
     private func previewStep(_ flow: RatePlanHistoryFlow) -> some View {
         let model = RatePlanHistoryModel(
-            hasTeslaPlan: true,
             loadHistory: { RatePlanHistoryPreviewFlows.history },
             saveHistory: { _ in }
         )
@@ -99,7 +98,6 @@
 
     #Preview("Sheet, loading from demo") {
         RatePlanHistorySheet(
-            hasTeslaPlan: true,
             teslaPlanName: "CGS NM (edited)",
             load: { RatePlanHistoryPreviewFlows.history },
             save: { _ in }

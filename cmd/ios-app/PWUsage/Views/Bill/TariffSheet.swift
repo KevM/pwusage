@@ -228,7 +228,6 @@ struct TariffSheet: View {
 
     private var rateHistorySheet: some View {
         RatePlanHistorySheet(
-            hasTeslaPlan: timeline?.teslaSync.latestTariffId != nil,
             teslaPlanName: timeline?.teslaSync.latestTariffName,
             load: { try await actions.loadRateHistory() },
             save: { timeline = try await actions.saveRateHistory($0) }

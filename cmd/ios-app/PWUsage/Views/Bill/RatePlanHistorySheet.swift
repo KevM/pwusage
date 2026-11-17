@@ -13,13 +13,12 @@ struct RatePlanHistorySheet: View {
     }
 
     init(
-        hasTeslaPlan: Bool,
         teslaPlanName: String?,
         load: @escaping () async throws -> RatePlanHistoryDTO,
         save: @escaping ([RatePlanHistoryPeriod]) async throws -> Void
     ) {
         self.init(
-            model: RatePlanHistoryModel(hasTeslaPlan: hasTeslaPlan, loadHistory: load, saveHistory: save),
+            model: RatePlanHistoryModel(loadHistory: load, saveHistory: save),
             teslaPlanName: teslaPlanName
         )
     }
@@ -51,16 +50,16 @@ struct RatePlanHistorySheet: View {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background { SectionTheme.bill.screenBackground }
-        case .failed:
-            failedView
+        case .failed(let message):
+            failedView(message)
         case .ready(let flow):
             RatePlanHistoryStepView(flow: flow, model: model, teslaPlanName: teslaPlanName)
         }
     }
 
-    private var failedView: some View {
+    private func failedView(_ message: String) -> some View {
         VStack(spacing: 14) {
-            Text(RatePlanHistoryPresentation.loadFailureMessage)
+            Text(message)
                 .multilineTextAlignment(.center)
             Button(RatePlanHistoryPresentation.retryTitle) {
                 Task { await model.reload() }

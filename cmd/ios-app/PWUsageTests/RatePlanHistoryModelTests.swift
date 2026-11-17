@@ -24,7 +24,6 @@ private final class HistoryStub {
 
     func model() -> RatePlanHistoryModel {
         RatePlanHistoryModel(
-            hasTeslaPlan: true,
             loadHistory: { [self] in
                 if loadsUntilCancelled { try await Task.sleep(for: .seconds(60)) }
                 if let loadFailure { throw loadFailure }
@@ -56,7 +55,7 @@ struct RatePlanHistoryModelTests {
         stub.loadFailure = StubFailure()
         let model = stub.model()
         await model.load()
-        #expect(model.state == .failed)
+        #expect(model.state == .failed(RatePlanHistoryPresentation.loadFailureMessage))
         stub.loadFailure = nil
         await model.reload()
         guard case .ready = model.state else {
@@ -92,7 +91,7 @@ struct RatePlanHistoryModelTests {
         let task = Task { await model.load() }
         task.cancel()
         await task.value
-        #expect(model.state == .failed)
+        #expect(model.state == .failed(RatePlanHistoryPresentation.loadFailureMessage))
     }
 
     @Test func saveSendsPeriodsAndFinishes() async {
@@ -140,6 +139,36 @@ struct RatePlanHistoryModelTests {
         await model.load()
         await model.save()
         #expect(model.errorMessage == "Rates changed. Reload.")
+    }
+
+    @Test func loadRejectionIsShownAsIs() async {
+        let stub = HistoryStub()
+        stub.loadFailure = PWUsageAPIError.requestRejected(statusCode: 409, message: "Choose a utility first.")
+        let model = stub.model()
+        await model.load()
+        #expect(model.state == .failed("Choose a utility first."))
+    }
+
+    @Test func teslaPlanComesFromTheHistory() async {
+        let stub = HistoryStub()
+        let model = stub.model()
+        await model.load()
+        guard case .ready(let withTesla) = model.state else {
+            Issue.record("expected ready")
+            return
+        }
+        #expect(withTesla.hasTeslaPlan)
+        // The Default Rate fallback has no shape: the server sends `teslaShape: null`.
+        stub.history = RatePlanHistoryDTO(
+            utilityName: "We Energies", historyStart: "2023-11-14", fillThrough: nil, teslaShape: nil,
+            current: [HistoryStub.fixed(2026)], years: []
+        )
+        await model.reload()
+        guard case .ready(let withoutTesla) = model.state else {
+            Issue.record("expected ready")
+            return
+        }
+        #expect(withoutTesla.hasTeslaPlan == false)
     }
 
     @Test func updatesAreIgnoredBeforeLoading() {

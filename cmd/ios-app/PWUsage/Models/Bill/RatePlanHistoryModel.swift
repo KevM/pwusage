@@ -9,7 +9,8 @@ final class RatePlanHistoryModel {
     enum State: Equatable {
         case loading
         case ready(RatePlanHistoryFlow)
-        case failed
+        /// The message the retry screen shows.
+        case failed(String)
     }
 
     private(set) var state: State = .loading
@@ -17,16 +18,13 @@ final class RatePlanHistoryModel {
     private(set) var errorMessage: String?
     private(set) var isDone = false
 
-    @ObservationIgnored private let hasTeslaPlan: Bool
     @ObservationIgnored private let loadHistory: () async throws -> RatePlanHistoryDTO
     @ObservationIgnored private let saveHistory: ([RatePlanHistoryPeriod]) async throws -> Void
 
     init(
-        hasTeslaPlan: Bool,
         loadHistory: @escaping () async throws -> RatePlanHistoryDTO,
         saveHistory: @escaping ([RatePlanHistoryPeriod]) async throws -> Void
     ) {
-        self.hasTeslaPlan = hasTeslaPlan
         self.loadHistory = loadHistory
         self.saveHistory = saveHistory
     }
@@ -44,10 +42,10 @@ final class RatePlanHistoryModel {
         errorMessage = nil
         do {
             let history = try await loadHistory()
-            state = .ready(RatePlanHistoryFlow(history: history, hasTeslaPlan: hasTeslaPlan))
+            state = .ready(RatePlanHistoryFlow(history: history, hasTeslaPlan: history.teslaShape != nil))
         } catch {
             // A cancelled load (the view went away) ends as failed too, never stuck at loading.
-            state = .failed
+            state = .failed(RatePlanHistoryPresentation.loadErrorMessage(for: error))
         }
     }
 
