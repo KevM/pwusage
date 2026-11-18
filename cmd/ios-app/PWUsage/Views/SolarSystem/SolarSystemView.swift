@@ -86,7 +86,7 @@ struct SolarSystemView: View {
                     defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
                     suggestedStartDate: suggestion,
                     estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
-                    timeZone: TimeZone(identifier: coordinator.bill.response?.site.timezone ?? "") ?? .current,
+                    timeZone: siteTimeZone,
                     currency: coordinator.bill.response?.currentBill.currency ?? "USD",
                     onSave: { request, editing in
                         await coordinator.saveFixedRatePlan(request, editing: editing)
@@ -94,6 +94,15 @@ struct SolarSystemView: View {
                     onDelete: { periodID in
                         await coordinator.removeFixedRatePlan(periodID: periodID)
                     }
+                )
+            case .systemCosts:
+                SystemCostsForm(
+                    costs: coordinator.savingsTimeline?.systemCosts,
+                    batteryStartDay: batteryStartDay,
+                    hasPowerwall: hasPowerwall,
+                    timeZone: siteTimeZone,
+                    currency: currency,
+                    onSave: { request in await coordinator.saveSystemCosts(request) }
                 )
             case .ratePlans:
                 RatePlansSheet(site: site, actions: .live(coordinator))
@@ -105,6 +114,28 @@ struct SolarSystemView: View {
                 )
             }
         }
+    }
+
+    /// The savings timeline's zone first, so the payback section matches the savings math; then the bill's zone.
+    private var siteTimeZone: TimeZone {
+        let identifier = coordinator.savingsTimeline?.timezone ?? coordinator.bill.response?.site.timezone ?? ""
+        return TimeZone(identifier: identifier) ?? .current
+    }
+
+    private var currency: String {
+        coordinator.bill.response?.currentBill.currency ?? "USD"
+    }
+
+    /// The Powerwall's first day of battery flow, from the savings report.
+    private var batteryStartDay: String? {
+        guard case .ready(let report) = coordinator.savings else { return nil }
+        return report.batteryStartDay
+    }
+
+    private var hasPowerwall: Bool {
+        coordinator.savingsTimeline?.battery != nil
+            || batteryStartDay != nil
+            || coordinator.savingsTimeline?.systemCosts?.powerwall != nil
     }
 
     private var activeLayout: SolarLayout? {
@@ -157,7 +188,7 @@ struct SolarSystemView: View {
             }
             SolarSystemSavingsSection(
                 state: coordinator.savings,
-                currency: coordinator.bill.response?.currentBill.currency ?? "USD",
+                currency: currency,
                 hasReferencePlan: coordinator.activeReferencePeriod != nil,
                 onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
                 onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
@@ -171,6 +202,7 @@ struct SolarSystemView: View {
                     periods: coordinator.savingsTimeline?.periods ?? []
                 )
             )
+            paybackSection
             panelHealthSection
             if stored != nil || status != nil { locationSection }
             #if DEBUG
@@ -184,6 +216,18 @@ struct SolarSystemView: View {
         case .editFixedRatePlan(let suggestion): savingsSheet = .fixedRatePlan(suggestion)
         case .fixRatePlans: savingsSheet = .ratePlans
         }
+    }
+
+    private var paybackSection: some View {
+        SolarSystemPaybackSection(
+            state: coordinator.savings,
+            costs: coordinator.savingsTimeline?.systemCosts,
+            change: solarHealth?.report?.changeOverTime,
+            currency: currency,
+            timeZone: siteTimeZone,
+            onEditCosts: { savingsSheet = .systemCosts },
+            onCaveatAction: routeCaveat
+        )
     }
 
     @ViewBuilder
@@ -310,11 +354,13 @@ private enum SolarSavingsSheet: Identifiable {
     case fixedRatePlan(String?)
     case ratePlans
     case rateEstimates(RateEstimatesPrompt)
+    case systemCosts
 
     var id: String {
         switch self {
         case .fixedRatePlan: "fixedRatePlan"
         case .ratePlans: "ratePlans"
+        case .systemCosts: "systemCosts"
         case .rateEstimates(let prompt): "rateEstimates-\(prompt)"
         }
     }

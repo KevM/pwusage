@@ -130,7 +130,18 @@ struct SolarSystemSavingsSection: View {
     )
     return List {
         SolarSystemSavingsSection(
-            state: .ready(SavingsReport(cycle: year, year: year, lifetime: life, cycleStart: .now)),
+            state: .ready(SavingsReport(
+                cycle: year,
+                year: year,
+                lifetime: life,
+                cycleStart: .now,
+                solarSinceInstall: life,
+                powerwallSinceInstall: nil,
+                cycles: [],
+                recentCycles: [],
+                batteryStartDay: nil,
+                rateGrowth: .typical
+            )),
             currency: "USD",
             hasReferencePlan: true,
             onAddFixedRatePlan: {},

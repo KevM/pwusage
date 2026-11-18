@@ -13,6 +13,18 @@ When starting fresh work in this repo, check this file. If a session begins some
 - [ ] **Review date-only edits and deletes on iOS:** "Edit Dates" and "Delete" on plan cards still call the legacy PATCH/DELETE routes without a review. Shortening a manual plan's dates in the editor replaces only the chosen range; the rest of the old range stays.
 - [ ] **Record when Tesla was last read:** the mismatch banner can only say when the Tesla plan was last *saved* (`Tariff.updated`); an unchanged sync records nothing. A last-checked time would let it say how fresh the comparison is.
 
+## iOS: Savings Phase 3 return on investment follow-ups (2026-11-17, branch `claude/savings-phase-3-roi`)
+
+Payback, System Costs and the Powerwall install date (spec and plan are local to the branch's SDD notes).
+
+- [ ] **Owner's live check on beta (ruling 9):** after PR #381's server deploys, save system costs on the Harrison site, relaunch, confirm they persist, and confirm a second account on the site sees them. Do this before merging PR 2.
+- [ ] **Manual simulator pass of System Costs and Payback:** check the sheet and section in light and dark and at the largest Dynamic Type. The automated pass got stuck on the demo fixed-rate sheet, likely pre-existing; reproduce at `57d2fed4` first.
+- [ ] **Battery capacity from the gateway:** replace the fixed 3% a year fade and 30% floor with the usable capacity from the gateway reading once it exists (spec §7.3).
+- [ ] **Web payback:** the web savings view needs the scenario port before a Payback section can ship there.
+- [ ] **Copy for zero rates:** a measured 0% rate growth or solar decline reads "about 0%" (for example "Rates rise about 0% a year"). Pick wording for flat rates.
+- [ ] **Coverage before the first stored day:** when a solar install date is earlier than the first stored day, those cycles are not counted, yet the coverage line reads as full. Show a gap note.
+- [ ] **Rate growth start:** `RateGrowth` measures the first 365-day window from the first stored day, not the first covered day, which biases growth low on partial coverage. Start at the first strictly covered day.
+
 ## Web: rate plan backfill and overrides (2026-11-17)
 
 - [ ] **Add a responsive web rate-plan editor for non-iOS users:** the web currently shows the timeline and sync/repricing controls but sends historical edits to iOS. Add gap backfill and persistent Change Plan actions for actual and fixed comparison plans, public utility plan selection for US sites, manual entry, and Restore Original Tesla Rate Plan. Require explicitly chosen effective dates with no default, allow backdating, and show before/after plan names, usage rates, and production rates for every affected interval before applying. Include separate bill verification, clear source labels, and repricing progress. Use the same authenticated preview/commit, public-plan browsing, country eligibility, and timeline APIs planned for iOS; keep validation, selection precedence, verification, restoration, and repricing on the server. Support explicit site-country selection when no country is known. Extend the [design](docs/plans/2026-11-17-rate-plan-selection-design.md) and [implementation plan](docs/plans/2026-11-17-rate-plan-selection-implementation.md) with web UI tasks. The design merged in [PR #392](https://github.com/KevM/pwusage/pull/392); the shared APIs and the iOS flow are on branch `feat/rate-plan-selection`.
