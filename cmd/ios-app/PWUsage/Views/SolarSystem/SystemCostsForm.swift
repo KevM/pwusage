@@ -217,7 +217,7 @@ private struct CostComponentSection: View {
             ))
             if component.taxCreditPercent != nil {
                 HStack {
-                    Text("Credit Rate")
+                    Text("Tax Credit Rate")
                     Spacer()
                     TextField("30", value: Binding(
                         get: { component.taxCreditPercent ?? 0 },
