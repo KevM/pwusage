@@ -311,7 +311,14 @@ final class PWUsageAPI: MobileAuthAPI, MobileBillShadowAPI, Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response): (Data, URLResponse) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code == .cancelled {
+            // The task asking was cancelled (a screen went away or reloaded): callers skip a
+            // CancellationError, whereas URLError.cancelled would show as "cancelled".
+            throw CancellationError()
+        }
         guard let http = response as? HTTPURLResponse else { throw PWUsageAPIError.invalidResponse }
         return (data, http)
     }
