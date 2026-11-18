@@ -141,6 +141,19 @@ provenance to PWUsage, never coordinates or panel layout for rate eligibility.
 Country resolution must have a documented boundary-data/provider choice and
 an uncertain result near borders; do not approximate the US with a rectangle.
 
+**Chosen approach (2026-11-17):** bundled boundary data, not a geocoding service.
+The app ships Natural Earth's public-domain 1:50m Admin 0 country outlines,
+reduced by `cmd/ios-app/make-country-boundaries.py` to
+`PWUsage/Resources/country-boundaries.bin` (about 800 KB). Apple's
+`CLGeocoder` was rejected because it sends coordinates to Apple. A saved
+location inside one country with no other country within 5 km resolves to
+that country. A point within that margin of a border is uncertain, since
+locations are rounded to about 1 km and 1:50m outlines can sit a few km off
+the true line. Areas with no ISO 3166 code (Kosovo, Somaliland, Northern
+Cyprus) and open sea are unresolved. A site that is uncertain, unresolved
+or has no saved location asks the owner. To refresh the data, rerun the
+script on a newer Natural Earth release.
+
 Ask the user for site country only when existing information cannot resolve it.
 Explicit correction takes precedence over inferred country. A changed saved
 location invalidates its prior country inference; failed inference returns

@@ -45,7 +45,7 @@ struct RateEstimatesRatePlanSection: View {
                     Text("Utility")
                         .font(.headline)
                     Spacer(minLength: 8)
-                    Text(RateEstimatesPresentation.utilityRowValue(estimates.utilityName))
+                    Text(RateEstimatesPresentation.utilityRowValue(estimates))
                         .foregroundStyle(.secondary)
                     Image(systemName: "chevron.forward")
                         .font(.caption.weight(.semibold))

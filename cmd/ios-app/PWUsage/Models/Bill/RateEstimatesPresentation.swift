@@ -2,6 +2,8 @@ import Foundation
 
 /// The one setup step a site needs before its days can be priced from public rates.
 enum RateEstimatesPrompt: Equatable, Sendable {
+    /// The site's country is unconfirmed; public utility rates only cover US homes.
+    case confirmCountry
     case pickUtility
     case pickPlan
 }
@@ -44,7 +46,8 @@ enum RateEstimatesPresentation {
     }
 
     static func prompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt? {
-        switch estimates?.status {
+        if estimates?.needsCountryConfirmation == true { return .confirmCountry }
+        return switch estimates?.status {
         case .needsUtility: .pickUtility
         case .needsPlan: .pickPlan
         case .pending, .ready, .skipped, .failed, nil: nil
@@ -55,6 +58,7 @@ enum RateEstimatesPresentation {
 
     static func accessoryTitle(_ prompt: RateEstimatesPrompt) -> String {
         switch prompt {
+        case .confirmCountry: "Confirm your home’s country"
         case .pickUtility: "Choose your utility"
         case .pickPlan: "Choose your rate plan"
         }
@@ -62,6 +66,7 @@ enum RateEstimatesPresentation {
 
     static func accessorySubtitle(_ prompt: RateEstimatesPrompt, utilityName: String?) -> String {
         switch prompt {
+        case .confirmCountry: "Public utility rates cover US homes"
         case .pickUtility: "To estimate rates for days without a plan"
         case .pickPlan: "\(utilityPhrase(utilityName)) · prices days without a plan"
         }
@@ -73,6 +78,8 @@ enum RateEstimatesPresentation {
 
     static func cardMessage(_ prompt: RateEstimatesPrompt, utilityName: String?) -> String {
         switch prompt {
+        case .confirmCountry:
+            "Public utility rates are available for US homes. Confirm your home’s country to use them."
         case .pickUtility:
             "Your utility’s public rates can estimate days without a rate plan."
         case .pickPlan:
@@ -86,6 +93,7 @@ enum RateEstimatesPresentation {
 
     static func buttonTitle(_ prompt: RateEstimatesPrompt) -> String {
         switch prompt {
+        case .confirmCountry: "Confirm Country"
         case .pickUtility: "Choose Utility"
         case .pickPlan: "Choose Rate Plan"
         }
@@ -137,8 +145,18 @@ enum RateEstimatesPresentation {
     static let notNowLabel = "Not now"
 
     /// The Utility row in Rate Plans; `Not Set` until a utility is chosen or skipped.
-    static func utilityRowValue(_ name: String?) -> String {
-        nonEmpty(name) ?? "Not Set"
+    static func utilityRowValue(_ estimates: SiteRateEstimatesDTO) -> String {
+        if estimates.eligibility == .outsideUS { return "US Homes Only" }
+        if estimates.needsCountryConfirmation == true { return "Confirm Country" }
+        return nonEmpty(estimates.utilityName) ?? "Not Set"
+    }
+
+    /// The utility row asks for the country first while it is unconfirmed, and lets an owner
+    /// outside the US correct it, since public utility rates cover only US homes.
+    static func utilityRowPrompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt {
+        guard let estimates else { return .pickUtility }
+        return estimates.needsCountryConfirmation == true || estimates.eligibility == .outsideUS
+            ? .confirmCountry : .pickUtility
     }
 
     private static func utilityPhrase(_ name: String?) -> String {

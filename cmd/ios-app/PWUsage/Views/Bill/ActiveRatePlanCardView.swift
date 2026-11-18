@@ -14,6 +14,11 @@ struct TariffTimelineActions: Sendable {
     var setUtilityPlan: @MainActor (String) async throws -> Void
     var loadRateHistory: @MainActor () async throws -> RatePlanHistoryDTO
     var saveRateHistory: @MainActor ([RatePlanHistoryPeriod]) async throws -> SiteTariffsTimelineResponse
+    var siteCountryInference: @MainActor () async -> SiteCountryInference = { .noLocation }
+    /// The owner's explicit country choice, which always wins over inference.
+    var setSiteCountry: @MainActor (String) async throws -> SiteTariffsTimelineResponse = { _ in
+        throw PWUsageAPIError.invalidResponse
+    }
 
     @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
         Self(
@@ -29,7 +34,9 @@ struct TariffTimelineActions: Sendable {
             utilityPlans: { try await coordinator.utilityPlans() },
             setUtilityPlan: { _ = try await coordinator.setUtilityPlan(label: $0) },
             loadRateHistory: { try await coordinator.loadRateHistory() },
-            saveRateHistory: { try await coordinator.saveRateHistory($0) }
+            saveRateHistory: { try await coordinator.saveRateHistory($0) },
+            siteCountryInference: { await coordinator.siteCountryInference() },
+            setSiteCountry: { try await coordinator.setSiteRateCountry($0, source: .owner) }
         )
     }
 }

@@ -117,7 +117,9 @@ struct TariffSheet: View {
             onFindHistory: { activeModal = .rateHistory },
             onDismissHistory: { historyOfferDismissals.dismiss(siteID: site.id) },
             onAddRatePlan: { activeModal = .editor(.add) },
-            onChooseUtility: { activeModal = .estimates(.pickUtility) },
+            onChooseUtility: {
+                activeModal = .estimates(RateEstimatesPresentation.utilityRowPrompt(data.estimates))
+            },
             onChoosePlan: { activeModal = .estimates(.pickPlan) }
         )
         if let actionError {

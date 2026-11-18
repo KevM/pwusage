@@ -142,9 +142,31 @@ struct RateEstimatesPresentationTests {
     // MARK: Rate Plans and accessory copy
 
     @Test func utilityRowShowsTheNameOrNotSet() {
-        #expect(RateEstimatesPresentation.utilityRowValue("Pacific Gas & Electric") == "Pacific Gas & Electric")
-        #expect(RateEstimatesPresentation.utilityRowValue(nil) == "Not Set")
-        #expect(RateEstimatesPresentation.utilityRowValue("") == "Not Set")
+        #expect(RateEstimatesPresentation.utilityRowValue(Self.estimates()) == "Pacific Gas & Electric")
+        #expect(RateEstimatesPresentation.utilityRowValue(Self.estimates(utilityName: nil)) == "Not Set")
+        #expect(RateEstimatesPresentation.utilityRowValue(Self.estimates(utilityName: "")) == "Not Set")
+    }
+
+    @Test("An unconfirmed or non-US country leads to the country picker, not a US utility search")
+    func countryComesBeforeUtility() {
+        var unconfirmed = Self.estimates(status: .needsUtility, utilityName: nil)
+        unconfirmed.needsCountryConfirmation = true
+        unconfirmed.eligibility = .unknown
+        #expect(RateEstimatesPresentation.prompt(unconfirmed) == .confirmCountry)
+        #expect(RateEstimatesPresentation.utilityRowPrompt(unconfirmed) == .confirmCountry)
+        #expect(RateEstimatesPresentation.utilityRowValue(unconfirmed) == "Confirm Country")
+
+        var outside = Self.estimates(status: .skipped, utilityName: nil)
+        outside.eligibility = .outsideUS
+        #expect(RateEstimatesPresentation.prompt(outside) == nil)
+        #expect(RateEstimatesPresentation.utilityRowPrompt(outside) == .confirmCountry)
+        #expect(RateEstimatesPresentation.utilityRowValue(outside) == "US Homes Only")
+
+        var american = Self.estimates(status: .needsUtility, utilityName: nil)
+        american.eligibility = .unitedStates
+        #expect(RateEstimatesPresentation.prompt(american) == .pickUtility)
+        #expect(RateEstimatesPresentation.utilityRowPrompt(american) == .pickUtility)
+        #expect(RateEstimatesPresentation.buttonTitle(.confirmCountry) == "Confirm Country")
     }
 
     @Test func accessoryDismissAndAddRatePlanLabels() {

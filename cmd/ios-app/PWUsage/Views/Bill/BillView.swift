@@ -154,7 +154,7 @@ struct BillView: View {
                 prompt: prompt,
                 utilityName: coordinator.savingsTimeline?.estimates?.utilityName,
                 onChoose: { coordinator.presentedSheet = .rateEstimates(prompt) },
-                onAddRatePlan: prompt == .pickUtility ? { sheet = .ratePlans(startsAdding: true) } : nil
+                onAddRatePlan: prompt != .pickPlan ? { sheet = .ratePlans(startsAdding: true) } : nil
             )
         }
         BillSavingsCard(

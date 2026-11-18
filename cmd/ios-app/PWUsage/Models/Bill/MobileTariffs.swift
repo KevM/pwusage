@@ -13,10 +13,22 @@ enum TariffStartSource: String, Codable, Equatable, Sendable {
     case historyStart = "history_start"
 }
 
+/// A public utility plan. The detail fields come from servers with rate plan selection
+/// (`PublicUtilityPlanDTO`); older servers send only the label, name and start date.
 struct UtilityPlanDTO: Decodable, Equatable, Sendable, Identifiable {
     let label: String
     let name: String
     let startDate: String
+    var utilityName: String?
+    /// Informational revision start; never a default effective date.
+    var revisionStart: String?
+    var kind: RatePlanKind?
+    var isDefault: Bool?
+    var currency: String?
+    var holidaysUseWeekendSchedule: Bool?
+    var exportRateProvenance: ExportRateProvenance?
+    var seasons: [TariffSeasonInput]?
+    var approximationNotes: [TariffApproximationNote]?
     var id: String { label }
 }
 
@@ -76,6 +88,11 @@ struct TariffPeriodDTO: Codable, Equatable, Sendable, Identifiable {
     let updatedBy: TariffUpdatedByDTO?
     let seasons: [TariffSeasonInput]
     var startSource: TariffStartSource?
+    /// Selection provenance, from servers with rate plan selection.
+    var selectionId: Int?
+    var choiceKind: TariffSelectionChoiceKind?
+    var urdbLabel: String?
+    var verification: TariffVerificationSummary?
 
     var id: Int { periodId }
 }
@@ -87,50 +104,6 @@ struct TeslaSyncDTO: Codable, Equatable, Sendable {
     /// When the active custom plan was saved; nil from servers that predate the field.
     let activeManualUpdatedAt: String?
     let differsFromActiveManual: Bool
-}
-
-/// What to tell the user when their custom plan and the Tesla plan disagree.
-struct TeslaDivergenceCopy: Equatable, Sendable {
-    let title: String
-    let detail: String
-
-    init(sync: TeslaSyncDTO) {
-        let ours = Self.parse(sync.activeManualUpdatedAt)
-        let theirs = Self.parse(sync.latestUpdatedAt)
-        let planName = sync.latestTariffName.flatMap { $0.isEmpty ? nil : "\"\($0)\"" } ?? "Its plan"
-        func day(_ date: Date) -> String {
-            date.formatted(.dateTime.month(.abbreviated).day().year().locale(Locale(identifier: "en_US")))
-        }
-        if let ours, let theirs, ours >= theirs {
-            title = "Your custom plan is newer than Tesla's"
-            detail = "\(planName) in your Tesla account hasn't changed since \(day(theirs))."
-        } else if let ours, let theirs {
-            title = "Tesla changed its plan after your custom plan"
-            detail = "\(planName) was updated in your Tesla account on \(day(theirs)); yours was saved \(day(ours))."
-        } else {
-            title = "Tesla's plan differs from your custom plan"
-            detail = "\(planName) is saved in your Tesla account."
-        }
-    }
-
-    /// Syncing often changes nothing on screen, so say what it found.
-    static func syncNotice(previousTeslaPlan: Int?, refreshed: SiteTariffsTimelineResponse) -> String {
-        let hasActiveCustomPlan = refreshed.teslaSync.differsFromActiveManual
-        if refreshed.teslaSync.latestTariffId != previousTeslaPlan {
-            return hasActiveCustomPlan
-                ? "Saved Tesla's updated plan to your history. Your custom plan stays active."
-                : "Tesla's updated plan was saved to your history."
-        }
-        return hasActiveCustomPlan
-            ? "Checked Tesla: its plan hasn't changed. Your custom plan stays active."
-            : "Checked Tesla: your rate plan is up to date."
-    }
-
-    private static func parse(_ value: String?) -> Date? {
-        guard let value else { return nil }
-        return (try? Date(value, strategy: .iso8601))
-            ?? (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
-    }
 }
 
 struct ActiveTariffPeriodMatch: Equatable, Sendable {
@@ -159,6 +132,8 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
     let teslaSync: TeslaSyncDTO
     var estimates: SiteRateEstimatesDTO?
     var systemCosts: SystemCostsDTO?
+    /// The site's stored country and public-plan eligibility; nil from older servers.
+    var rateCountry: SiteRateCountryDTO?
 
     private enum CodingKeys: String, CodingKey {
         case version
@@ -173,6 +148,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         case teslaSync
         case estimates
         case systemCosts
+        case rateCountry
     }
 
     init(
@@ -187,7 +163,8 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         holidayDates: [String]? = nil,
         teslaSync: TeslaSyncDTO,
         estimates: SiteRateEstimatesDTO? = nil,
-        systemCosts: SystemCostsDTO? = nil
+        systemCosts: SystemCostsDTO? = nil,
+        rateCountry: SiteRateCountryDTO? = nil
     ) {
         self.version = version
         self.siteId = siteId
@@ -201,6 +178,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         self.teslaSync = teslaSync
         self.estimates = estimates
         self.systemCosts = systemCosts
+        self.rateCountry = rateCountry
     }
 
     init(from decoder: Decoder) throws {
@@ -217,6 +195,7 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         teslaSync = try container.decode(TeslaSyncDTO.self, forKey: .teslaSync)
         estimates = try container.decodeIfPresent(SiteRateEstimatesDTO.self, forKey: .estimates)
         systemCosts = try container.decodeIfPresent(SystemCostsDTO.self, forKey: .systemCosts)
+        rateCountry = try container.decodeIfPresent(SiteRateCountryDTO.self, forKey: .rateCountry)
     }
 
     func validating(siteID: String) throws -> Self {
@@ -311,88 +290,4 @@ struct TariffPlanPatchRequest: Encodable, Equatable, Sendable {
 enum TimelineFetch: Equatable, Sendable {
     case unchanged
     case changed(SiteTariffsTimelineResponse, etag: String?)
-}
-
-@MainActor
-protocol MobileTariffDataAPI: Sendable {
-    func searchUtilities(siteID: String, query: String) async throws -> [String]
-    func setUtility(siteID: String, name: String) async throws -> SiteTariffsTimelineResponse
-    func skipUtility(siteID: String) async throws -> SiteTariffsTimelineResponse
-    func utilityPlans(siteID: String) async throws -> [UtilityPlanDTO]
-    func setUtilityPlan(siteID: String, label: String) async throws -> SiteTariffsTimelineResponse
-    func rateHistory(siteID: String) async throws -> RatePlanHistoryDTO
-    func saveRateHistory(
-        siteID: String,
-        periods: [RatePlanHistoryPeriod]
-    ) async throws -> SiteTariffsTimelineResponse
-    func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse
-    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch
-    func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse
-    func createTariffPeriod(
-        siteID: String,
-        body: TariffPlanWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse
-    func updateTariffPeriod(
-        siteID: String,
-        periodID: Int,
-        body: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse
-    func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
-    func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse
-    func createReferenceRatePlan(
-        siteID: String,
-        body: TariffPlanWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse
-    func updateReferenceRatePlan(
-        siteID: String,
-        periodID: Int,
-        body: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse
-    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
-    func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse
-}
-
-extension MobileTariffDataAPI {
-    func searchUtilities(siteID _: String, query _: String) async throws -> [String] {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func setUtility(siteID _: String, name _: String) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func skipUtility(siteID _: String) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func utilityPlans(siteID _: String) async throws -> [UtilityPlanDTO] {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func setUtilityPlan(siteID _: String, label _: String) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
-        .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
-    }
-
-    func createReferenceRatePlan(
-        siteID _: String,
-        body _: TariffPlanWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func updateReferenceRatePlan(
-        siteID _: String,
-        periodID _: Int,
-        body _: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func deleteReferenceRatePlan(siteID _: String, periodID _: Int) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
 }

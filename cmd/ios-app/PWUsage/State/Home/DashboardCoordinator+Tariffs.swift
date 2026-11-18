@@ -95,6 +95,43 @@ extension DashboardCoordinator {
         }
     }
 
+    /// Builds the server's review of a change; nothing is saved.
+    func previewTariffSelection(_ request: TariffSelectionRequest) async throws -> TariffSelectionPreviewResponse {
+        try await runTariffQuery { api, siteID in
+            try await api.previewTariffSelection(siteID: siteID, request: request).validating(siteID: siteID)
+        }
+    }
+
+    /// Applies a reviewed change. A stale review throws `RatePlanSelectionError.reviewStale`.
+    func commitTariffSelection(_ commit: TariffSelectionCommit) async throws -> TariffSelectionCommitResponse {
+        var committed: TariffSelectionCommitResponse?
+        _ = try await runTariffRequest { api, siteID in
+            let response = try await api.commitTariffSelection(siteID: siteID, commit: commit)
+            committed = response
+            return response.timeline
+        }
+        guard let committed else { throw PWUsageAPIError.invalidResponse }
+        return committed
+    }
+
+    /// Public plans in effect on `effectiveDate` (YYYY-MM-DD), with their full rates.
+    func publicUtilityPlans(effectiveDate: String) async throws -> PublicUtilityPlansResponse {
+        try await runTariffQuery { api, siteID in
+            try await api.publicUtilityPlans(siteID: siteID, effectiveDate: effectiveDate)
+        }
+    }
+
+    /// Stores the site's country. Only the code and its source are sent.
+    func setSiteRateCountry(
+        _ countryCode: String?,
+        source: RateCountrySource = .owner
+    ) async throws -> SiteTariffsTimelineResponse {
+        let body = SiteRateCountryWriteRequest(countryCode: countryCode, source: source)
+        return try await runTariffRequest { api, siteID in
+            try await api.setSiteRateCountry(siteID: siteID, body: body)
+        }
+    }
+
     private func runTariffFetch(knownETag: String?) async throws -> SiteTariffsTimelineResponse? {
         guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
@@ -192,5 +229,8 @@ extension DashboardCoordinator {
               siteGeneration == generation,
               tariffScope(siteID: selectedSiteID) == scope else { return }
         await refreshSavings(timeline: timeline)
+        if let stored = timeline.rateCountry, stored.source != .owner {
+            Task { [weak self] in await self?.syncSiteRateCountry(stored: stored) }
+        }
     }
 }
