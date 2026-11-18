@@ -14,8 +14,8 @@ struct SystemCostsDraftTests {
         SystemCostsDTO(siteInstalled: siteInstalled, solar: solar, powerwall: powerwall)
     }
 
-    @Test("A new draft prefills the site install day and the Powerwall battery start")
-    func draftPrefillsSiteInstallAndBatteryStart() {
+    @Test("Both components default to the Tesla site install day despite later recorded battery activity")
+    func draftPrefillsBothFromSiteInstall() {
         let draft = SystemCostsDraft(
             costs: Self.costs(siteInstalled: "2023-11-14"),
             batteryStartDay: "2024-03-04",
@@ -23,6 +23,25 @@ struct SystemCostsDraftTests {
             timeZone: Self.utc
         )
         #expect(draft.solar.installDay == "2023-11-14")
+        #expect(draft.powerwall.installDay == "2023-11-14")
+    }
+
+    @Test("An explicitly saved Powerwall install day takes precedence over the site day")
+    func savedPowerwallDateIsPreserved() {
+        let draft = SystemCostsDraft(
+            costs: Self.costs(powerwall: SystemCostDTO(
+                installDate: "2024-03-04", price: 9_000, taxCreditPercent: 30, incentives: 0
+            )),
+            batteryStartDay: "2025-01-01", hasPowerwall: true, timeZone: Self.utc
+        )
+        #expect(draft.powerwall.installDay == "2024-03-04")
+    }
+
+    @Test("Recorded battery activity remains a fallback when the site date is unavailable")
+    func batteryStartIsFallbackWithoutSiteCosts() {
+        let draft = SystemCostsDraft(
+            costs: nil, batteryStartDay: "2024-03-04", hasPowerwall: true, timeZone: Self.utc
+        )
         #expect(draft.powerwall.installDay == "2024-03-04")
     }
 
@@ -112,10 +131,10 @@ struct SystemCostsDraftTests {
         ))
     }
 
-    @Test("A Powerwall price without a battery start needs an install date")
+    @Test("A Powerwall price without a site date or battery start needs an install date")
     func draftRequiresPowerwallDateWithoutBatteryStart() {
         var draft = SystemCostsDraft(
-            costs: Self.costs(), batteryStartDay: nil, hasPowerwall: true, timeZone: Self.utc
+            costs: nil, batteryStartDay: nil, hasPowerwall: true, timeZone: Self.utc
         )
         draft.powerwall.price = 9_000
         #expect(draft.request == nil)

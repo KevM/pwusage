@@ -83,7 +83,8 @@ struct SystemCostsDraft: Equatable {
         self.timeZone = timeZone
         self.hasPowerwall = hasPowerwall
         solar = Component(dto: costs?.solar, fallbackDay: costs?.siteInstalled)
-        powerwall = Component(dto: costs?.powerwall, fallbackDay: batteryStartDay)
+        // Recorded activity can begin years after installation when older history is unavailable.
+        powerwall = Component(dto: costs?.powerwall, fallbackDay: costs?.siteInstalled ?? batteryStartDay)
     }
 
     var solarNetCost: Double? { solar.netCost }
