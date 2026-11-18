@@ -151,7 +151,7 @@ struct PWUsageAppModelTests {
         await model.bootstrap()
         let coordinator = try #require(model.coordinator)
 
-        #expect(DashboardSheet.allCases == [.batteryHold, .chooseUtility, .choosePlan, .rateHistory],
+        #expect(DashboardSheet.allCases == [.batteryHold, .confirmCountry, .chooseUtility, .choosePlan, .rateHistory],
                 "Rate Plans and About are pushed pages in Settings, not dashboard sheets.")
 
         coordinator.isBatteryHoldSheetPresented = true

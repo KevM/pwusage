@@ -9,9 +9,10 @@ enum SiteDeepHistoryPhase: Equatable {
 
 /// What the Solar System screen and the tab accessory show of the deep-history walk, and the
 /// run behind it. The walk runs here in the foreground and from the shared background task
-/// (`runInBackground`), but only once the user started it; the user's Stop ends both until they
-/// continue. Leaving the foreground, sign-out and a change of site stop this run only, and a walk
-/// the user did not stop picks itself up again on the next activation.
+/// (`runInBackground`) once it has started: by itself the first time the app opens a site (savings
+/// and payback need the history back to install), or from the user's Load. The user's Stop ends
+/// both until they continue. Leaving the foreground, sign-out and a change of site stop this run
+/// only, and a walk the user did not stop picks itself up again on the next activation.
 @MainActor
 @Observable
 final class SiteDeepHistoryModel {
@@ -67,11 +68,15 @@ final class SiteDeepHistoryModel {
         await refresh()
     }
 
-    /// The app is in the foreground for `scope`: a walk the user started and did not stop (one that
-    /// was running when the app left, or that progressed in the background) carries on by itself.
+    /// The app is in the foreground for `scope`: a site that never had a walk starts one, and a
+    /// walk that was not stopped or finished (one that was running when the app left, or that
+    /// progressed in the background) carries on by itself.
     func activate(scope next: SolarForecastSiteScope) async {
         await select(scope: next)
-        guard run == nil, await deepHistory.isWanted(scope: next), scope == next, run == nil else { return }
+        guard run == nil else { return }
+        let neverRan = (try? await store.progress(scope: next)) == nil
+        let wanted = await deepHistory.isWanted(scope: next)
+        guard neverRan || wanted, scope == next, run == nil else { return }
         start()
     }
 

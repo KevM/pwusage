@@ -4,6 +4,7 @@ import {
   compileSeasonsToParsedTariff,
   computeSpanMutations,
   decompileTariffToSeasons,
+  tariffHasDaySpecificSchedules,
   siteLocalDateString,
   TariffValidationError,
   validateTariffPlanInput,
@@ -157,6 +158,25 @@ describe('compileSeasonsToParsedTariff & decompileTariffToSeasons', () => {
     ]);
   });
 
+  it('notices a schedule the weekday/weekend comparison would collapse, such as a Sunday-only rate', () => {
+    // Tesla days of week: 0 = Monday ... 6 = Sunday.
+    const sch = (id: number, name: string, buy: number, fromDay: number, toDay: number) => ({
+      id, season_id: 1, name, buy_rate: buy, sell_rate: 0.03, from_day_of_week: fromDay, to_day_of_week: toDay,
+      from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0,
+    });
+    const tariff = (schedules: ReturnType<typeof sch>[]) => ({
+      id: 5, site_id: 's1', updated: new Date(), name: 'Days',
+      seasons: [{
+        id: 1, tariff_id: 5, name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+        buy_rate: 0.1, sell_rate: 0.03, schedules,
+      }],
+    });
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Off-Peak', 0.1, 0, 5), sch(2, 'Peak', 0.5, 6, 6)]))).toBe(true);
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Peak', 0.3, 0, 3), sch(2, 'Off-Peak', 0.1, 4, 6)]))).toBe(true);
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Peak', 0.3, 0, 4), sch(2, 'Off-Peak', 0.1, 5, 6)]))).toBe(false);
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Off-Peak', 0.1, 0, 6)]))).toBe(false);
+  });
+
   it('exposes day-of-month season bounds so a mid-month Tesla season is not reduced to whole months', () => {
     const seasons = decompileTariffToSeasons({
       id: 3, site_id: 's1', updated: new Date(), name: 'Mid-month',
@@ -237,6 +257,52 @@ describe('computeSpanMutations', () => {
       { tariffId: 10, source: 'tesla', effectiveFrom: '2024-01-01', effectiveTo: '2024-04-30', updatedByUserId: null },
       { tariffId: 12, source: 'tesla', effectiveFrom: '2025-04-01', effectiveTo: null, updatedByUserId: 'u-adj' },
       { tariffId: 99, source: 'manual', effectiveFrom: '2024-05-01', effectiveTo: '2025-03-31', updatedByUserId: 'u-new' },
+    ]);
+  });
+
+  it('preserves selectionId and choiceKind on split left/right fragments', () => {
+    const existing = [
+      {
+        id: 1,
+        tariffId: 50,
+        source: 'estimated' as const,
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        updatedByUserId: 'u1',
+        selectionId: 77,
+        choiceKind: 'owner',
+      },
+    ];
+    const incoming = {
+      tariffId: 60,
+      source: 'manual' as const,
+      effectiveFrom: '2025-06-01',
+      effectiveTo: '2025-06-30',
+      updatedByUserId: 'u1',
+      selectionId: 88,
+      choiceKind: 'owner',
+    };
+    const plan = computeSpanMutations(existing as never, incoming as never);
+    expect(plan.inserts).toEqual([
+      {
+        tariffId: 50,
+        source: 'estimated',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-05-31',
+        updatedByUserId: 'u1',
+        selectionId: 77,
+        choiceKind: 'owner',
+      },
+      {
+        tariffId: 50,
+        source: 'estimated',
+        effectiveFrom: '2025-07-01',
+        effectiveTo: '2025-12-31',
+        updatedByUserId: 'u1',
+        selectionId: 77,
+        choiceKind: 'owner',
+      },
+      incoming,
     ]);
   });
 });

@@ -2,13 +2,16 @@ import type { PoolClient } from 'pg';
 import { pool, Tariff, TariffSchedule } from './db';
 import { ParsedTariff, tariffContentHash } from './importer/tariff-parser';
 import { logEvent } from './observability';
+import { deriveRatePlanEligibility } from './rate-plan-eligibility';
 import { SiteRepo } from './site-repo';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
-import { addCalendarDays, computeSpanMutations, siteLocalDateString } from './tariff-timeline';
+import { addCalendarDays, computeSpanMutations, isProtectedSpan, siteLocalDateString } from './tariff-timeline';
 import {
   applyEstimatesOnClient,
   applySpanMutationPlan,
+  bumpSiteTimelineRevisionOnClient,
   insertTariffGraph,
+  insertTariffSelectionOnClient,
   loadExistingSpans,
 } from './tariff-timeline-repo';
 
@@ -81,7 +84,12 @@ export class TariffRepo {
       await client.query('BEGIN');
 
       // Acquire write lock on the parent Site row to serialize concurrent tariff updates for this site.
-      await client.query('SELECT 1 FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      const siteLock = await client.query<{ rate_country?: string | null }>(
+        'SELECT rate_country FROM "Site" WHERE id = $1 FOR UPDATE',
+        [siteId]
+      );
+      const isUsEligible = deriveRatePlanEligibility(siteLock.rows[0]?.rate_country ?? null) === 'us';
+      const nextUtilityStatus = isUsEligible ? 'pending' : 'ready';
 
       // A backfill of the plan saved in Site.json is stale once a Tesla or manual tariff exists: a sync may
       // have stored a newer plan since the caller chose this site. Checked under the site lock.
@@ -102,7 +110,12 @@ export class TariffRepo {
       if (latestTesla?.content_hash === newHash) {
         if (metadata) {
           const updated = await client.query(`UPDATE "Tariff" SET plan_name = $2, plan_code = $3 WHERE id = $1 AND (plan_name IS DISTINCT FROM $2 OR plan_code IS DISTINCT FROM $3)`, [latestTesla.id, metadata.name, metadata.code]);
-          if (updated.rowCount) await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = clock_timestamp()`, [siteId]);
+          if (updated.rowCount) {
+            if (isUsEligible) {
+              await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = clock_timestamp()`, [siteId]);
+            }
+            await bumpSiteTimelineRevisionOnClient(client, siteId);
+          }
         }
         await client.query('COMMIT');
         return false;
@@ -110,7 +123,15 @@ export class TariffRepo {
 
       const newTariffId = await insertTariffGraph(client, siteId, parsed, 'tesla', null, false, newHash);
       if (metadata) await client.query('UPDATE "Tariff" SET plan_name = $2, plan_code = $3 WHERE id = $1', [newTariffId, metadata.name, metadata.code]);
-      await client.query(`INSERT INTO "SiteUtility" (site_id, choice, status) VALUES ($1, 'auto', 'pending') ON CONFLICT (site_id) DO UPDATE SET status = 'pending', updated_at = now()`, [siteId]);
+      await client.query(
+        `INSERT INTO "SiteUtility" (site_id, choice, status, next_check_at)
+         VALUES ($1, 'auto', $2, NULL)
+         ON CONFLICT (site_id) DO UPDATE
+         SET status = $2,
+             next_check_at = CASE WHEN $2 = 'pending' THEN "SiteUtility".next_check_at ELSE NULL END,
+             updated_at = now()`,
+        [siteId, nextUtilityStatus]
+      );
       const siteTz = (await client.query<{ timezone: string }>(
         'SELECT timezone FROM "Site" WHERE id = $1',
         [siteId]
@@ -119,7 +140,7 @@ export class TariffRepo {
       const spans = await loadExistingSpans(client, siteId);
       const coveringToday = spans.find(s => s.effectiveFrom <= today && (s.effectiveTo === null || s.effectiveTo >= today));
 
-      if (coveringToday?.source === 'manual') {
+      if (coveringToday && isProtectedSpan(coveringToday)) {
         logEvent('info', 'tariff.tesla_sync.divergence_detected', {
           latestTariffId: newTariffId,
           activeManualTariffId: coveringToday.tariffId,
@@ -129,14 +150,28 @@ export class TariffRepo {
         // A site's first plan covers the history already archived, as the historic-tariffs migration
         // did for first plans; the URDB anchor then labels that start `history_start`.
         const effectiveFrom = spans.length === 0 ? await firstArchivedDay(client, siteId, siteTz, today) : today;
-        const nextManual = spans.find(s => s.source === 'manual' && s.effectiveFrom > effectiveFrom);
-        const effectiveTo = nextManual ? addCalendarDays(nextManual.effectiveFrom, -1) : null;
+        const nextProtected = spans.find(s => isProtectedSpan(s) && s.effectiveFrom > effectiveFrom);
+        const effectiveTo = nextProtected ? addCalendarDays(nextProtected.effectiveFrom, -1) : null;
+        const selectionId = await insertTariffSelectionOnClient(client, {
+          siteId,
+          scope: 'actual',
+          tariffId: newTariffId,
+          effectiveFrom,
+          effectiveTo,
+          source: 'tesla',
+          choiceKind: 'automatic',
+          candidateKind: 'tesla_sync',
+          selectedByUserId: null,
+          exportRateProvenance: 'tesla',
+          selectedContentHash: newHash,
+        });
         await applySpanMutationPlan(client, siteId, computeSpanMutations(spans, {
           tariffId: newTariffId,
           source: 'tesla',
           effectiveFrom,
           effectiveTo,
           updatedByUserId: null,
+          ...(selectionId !== null ? { selectionId, choiceKind: 'automatic' as const } : {}),
         }));
         // Today's samples may already be priced under the previous plan, and when the new span is
         // now the earliest it also reprices the days before it. The cron runner picks the job up.
@@ -152,6 +187,7 @@ export class TariffRepo {
         }
       }
       if (reattribution) queued = await enqueueReattributionOnClient(client, reattribution);
+      await bumpSiteTimelineRevisionOnClient(client, siteId);
       await client.query('COMMIT');
       changed = true;
     } catch (e) {

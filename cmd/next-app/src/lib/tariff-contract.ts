@@ -1,4 +1,21 @@
-import type { TariffReattributionStatus, TariffSource, TariffStartSource } from './db-types';
+import type {
+  ExportRateProvenance,
+  RateCountrySource,
+  RatePlanEligibility,
+  TariffReattributionStatus,
+  TariffSelectionChoiceKind,
+  TariffSelectionScope,
+  TariffSource,
+  TariffStartSource,
+} from './db-types';
+
+export type {
+  ExportRateProvenance,
+  RateCountrySource,
+  RatePlanEligibility,
+  TariffSelectionChoiceKind,
+  TariffSelectionScope,
+};
 
 export type TariffPeriodName = 'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK';
 
@@ -41,6 +58,10 @@ export interface TariffPeriodDTO {
   isCurrentToday: boolean;
   updatedBy: TariffUpdatedByDTO | null;
   seasons: TariffSeasonInput[];
+  selectionId?: number | null;
+  choiceKind?: TariffSelectionChoiceKind;
+  urdbLabel?: string | null;
+  verification?: TariffVerificationSummary | null;
 }
 
 export interface ReattributionStatusDTO {
@@ -103,6 +124,14 @@ export interface RatePlanHistoryResponse {
   years: RatePlanHistoryYear[];
 }
 
+export interface SiteRateCountryDTO {
+  countryCode: string | null;
+  source: RateCountrySource | null;
+  updatedAt: string | null;
+  eligibility: RatePlanEligibility;
+  hasIneligiblePublicSelection?: boolean;
+}
+
 export interface EstimatesStatusDTO {
   status: 'pending' | 'ready' | 'needs_utility' | 'needs_plan' | 'skipped' | 'failed';
   utilityName: string | null;
@@ -116,6 +145,12 @@ export interface EstimatesStatusDTO {
   mayBeOutdated: boolean;
   /** Offer to walk the owner through past rate plans; null when there is nothing to fill. */
   historyGuide: { historyStart: string; fillThrough: string | null; unconfirmedDays: number } | null;
+  /** Additive US public-rate-plan eligibility derived from stored site country. */
+  eligibility?: RatePlanEligibility;
+  /** True when site country has not been confirmed yet and requires country confirmation rather than US utility search. */
+  needsCountryConfirmation?: boolean;
+  /** True when an ineligible site retains an explicit owner-selected public rate plan requiring review/replacement. */
+  hasIneligiblePublicSelection?: boolean;
 }
 
 export interface SiteTariffsTimelineResponse {
@@ -126,6 +161,8 @@ export interface SiteTariffsTimelineResponse {
   periods: TariffPeriodDTO[];
   referencePeriods: TariffPeriodDTO[];
   estimates: EstimatesStatusDTO | null;
+  /** Additive country provenance and derived US public-plan eligibility for the site. */
+  rateCountry?: SiteRateCountryDTO;
   battery: SiteBatteryDTO | null;
   systemCosts: SystemCostsDTO;
   reattribution: ReattributionStatusDTO | null;
@@ -137,6 +174,246 @@ export interface SiteTariffsTimelineResponse {
     latestUpdatedAt: string | null;
     /** When the active custom plan was saved, so clients can say which of the two is newer. */
     activeManualUpdatedAt?: string | null;
+    /** True when today's plan chosen in PWUsage (manual, a public plan or a restored Tesla plan an owner selected) differs from the latest Tesla plan. */
     differsFromActiveManual: boolean;
   };
+}
+
+export type TariffSelectionCandidate =
+  | { kind: 'public'; label: string }
+  | { kind: 'manual'; name: string; seasons: TariffSeasonInput[] }
+  | { kind: 'restore_tesla'; originalSelectionId: number };
+
+export interface TariffSelectionRequest {
+  scope: TariffSelectionScope;
+  candidate: TariffSelectionCandidate;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export interface TariffSelectionCommit extends TariffSelectionRequest {
+  expectedReviewHash: string;
+  verifiedAgainstBill: boolean;
+}
+
+export type TariffApproximationKind =
+  | 'tier_blended'
+  | 'export_inherited_from_tesla'
+  | 'export_net_metering_assumed'
+  | 'export_fallback_zero'
+  | 'holiday_weekend_schedule'
+  /** The plan has rules for specific days the weekday/weekend comparison can't show. */
+  | 'day_specific_schedule'
+  | 'other';
+
+export interface TariffApproximationNote {
+  kind: TariffApproximationKind;
+  message: string;
+}
+
+export interface TariffVerificationSummary {
+  verifiedAt: string;
+  verifiedByEmail: string | null;
+  verifiedByCurrentUser: boolean;
+}
+
+export interface TariffReviewPlanSnapshot {
+  /** Stored Tariff.id when backed by a saved version; null for an unsaved candidate. */
+  tariffId: number | null;
+  /** Stored Tariff.version when backed by a saved version; null for an unsaved candidate. */
+  version: number | null;
+  /** Stored TariffEffectivePeriod.id when representing an existing timeline span; null for a candidate. */
+  periodId: number | null;
+  /** Stored selection record id when backed by a selection provenance row. */
+  selectionId: number | null;
+  name: string;
+  utilityName: string | null;
+  source: TariffSource;
+  choiceKind: TariffSelectionChoiceKind;
+  /** URDB label when source is 'estimated' (public utility rates). */
+  urdbLabel: string | null;
+  /** Informational revision start date (YYYY-MM-DD) for public utility rates; never a default effective date. */
+  revisionStart: string | null;
+  contentHash: string | null;
+  exportRateProvenance: ExportRateProvenance;
+  holidaysUseWeekendSchedule: boolean;
+  seasons: TariffSeasonInput[];
+  approximationNotes: TariffApproximationNote[];
+  verification: TariffVerificationSummary | null;
+}
+
+export interface TariffComparisonSlotRate {
+  touName: TariffPeriodName;
+  buyRate: number;
+  sellRate: number;
+}
+
+export interface TariffAlignedTimeRow {
+  fromHour: number;
+  fromMinute: number;
+  toHour: number;
+  toMinute: number;
+  before: TariffComparisonSlotRate | null;
+  after: TariffComparisonSlotRate | null;
+  buyRateDelta: number | null;
+  sellRateDelta: number | null;
+  buyRateChanged: boolean;
+  sellRateChanged: boolean;
+  rateChanged: boolean;
+  periodNameChanged: boolean;
+}
+
+export interface TariffAlignedSeasonComparison {
+  fromMonth: number;
+  fromDay: number;
+  toMonth: number;
+  toDay: number;
+  beforeSeasonName: string | null;
+  afterSeasonName: string | null;
+  weekdayRows: TariffAlignedTimeRow[];
+  weekendRows: TariffAlignedTimeRow[];
+  hasBuyRateChanges: boolean;
+  hasSellRateChanges: boolean;
+  hasRateChanges: boolean;
+  hasPeriodNameChanges: boolean;
+}
+
+export interface TariffRestorationOriginalRef {
+  originalSelectionId: number | null;
+  tariffId: number;
+  name: string;
+  version: number | null;
+  contentHash: string | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export type TariffIntervalRestorationProvenance =
+  | { status: 'not_applicable' }
+  | { status: 'preserves_tesla_original'; original: TariffRestorationOriginalRef }
+  | { status: 'restoring_original'; original: TariffRestorationOriginalRef }
+  | { status: 'unavailable'; reason: string };
+
+export type TariffReviewAffectedIntervalKind =
+  | 'replace'
+  | 'fill_gap'
+  | 'restore'
+  | 'restore_unavailable';
+
+export interface TariffReviewAffectedInterval {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  kind: TariffReviewAffectedIntervalKind;
+  before: TariffReviewPlanSnapshot | null;
+  /**
+   * The interval is a gap (`fill_gap`) that billing currently prices with a borrowed plan, the
+   * nearest earlier one or else the earliest, so `before` is that plan rather than one saved for
+   * these dates. Always false for the fixed comparison plan, which never borrows.
+   */
+  beforeIsFallback: boolean;
+  /** The plan these dates use after the change; for `restore_unavailable` the same as `before`. */
+  after: TariffReviewPlanSnapshot | null;
+  seasons: TariffAlignedSeasonComparison[];
+  hasBuyRateChanges: boolean;
+  hasSellRateChanges: boolean;
+  hasRateChanges: boolean;
+  hasPeriodNameChanges: boolean;
+  restoration: TariffIntervalRestorationProvenance;
+}
+
+export interface TariffReviewUnchangedPeriod {
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  relation: 'before_range' | 'after_range';
+  wasTrimmed: boolean;
+  originalEffectiveFrom: string;
+  originalEffectiveTo: string | null;
+  plan: TariffReviewPlanSnapshot;
+}
+
+export interface TariffReviewRestorationSummary {
+  preservedOriginals: TariffRestorationOriginalRef[];
+  restoredOriginals: TariffRestorationOriginalRef[];
+  unavailableRanges: Array<{
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    reason: string;
+  }>;
+  canApplyRestoration: boolean;
+}
+
+export interface TariffSelectionPreviewResponse {
+  reviewHash: string;
+  siteId: string;
+  scope: TariffSelectionScope;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  currency: string;
+  unit: 'kWh';
+  timezone: string;
+  holidaysUseWeekendSchedule: boolean;
+  recalculatesHistory: boolean;
+  /**
+   * The change reaches the site's earliest plan, so every earlier day is repriced too and
+   * `recalculationRange.fromDate` is the internal history floor rather than a real date.
+   */
+  recalculatesFromHistoryStart: boolean;
+  recalculationRange: {
+    fromDate: string;
+    toDate: string | null;
+  } | null;
+  affectsPowerwallPlan: false;
+  candidatePlan: TariffReviewPlanSnapshot | null;
+  affectedIntervals: TariffReviewAffectedInterval[];
+  unchangedOutsidePeriods: TariffReviewUnchangedPeriod[];
+  restoration: TariffReviewRestorationSummary;
+  approximationNotes: TariffApproximationNote[];
+  summary: {
+    hasBuyRateChanges: boolean;
+    hasSellRateChanges: boolean;
+    hasRateChanges: boolean;
+    hasPeriodNameChanges: boolean;
+    fillsGap: boolean;
+    replacesExistingPlan: boolean;
+  };
+}
+
+export interface PublicUtilityPlanDTO {
+  label: string;
+  name: string;
+  utilityName: string;
+  startDate: string;
+  revisionStart: string;
+  kind: RatePlanKind;
+  isDefault: boolean;
+  currency: string;
+  unit: 'kWh';
+  holidaysUseWeekendSchedule: boolean;
+  exportRateProvenance: ExportRateProvenance;
+  seasons: TariffSeasonInput[];
+  approximationNotes: TariffApproximationNote[];
+}
+
+export interface PublicUtilityPlansResponse {
+  utilityName: string;
+  effectiveDate: string;
+  currency: string;
+  unit: 'kWh';
+  plans: PublicUtilityPlanDTO[];
+}
+
+export interface TariffSelectionCommitResponse {
+  selectionIds: number[];
+  tariffIds: number[];
+  createdNewTariffVersion: boolean;
+  unchanged: boolean;
+  reattributionRange: { fromDate: string; toDate: string | null } | null;
+  timeline: SiteTariffsTimelineResponse;
+}
+
+export interface TariffSelectionConflictResponse {
+  error: string;
+  code: 'REVIEW_STALE';
+  refreshPath: string;
+  preview: TariffSelectionPreviewResponse;
 }

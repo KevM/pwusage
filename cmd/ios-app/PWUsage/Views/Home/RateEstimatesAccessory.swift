@@ -64,6 +64,7 @@ struct RateEstimatesAccessory: View {
 
     private var symbol: String {
         switch kind {
+        case .setup(.confirmCountry): "globe.americas"
         case .setup(.pickUtility): "building.columns"
         case .setup(.pickPlan): "list.bullet.rectangle"
         case .historyOffer: RatePlanHistoryPresentation.accessorySymbol

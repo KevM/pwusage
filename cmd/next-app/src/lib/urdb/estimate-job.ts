@@ -7,8 +7,16 @@ import { createEnergyRepo } from '../energy-repo-factory';
 import { checkIoDeadline } from '../io-deadline';
 import { logEvent } from '../observability';
 import { enqueueReattributionOnClient } from '../tariff-reattribution-queue';
-import { applyEstimatesOnClient, hydrateTariffs, insertTariffGraph, loadExistingSpans, pickActivePeriodForDate } from '../tariff-timeline-repo';
-import { addCalendarDays, compileSeasonsToParsedTariff, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
+import {
+  applyEstimatesOnClient,
+  bumpSiteTimelineRevisionOnClient,
+  clearUnprotectedUrdbSourcesOnClient,
+  hydrateTariffs,
+  insertTariffGraph,
+  loadExistingSpans,
+  pickActivePeriodForDate,
+} from '../tariff-timeline-repo';
+import { addCalendarDays, compileSeasonsToParsedTariff, isProtectedSpan, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
 import { buildDefaultTariff, parseTariffContent, tariffContentHash, type ParsedTariff } from '../importer/tariff-parser';
 import type { TariffV2 } from '../tesla-client';
 import { layoutTimeline } from '../tariff-estimates';
@@ -16,12 +24,12 @@ import * as client from './client';
 import { urdbRateToSeasons } from './convert';
 import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, urdbStartDate, walkSupersedes, type RevisionSpan } from './match';
 import { normalizeUtilityName, resolveUtility } from './utility-lookup';
-import { isOutsideUs } from './us-time-zones';
+import { deriveRatePlanEligibility, US_ELIGIBLE_COUNTRY_LIST } from '../rate-plan-eligibility';
 import type { UrdbRate } from './types';
 import type { TariffSeasonInput } from '../tariff-contract';
 
 export interface UrdbApi { ratesEffectiveOn: typeof client.ratesEffectiveOn; rateByLabel: typeof client.rateByLabel; defaultRates: typeof client.defaultRates; utilityNames: typeof client.utilityNames }
-type Snapshot = { site: { id: string; utility: string | null; grid_utility: string | null; timezone: string; history_start: string | null; tariff_content: TariffV2 | null; site_name: string | null }; utility: SiteUtilityRow | undefined; spans: Awaited<ReturnType<typeof loadExistingSpans>>; tariffs: Tariff[]; allTariffs: Tariff[]; sources: Array<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null }> };
+type Snapshot = { site: { id: string; utility: string | null; grid_utility: string | null; timezone: string; rate_country: string | null; history_start: string | null; tariff_content: TariffV2 | null; site_name: string | null }; utility: SiteUtilityRow | undefined; spans: Awaited<ReturnType<typeof loadExistingSpans>>; tariffs: Tariff[]; allTariffs: Tariff[]; sources: Array<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null }> };
 type Anchor = { tariffId: number; startDate: string; startSource: string; label: string | null; newer: UrdbRate | null };
 type Converted = { span: RevisionSpan; seasons: TariffSeasonInput[]; name: string; role: 'estimated_actual' | 'estimated_reference' };
 type PlanBackfill = { tariffId: number; name: string | null; code: string | null };
@@ -35,7 +43,7 @@ export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: 
   return names.has(normalizeUtilityName(selected.utility));
 }
 async function snapshot(siteId: string): Promise<Snapshot> {
-  const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, s.json ->> 'utility' AS grid_utility, COALESCE(s.timezone, 'UTC') AS timezone, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
+  const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, s.json ->> 'utility' AS grid_utility, COALESCE(s.timezone, 'UTC') AS timezone, s.rate_country, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
   const utility = (await pool.query<SiteUtilityRow>('SELECT * FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
   const connection = await pool.connect();
@@ -85,10 +93,9 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const planBackfill = planBackfillFor(unfilled.at(-1), site);
   const tariffs = planBackfill ? unfilled.map(tariff => tariff.id === planBackfill.tariffId ? { ...tariff, plan_name: planBackfill.name, plan_code: planBackfill.code } : tariff) : unfilled;
   const empty = (status: SiteUtilityStatus, utilityName: string | null): Preview => ({ planBackfill, status, utilityName, anchors: [], actual: [], reference: [], changed: [], fallbackTariffIds, ownerPicked: false, matchOutcomes: tariffs.map(() => 'no_utility') });
-  if (utility?.choice === 'skipped') return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
-  // OpenEI lists US utilities only, so a site outside the US can never match one. Leave it ready with no
-  // estimates rather than asking the owner to pick a utility; an owner's own pick still applies.
-  if (utility?.choice !== 'owner' && isOutsideUs(site.timezone)) return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
+  if (utility?.choice === 'skipped' || deriveRatePlanEligibility(site.rate_country) !== 'us') {
+    return { ...empty('ready', null), changed: layoutTimeline(spans, [], []).changed };
+  }
   const names = await api.utilityNames(); checkIoDeadline();
   const utilityName = utility?.choice === 'owner' ? utility.urdb_utility : resolveUtility(site.utility, names, site.grid_utility);
   if (!utilityName) return empty('needs_utility', null);
@@ -107,7 +114,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     matches.push(matched);
     const ownedSpan = spans.find(span => span.tariffId === tariff.id);
     if (!ownedSpan) continue;
-    const anchor = anchorStart({ matched, firstSeen, isFirstVersion: index === firstSpanned, currentSpanStart: ownedSpan.effectiveFrom, ownerDated: ownedSpan.updatedByUserId !== null, timeZone: site.timezone });
+    const anchor = anchorStart({ matched, firstSeen, isFirstVersion: index === firstSpanned, currentSpanStart: ownedSpan.effectiveFrom, ownerDated: isProtectedSpan(ownedSpan), timeZone: site.timezone });
     if (anchor) anchors.push({ tariffId: tariff.id, ...anchor, label: matched?.label ?? null, newer: null });
   }
   if (matches.at(-1)) {
@@ -147,7 +154,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   });
   const ownerPicked = !tariffs.length && !!start && !!utility?.urdb_plan_label;
   const previewSpans = ownerPicked ? spans.flatMap(row => {
-    if (row.source !== 'tesla' || row.updatedByUserId !== null || !fallbackTariffIds.includes(row.tariffId)) return [row];
+    if (row.source !== 'tesla' || isProtectedSpan(row) || !fallbackTariffIds.includes(row.tariffId)) return [row];
     let parts = [{ from: row.effectiveFrom, to: row.effectiveTo }];
     for (const estimate of actual) parts = parts.flatMap(part => {
       const startDate = estimate.span.effectiveFrom;
@@ -177,7 +184,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     return result ? [result] : [];
   });
   const changed = layout.changed;
-  const status = !tariffs.length && !spans.some(span => span.source === 'manual') && !start ? 'needs_plan' : 'ready';
+  const status = !tariffs.length && !spans.some(span => isProtectedSpan(span)) && !start ? 'needs_plan' : 'ready';
   const matchOutcomes = matches.map((match, index) => !match ? 'no_match' as const : convert({ rate: match, effectiveFrom: today, effectiveTo: null }, 'estimated_actual', averageSell(tariffs[index])) ? 'matched' as const : 'unconvertible' as const);
   return { planBackfill, status, utilityName, anchors, actual, reference, changed, fallbackTariffIds, ownerPicked, matchOutcomes };
 }
@@ -218,34 +225,56 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
     const write = await pool.connect();
     try {
       await write.query('BEGIN');
-      await write.query('SELECT id FROM "Site" WHERE id = $1 FOR UPDATE', [siteId]);
+      const lockedSite = (
+        await write.query<{ id: string; timezone: string | null; rate_country: string | null }>(
+          'SELECT id, timezone, rate_country FROM "Site" WHERE id = $1 FOR UPDATE',
+          [siteId]
+        )
+      ).rows[0];
       const current = await write.query<{ claim: string; choice: string }>('SELECT updated_at::text AS claim, choice FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE', [siteId]);
       if (current.rows[0]?.claim !== claim) { await write.query('ROLLBACK'); return { status: 'pending', changedDays: 0 }; }
       checkIoDeadline();
-      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
-      await write.query(`DELETE FROM "TariffUrdbSource" WHERE site_id = $1 AND role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference')`, [siteId]);
-      if (preview.planBackfill) {
-        await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [preview.planBackfill.tariffId, siteId, preview.planBackfill.name, preview.planBackfill.code]);
+      const writeEligibility = deriveRatePlanEligibility(lockedSite?.rate_country ?? null);
+      const effectivePreview: Preview =
+        writeEligibility === 'us'
+          ? preview
+          : {
+              utilityName: null,
+              status: 'ready',
+              ownerPicked: false,
+              fallbackTariffIds: [],
+              planBackfill: null,
+              anchors: [],
+              actual: [],
+              reference: [],
+              changed: [],
+              matchOutcomes: [],
+            };
+      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference', 'owner_selection')`, [siteId]);
+      await clearUnprotectedUrdbSourcesOnClient(write, siteId);
+      if (effectivePreview.planBackfill) {
+        await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [effectivePreview.planBackfill.tariffId, siteId, effectivePreview.planBackfill.name, effectivePreview.planBackfill.code]);
       }
-      for (const anchor of preview.anchors) {
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date)`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
+      for (const anchor of effectivePreview.anchors) {
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start, is_current_estimate) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, start_source = EXCLUDED.start_source, newer_urdb_label = EXCLUDED.newer_urdb_label, newer_urdb_name = EXCLUDED.newer_urdb_name, newer_urdb_start = EXCLUDED.newer_urdb_start, is_current_estimate = TRUE`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
       }
-      for (const item of [...preview.actual, ...preview.reference]) {
+      for (const item of [...effectivePreview.actual, ...effectivePreview.reference]) {
         const parsed = compileSeasonsToParsedTariff(item.name, item.seasons);
         const hash = tariffContentHash(parsed);
         const previous = old.rows.find(row => row.role === item.role && row.urdb_label === item.span.rate.label && row.content_hash === hash);
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date)`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
+        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start, is_current_estimate) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, start_source = EXCLUDED.start_source, revision_start = EXCLUDED.revision_start, is_current_estimate = TRUE`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
       }
-      const today = siteLocalDateString(now, (await write.query<{ timezone: string }>('SELECT timezone FROM "Site" WHERE id = $1', [siteId])).rows[0]?.timezone ?? 'UTC');
-      const beforeCoverage = current.rows[0].choice === 'skipped' ? [] : (await write.query<{ source: string; effective_from: string; effective_to: string | null; kind: string }>(`SELECT source, effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT source, effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;
-      if (preview.ownerPicked && preview.fallbackTariffIds.length) {
+      const today = siteLocalDateString(now, lockedSite?.timezone ?? 'UTC');
+      const skipCoverageCheck = current.rows[0].choice === 'skipped' || writeEligibility !== 'us';
+      const beforeCoverage = skipCoverageCheck ? [] : (await write.query<{ source: string; effective_from: string; effective_to: string | null; kind: string }>(`SELECT source, effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT source, effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;
+      if (effectivePreview.ownerPicked && effectivePreview.fallbackTariffIds.length) {
         // The importer creates a synthetic Tesla fallback when Tesla has no plan. Once an
         // owner picks a public plan, only overlapping, unedited fallback days are replaced.
         const currentSpans = await loadExistingSpans(write, siteId);
-        for (const fallback of currentSpans.filter(row => row.source === 'tesla' && row.updatedByUserId === null && preview.fallbackTariffIds.includes(row.tariffId))) {
+        for (const fallback of currentSpans.filter(row => row.source === 'tesla' && !isProtectedSpan(row) && effectivePreview.fallbackTariffIds.includes(row.tariffId))) {
           let parts = [{ from: fallback.effectiveFrom, to: fallback.effectiveTo }];
-          for (const estimate of preview.actual) {
+          for (const estimate of effectivePreview.actual) {
             const start = estimate.span.effectiveFrom;
             const finish = estimate.span.effectiveTo;
             parts = parts.flatMap(part => {
@@ -258,7 +287,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
           }
           if (parts.length === 1 && parts[0].from === fallback.effectiveFrom && parts[0].to === fallback.effectiveTo) continue;
           await write.query('DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1 AND id = $2', [siteId, fallback.id]);
-          for (const part of parts) await write.query(`INSERT INTO "TariffEffectivePeriod" (site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id) VALUES ($1, $2, $3::date, $4::date, 'tesla', NULL)`, [siteId, fallback.tariffId, part.from, part.to]);
+          for (const part of parts) await write.query(`INSERT INTO "TariffEffectivePeriod" (site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id, selection_id) VALUES ($1, $2, $3::date, $4::date, 'tesla', NULL, $5)`, [siteId, fallback.tariffId, part.from, part.to, fallback.selectionId ?? null]);
         }
       }
 
@@ -283,13 +312,15 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
         const toDate = changed.some(range => range.to === null) ? null : changed.reduce<string>((max, range) => range.to && range.to > max ? range.to : max, '');
         await enqueueReattributionOnClient(write, { siteId, fromDate, toDate, requestedByUserId: null, trigger: 'estimate' });
       }
-      await write.query(`UPDATE "SiteUtility" SET urdb_utility = CASE WHEN choice = 'auto' THEN $2 ELSE urdb_utility END, status = $3, attempt_count = 0, last_error = NULL, checked_at = $4, next_check_at = $4::timestamptz + interval '7 days', updated_at = clock_timestamp() WHERE site_id = $1`, [siteId, preview.utilityName, preview.status, now]);
+      const nextCheckExpr = writeEligibility === 'us' ? "$4::timestamptz + interval '7 days'" : 'NULL';
+      await write.query(`UPDATE "SiteUtility" SET urdb_utility = CASE WHEN choice = 'auto' THEN $2 ELSE urdb_utility END, status = $3, attempt_count = 0, last_error = NULL, checked_at = $4, next_check_at = ${nextCheckExpr}, updated_at = clock_timestamp() WHERE site_id = $1`, [siteId, effectivePreview.utilityName, effectivePreview.status, now]);
+      await bumpSiteTimelineRevisionOnClient(write, siteId);
       checkIoDeadline();
       await write.query('COMMIT');
       new SiteRepo().invalidateCache(siteId);
-      logEvent('info', 'urdb.site.completed', { siteId, actualCount: preview.actual.length, referenceCount: preview.reference.length, matchOutcomes: preview.matchOutcomes });
+      logEvent('info', 'urdb.site.completed', { siteId, actualCount: effectivePreview.actual.length, referenceCount: effectivePreview.reference.length, matchOutcomes: effectivePreview.matchOutcomes });
       const changedDays = changed.reduce((sum, range) => sum + Math.max(0, Math.floor((Date.parse(`${range.to ?? today}T00:00:00Z`) - Date.parse(`${range.from}T00:00:00Z`)) / 86400000) + 1), 0);
-      return { status: preview.status, changedDays };
+      return { status: effectivePreview.status, changedDays };
     } catch (error) { await write.query('ROLLBACK'); throw error; } finally { write.release(); }
   } catch (error) {
     await pool.query(`UPDATE "SiteUtility" SET status = 'failed', attempt_count = attempt_count + 1, last_error = $3, next_check_at = $4::timestamptz + LEAST(interval '7 days', interval '1 hour' * power(2, LEAST(attempt_count + 1, 8))), updated_at = clock_timestamp() WHERE site_id = $1 AND updated_at::text = $2 AND status = 'running'`, [siteId, claim, error instanceof Error ? error.message.slice(0, 500) : 'Unknown error', now]);
@@ -299,7 +330,54 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
 export async function runUrdbEstimatesCron(opts: { maxTimeMs: number; maxSites: number; api?: UrdbApi }): Promise<{ checked: number; sites: Array<{ siteId: string; status: SiteUtilityStatus }>; stopped?: 'time' | 'disabled' }> {
   if (!process.env.OPENEI_API_KEY && !opts.api) { logEvent('info', 'urdb.disabled', {}); return { checked: 0, sites: [], stopped: 'disabled' }; }
   const start = Date.now();
-  const due = await pool.query<{ id: string }>(`SELECT s.id FROM "Site" s LEFT JOIN "SiteUtility" u ON u.site_id = s.id WHERE s.orphaned_at IS NULL AND (u.site_id IS NULL OR u.status = 'pending' OR (u.status = 'running' AND u.updated_at < now() - interval '5 minutes') OR (u.status IN ('ready','needs_utility','needs_plan','failed') AND u.next_check_at <= now())) ORDER BY u.updated_at NULLS FIRST LIMIT $1`, [opts.maxSites]);
+  const due = await pool.query<{ id: string }>(
+    `SELECT s.id
+     FROM "Site" s
+     LEFT JOIN "SiteUtility" u ON u.site_id = s.id
+     WHERE s.orphaned_at IS NULL
+       AND (
+         (
+           s.rate_country = ANY($2::text[])
+           AND (
+             u.site_id IS NULL
+             OR u.status = 'pending'
+             OR (u.status = 'running' AND u.updated_at < now() - interval '5 minutes')
+             OR (u.status IN ('ready', 'needs_utility', 'needs_plan', 'failed') AND u.next_check_at <= now())
+           )
+         )
+         OR (
+           (s.rate_country IS NULL OR NOT (s.rate_country = ANY($2::text[])))
+           AND (
+             u.status IN ('pending', 'needs_utility', 'needs_plan', 'failed')
+             OR (u.status = 'running' AND u.updated_at < now() - interval '5 minutes')
+             OR (u.status = 'ready' AND u.next_check_at IS NOT NULL AND u.next_check_at <= now())
+             OR EXISTS (
+               SELECT 1
+               FROM "TariffEffectivePeriod" p
+               LEFT JOIN "TariffSelection" ts ON ts.id = p.selection_id
+               WHERE p.site_id = s.id
+                 AND p.source = 'estimated'
+                 AND p.updated_by_user_id IS NULL
+                 AND COALESCE(ts.choice_kind, 'automatic') <> 'owner'
+             )
+             OR EXISTS (
+               SELECT 1
+               FROM "TariffReferencePeriod" r
+               LEFT JOIN "TariffSelection" ts ON ts.id = r.selection_id
+               WHERE r.site_id = s.id
+                 AND r.source = 'estimated'
+                 AND r.updated_by_user_id IS NULL
+                 AND COALESCE(ts.choice_kind, 'automatic') <> 'owner'
+             )
+           )
+         )
+       )
+     -- An owner may be waiting on a new or pending site (a utility, plan or country just changed);
+     -- run those before routine rechecks and cleanup, which can be a long backlog.
+     ORDER BY (u.site_id IS NULL OR u.status = 'pending') DESC, u.updated_at NULLS FIRST
+     LIMIT $1`,
+    [opts.maxSites, [...US_ELIGIBLE_COUNTRY_LIST]]
+  );
   const sites: Array<{ siteId: string; status: SiteUtilityStatus }> = [];
   for (const row of due.rows) {
     if (Date.now() - start >= opts.maxTimeMs) return { checked: sites.length, sites, stopped: 'time' };

@@ -137,7 +137,8 @@ struct DashboardEndpointState<Response: Equatable>: Equatable {
 /// setup pickers are the sheets added for estimated rate plans.
 enum DashboardSheet: String, Identifiable, CaseIterable {
     case batteryHold
-    /// Estimate setup: the utility, or the rate plan on the chosen utility.
+    /// Estimate setup: the site's country, the utility, or the rate plan on the chosen utility.
+    case confirmCountry
     case chooseUtility
     case choosePlan
     /// The rate plan history guide, from the Home accessory.
