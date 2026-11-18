@@ -14,6 +14,12 @@ echo generated >> "$PWUSAGE_TEST_CALLS"
 EOF
 cat > "$fixture_dir/bin/xcrun" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1 $2" == 'simctl bootstatus' ]]; then
+  echo "boot:$3 $4" >> "$PWUSAGE_TEST_CALLS"
+  [[ "${PWUSAGE_TEST_BOOT_HANG:-0}" == 1 ]] && sleep 30
+  [[ "${PWUSAGE_TEST_BOOT_FAIL:-0}" == 1 ]] && exit 3
+  exit 0
+fi
 if [[ "$1" == xcresulttool ]]; then
   printf '{"totalTestCount":%s,"passedTests":%s,"failedTests":0,"skippedTests":0,"expectedFailures":0}\n' \
     "${PWUSAGE_TEST_EXECUTED:-5}" "${PWUSAGE_TEST_EXECUTED:-5}"
@@ -69,6 +75,8 @@ grep -qE '^-parallel-testing-enabled$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^-collect-test-diagnostics$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^on-failure$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^COMPILER_INDEX_STORE_ENABLE=NO$' "$PWUSAGE_TEST_ARGS"
+# The simulator is booted before the timed xcodebuild run, so a slow boot has its own limit.
+grep -qxF 'boot:TEST-UDID -b' "$PWUSAGE_TEST_CALLS"
 
 # expect_failure <expected-status> <output-pattern> -- <run-tests.sh args...>
 expect_failure() {
@@ -92,6 +100,13 @@ PWUSAGE_TEST_DEVICES='{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-17-5":
   expect_failure 2 'iOS 18.0 or newer' --
 PWUSAGE_SIMULATOR_ID=PINNED "$script_dir/run-tests.sh"
 grep -qE '^id=PINNED$' "$PWUSAGE_TEST_ARGS"
+grep -qxF 'boot:PINNED -b' "$PWUSAGE_TEST_CALLS"
+
+# A simulator that fails to boot stops the run before xcodebuild starts.
+rm -f "$PWUSAGE_TEST_ARGS"
+PWUSAGE_TEST_BOOT_FAIL=1 expect_failure 3 'did not boot' --
+[[ ! -e "$PWUSAGE_TEST_ARGS" ]] || { echo 'xcodebuild ran after the simulator failed to boot' >&2; exit 1; }
+PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS=0 expect_failure 2 'PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS must be' --
 
 # A bare test-target name runs the whole bundle, not an invented suite.
 "$script_dir/run-tests.sh" PWUsageTests
@@ -261,8 +276,13 @@ grep -qE '/pwusage-ios-tests\.[^/]+/DerivedData$' "$PWUSAGE_TEST_ARGS" || {
 
 # --build-only (CI on main) builds the default Debug tests without running them, so pull requests
 # can start from main's build products; it reads no test result bundle and takes no filters.
+: > "$PWUSAGE_TEST_CALLS"
 PWUSAGE_TEST_EXECUTED=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/run-tests.sh' "$script_dir/run-tests.sh" --build-only
 grep -qE '^build-for-testing$' "$PWUSAGE_TEST_ARGS"
+if grep -qE '^boot:' "$PWUSAGE_TEST_CALLS"; then
+  echo '--build-only booted a simulator it does not use' >&2
+  exit 1
+fi
 if grep -qE '^(test|SWIFT_OPTIMIZATION_LEVEL=.*|-skip-testing:.*)$' "$PWUSAGE_TEST_ARGS"; then
   echo '--build-only ran tests, built optimized or filtered suites' >&2
   exit 1
@@ -279,5 +299,12 @@ status=$?
 set -e
 [[ "$status" == 124 ]] || { cat "$fixture_dir/timeout-output"; echo "Expected timeout exit 124, got $status" >&2; exit 1; }
 (( SECONDS - started < 10 )) || { echo 'Timeout took too long' >&2; exit 1; }
+
+# A simulator boot that hangs is stopped at its own limit, separately from the test run's.
+unset PWUSAGE_TEST_HANG
+export PWUSAGE_TEST_TIMEOUT_SECONDS=600
+started=$SECONDS
+PWUSAGE_TEST_BOOT_HANG=1 PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS=1 expect_failure 124 'Simulator boot exceeded 1s' --
+(( SECONDS - started < 10 )) || { echo 'Boot timeout took too long' >&2; exit 1; }
 
 echo 'run-tests.sh checks passed'
