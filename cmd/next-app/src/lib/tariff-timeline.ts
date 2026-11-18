@@ -6,6 +6,15 @@ import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from 
 export const MAX_EFFECTIVE_PERIODS_PER_SITE = 50;
 const VALID_TOU_NAMES = new Set<TariffPeriodName>(['ON_PEAK', 'PARTIAL_PEAK', 'OFF_PEAK', 'SUPER_OFF_PEAK']);
 const MONTH_MAX_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const NON_LEAP_MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function dayOfYear365(month: number, day: number): number {
+  let offset = 0;
+  for (let i = 0; i < month - 1; i++) {
+    offset += NON_LEAP_MONTH_DAYS[i];
+  }
+  return offset + Math.min(day, NON_LEAP_MONTH_DAYS[month - 1]) - 1;
+}
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface TariffPlanWriteInput {
@@ -168,7 +177,7 @@ export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLo
   if (!Array.isArray(input.seasons) || input.seasons.length < 1 || input.seasons.length > 6) {
     throw new TariffValidationError('Rate plan must include 1–6 seasons');
   }
-  const monthOwners = new Array<boolean>(12).fill(false);
+  const dayOwners = new Array<boolean>(365).fill(false);
   const seasons: TariffSeasonInput[] = input.seasons.map(season => {
     const seasonName = typeof season.name === 'string' ? season.name.trim() : '';
     if (!seasonName || seasonName.length > 64) {
@@ -178,24 +187,34 @@ export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLo
       || !Number.isInteger(season.toMonth) || season.toMonth < 1 || season.toMonth > 12) {
       throw new TariffValidationError('Season months must be integers in 1..12');
     }
-    let m = season.fromMonth;
-    for (let guard = 0; guard < 12; guard++) {
-      if (monthOwners[m - 1]) {
+    if (season.fromDay !== undefined && (!Number.isInteger(season.fromDay) || season.fromDay < 1 || season.fromDay > MONTH_MAX_DAYS[season.fromMonth - 1])) {
+      throw new TariffValidationError('Season fromDay must be a valid day of the start month');
+    }
+    if (season.toDay !== undefined && (!Number.isInteger(season.toDay) || season.toDay < 1 || season.toDay > MONTH_MAX_DAYS[season.toMonth - 1])) {
+      throw new TariffValidationError('Season toDay must be a valid day of the end month');
+    }
+    const startDoy = dayOfYear365(season.fromMonth, season.fromDay ?? 1);
+    const endDoy = dayOfYear365(season.toMonth, season.toDay ?? MONTH_MAX_DAYS[season.toMonth - 1]);
+    let d = startDoy;
+    for (let guard = 0; guard < 365; guard++) {
+      if (dayOwners[d]) {
         throw new TariffValidationError('Seasons must cover all 12 months without overlap');
       }
-      monthOwners[m - 1] = true;
-      if (m === season.toMonth) break;
-      m = (m % 12) + 1;
+      dayOwners[d] = true;
+      if (d === endDoy) break;
+      d = (d + 1) % 365;
     }
     return {
       name: seasonName,
       fromMonth: season.fromMonth,
+      ...(season.fromDay !== undefined ? { fromDay: season.fromDay } : {}),
       toMonth: season.toMonth,
+      ...(season.toDay !== undefined ? { toDay: season.toDay } : {}),
       weekdayPeriods: validateDaySlots(season.weekdayPeriods, `${seasonName} weekday schedule`),
       weekendPeriods: validateDaySlots(season.weekendPeriods, `${seasonName} weekend schedule`),
     };
   });
-  if (monthOwners.some(v => !v)) {
+  if (dayOwners.some(v => !v)) {
     throw new TariffValidationError('Seasons must cover all 12 months without gaps');
   }
   return { name, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, seasons };
@@ -249,9 +268,9 @@ export function compileSeasonsToParsedTariff(name: string, seasons: TariffSeason
     return {
       name: season.name,
       from_month: season.fromMonth,
-      from_day: 1,
+      from_day: season.fromDay ?? 1,
       to_month: season.toMonth,
-      to_day: MONTH_MAX_DAYS[season.toMonth - 1],
+      to_day: season.toDay ?? MONTH_MAX_DAYS[season.toMonth - 1],
       buy_rate: minBuy,
       sell_rate: minSell,
       schedules,

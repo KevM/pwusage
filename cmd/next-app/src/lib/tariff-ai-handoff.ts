@@ -123,7 +123,9 @@ function stripReadOnlySeasonFields(seasons: TariffSeasonInput[]): TariffSeasonIn
   return seasons.map(s => ({
     name: s.name,
     fromMonth: s.fromMonth,
+    ...(s.fromDay !== undefined ? { fromDay: s.fromDay } : {}),
     toMonth: s.toMonth,
+    ...(s.toDay !== undefined ? { toDay: s.toDay } : {}),
     weekdayPeriods: s.weekdayPeriods.map(w => ({
       touName: w.touName,
       fromHour: w.fromHour,

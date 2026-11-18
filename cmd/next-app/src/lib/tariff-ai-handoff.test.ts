@@ -254,6 +254,35 @@ Hope this helps!
     expect(md).toContain('Imported with AI assistant');
   });
 
+  it('preserves mid-month season boundaries (fromDay/toDay) across export and re-import', () => {
+    const timeline = sampleTimeline();
+    const midMonthSeasons: TariffSeasonInput[] = [
+      {
+        name: 'Summer',
+        fromMonth: 6,
+        fromDay: 15,
+        toMonth: 9,
+        toDay: 14,
+        weekdayPeriods: SUMMER_TOU_SEASONS[0].weekdayPeriods,
+        weekendPeriods: SUMMER_TOU_SEASONS[0].weekendPeriods,
+      },
+      {
+        name: 'Winter',
+        fromMonth: 9,
+        fromDay: 15,
+        toMonth: 6,
+        toDay: 14,
+        weekdayPeriods: SUMMER_TOU_SEASONS[1].weekdayPeriods,
+        weekendPeriods: SUMMER_TOU_SEASONS[1].weekendPeriods,
+      },
+    ];
+    timeline.periods[0].seasons = midMonthSeasons;
+
+    const md = buildRatePlanAiHandoffMarkdown(timeline, '2026-11-18');
+    const parsed = parseRatePlanAiHandoffInput(md, '2026-11-18');
+    expect(parsed.actualPeriods[0].seasons).toEqual(midMonthSeasons);
+  });
+
   it('rejects wrong schema or empty periods across both scopes', () => {
     expect(() =>
       parseRatePlanAiHandoffInput(JSON.stringify({ schema: 'wrong/v1', actualPeriods: [], referencePeriods: [] }), '2026-11-18')
