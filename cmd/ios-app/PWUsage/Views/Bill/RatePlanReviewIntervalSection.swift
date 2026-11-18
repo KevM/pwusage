@@ -9,8 +9,12 @@ struct RatePlanReviewIntervalSection: View {
 
     var body: some View {
         Section {
-            planRow("Before", plan: interval.before)
-            planRow("After", plan: interval.after)
+            if let keeps = RatePlanReviewPresentation.keepsPlanLine(interval) {
+                Text(keeps)
+            } else {
+                planRow("Before", plan: interval.before)
+                planRow("After", plan: interval.after)
+            }
             if let note = RatePlanReviewPresentation.fallbackNote(interval) {
                 Text(note)
                     .font(.subheadline)
@@ -21,13 +25,15 @@ struct RatePlanReviewIntervalSection: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            if !interval.hasRateChanges, !interval.hasPeriodNameChanges, interval.before != nil {
-                Text("Rates and time periods are the same.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(Array(interval.seasons.enumerated()), id: \.offset) { _, season in
-                RatePlanReviewSeasonView(season: season, currency: currency)
+            if RatePlanReviewPresentation.comparesRates(interval) {
+                if !interval.hasRateChanges, !interval.hasPeriodNameChanges, interval.before != nil {
+                    Text("Rates and time periods are the same.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(Array(interval.seasons.enumerated()), id: \.offset) { _, season in
+                    RatePlanReviewSeasonView(season: season, currency: currency)
+                }
             }
         } header: {
             VStack(alignment: .leading, spacing: 2) {

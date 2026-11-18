@@ -79,6 +79,24 @@ struct RatePlanReviewPresentationTests {
     }
 
     @MainActor
+    @Test("Dates without a saved Tesla plan keep their current plan")
+    func unavailableRestoreKeepsPlan() throws {
+        let replaced = try #require(RatePlanReviewModelTests.preview().affectedIntervals.first)
+        #expect(RatePlanReviewPresentation.keepsPlanLine(replaced) == nil)
+        let json = MobileTariffsDecodingTests.previewJSON.replacingOccurrences(
+            of: "\"kind\": \"replace\"", with: "\"kind\": \"restore_unavailable\""
+        )
+        let unavailable = try #require(
+            MobileContractDecoder.make()
+                .decode(TariffSelectionPreviewResponse.self, from: Data(json.utf8))
+                .affectedIntervals.first
+        )
+        #expect(RatePlanReviewPresentation.keepsPlanLine(unavailable) == "Tesla stays for these dates.")
+        #expect(!RatePlanReviewPresentation.comparesRates(unavailable))
+        #expect(RatePlanReviewPresentation.comparesRates(replaced))
+    }
+
+    @MainActor
     @Test("A gap names the plan its bills borrow today")
     func borrowedPlanNote() throws {
         let replaced = try #require(RatePlanReviewModelTests.preview().affectedIntervals.first)

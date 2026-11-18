@@ -90,6 +90,18 @@ enum RatePlanReviewPresentation {
         }
     }
 
+    /// Restoring writes only dates with a saved Tesla plan; the rest keep their current plan.
+    static func keepsPlanLine(_ interval: TariffReviewAffectedInterval) -> String? {
+        guard interval.kind == .restoreUnavailable else { return nil }
+        guard let name = interval.before?.name else { return "These dates stay without a plan." }
+        return "\(name) stays for these dates."
+    }
+
+    /// Unchanged dates have no before and after to compare.
+    static func comparesRates(_ interval: TariffReviewAffectedInterval) -> Bool {
+        interval.kind != .restoreUnavailable
+    }
+
     /// Why a gap shows a plan under Before: billing borrows it for days without a plan.
     static func fallbackNote(_ interval: TariffReviewAffectedInterval) -> String? {
         guard interval.beforeIsFallback, let name = interval.before?.name else { return nil }

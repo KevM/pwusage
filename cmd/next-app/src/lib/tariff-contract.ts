@@ -309,6 +309,7 @@ export interface TariffReviewAffectedInterval {
    * these dates. Always false for the fixed comparison plan, which never borrows.
    */
   beforeIsFallback: boolean;
+  /** The plan these dates use after the change; for `restore_unavailable` the same as `before`. */
   after: TariffReviewPlanSnapshot | null;
   seasons: TariffAlignedSeasonComparison[];
   hasBuyRateChanges: boolean;

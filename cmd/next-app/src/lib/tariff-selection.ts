@@ -943,7 +943,8 @@ export function buildTariffSelectionPreview(
         restoredOriginals.push(clippedOriginal);
         collectedNotes.push(...target.plan.approximationNotes);
       } else {
-        afterPlan = null;
+        // Applying writes only the restoration targets, so these dates keep the plan they have.
+        afterPlan = beforePlan;
         kind = 'restore_unavailable';
         restoration = { status: 'unavailable', reason: UNAVAILABLE_RESTORATION_REASON };
         unavailableRanges.push({
@@ -1000,7 +1001,7 @@ export function buildTariffSelectionPreview(
   const resolvedCandidatePlan: TariffReviewPlanSnapshot | null =
     candidate.kind === 'restore_tesla'
       ? distinctRestoredTariffIds.size === 1
-        ? (affectedIntervals.find(i => i.after !== null)?.after ?? null)
+        ? (affectedIntervals.find(i => i.kind === 'restore')?.after ?? null)
         : null
       : (input.candidatePlan ?? null);
 

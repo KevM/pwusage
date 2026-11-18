@@ -700,9 +700,16 @@ describe('buildTariffSelectionPreview', () => {
       restorationStatus: i.restoration.status,
     }))).toEqual([
       { from: '2025-01-01', to: '2025-05-31', kind: 'restore', afterName: 'Tesla Original v1', restorationStatus: 'restoring_original' },
-      { from: '2025-06-01', to: '2025-06-30', kind: 'restore_unavailable', afterName: null, restorationStatus: 'unavailable' },
+      // Applying writes only the restoration targets, so June keeps its current plan.
+      { from: '2025-06-01', to: '2025-06-30', kind: 'restore_unavailable', afterName: activeOverride.name, restorationStatus: 'unavailable' },
       { from: '2025-07-01', to: '2025-12-31', kind: 'restore', afterName: 'Tesla Original v2', restorationStatus: 'restoring_original' },
     ]);
+
+    const june = preview.affectedIntervals[1];
+    expect(june.after).toEqual(june.before);
+    expect(june.hasRateChanges).toBe(false);
+    expect(june.hasPeriodNameChanges).toBe(false);
+    expect(june.seasons.every(season => !season.hasRateChanges)).toBe(true);
 
     expect(preview.candidatePlan).toBeNull();
     expect(preview.restoration.canApplyRestoration).toBe(true);
@@ -735,7 +742,39 @@ describe('buildTariffSelectionPreview', () => {
     expect(noOriginalPreview.recalculatesHistory).toBe(false);
     expect(noOriginalPreview.recalculationRange).toBeNull();
     expect(noOriginalPreview.affectedIntervals[0].kind).toBe('restore_unavailable');
-    expect(noOriginalPreview.affectedIntervals[0].after).toBeNull();
+    expect(noOriginalPreview.affectedIntervals[0].after?.name).toBe(activeOverride.name);
+    expect(noOriginalPreview.candidatePlan).toBeNull();
+
+    // Dates without an original that come first never stand in for the restored plan.
+    const unavailableFirst = buildTariffSelectionPreview({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-17',
+      request: {
+        scope: 'actual',
+        candidate: { kind: 'restore_tesla', originalSelectionId: 90 },
+        effectiveFrom: '2025-06-01',
+        effectiveTo: '2025-12-31',
+      },
+      existingSpans: [
+        { effectiveFrom: '2025-01-01', effectiveTo: '2025-12-31', plan: activeOverride },
+      ],
+      restorationTargets: [
+        {
+          effectiveFrom: '2025-07-01',
+          effectiveTo: '2025-12-31',
+          original: {
+            originalSelectionId: 90, tariffId: 102, name: 'Tesla Original v2', version: 2,
+            contentHash: 'tesla-v2', effectiveFrom: '2025-07-01', effectiveTo: '2025-12-31',
+          },
+          plan: teslaV2,
+        },
+      ],
+    });
+    expect(unavailableFirst.affectedIntervals.map(i => i.kind)).toEqual(['restore_unavailable', 'restore']);
+    expect(unavailableFirst.candidatePlan?.name).toBe('Tesla Original v2');
+    expect(noOriginalPreview.affectedIntervals[0].hasRateChanges).toBe(false);
   });
 });
 
