@@ -529,6 +529,31 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(automatic.teslaSync.differsFromActiveManual).toBe(false);
   });
 
+  it('buildSiteTariffsTimelineResponse flags a restored Tesla plan that newer Tesla rates no longer match', () => {
+    const base = {
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
+      currency: 'USD',
+      today: '2026-11-17',
+      viewerUserId: 'u1',
+      tariffMap: new Map([[10, { id: 10, updated: new Date('2026-10-01T00:00:00Z') } as never]]),
+      latestTesla: { id: 11, name: 'Tesla Plan', content_hash: 'tesla-new', updated: new Date('2026-11-01T00:00:00Z') } as never,
+    };
+    // A Tesla import skips an owner-protected period, so a restored plan keeps its old rates.
+    const tesla = (choice: 'owner' | 'automatic') => ({
+      period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'tesla',
+      updated_by_user_id: null, name: 'Tesla Plan', version: 1, content_hash: 'tesla-old',
+      selection_id: 6, choice_kind: choice, candidate_kind: choice === 'owner' ? 'restore_tesla' : 'tesla_sync',
+    }) as never;
+
+    const restored = buildSiteTariffsTimelineResponse({ ...base, periodRows: [tesla('owner')] });
+    expect(restored.teslaSync.differsFromActiveManual).toBe(true);
+
+    const synced = buildSiteTariffsTimelineResponse({ ...base, periodRows: [tesla('automatic')] });
+    expect(synced.teslaSync.differsFromActiveManual).toBe(false);
+  });
+
   it('buildSiteTariffsTimelineResponse retains choiceKind and displays verification only when exact hash and range match', () => {
     const res = buildSiteTariffsTimelineResponse({
       siteId: 's1',

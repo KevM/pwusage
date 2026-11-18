@@ -174,7 +174,7 @@ export interface SiteTariffsTimelineResponse {
     latestUpdatedAt: string | null;
     /** When the active custom plan was saved, so clients can say which of the two is newer. */
     activeManualUpdatedAt?: string | null;
-    /** True when today's plan chosen in PWUsage (manual, or a public plan an owner selected) differs from the latest Tesla plan. */
+    /** True when today's plan chosen in PWUsage (manual, a public plan or a restored Tesla plan an owner selected) differs from the latest Tesla plan. */
     differsFromActiveManual: boolean;
   };
 }
