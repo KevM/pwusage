@@ -219,6 +219,9 @@ struct SiteTariffsTimelineResponse: Codable, Equatable, Sendable {
         return self
     }
 
+    /// Servers with reviewed rate plan selection always send the site's country.
+    var supportsRatePlanSelection: Bool { rateCountry != nil }
+
     func activePeriodNow(at now: Date = .now) -> ActiveTariffPeriodMatch? {
         RatePeriodResolver(timeline: self)?.match(at: now)
     }

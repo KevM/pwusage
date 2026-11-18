@@ -25,6 +25,8 @@ struct RatePlanDraftTests {
         let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
         var draft = RatePlanDraft.makeBlank(timeZone: chicago)
         draft.name = "Utility Plan"
+        draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600)
+        draft.end = .ongoing
         #expect(draft.validate() == nil)
 
         draft.addSeason()
@@ -212,6 +214,8 @@ struct RatePlanDraftTests {
     func seasonBoundaryClampsToNeighbours() {
         var draft = RatePlanDraft.makeBlank(timeZone: TimeZone(identifier: "America/Chicago") ?? .gmt)
         draft.name = "Plan"
+        draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600)
+        draft.end = .ongoing
         draft.seasons = [
             SeasonDraft.makeDefault(name: "A", fromMonth: 1, toMonth: 4),
             SeasonDraft.makeDefault(name: "B", fromMonth: 5, toMonth: 8),
@@ -250,10 +254,45 @@ struct RatePlanDraftTests {
         let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
         var draft = RatePlanDraft.makeBlank(timeZone: chicago)
         draft.name = "Next year"
+        draft.end = .ongoing
         let now = Date()
         draft.effectiveFrom = now.addingTimeInterval(30 * 86400)
         #expect(draft.validate(today: now) == nil)
         draft.effectiveFrom = now.addingTimeInterval(400 * 86400)
         #expect(draft.validate(today: now) != nil)
+    }
+
+    @Test("A new plan has no default dates and says which one is missing")
+    func newPlanNeedsDates() {
+        let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
+        var draft = RatePlanDraft.makeBlank(timeZone: chicago)
+        draft.name = "Mine"
+        #expect(draft.effectiveFrom == nil)
+        #expect(draft.validate() == "Choose a start date.")
+        #expect(draft.toWriteRequest() == nil)
+        draft.effectiveFrom = RatePlanTimelineFormatting.parseYMD("2025-03-01", in: chicago)
+        #expect(draft.validate() == "Choose an end date, or choose Ongoing.")
+        draft.end = .endsOn(RatePlanTimelineFormatting.parseYMD("2025-02-01", in: chicago) ?? .now)
+        #expect(draft.validate() == "Effective end date must be on or after the start date.")
+        draft.end = .endsOn(RatePlanTimelineFormatting.parseYMD("2025-12-31", in: chicago) ?? .now)
+        #expect(draft.toWriteRequest()?.effectiveTo == "2025-12-31")
+        draft.end = .ongoing
+        let request = draft.selectionRequest(scope: .reference)
+        #expect(request?.scope == .reference)
+        #expect(request?.effectiveFrom == "2025-03-01")
+        #expect(request?.effectiveTo == nil)
+    }
+
+    @Test("Editing keeps the plan's own dates")
+    func editingKeepsDates() {
+        let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
+        let period = TariffPeriodDTO(
+            periodId: 1, tariffId: 1, name: "Winter", version: 1, source: .manual,
+            effectiveFrom: "2026-01-15", effectiveTo: "2026-04-30", isCurrentToday: false, updatedBy: nil,
+            seasons: []
+        )
+        let draft = RatePlanDraft(editing: period, timeZone: chicago)
+        #expect(draft.chosenDates?.from == "2026-01-15")
+        #expect(draft.chosenDates?.to == "2026-04-30")
     }
 }

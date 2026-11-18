@@ -127,6 +127,10 @@ struct RatePlanEditorFlowTests {
         #expect(blank.draft.nameProblem?.contains("already named") == true)
         #expect(!blank.canSubmit)
         blank.draft.name = "Fresh Plan"
+        #expect(!blank.canSubmit, "A new plan has no dates until the owner picks them")
+        blank.draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_000_000)
+        #expect(!blank.canSubmit)
+        blank.draft.end = .ongoing
         #expect(blank.canSubmit)
 
         let timeline = try MobileContractDecoder.make().decode(
@@ -205,6 +209,8 @@ struct RatePlanEditorFlowTests {
             onUpdate: { _, _ in }
         )
         failingState.draft.name = "My Edited Plan"
+        failingState.draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_000_000)
+        failingState.draft.end = .ongoing
         failingState.updateRate(
             seasonIndex: 0,
             touName: .offPeak,
@@ -225,6 +231,8 @@ struct RatePlanEditorFlowTests {
             onUpdate: { _, _ in }
         )
         succeedingState.draft.name = "My Edited Plan"
+        succeedingState.draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_000_000)
+        succeedingState.draft.end = .ongoing
         succeedingState.updateRate(
             seasonIndex: 0,
             touName: .offPeak,
@@ -276,5 +284,49 @@ struct RatePlanEditorFlowTests {
         #expect(patchedBody?.name == "Updated Winter")
         #expect(patchedBody?.effectiveFrom == "2026-01-15")
         #expect(patchedBody?.effectiveTo == .set("2026-04-30"))
+    }
+
+    @MainActor
+    @Test("Review needs both dates, and any later edit discards the review")
+    func reviewNeedsDatesAndEditsInvalidate() async throws {
+        let spy = try RatePlanReviewModelTests.Spy(preview: RatePlanReviewModelTests.preview())
+        let state = RatePlanEditorState(
+            mode: .copy(Self.samplePeriod), timeZone: .gmt, currency: "USD", selection: spy.actions
+        )
+        #expect(state.draft.effectiveFrom == nil, "Copying keeps the rates but never the dates")
+        #expect(state.draft.end == nil)
+        #expect(!state.canReview)
+        state.startReview()
+        #expect(state.review == nil)
+
+        state.draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01 UTC
+        #expect(!state.canReview, "Ongoing or an end date must be chosen too")
+        state.draft.end = .ongoing
+        #expect(state.canReview)
+        state.startReview()
+        #expect(state.path == [.review])
+        let review = try #require(state.review)
+        #expect(review.request.effectiveFrom == "2026-01-01")
+        #expect(review.request.effectiveTo == nil)
+        guard case .manual(let name, _) = review.request.candidate else {
+            Issue.record("Expected a manual candidate")
+            return
+        }
+        #expect(name == "Summer Time-of-Use")
+
+        state.draft.end = .endsOn(Date(timeIntervalSince1970: 1_769_817_600)) // 2026-01-31 UTC
+        #expect(state.review == nil, "Changing the dates needs a fresh review")
+        #expect(state.path.isEmpty)
+        #expect(spy.previews.isEmpty, "Nothing was sent while the owner only edited and cancelled")
+    }
+
+    @MainActor
+    @Test("Without reviewed selections on the server, Save still works and Review is unavailable")
+    func olderServerKeepsSave() {
+        let state = RatePlanEditorState(mode: .copy(Self.samplePeriod), timeZone: .gmt, currency: "USD")
+        state.draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600)
+        state.draft.end = .ongoing
+        #expect(state.canSubmit)
+        #expect(!state.canReview)
     }
 }

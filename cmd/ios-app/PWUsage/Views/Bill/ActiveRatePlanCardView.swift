@@ -19,6 +19,19 @@ struct TariffTimelineActions: Sendable {
     var setSiteCountry: @MainActor (String) async throws -> SiteTariffsTimelineResponse = { _ in
         throw PWUsageAPIError.invalidResponse
     }
+    var previewSelection: @MainActor (TariffSelectionRequest) async throws -> TariffSelectionPreviewResponse = { _ in
+        throw PWUsageAPIError.invalidResponse
+    }
+    var commitSelection: @MainActor (TariffSelectionCommit) async throws -> TariffSelectionCommitResponse = { _ in
+        throw PWUsageAPIError.invalidResponse
+    }
+    var publicPlans: @MainActor (String) async throws -> PublicUtilityPlansResponse = { _ in
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    var selection: RatePlanSelectionActions {
+        RatePlanSelectionActions(preview: previewSelection, commit: commitSelection)
+    }
 
     @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
         Self(
@@ -36,7 +49,10 @@ struct TariffTimelineActions: Sendable {
             loadRateHistory: { try await coordinator.loadRateHistory() },
             saveRateHistory: { try await coordinator.saveRateHistory($0) },
             siteCountryInference: { await coordinator.siteCountryInference() },
-            setSiteCountry: { try await coordinator.setSiteRateCountry($0, source: .owner) }
+            setSiteCountry: { try await coordinator.setSiteRateCountry($0, source: .owner) },
+            previewSelection: { try await coordinator.previewTariffSelection($0) },
+            commitSelection: { try await coordinator.commitTariffSelection($0) },
+            publicPlans: { try await coordinator.publicUtilityPlans(effectiveDate: $0) }
         )
     }
 }
@@ -70,6 +86,8 @@ enum RatePlanEditorMode: Identifiable, Equatable {
 struct ActiveRatePlanCardView: View {
     let timeline: SiteTariffsTimelineResponse
     let now: Date
+    /// Nil on older servers, which can't review a change.
+    var onChangePlan: (() -> Void)?
 
     var body: some View {
         CardContainer(title: "Currently active", symbol: "bolt.circle.fill", theme: .bill) {
@@ -93,6 +111,10 @@ struct ActiveRatePlanCardView: View {
                 Text("No active rate period scheduled right now.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+            }
+            if let onChangePlan {
+                Button("Change Plan", action: onChangePlan)
+                    .font(.subheadline.weight(.semibold))
             }
         }
     }

@@ -1,21 +1,5 @@
 import SwiftUI
 
-private enum TariffSheetModal: Identifiable, Equatable {
-    case effectiveDates(TariffPeriodDTO)
-    case editor(RatePlanEditorMode)
-    case estimates(RateEstimatesPrompt)
-    case rateHistory
-
-    var id: String {
-        switch self {
-        case .effectiveDates(let period): "dates-\(period.periodId)"
-        case .editor(let mode): "editor-\(mode.id)"
-        case .estimates(let prompt): "estimates-\(prompt)"
-        case .rateHistory: "rate-history"
-        }
-    }
-}
-
 struct TariffSheet: View {
     let site: MobileSite
     let actions: TariffTimelineActions
@@ -142,7 +126,8 @@ struct TariffSheet: View {
         if data.teslaSync.differsFromActiveManual {
             teslaDivergenceBanner(data.teslaSync, isSyncing: isSyncing, onSync: syncFromTesla)
         }
-        ActiveRatePlanCardView(timeline: data, now: minuteTick)
+        ActiveRatePlanCardView(timeline: data, now: minuteTick, onChangePlan: data.supportsRatePlanSelection
+            ? { activeModal = .changePlan(for: data) } : nil)
     }
 
     @ViewBuilder
@@ -175,7 +160,9 @@ struct TariffSheet: View {
                     onEditPlan: { activeModal = .editor(.edit(period)) },
                     onCopyPlan: { activeModal = .editor(.copy(period)) },
                     onEditDates: { activeModal = .effectiveDates(period) },
-                    onDelete: { pendingDeletion = period }
+                    onDelete: { pendingDeletion = period },
+                    onRestoreTesla: RatePlanSourcePresentation.canRestoreTesla(period, in: data)
+                        ? { activeModal = .restore(period) } : nil
                 )
             }
         }
@@ -206,6 +193,11 @@ struct TariffSheet: View {
             RateEstimatesSetupSheet(prompt: prompt, utilityName: timeline?.estimates?.utilityName, actions: actions)
         case .rateHistory:
             rateHistorySheet
+        case .changePlan, .restore:
+            RatePlanChangeFlow.make(
+                kind: modal.changeKind, timeline: timeline, actions: actions,
+                onEnterManually: { activeModal = .editor(.add) }, onApplied: { timeline = $0.timeline }
+            )
         case .editor(let mode):
             RatePlanEditorFlow(
                 mode: mode,
@@ -217,7 +209,9 @@ struct TariffSheet: View {
                 },
                 onUpdate: { periodID, patch in
                     timeline = try await actions.updatePeriod(periodID, patch)
-                }
+                },
+                selection: timeline?.supportsRatePlanSelection == true ? actions.selection : nil,
+                onApplied: { timeline = $0.timeline }
             )
         }
     }
