@@ -372,7 +372,9 @@ export async function runUrdbEstimatesCron(opts: { maxTimeMs: number; maxSites: 
            )
          )
        )
-     ORDER BY u.updated_at NULLS FIRST
+     -- An owner may be waiting on a new or pending site (a utility, plan or country just changed);
+     -- run those before routine rechecks and cleanup, which can be a long backlog.
+     ORDER BY (u.site_id IS NULL OR u.status = 'pending') DESC, u.updated_at NULLS FIRST
      LIMIT $1`,
     [opts.maxSites, [...US_ELIGIBLE_COUNTRY_LIST]]
   );

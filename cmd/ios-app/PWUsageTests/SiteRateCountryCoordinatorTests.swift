@@ -6,6 +6,8 @@ import Testing
 private final class RateCountryAPISpy: MobileDashboardDataAPI, MobileTariffDataAPI {
     var writes: [(siteID: String, body: SiteRateCountryWriteRequest)] = []
     var beforeReturn: (() -> Void)?
+    var fetchedCountry: SiteRateCountryDTO?
+    var fetches = 0
 
     func setSiteRateCountry(
         siteID: String,
@@ -36,7 +38,9 @@ private final class RateCountryAPISpy: MobileDashboardDataAPI, MobileTariffDataA
     }
 
     func fetchTariffTimeline(siteID: String) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
+        guard let fetchedCountry else { throw PWUsageAPIError.invalidResponse }
+        fetches += 1
+        return Self.timeline(siteID: siteID, country: fetchedCountry)
     }
 
     func refreshTariffsFromTesla(siteID: String) async throws -> SiteTariffsTimelineResponse {
@@ -152,5 +156,25 @@ struct SiteRateCountryCoordinatorTests {
         #expect(api.writes.count == 1)
         let saved = await coordinator.savedTimeline(for: coordinator.tariffScope(siteID: "site-a"))
         #expect(saved == nil, "The completion for site-a was dropped after switching sites")
+    }
+
+    @Test("Loading Rate Plans returns the timeline with the inferred country, not the stale one")
+    func loadReturnsReportedCountry() async throws {
+        try await save(Self.chicago)
+        api.fetchedCountry = Self.unknown
+        let loaded = try await coordinator.fetchTariffTimeline()
+        #expect(loaded.rateCountry?.countryCode == "US")
+        #expect(loaded.rateCountry?.eligibility == .unitedStates)
+        // Let any background work run, then check the country was reported only once.
+        for _ in 0 ..< 20 { await Task.yield() }
+        #expect(api.writes.count == 1)
+    }
+
+    @Test("Loading Rate Plans without a location returns the fetched timeline unchanged")
+    func loadWithoutLocation() async throws {
+        api.fetchedCountry = Self.unknown
+        let loaded = try await coordinator.fetchTariffTimeline()
+        #expect(loaded.rateCountry == Self.unknown)
+        #expect(api.writes.isEmpty)
     }
 }

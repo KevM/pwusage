@@ -2088,6 +2088,39 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       expect(pass2.sites).toEqual([]);
     });
 
+    it('runs a site an owner is waiting on before older cleanup and recheck rows', async () => {
+      const cleanupId = 's-queue-cleanup-unknown';
+      const waitingId = 's-queue-waiting-us';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', NULL, NULL),
+                ($2, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', 'US', 'solar_location')`,
+        [cleanupId, waitingId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility, next_check_at, updated_at)
+         VALUES ($1, 'auto', 'needs_utility', 'We Energies', 'infinity', now() - interval '2 days'),
+                ($2, 'auto', 'pending', 'We Energies', NULL, now())`,
+        [cleanupId, waitingId]
+      );
+      await local.database.query(
+        `UPDATE "Site" SET orphaned_at = now() WHERE id NOT IN ($1, $2)`,
+        [cleanupId, waitingId]
+      );
+      onTestFinished(async () => {
+        await local.database.query(`UPDATE "Site" SET orphaned_at = NULL`);
+      });
+      const cronApi: UrdbApi = {
+        utilityNames: vi.fn(async () => []),
+        ratesEffectiveOn: vi.fn(async () => []),
+        rateByLabel: vi.fn(async () => null),
+        defaultRates: vi.fn(async () => []),
+      };
+
+      const pass = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 1, api: cronApi });
+      expect(pass.sites.map(site => site.siteId)).toEqual([waitingId]);
+    });
+
     it('cleans automatic public estimates via repricing, preserves audit/manual/Tesla history and explicit owner selections for review, and rejects 409 on mid-review eligibility flips', async () => {
       const siteId = 's-country-cleanup-pg';
       await local.database.query(

@@ -1,10 +1,16 @@
 import Foundation
 
 extension DashboardCoordinator {
-    /// Load rate plan timeline only while this coordinator has verified site access.
+    /// Load rate plan timeline only while this coordinator has verified site access. Rate Plans
+    /// shows what this returns, so it waits for the inferred country to be reported: otherwise the
+    /// screen would keep asking for a country the app already knows.
     func fetchTariffTimeline() async throws -> SiteTariffsTimelineResponse {
-        guard let timeline = try await runTariffFetch(knownETag: nil) else {
+        guard let timeline = try await runTariffFetch(knownETag: nil, syncsCountryInBackground: false) else {
             throw PWUsageAPIError.invalidResponse
+        }
+        if let stored = timeline.rateCountry, stored.source != .owner,
+           let updated = await syncSiteRateCountry(stored: stored) {
+            return updated
         }
         return timeline
     }
@@ -132,7 +138,10 @@ extension DashboardCoordinator {
         }
     }
 
-    private func runTariffFetch(knownETag: String?) async throws -> SiteTariffsTimelineResponse? {
+    private func runTariffFetch(
+        knownETag: String?,
+        syncsCountryInBackground: Bool = true
+    ) async throws -> SiteTariffsTimelineResponse? {
         guard canRequestAccountData else { throw PWUsageAPIError.signInRequired }
         guard let tariffAPI = api as? any MobileTariffDataAPI else { throw PWUsageAPIError.invalidResponse }
         let generation = siteGeneration
@@ -148,7 +157,9 @@ extension DashboardCoordinator {
                 return nil
             case .changed(let response, let etag):
                 let validated = try response.validating(siteID: siteID)
-                await saveTimeline(validated, etag: etag, scope: scope)
+                await saveTimeline(
+                    validated, etag: etag, scope: scope, syncsCountryInBackground: syncsCountryInBackground
+                )
                 return validated
             }
         } catch {
@@ -219,7 +230,8 @@ extension DashboardCoordinator {
     private func saveTimeline(
         _ timeline: SiteTariffsTimelineResponse,
         etag: String?,
-        scope: SolarForecastSiteScope?
+        scope: SolarForecastSiteScope?,
+        syncsCountryInBackground: Bool = true
     ) async {
         guard let scope else { return }
         let generation = siteGeneration
@@ -229,7 +241,7 @@ extension DashboardCoordinator {
               siteGeneration == generation,
               tariffScope(siteID: selectedSiteID) == scope else { return }
         await refreshSavings(timeline: timeline)
-        if let stored = timeline.rateCountry, stored.source != .owner {
+        if syncsCountryInBackground, let stored = timeline.rateCountry, stored.source != .owner {
             Task { [weak self] in await self?.syncSiteRateCountry(stored: stored) }
         }
     }
