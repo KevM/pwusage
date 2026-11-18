@@ -166,6 +166,31 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const manualTariffStillExists = await local.database.query(`SELECT id FROM "Tariff" WHERE site_id = 's1' AND name = 'Exact 2026'`);
     expect(manualTariffStillExists.rowCount).toBe(1);
   });
+  it('replays the selection provenance and site rate country migrations without changing data', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-replay', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    await repo.createManualPeriod('s-replay', 'u1', {
+      name: 'Replay Plan',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+      }],
+    });
+    const before = await repo.getTimeline('s-replay', 'u1');
+    const migrations = (await readdir('db-migrations'))
+      .filter(f => f.endsWith('_tariff_selection_provenance.sql') || f.endsWith('_site_rate_country.sql'))
+      .sort();
+    expect(migrations).toHaveLength(2);
+    for (const file of migrations) {
+      await local.database.query(await readFile(`db-migrations/${file}`, 'utf8'));
+    }
+    const after = await repo.getTimeline('s-replay', 'u1');
+    expect(after.periods).toEqual(before.periods);
+    expect(after.rateCountry).toEqual(before.rateCountry);
+  });
   it('marks the nearest earlier plan as active when today falls in a gap, like billing does', async () => {
     await local.database.query(`INSERT INTO "Site" VALUES ('s-gap', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
     const repo = new TariffTimelineRepo();

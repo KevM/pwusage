@@ -64,14 +64,15 @@ struct RateEstimatesPresentationTests {
     @Test func outOfDateNoticeNamesTheNewerRevisionStart() {
         let dto = Self.estimates(teslaPlanOutOfDate: true, newerPlanStart: "2026-01-01")
         #expect(RateEstimatesPresentation.outOfDateNotice(dto)
-            == "Your Tesla rate plan looks out of date. Newer rates took effect Jan 1, 2026. "
-            + "Update it in the Tesla app or add your rate plan here.")
+            == "Your Tesla rate plan may be out of date: newer public rates took effect Jan 1, 2026. "
+            + "Check your bill, then change PWUsage’s plan, or update the plan in the Tesla app and sync.")
     }
 
     @Test func outOfDateNoticeFallsBackWithoutADate() {
         let dto = Self.estimates(teslaPlanOutOfDate: true, newerPlanStart: nil)
         #expect(RateEstimatesPresentation.outOfDateNotice(dto)
-            == "Your Tesla rate plan looks out of date. Update it in the Tesla app or add your rate plan here.")
+            == "Your Tesla rate plan may be out of date. "
+            + "Check your bill, then change PWUsage’s plan, or update the plan in the Tesla app and sync.")
     }
 
     @Test func outOfDateNoticeIsHiddenWhenThePlanIsCurrent() {

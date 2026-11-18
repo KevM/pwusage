@@ -177,7 +177,7 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse { throw PWUsageAPIError.invalidResponse }
 
-    @Test("Divergence banner says which plan is newer")
+    @Test("Mismatch banner says PWUsage's plan differs from the plan last saved from Tesla, and when")
     func divergenceCopyNamesTheNewerPlan() {
         func copy(ours: String?, theirs: String?) -> TeslaDivergenceCopy {
             TeslaDivergenceCopy(
@@ -190,15 +190,14 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
                 )
             )
         }
-        let newer = copy(ours: "2026-11-12T15:00:00Z", theirs: "2026-10-29T12:00:00Z")
-        #expect(newer.title == "Your custom plan is newer than Tesla's")
-        #expect(newer.detail.contains("hasn't changed since"))
-        #expect(newer.detail.contains("2026"))
+        let dated = copy(ours: "2026-11-12T15:00:00Z", theirs: "2026-10-29T12:00:00Z")
+        #expect(dated.title == "PWUsage’s rate plan differs from Tesla’s")
+        #expect(dated.detail.hasPrefix("PWUsage last saved \"We energies\" from Tesla on Oct 29, 2026."))
+        #expect(dated.detail.contains("Your Powerwall uses the plan in Tesla"))
 
-        let older = copy(ours: "2026-10-01T15:00:00Z", theirs: "2026-11-02T12:00:00Z")
-        #expect(older.title == "Tesla changed its plan after your custom plan")
-
-        #expect(copy(ours: nil, theirs: nil).title == "Tesla's plan differs from your custom plan")
+        let undated = copy(ours: nil, theirs: nil)
+        #expect(undated.title == "PWUsage’s rate plan differs from Tesla’s")
+        #expect(undated.detail.hasPrefix("\"We energies\" is the plan PWUsage last saved from Tesla."))
     }
 
     @Test("Sync reports what it found even when nothing changes on screen")

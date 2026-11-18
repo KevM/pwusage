@@ -1,26 +1,22 @@
 import Foundation
 
-/// What to tell the user when their custom plan and the Tesla plan disagree.
+/// What to tell the user when the plan chosen in PWUsage differs from the plan last saved from
+/// Tesla. It names when that Tesla plan was saved, so an old snapshot never reads as live.
 struct TeslaDivergenceCopy: Equatable, Sendable {
     let title: String
     let detail: String
 
+    private static let effect = "Your Powerwall uses the plan in Tesla; PWUsage uses yours for bills and savings."
+
     init(sync: TeslaSyncDTO) {
-        let ours = Self.parse(sync.activeManualUpdatedAt)
-        let theirs = Self.parse(sync.latestUpdatedAt)
-        let planName = sync.latestTariffName.flatMap { $0.isEmpty ? nil : "\"\($0)\"" } ?? "Its plan"
-        func day(_ date: Date) -> String {
-            date.formatted(.dateTime.month(.abbreviated).day().year().locale(Locale(identifier: "en_US")))
-        }
-        if let ours, let theirs, ours >= theirs {
-            title = "Your custom plan is newer than Tesla's"
-            detail = "\(planName) in your Tesla account hasn't changed since \(day(theirs))."
-        } else if let ours, let theirs {
-            title = "Tesla changed its plan after your custom plan"
-            detail = "\(planName) was updated in your Tesla account on \(day(theirs)); yours was saved \(day(ours))."
+        let saved = Self.parse(sync.latestUpdatedAt)
+        let planName = sync.latestTariffName.flatMap { $0.isEmpty ? nil : "\"\($0)\"" }
+        title = "PWUsage’s rate plan differs from Tesla’s"
+        if let saved {
+            let day = saved.formatted(.dateTime.month(.abbreviated).day().year().locale(Locale(identifier: "en_US")))
+            detail = "PWUsage last saved \(planName ?? "its plan") from Tesla on \(day). \(Self.effect)"
         } else {
-            title = "Tesla's plan differs from your custom plan"
-            detail = "\(planName) is saved in your Tesla account."
+            detail = "\(planName ?? "Tesla’s plan") is the plan PWUsage last saved from Tesla. \(Self.effect)"
         }
     }
 
@@ -29,11 +25,11 @@ struct TeslaDivergenceCopy: Equatable, Sendable {
         let hasActiveCustomPlan = refreshed.teslaSync.differsFromActiveManual
         if refreshed.teslaSync.latestTariffId != previousTeslaPlan {
             return hasActiveCustomPlan
-                ? "Saved Tesla's updated plan to your history. Your custom plan stays active."
+                ? "Saved Tesla's updated plan to your history. The plan you chose stays active."
                 : "Tesla's updated plan was saved to your history."
         }
         return hasActiveCustomPlan
-            ? "Checked Tesla: its plan hasn't changed. Your custom plan stays active."
+            ? "Checked Tesla: its plan hasn't changed. The plan you chose stays active."
             : "Checked Tesla: your rate plan is up to date."
     }
 

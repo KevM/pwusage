@@ -10,7 +10,8 @@ enum RateEstimatesPrompt: Equatable, Sendable {
 
 /// Copy for rate plan start-date sources, estimated days and setup prompts.
 enum RateEstimatesPresentation {
-    private static let updateTail = "Update it in the Tesla app or add your rate plan here."
+    private static let updateTail = "Check your bill, then change PWUsage’s plan, "
+        + "or update the plan in the Tesla app and sync."
 
     static func startSourceLabel(_ source: TariffStartSource?) -> String? {
         switch source {
@@ -30,10 +31,10 @@ enum RateEstimatesPresentation {
     static func outOfDateNotice(_ estimates: SiteRateEstimatesDTO?) -> String? {
         guard let estimates, estimates.teslaPlanOutOfDate else { return nil }
         guard let start = estimates.newerPlanStart else {
-            return "Your Tesla rate plan looks out of date. \(updateTail)"
+            return "Your Tesla rate plan may be out of date. \(updateTail)"
         }
         let date = RatePlanTimelineFormatting.displayDate(start)
-        return "Your Tesla rate plan looks out of date. Newer rates took effect \(date). \(updateTail)"
+        return "Your Tesla rate plan may be out of date: newer public rates took effect \(date). \(updateTail)"
     }
 
     static func mayBeOutdatedNote(_ estimates: SiteRateEstimatesDTO?) -> String? {
@@ -153,6 +154,10 @@ enum RateEstimatesPresentation {
 
     /// The utility row asks for the country first while it is unconfirmed, and lets an owner
     /// outside the US correct it, since public utility rates cover only US homes.
+    static func addRatePlanTitle(for timeline: SiteTariffsTimelineResponse) -> String {
+        timeline.supportsRatePlanSelection ? "Change Plan" : addRatePlanButtonTitle
+    }
+
     static func utilityRowPrompt(_ estimates: SiteRateEstimatesDTO?) -> RateEstimatesPrompt {
         guard let estimates else { return .pickUtility }
         return estimates.needsCountryConfirmation == true || estimates.eligibility == .outsideUS

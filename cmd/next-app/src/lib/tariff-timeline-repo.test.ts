@@ -504,6 +504,31 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(clientQueries.some(q => q.sql.includes('SiteTariffReattribution'))).toBe(false);
   });
 
+  it('buildSiteTariffsTimelineResponse flags an active owner-chosen public plan that differs from Tesla', () => {
+    const base = {
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
+      currency: 'USD',
+      today: '2026-11-17',
+      viewerUserId: 'u1',
+      tariffMap: new Map([[10, { id: 10, updated: new Date('2026-10-01T00:00:00Z') } as never]]),
+      latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-09-01T00:00:00Z') } as never,
+    };
+    const row = (choice: 'owner' | 'automatic') => ({
+      period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+      updated_by_user_id: choice === 'owner' ? 'u1' : null, name: 'Public', version: 1, content_hash: 'public-hash',
+      selection_id: 5, choice_kind: choice,
+    }) as never;
+
+    const chosen = buildSiteTariffsTimelineResponse({ ...base, periodRows: [row('owner')] });
+    expect(chosen.teslaSync.differsFromActiveManual).toBe(true);
+    expect(chosen.teslaSync.activeManualUpdatedAt).toBe('2026-10-01T00:00:00.000Z');
+
+    const automatic = buildSiteTariffsTimelineResponse({ ...base, periodRows: [row('automatic')] });
+    expect(automatic.teslaSync.differsFromActiveManual).toBe(false);
+  });
+
   it('buildSiteTariffsTimelineResponse retains choiceKind and displays verification only when exact hash and range match', () => {
     const res = buildSiteTariffsTimelineResponse({
       siteId: 's1',

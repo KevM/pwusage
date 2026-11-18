@@ -9,6 +9,8 @@ struct RateEstimatesRatePlanSection: View {
     var onFindHistory: () -> Void = {}
     var onDismissHistory: () -> Void = {}
     let onAddRatePlan: () -> Void
+    /// "Change Plan" where the server reviews changes; "Add Rate Plan" on older servers.
+    var addRatePlanTitle = RateEstimatesPresentation.addRatePlanButtonTitle
     let onChooseUtility: () -> Void
     let onChoosePlan: () -> Void
 
@@ -21,7 +23,7 @@ struct RateEstimatesRatePlanSection: View {
                 } icon: {
                     Image(systemName: "bolt.badge.clock")
                 }
-                Button(RateEstimatesPresentation.addRatePlanButtonTitle, action: onAddRatePlan)
+                Button(addRatePlanTitle, action: onAddRatePlan)
                     .emphasisProminentButton()
                     .controlSize(.small)
             }

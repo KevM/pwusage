@@ -32,4 +32,9 @@ enum TariffSheetModal: Identifiable, Equatable {
     static func changePlan(for timeline: SiteTariffsTimelineResponse) -> Self {
         RatePlanSourcePresentation.offersPublicPlans(timeline) ? .changePlan : .editor(.add)
     }
+
+    /// The out-of-date notice's action: Change Plan where the server reviews changes.
+    static func newPlan(for timeline: SiteTariffsTimelineResponse) -> Self {
+        timeline.supportsRatePlanSelection ? changePlan(for: timeline) : .editor(.add)
+    }
 }

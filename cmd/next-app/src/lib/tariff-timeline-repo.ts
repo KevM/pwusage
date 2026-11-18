@@ -309,10 +309,13 @@ export function buildSiteTariffsTimelineResponse(
   const activeRefToday = pickActivePeriodForDate(referencePeriods, today);
   if (activeRefToday) activeRefToday.isCurrentToday = true;
 
+  // The plan chosen in PWUsage that is active today: a manual plan, or any non-Tesla plan an owner
+  // explicitly selected (a public plan). The field keeps its wire name for older clients.
   const activeManualRow = periodRows.find(r => {
     const from = r.effective_from.slice(0, 10);
     const to = r.effective_to ? r.effective_to.slice(0, 10) : null;
-    return r.source === 'manual' && from <= today && (to === null || to >= today);
+    const chosenInPwusage = r.source === 'manual' || (r.source === 'estimated' && r.choice_kind === 'owner');
+    return chosenInPwusage && from <= today && (to === null || to >= today);
   });
   const differsFromActiveManual = Boolean(
     activeManualRow && latestTesla && latestTesla.content_hash !== activeManualRow.content_hash
