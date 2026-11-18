@@ -1,4 +1,8 @@
 import { layoutTimeline } from './tariff-estimates';
+import {
+  buildBatchAiHandoffPreviewWithDetails,
+  TariffAiHandoffConflictError,
+} from './tariff-ai-handoff-service';
 import { estimateFreshness } from './urdb/match';
 import type { PoolClient } from 'pg';
 import { pool } from './db';
@@ -4161,6 +4165,164 @@ export class TariffTimelineRepo {
         verification: verBySel.get(sid) ?? null,
       };
     });
+  }
+
+  async loadAiHandoffSpans(
+    siteId: string,
+    viewerUserId: string | null
+  ): Promise<{
+    actualSpans: ExistingTimelineSpanInput[];
+    referenceSpans: ExistingTimelineSpanInput[];
+  }> {
+    const [actualSpans, referenceSpans] = await Promise.all([
+      loadScopeSelectionSpans(pool, siteId, 'actual', viewerUserId),
+      loadScopeSelectionSpans(pool, siteId, 'reference', viewerUserId),
+    ]);
+    return { actualSpans, referenceSpans };
+  }
+
+  async commitAiHandoffSelections(
+    siteId: string,
+    input: {
+      userId: string;
+      rawInput: string;
+      expectedReviewHash: string;
+      verifiedAgainstBill: boolean;
+      now?: Date;
+    }
+  ): Promise<import('./tariff-contract').TariffAiHandoffCommitResponse> {
+    const { userId, rawInput, expectedReviewHash, verifiedAgainstBill } = input;
+    const now = input.now ?? new Date();
+    const client = await pool.connect();
+    const selectionIds: number[] = [];
+    const tariffIds: number[] = [];
+    let appliedActualCount = 0;
+    let appliedReferenceCount = 0;
+    let reattributionFrom: string | null = null;
+    let reattributionTo: string | null = null;
+    let hasReattribution = false;
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
+
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{
+        id: string;
+        timezone: string;
+        currency: string;
+        rate_country?: string | null;
+      }>(
+        `SELECT id, timezone,
+                COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
+                rate_country
+         FROM "Site" WHERE id = $1 FOR UPDATE`,
+        [siteId]
+      );
+      const site = siteRes.rows[0];
+      if (!site) throw new TariffNotFoundError('Site not found');
+
+      const timezone = site.timezone || 'UTC';
+      const currency = (site.currency || 'USD').trim().toUpperCase();
+      const today = siteLocalDateString(now, timezone);
+      const eligibility = deriveRatePlanEligibility(site.rate_country ?? null);
+
+      const actualSpans = await loadScopeSelectionSpans(client, siteId, 'actual', userId);
+      const referenceSpans = await loadScopeSelectionSpans(client, siteId, 'reference', userId);
+
+      const built = buildBatchAiHandoffPreviewWithDetails({
+        siteId,
+        timezone,
+        currency,
+        todaySiteLocal: today,
+        eligibility,
+        rawInput,
+        actualSpans,
+        referenceSpans,
+      });
+
+      if (built.response.reviewHash !== expectedReviewHash) {
+        throw new TariffAiHandoffConflictError(built.response);
+      }
+
+      for (const item of [...built.changedActual, ...built.changedReference]) {
+        const res = await applyTariffSelectionOnClient(client, siteId, today, {
+          scope: item.scope,
+          effectiveFrom: item.period.effectiveFrom,
+          effectiveTo: item.period.effectiveTo,
+          userId,
+          verifiedAgainstBill,
+          candidate: {
+            kind: 'manual',
+            name: item.period.name,
+            seasons: item.period.seasons,
+            holidaysUseWeekendSchedule: true,
+          },
+          reviewHash: item.preview.reviewHash,
+        });
+        selectionIds.push(...res.selectionIds);
+        tariffIds.push(...res.tariffIds);
+        if (!res.unchanged) {
+          if (item.scope === 'actual') appliedActualCount += 1;
+          else appliedReferenceCount += 1;
+        }
+        if (item.scope === 'actual' && res.reattributionRange) {
+          if (!hasReattribution) {
+            hasReattribution = true;
+            reattributionFrom = res.reattributionRange.fromDate;
+            reattributionTo = res.reattributionRange.toDate;
+          } else {
+            reattributionFrom = minDate(reattributionFrom as string, res.reattributionRange.fromDate);
+            reattributionTo = maxEnd(reattributionTo, res.reattributionRange.toDate);
+          }
+        }
+      }
+
+      if (hasReattribution && reattributionFrom !== null) {
+        reattribution = {
+          siteId,
+          fromDate: reattributionFrom,
+          toDate: reattributionTo,
+          requestedByUserId: userId,
+          trigger: 'update',
+        };
+        queued = await enqueueReattributionOnClient(client, reattribution);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const unchanged = appliedActualCount === 0 && appliedReferenceCount === 0;
+    if (!unchanged) {
+      new SiteRepo().invalidateCache(siteId);
+    }
+    if (reattribution && queued) {
+      logReattributionEnqueued(reattribution, queued);
+    }
+    logEvent('info', 'tariff.ai_handoff.committed', {
+      appliedActualCount,
+      appliedReferenceCount,
+      unchanged,
+      verifiedAgainstBill,
+      accountId: accountFingerprint(userId),
+    });
+
+    return {
+      selectionIds,
+      tariffIds: [...new Set(tariffIds)],
+      appliedActualCount,
+      appliedReferenceCount,
+      unchanged,
+      reattributionRange:
+        hasReattribution && reattributionFrom !== null
+          ? { fromDate: reattributionFrom, toDate: reattributionTo }
+          : null,
+      timeline: await this.getTimeline(siteId, userId),
+    };
   }
 }
 
