@@ -34,6 +34,12 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
   echo 'PWUSAGE_TEST_TIMEOUT_SECONDS must be a positive integer' >&2
   exit 2
 fi
+# Booting the simulator has its own limit, so a slow boot does not eat into the test run's.
+boot_timeout_seconds="${PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS:-900}"
+if [[ ! "$boot_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+  echo 'PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS must be a positive integer' >&2
+  exit 2
+fi
 
 missing_tools=()
 command -v xcodegen > /dev/null 2>&1 || missing_tools+=('xcodegen (brew install xcodegen)')
@@ -170,6 +176,41 @@ if [[ "$mode" == default && "$#" -eq 0 ]]; then
   fi
 fi
 
+# run_with_timeout LABEL SECONDS COMMAND... : runs COMMAND in its own process group and stops the
+# whole group (exit 124) once SECONDS pass.
+run_with_timeout() {
+  python3 - "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+label = sys.argv[1]
+timeout = int(sys.argv[2])
+command = sys.argv[3:]
+process = subprocess.Popen(command, start_new_session=True)
+
+def stop_process():
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+try:
+    status = process.wait(timeout=timeout)
+except subprocess.TimeoutExpired:
+    print(f"{label} exceeded {timeout}s; stopping {os.path.basename(command[0])} and its children", file=sys.stderr)
+    stop_process()
+    status = 124
+except KeyboardInterrupt:
+    stop_process()
+    status = 130
+sys.exit(status)
+PY
+}
+
 xcodebuild_action=test
 test_options=(-parallel-testing-enabled NO -collect-test-diagnostics on-failure)
 if [[ "$mode" == build ]]; then
@@ -188,8 +229,25 @@ if [[ "${#test_filter_args[@]}" -gt 0 ]]; then
 fi
 echo "Test artifacts: $artifacts_dir"
 
+# Boot the simulator before the timed run. xcodebuild boots it only after building, and on a busy
+# hosted Mac the wait between the build and the first test has taken over ten minutes of the limit.
+if [[ "$mode" != build ]]; then
+  echo "Booting simulator $simulator_id (limit: ${boot_timeout_seconds}s)"
+  boot_started=$SECONDS
+  set +e
+  run_with_timeout 'Simulator boot' "$boot_timeout_seconds" xcrun simctl bootstatus "$simulator_id" -b
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo "Simulator $simulator_id did not boot (exit $status)" >&2
+    rm -rf "$artifacts_dir"
+    exit "$status"
+  fi
+  echo "Simulator ready after $((SECONDS - boot_started))s"
+fi
+
 set +e
-python3 - "$timeout_seconds" xcodebuild \
+run_with_timeout 'iOS test run' "$timeout_seconds" xcodebuild \
   -project PWUsage.xcodeproj \
   -scheme PWUsage \
   -destination "id=$simulator_id" \
@@ -202,35 +260,7 @@ python3 - "$timeout_seconds" xcodebuild \
   "PWUSAGE_FUZZ_SEED=${PWUSAGE_FUZZ_SEED:-}" \
   ${mode_build_settings[@]+"${mode_build_settings[@]}"} \
   ${test_filter_args[@]+"${test_filter_args[@]}"} \
-  "$xcodebuild_action" <<'PY'
-import os
-import signal
-import subprocess
-import sys
-
-timeout = int(sys.argv[1])
-command = sys.argv[2:]
-process = subprocess.Popen(command, start_new_session=True)
-
-def stop_process():
-    os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-
-try:
-    status = process.wait(timeout=timeout)
-except subprocess.TimeoutExpired:
-    print(f"iOS test run exceeded {timeout}s; stopping xcodebuild and its children", file=sys.stderr)
-    stop_process()
-    status = 124
-except KeyboardInterrupt:
-    stop_process()
-    status = 130
-sys.exit(status)
-PY
+  "$xcodebuild_action"
 status=$?
 set -e
 

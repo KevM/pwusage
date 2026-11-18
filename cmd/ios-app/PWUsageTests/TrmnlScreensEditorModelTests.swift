@@ -264,6 +264,9 @@ struct TrmnlScreensEditorModelTests {
     }
 }
 
+/// The editor's API calls run off the main actor, and a preview or save can still be on its way when
+/// the next one starts, so every field sits behind a lock. Unguarded appends from two calls at once
+/// crashed the test host on CI.
 private final class FakeScreensAPI: MobileTrmnlAPI, @unchecked Sendable {
     struct Saved {
         let screens: [TrmnlManagedScreen]
@@ -271,37 +274,74 @@ private final class FakeScreensAPI: MobileTrmnlAPI, @unchecked Sendable {
         let siteID: String
     }
 
-    var screens: [TrmnlManagedScreen]
-    var screensFailure: (any Error)?
-    var saveFailure: (any Error)?
-    var previewFailures: [TrmnlComponentConfig] = []
-    private(set) var previewRequests: [TrmnlComponentConfig] = []
-    var saveLatency: Duration = .zero
-    private(set) var saves: [Saved] = []
-    private(set) var saveStarts = 0
+    private struct State {
+        var screens: [TrmnlManagedScreen]
+        var screensFailure: (any Error)?
+        var saveFailure: (any Error)?
+        var previewFailures: [TrmnlComponentConfig] = []
+        var previewRequests: [TrmnlComponentConfig] = []
+        var saveLatency: Duration = .zero
+        var saves: [Saved] = []
+        var saveStarts = 0
+    }
 
-    init(screens: [TrmnlManagedScreen]) { self.screens = screens }
+    private let lock = NSLock()
+    private var state: State
+
+    init(screens: [TrmnlManagedScreen]) { state = State(screens: screens) }
+
+    var screensFailure: (any Error)? {
+        get { lock.withLock { state.screensFailure } }
+        set { lock.withLock { state.screensFailure = newValue } }
+    }
+
+    var saveFailure: (any Error)? {
+        get { lock.withLock { state.saveFailure } }
+        set { lock.withLock { state.saveFailure = newValue } }
+    }
+
+    var previewFailures: [TrmnlComponentConfig] {
+        get { lock.withLock { state.previewFailures } }
+        set { lock.withLock { state.previewFailures = newValue } }
+    }
+
+    var saveLatency: Duration {
+        get { lock.withLock { state.saveLatency } }
+        set { lock.withLock { state.saveLatency = newValue } }
+    }
+
+    var previewRequests: [TrmnlComponentConfig] { lock.withLock { state.previewRequests } }
+    var saves: [Saved] { lock.withLock { state.saves } }
+    var saveStarts: Int { lock.withLock { state.saveStarts } }
 
     func fetchTrmnlDevices(siteID _: String) async throws -> [TrmnlDevice] { [] }
 
     func fetchTrmnlPreview(siteID _: String, screen: TrmnlComponentConfig?) async throws -> String {
-        if let screen {
-            previewRequests.append(screen)
-            if previewFailures.contains(screen) { throw URLError(.timedOut) }
+        guard let screen else { return "<doc/>" }
+        let fails = lock.withLock {
+            state.previewRequests.append(screen)
+            return state.previewFailures.contains(screen)
         }
+        if fails { throw URLError(.timedOut) }
         return "<doc/>"
     }
 
     func fetchTrmnlScreens(uuid _: String) async throws -> [TrmnlManagedScreen] {
-        if let screensFailure { throw screensFailure }
+        let (screens, failure) = lock.withLock { (state.screens, state.screensFailure) }
+        if let failure { throw failure }
         return screens
     }
 
     func saveTrmnlScreens(_ screens: [TrmnlManagedScreen], for device: TrmnlDevice, siteID: String) async throws {
-        saveStarts += 1
-        if saveLatency > .zero { try await Task.sleep(for: saveLatency) }
-        if let saveFailure { throw saveFailure }
-        saves.append(Saved(screens: screens, device: device, siteID: siteID))
+        let latency = lock.withLock {
+            state.saveStarts += 1
+            return state.saveLatency
+        }
+        if latency > .zero { try await Task.sleep(for: latency) }
+        try lock.withLock {
+            if let failure = state.saveFailure { throw failure }
+            state.saves.append(Saved(screens: screens, device: device, siteID: siteID))
+        }
     }
 }
 

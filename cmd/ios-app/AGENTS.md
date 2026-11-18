@@ -159,13 +159,17 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   parentheses. A run that executes zero tests (for example a misspelled suite) exits non-zero even
   though `xcodebuild` prints `TEST SUCCEEDED`. After changing the script, run `./test-run-tests.sh`.
 - **Tuning**: set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or
-  `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. A failed or timed-out run prints the
-  retained test-artifact path; inspect those artifacts and the simulator state before changing app
-  code, and avoid overlapping runs.
+  `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. The simulator boots before that deadline
+  starts, under `PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS` (900 by default). A failed or timed-out
+  run prints the retained test-artifact path; inspect those artifacts and the simulator state
+  before changing app code, and avoid overlapping runs.
 - **Framework**: Swift Testing only — `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`.
   Legacy `XCTest` is prohibited.
 - **Waiting**: never assert after a fixed `Task.sleep`. Use `eventually` for a state that must be
   reached and `staysTrue` for one that must not change, both in `PWUsageTests/TestWaits.swift`.
+- **Fakes**: a fake's `async` protocol methods run off the main actor and can overlap, so an
+  `@unchecked Sendable` fake keeps what it records behind a lock. Unguarded appends crashed the
+  simulator's test host on CI.
 - **CI**: iOS CI runs on a GitHub-hosted macOS runner for PRs marked ready for review or manually
   via `workflow_dispatch`.
 

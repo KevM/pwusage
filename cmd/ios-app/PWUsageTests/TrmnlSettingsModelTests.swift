@@ -96,25 +96,34 @@ struct TrmnlSettingsModelTests {
     }
 }
 
+/// API calls run off the main actor and can overlap, so the recorded state sits behind a lock.
 private final class FakeTrmnlAPI: MobileTrmnlAPI, @unchecked Sendable {
     struct PreviewRequest: Equatable {
         let siteID: String
         let screen: TrmnlComponentConfig?
     }
 
-    var devices: Result<[TrmnlDevice], any Error>
-    private(set) var previewRequests: [PreviewRequest] = []
+    private let lock = NSLock()
+    private var storedDevices: Result<[TrmnlDevice], any Error>
+    private var storedPreviewRequests: [PreviewRequest] = []
 
     init(devices: Result<[TrmnlDevice], any Error>) {
-        self.devices = devices
+        storedDevices = devices
     }
+
+    var devices: Result<[TrmnlDevice], any Error> {
+        get { lock.withLock { storedDevices } }
+        set { lock.withLock { storedDevices = newValue } }
+    }
+
+    var previewRequests: [PreviewRequest] { lock.withLock { storedPreviewRequests } }
 
     func fetchTrmnlDevices(siteID _: String) async throws -> [TrmnlDevice] {
         try devices.get()
     }
 
     func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
-        previewRequests.append(PreviewRequest(siteID: siteID, screen: screen))
+        lock.withLock { storedPreviewRequests.append(PreviewRequest(siteID: siteID, screen: screen)) }
         return "<doc/>"
     }
 
