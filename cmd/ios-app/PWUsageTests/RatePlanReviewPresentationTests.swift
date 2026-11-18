@@ -83,7 +83,11 @@ struct RatePlanReviewPresentationTests {
     func reviewCopy() throws {
         #expect(RatePlanReviewPresentation.rangeLabel(from: "2025-03-01", to: nil).hasSuffix("ongoing"))
         let preview = try RatePlanReviewModelTests.preview()
-        #expect(RatePlanReviewPresentation.recalculationNote(preview).contains("recalculated"))
+        #expect(RatePlanReviewPresentation.recalculationNote(preview)
+            == "Bills and savings estimates from Mar 1, 2025 will be recalculated in the background.")
+        let fromStart = try RatePlanReviewModelTests.preview(fromHistoryStart: true)
+        #expect(RatePlanReviewPresentation.recalculationNote(fromStart)
+            == "All past bills and savings estimates will be recalculated in the background.")
         #expect(RatePlanReviewPresentation.powerwallWarning.contains("Your Powerwall will continue using"))
         let row = TariffAlignedTimeRow(
             fromHour: 16, fromMinute: 0, toHour: 21, toMinute: 0,

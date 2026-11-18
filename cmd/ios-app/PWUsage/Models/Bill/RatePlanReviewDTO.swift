@@ -190,6 +190,9 @@ struct TariffSelectionPreviewResponse: Decodable, Equatable, Sendable {
     let timezone: String
     let holidaysUseWeekendSchedule: Bool
     let recalculatesHistory: Bool
+    /// The change reaches the earliest plan, so every earlier day is repriced too; the range's
+    /// start is then the server's internal history floor, not a date to show.
+    let recalculatesFromHistoryStart: Bool
     let recalculationRange: TariffReviewDateRange?
     /// Always false: saving in PWUsage never changes the plan on the Powerwall.
     let affectsPowerwallPlan: Bool

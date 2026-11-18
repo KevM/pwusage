@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { REATTRIBUTION_HISTORY_START } from './tariff-reattribution-queue';
 import type {
   TariffAlignedSeasonComparison,
   TariffAlignedTimeRow,
@@ -759,27 +760,56 @@ function collectBoundaryStarts(
   return [...starts].sort((a, b) => a.localeCompare(b));
 }
 
+type Recalculation = {
+  recalculatesHistory: boolean;
+  recalculatesFromHistoryStart: boolean;
+  recalculationRange: { fromDate: string; toDate: string | null } | null;
+};
+
+const NO_RECALCULATION: Recalculation = {
+  recalculatesHistory: false,
+  recalculatesFromHistoryStart: false,
+  recalculationRange: null,
+};
+
+/**
+ * The dates the commit reprices, widened by the same fallback rules as
+ * `enqueueReattributionOnClient`: days before the earliest plan are priced from it, and days in
+ * a gap after the range are priced from the plan before them.
+ */
 function computeRecalculation(
   scope: TariffSelectionScope,
   todaySiteLocal: string,
-  affectedIntervals: TariffReviewAffectedInterval[]
-): { recalculatesHistory: boolean; recalculationRange: { fromDate: string; toDate: string | null } | null } {
-  if (scope !== 'actual') {
-    return { recalculatesHistory: false, recalculationRange: null };
-  }
+  affectedIntervals: TariffReviewAffectedInterval[],
+  existingSpans: ReadonlyArray<{ effectiveFrom: string; effectiveTo: string | null }>
+): Recalculation {
+  if (scope !== 'actual') return NO_RECALCULATION;
   const actionable = affectedIntervals.filter(interval => interval.kind !== 'restore_unavailable');
-  if (actionable.length === 0) {
-    return { recalculatesHistory: false, recalculationRange: null };
+  if (actionable.length === 0) return NO_RECALCULATION;
+
+  const requestedFrom = actionable[0].effectiveFrom;
+  const earliestExisting = existingSpans.reduce<string | null>(
+    (min, span) => (min === null || span.effectiveFrom < min ? span.effectiveFrom : min),
+    null
+  );
+  const recalculatesFromHistoryStart = earliestExisting === null || requestedFrom <= earliestExisting;
+  const fromDate = recalculatesFromHistoryStart ? REATTRIBUTION_HISTORY_START : requestedFrom;
+  if (fromDate > todaySiteLocal) return NO_RECALCULATION;
+
+  let toDate = actionable[actionable.length - 1].effectiveTo;
+  if (toDate !== null) {
+    const dayAfter = addCalendarDays(toDate, 1);
+    const nextFrom = existingSpans
+      .filter(span => span.effectiveTo === null || span.effectiveTo >= dayAfter)
+      .map(span => maxStart(span.effectiveFrom, dayAfter))
+      .reduce<string | null>((min, from) => (min === null || from < min ? from : min), null);
+    if (nextFrom === null) toDate = null;
+    else if (nextFrom > dayAfter) toDate = addCalendarDays(nextFrom, -1);
   }
-  const earliestFrom = actionable[0].effectiveFrom;
-  if (earliestFrom > todaySiteLocal) {
-    return { recalculatesHistory: false, recalculationRange: null };
-  }
-  const latestEnd = actionable[actionable.length - 1].effectiveTo;
-  const toDate = latestEnd === null || latestEnd > todaySiteLocal ? null : latestEnd;
   return {
     recalculatesHistory: true,
-    recalculationRange: { fromDate: earliestFrom, toDate },
+    recalculatesFromHistoryStart,
+    recalculationRange: { fromDate, toDate: toDate === null || toDate > todaySiteLocal ? null : toDate },
   };
 }
 
@@ -937,10 +967,11 @@ export function buildTariffSelectionPreview(
     });
   }
 
-  const { recalculatesHistory, recalculationRange } = computeRecalculation(
+  const { recalculatesHistory, recalculatesFromHistoryStart, recalculationRange } = computeRecalculation(
     scope,
     input.todaySiteLocal,
-    affectedIntervals
+    affectedIntervals,
+    input.existingSpans
   );
 
   const distinctRestoredTariffIds = new Set(restoredOriginals.map(o => o.tariffId));
@@ -982,6 +1013,7 @@ export function buildTariffSelectionPreview(
     timezone: input.timezone,
     holidaysUseWeekendSchedule,
     recalculatesHistory,
+    recalculatesFromHistoryStart,
     recalculationRange,
     affectsPowerwallPlan: false,
     candidatePlan: resolvedCandidatePlan,

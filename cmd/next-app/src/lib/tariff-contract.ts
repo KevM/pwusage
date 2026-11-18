@@ -344,6 +344,11 @@ export interface TariffSelectionPreviewResponse {
   timezone: string;
   holidaysUseWeekendSchedule: boolean;
   recalculatesHistory: boolean;
+  /**
+   * The change reaches the site's earliest plan, so every earlier day is repriced too and
+   * `recalculationRange.fromDate` is the internal history floor rather than a real date.
+   */
+  recalculatesFromHistoryStart: boolean;
   recalculationRange: {
     fromDate: string;
     toDate: string | null;

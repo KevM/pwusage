@@ -12,7 +12,9 @@ import {
   validateSelectionDates,
   validateTariffSelectionCommit,
   validateTariffSelectionRequest,
+  type ExistingTimelineSpanInput,
 } from './tariff-selection';
+import { REATTRIBUTION_HISTORY_START } from './tariff-reattribution-queue';
 import { TariffValidationError } from './tariff-timeline';
 
 const summerWinterPlanA: TariffSeasonInput[] = [
@@ -457,6 +459,55 @@ describe('buildTariffSelectionPreview', () => {
 
     expect(futureActualPreview.recalculatesHistory).toBe(false);
     expect(futureActualPreview.recalculationRange).toBeNull();
+  });
+
+  it('recalculates the same dates the commit reprices: all earlier history and any gap after', () => {
+    const plan = makePlanSnapshot({
+      tariffId: 501, version: 1, periodId: 51, name: 'Tesla Plan', source: 'tesla', seasons: summerWinterPlanA,
+    });
+    const later = makePlanSnapshot({
+      tariffId: 502, version: 1, periodId: 52, name: 'Later Plan', source: 'tesla', seasons: summerWinterPlanA,
+    });
+    const candidate = makePlanSnapshot({ name: 'Owner Plan', source: 'manual', seasons: shiftedWindowPlanB });
+    const preview = (effectiveFrom: string, effectiveTo: string | null, existingSpans: ExistingTimelineSpanInput[]) =>
+      buildTariffSelectionPreview({
+        siteId: 'site-1',
+        timezone: 'America/Chicago',
+        currency: 'USD',
+        todaySiteLocal: '2026-11-17',
+        request: {
+          scope: 'actual',
+          candidate: { kind: 'manual', name: 'Owner Plan', seasons: shiftedWindowPlanB },
+          effectiveFrom,
+          effectiveTo,
+        },
+        existingSpans,
+        candidatePlan: candidate,
+      });
+
+    // Days before the earliest plan are priced from it, so replacing it reprices all of them,
+    // even when the earliest plan starts in the future.
+    const future = preview('2026-12-01', null, [{ effectiveFrom: '2026-12-01', effectiveTo: null, plan }]);
+    expect(future.recalculatesHistory).toBe(true);
+    expect(future.recalculatesFromHistoryStart).toBe(true);
+    expect(future.recalculationRange).toEqual({ fromDate: REATTRIBUTION_HISTORY_START, toDate: null });
+
+    const earliest = preview('2026-01-01', '2026-03-31', [{ effectiveFrom: '2026-01-01', effectiveTo: null, plan }]);
+    expect(earliest.recalculatesFromHistoryStart).toBe(true);
+    expect(earliest.recalculationRange).toEqual({ fromDate: REATTRIBUTION_HISTORY_START, toDate: '2026-03-31' });
+
+    // Days in a gap after the range are priced from the plan before them, so they change too.
+    const gapAfter = preview('2025-03-01', '2025-03-31', [
+      { effectiveFrom: '2025-01-01', effectiveTo: '2025-03-31', plan },
+      { effectiveFrom: '2025-07-01', effectiveTo: null, plan: later },
+    ]);
+    expect(gapAfter.recalculatesFromHistoryStart).toBe(false);
+    expect(gapAfter.recalculationRange).toEqual({ fromDate: '2025-03-01', toDate: '2025-06-30' });
+
+    const lastGap = preview('2025-03-01', '2025-03-31', [
+      { effectiveFrom: '2025-01-01', effectiveTo: '2025-03-31', plan },
+    ]);
+    expect(lastGap.recalculationRange).toEqual({ fromDate: '2025-03-01', toDate: null });
   });
 
   it('carries forward preserved Tesla originals when overriding an existing override', () => {

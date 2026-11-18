@@ -152,6 +152,7 @@ extension MobileTariffsDecodingTests {
       "reviewHash": "hash-1", "siteId": "site-1", "scope": "actual",
       "effectiveFrom": "2025-03-01", "effectiveTo": null, "currency": "USD", "unit": "kWh",
       "timezone": "America/Chicago", "holidaysUseWeekendSchedule": true, "recalculatesHistory": true,
+      "recalculatesFromHistoryStart": false,
       "recalculationRange": { "fromDate": "2025-03-01", "toDate": null }, "affectsPowerwallPlan": false,
       "candidatePlan": null,
       "affectedIntervals": [{

@@ -5,10 +5,18 @@ import Testing
 @MainActor
 @Suite("Reviewing a rate plan change before it applies")
 struct RatePlanReviewModelTests {
-    static func preview(hash: String = "hash-1", canRestore: Bool = true) throws -> TariffSelectionPreviewResponse {
+    static func preview(
+        hash: String = "hash-1",
+        canRestore: Bool = true,
+        fromHistoryStart: Bool = false
+    ) throws -> TariffSelectionPreviewResponse {
         let json = MobileTariffsDecodingTests.previewJSON
             .replacingOccurrences(of: "\"hash-1\"", with: "\"\(hash)\"")
             .replacingOccurrences(of: "\"canApplyRestoration\": true", with: "\"canApplyRestoration\": \(canRestore)")
+            .replacingOccurrences(
+                of: "\"recalculatesFromHistoryStart\": false",
+                with: "\"recalculatesFromHistoryStart\": \(fromHistoryStart)"
+            )
         return try MobileContractDecoder.make().decode(TariffSelectionPreviewResponse.self, from: Data(json.utf8))
     }
 

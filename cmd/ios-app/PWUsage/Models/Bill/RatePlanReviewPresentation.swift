@@ -74,6 +74,9 @@ enum RatePlanReviewPresentation {
         guard preview.recalculatesHistory, let range = preview.recalculationRange else {
             return "No past bills or savings change."
         }
+        if preview.recalculatesFromHistoryStart {
+            return "All past bills and savings estimates will be recalculated in the background."
+        }
         let start = RatePlanTimelineFormatting.displayDate(range.fromDate)
         return "Bills and savings estimates from \(start) will be recalculated in the background."
     }

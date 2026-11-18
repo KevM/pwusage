@@ -61,6 +61,7 @@ const previewStub = {
   timezone: 'America/Chicago',
   holidaysUseWeekendSchedule: true,
   recalculatesHistory: true,
+  recalculatesFromHistoryStart: false,
   recalculationRange: { fromDate: '2025-01-01', toDate: null },
   affectsPowerwallPlan: false as const,
   candidatePlan: null,
