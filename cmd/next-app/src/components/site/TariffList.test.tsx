@@ -298,7 +298,9 @@ describe('TariffList v2 timeline', () => {
                 unavailableRanges: [],
                 canApplyRestoration: false,
               },
-              approximationNotes: [],
+              approximationNotes: [
+                { kind: 'day_specific_schedule', message: 'Sunday rates differ from Saturday.' },
+              ],
               summary: {
                 hasBuyRateChanges: true,
                 hasSellRateChanges: false,
@@ -315,6 +317,7 @@ describe('TariffList v2 timeline', () => {
     );
     expect(previewHtml).toContain('Sat – Sun &amp; Holidays');
     expect(previewHtml).toContain('0.14/kWh');
+    expect(previewHtml).toContain('Sunday rates differ from Saturday.');
   });
 });
 

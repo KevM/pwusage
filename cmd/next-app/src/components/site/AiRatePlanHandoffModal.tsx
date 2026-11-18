@@ -102,6 +102,13 @@ export function renderScopePreviewSection(
               ))}
             </div>
           ))}
+          {preview.approximationNotes.length > 0 && (
+            <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/20 px-2.5 py-2 space-y-1 text-amber-900 dark:text-amber-200">
+              {preview.approximationNotes.map((note, nIdx) => (
+                <p key={nIdx}>{note.message}</p>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>

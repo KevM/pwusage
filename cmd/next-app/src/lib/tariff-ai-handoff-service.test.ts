@@ -152,6 +152,55 @@ describe('tariff-ai-handoff-service', () => {
     expect(preview.actualPreviews[0].candidatePlan?.name).toBe('Home Plan (2025)');
   });
 
+  it('treats Tesla plans with different season-level hash representations as unchanged when schedules match', () => {
+    const teslaSpan = makeExistingSpan('Tesla Plan', '2024-01-01', null, FLAT_SEASONS, 'tesla');
+    // parseTeslaTariff stores season-level buy/sell rates as 0, producing a different stored contentHash
+    teslaSpan.plan.contentHash = 'tesla-zero-season-rates-hash';
+
+    const unchangedPreview = buildBatchAiHandoffPreview({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-18',
+      eligibility: 'us',
+      rawInput: JSON.stringify({
+        schema: AI_HANDOFF_SCHEMA,
+        actualPeriods: [
+          { name: 'Tesla Plan', effectiveFrom: '2024-01-01', effectiveTo: null, seasons: FLAT_SEASONS },
+        ],
+        referencePeriods: [],
+      }),
+      actualSpans: [teslaSpan],
+      referenceSpans: [],
+    });
+    expect(unchangedPreview.unchangedActualCount).toBe(1);
+    expect(unchangedPreview.actualPreviews).toHaveLength(0);
+
+    // When the Tesla plan has day-specific schedules, keep it marked as changed
+    const daySpecificSpan = makeExistingSpan('Tesla Plan', '2024-01-01', null, FLAT_SEASONS, 'tesla');
+    daySpecificSpan.plan.approximationNotes = [
+      { kind: 'day_specific_schedule', message: 'Day-specific schedule detected.' },
+    ];
+    const changedPreview = buildBatchAiHandoffPreview({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-18',
+      eligibility: 'us',
+      rawInput: JSON.stringify({
+        schema: AI_HANDOFF_SCHEMA,
+        actualPeriods: [
+          { name: 'Tesla Plan', effectiveFrom: '2024-01-01', effectiveTo: null, seasons: FLAT_SEASONS },
+        ],
+        referencePeriods: [],
+      }),
+      actualSpans: [daySpecificSpan],
+      referenceSpans: [],
+    });
+    expect(changedPreview.unchangedActualCount).toBe(0);
+    expect(changedPreview.actualPreviews).toHaveLength(1);
+  });
+
   it('commits reviewed batch changes via repo.commitAiHandoffSelections and rejects missing reviewHash', async () => {
     const existingActual = [makeExistingSpan('Tesla Plan', '2024-01-01', null, FLAT_SEASONS, 'tesla')];
     const rawInput = JSON.stringify({

@@ -268,6 +268,7 @@ private struct RatePlanAiHandoffReviewSheet: View {
             if !preview.actualPreviews.isEmpty {
                 Section("Your Rate Plan Changes") {
                     ForEach(Array(preview.actualPreviews.enumerated()), id: \.offset) { _, item in
+                        approximationNotesView(item.approximationNotes)
                         ForEach(Array(item.affectedIntervals.enumerated()), id: \.offset) { _, interval in
                             RatePlanReviewIntervalSection(interval: interval, currency: preview.currency)
                         }
@@ -277,6 +278,7 @@ private struct RatePlanAiHandoffReviewSheet: View {
             if !preview.referencePreviews.isEmpty {
                 Section("Fixed Comparison Plan Changes") {
                     ForEach(Array(preview.referencePreviews.enumerated()), id: \.offset) { _, item in
+                        approximationNotesView(item.approximationNotes)
                         ForEach(Array(item.affectedIntervals.enumerated()), id: \.offset) { _, interval in
                             RatePlanReviewIntervalSection(interval: interval, currency: preview.currency)
                         }
@@ -284,6 +286,15 @@ private struct RatePlanAiHandoffReviewSheet: View {
                 }
             }
             confirmationSection
+        }
+    }
+
+    @ViewBuilder
+    private func approximationNotesView(_ notes: [TariffApproximationNote]) -> some View {
+        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+            Label(note.message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
         }
     }
 

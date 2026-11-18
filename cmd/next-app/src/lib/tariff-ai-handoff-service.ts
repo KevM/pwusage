@@ -152,13 +152,15 @@ function prepareScopePreviews(params: {
     const rawParsed = compileSeasonsToParsedTariff(rawPeriod.name, rawPeriod.seasons);
     const rawHash = tariffContentHash(rawParsed);
 
-    const exactMatch = currentSpans.find(
-      s =>
-        s.effectiveFrom === rawPeriod.effectiveFrom &&
-        s.effectiveTo === rawPeriod.effectiveTo &&
-        s.plan.contentHash === rawHash &&
-        s.plan.name.trim().toLowerCase() === rawPeriod.name.trim().toLowerCase()
-    );
+    const exactMatch = currentSpans.find(s => {
+      if (s.effectiveFrom !== rawPeriod.effectiveFrom || s.effectiveTo !== rawPeriod.effectiveTo) return false;
+      if (s.plan.name.trim().toLowerCase() !== rawPeriod.name.trim().toLowerCase()) return false;
+      if (s.plan.approximationNotes.some(n => n.kind === 'day_specific_schedule')) return false;
+      const normalizedExistingHash = tariffContentHash(
+        compileSeasonsToParsedTariff(s.plan.name, s.plan.seasons)
+      );
+      return normalizedExistingHash === rawHash;
+    });
     if (exactMatch) {
       unchangedCount += 1;
       assignedNames.push({ name: exactMatch.plan.name, contentHash: rawHash });
