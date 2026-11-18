@@ -12,8 +12,11 @@ import { jsonWithETag } from '@/lib/tariff-etag';
 import { TariffValidationError } from '@/lib/tariff-timeline';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import { UrdbUnavailableError, utilityNames } from '@/lib/urdb/client';
+import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
+// The background estimate can run for up to 40 seconds after the response.
+export const maxDuration = 60;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
 
 export function PUT(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -39,7 +42,9 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
         if (!names.includes(input.name)) return json({ error: 'Choose a valid utility.' }, 400);
         choice = { name: input.name };
       } else return json({ error: 'Invalid request body.' }, 400);
-      return jsonWithETag(await repo.setSiteUtility(siteId, user.id, choice));
+      const timeline = await repo.setSiteUtility(siteId, user.id, choice);
+      startPendingEstimates(siteId, timeline);
+      return jsonWithETag(timeline);
     } catch (error) {
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
       if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);

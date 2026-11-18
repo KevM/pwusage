@@ -14,8 +14,11 @@ import { TariffNotFoundError, TariffTimelineRepo, UtilityChangedError } from '@/
 import { ratesEffectiveOn, UrdbUnavailableError } from '@/lib/urdb/client';
 import { urdbRateToSeasons } from '@/lib/urdb/convert';
 import { urdbStartDate } from '@/lib/urdb/match';
+import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
+// The background estimate can run for up to 40 seconds after the response.
+export const maxDuration = 60;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
 
 export function PUT(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -44,7 +47,9 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const plans = rates.filter(rate => urdbStartDate(rate) !== null &&
         urdbRateToSeasons(rate, { medianMonthlyKwh: null, fallbackSellRate: 0 }).ok);
       if (!plans.some(rate => rate.label === input.label)) return json({ error: 'Choose a valid plan.' }, 400);
-      return jsonWithETag(await repo.setSitePlanLabel(siteId, user.id, input.label, utility));
+      const timeline = await repo.setSitePlanLabel(siteId, user.id, input.label, utility);
+      startPendingEstimates(siteId, timeline);
+      return jsonWithETag(timeline);
     } catch (error) {
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
       if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);

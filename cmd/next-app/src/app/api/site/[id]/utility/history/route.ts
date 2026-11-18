@@ -16,6 +16,7 @@ import { averageSell, monthlyUsage } from '@/lib/urdb/estimate-job';
 import { memoisedApi } from '@/lib/urdb/memoised-api';
 import { buildRatePlanHistory, mapWithConcurrency } from '@/lib/urdb/history-candidates';
 import { expandHistoryPeriod, HistoryPeriodError, type HistoryPeriodInput } from '@/lib/urdb/history-expand';
+import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -108,7 +109,9 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const expanded = await withIoDeadline(45_000, () => mapWithConcurrency(periods, 4, period =>
         expandHistoryPeriod(period, { api, utilityName, timeZone: site.timezone, today, convert })));
       const revisions = expanded.flatMap((items, index) => periods[index] === open ? items.filter(item => item.to !== null) : items);
-      return jsonWithETag(await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null));
+      const timeline = await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null);
+      startPendingEstimates(siteId, timeline);
+      return jsonWithETag(timeline);
     } catch (error) {
       if (error instanceof urdb.UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
       if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);

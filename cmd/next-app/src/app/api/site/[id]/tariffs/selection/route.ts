@@ -14,8 +14,11 @@ import {
   UtilityChangedError,
 } from '@/lib/tariff-timeline-repo';
 import { UrdbUnavailableError } from '@/lib/urdb/client';
+import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
+// The background estimate can run for up to 40 seconds after the response.
+export const maxDuration = 60;
 
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
@@ -52,6 +55,7 @@ export function POST(req: NextRequest, context: { params: Promise<{ id: string }
           }
         });
       }
+      startPendingEstimates(siteId, committed.timeline);
       return jsonWithETag(committed, 200);
     } catch (error) {
       if (error instanceof TariffSelectionConflictError) {

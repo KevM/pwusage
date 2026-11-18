@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   setSiteRateCountry: vi.fn(),
   runSiteReattribution: vi.fn(),
   logEvent: vi.fn(),
+  startPendingEstimates: vi.fn(),
 }));
 
 vi.mock('next/server', async importOriginal => {
@@ -59,6 +60,8 @@ vi.mock('@/lib/tariff-timeline-repo', async importOriginal => {
     },
   };
 });
+
+vi.mock('@/lib/urdb/start-estimates', () => ({ startPendingEstimates: mocks.startPendingEstimates }));
 
 import { GET, PUT } from './route';
 import { TariffNotFoundError } from '@/lib/tariff-timeline-repo';
@@ -130,6 +133,14 @@ describe('/api/site/[id]/rate-country', () => {
     mocks.isCrossOriginRequest.mockReturnValueOnce(true);
     expect((await PUT(put({ countryCode: 'US', source: 'owner' }), context)).status).toBe(403);
     expect(mocks.setSiteRateCountry).not.toHaveBeenCalled();
+  });
+
+  it('hands the saved timeline to the background estimate starter', async () => {
+    const pending = { ...timelineStub, estimates: { status: 'pending' } };
+    mocks.setSiteRateCountry.mockResolvedValueOnce({ timeline: pending, reattributionRange: null });
+    const res = await PUT(put({ countryCode: 'US', source: 'solar_location' }), context);
+    expect(res.status).toBe(200);
+    expect(mocks.startPendingEstimates).toHaveBeenCalledWith('site-1', pending);
   });
 
   it('returns stored country metadata on GET', async () => {
