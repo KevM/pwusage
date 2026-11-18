@@ -79,7 +79,22 @@ final class RatePlanEditorState {
     /// True once the user has changed anything, so a stray swipe cannot throw the work away.
     var hasUnsavedChanges: Bool { draft != initialDraft }
 
-    var validationError: String? { draft.validate() }
+    var validationError: String? { draft.validate() ?? editRangeProblem }
+
+    static let shortenedEditMessage = "To shorten this plan’s dates, use Edit Dates instead."
+
+    /// A reviewed edit replaces the chosen range and keeps anything outside it, so it can't shorten
+    /// a plan: the cut-off part would stay. It must still cover the plan's current dates.
+    var editRangeProblem: String? {
+        guard selection != nil, case .edit(let period) = mode, let dates = draft.chosenDates else { return nil }
+        let coversStart = dates.from <= period.effectiveFrom
+        let coversEnd = switch (dates.to, period.effectiveTo) {
+        case (nil, _): true
+        case (.some, nil): false
+        case (.some(let until), .some(let originalEnd)): until >= originalEnd
+        }
+        return coversStart && coversEnd ? nil : Self.shortenedEditMessage
+    }
     var canSave: Bool { validationError == nil && !isSaving }
 
     /// Save in the toolbar: a new or customized plan can always be saved once valid, but an
@@ -93,7 +108,9 @@ final class RatePlanEditorState {
     /// Review in the toolbar, for servers with reviewed selections: available once the plan and
     /// both dates are valid, and for an existing plan once something has changed.
     var canReview: Bool {
-        guard selection != nil, draft.selectionRequest(scope: scope) != nil, !isSaving else { return false }
+        guard selection != nil, draft.selectionRequest(scope: scope) != nil, editRangeProblem == nil, !isSaving else {
+            return false
+        }
         if case .edit = mode { return hasUnsavedChanges }
         return true
     }

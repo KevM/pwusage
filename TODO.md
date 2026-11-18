@@ -10,7 +10,7 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 - [ ] **Publish a verified plan to the Powerwall:** out of scope for selection. Needs Tesla API research and its own design: fresh authorization, an explicit confirmation of how Powerwall behavior changes, exact verified-content checks, readback, uncertain results and recovery. A verified plan is never authorization to send a Tesla command. See the [design](docs/plans/2026-11-17-rate-plan-selection-design.md#follow-up-update-the-powerwall).
 - [ ] **Review fixed comparison plan changes on iOS:** `FixedRatePlanForm` still saves reference plans directly. Route it through the reviewed selection flow (`scope: reference`, `RatePlanChangeModel`/`RatePlanReviewModel`), as the actual plan does.
-- [ ] **Review date-only edits and deletes on iOS:** "Edit Dates" and "Delete" on plan cards still call the legacy PATCH/DELETE routes without a review. Shortening a manual plan's dates in the editor replaces only the chosen range; the rest of the old range stays.
+- [ ] **Review date-only edits and deletes on iOS:** "Edit Dates" and "Delete" on plan cards still call the legacy PATCH/DELETE routes without a review. The reviewed editor can't shorten a plan (a selection keeps coverage outside its range), so it sends owners to Edit Dates; a reviewed shortening needs the server to accept the edited period as the replacement target.
 - [ ] **Record when Tesla was last read:** the mismatch banner can only say when the Tesla plan was last *saved* (`Tariff.updated`); an unchanged sync records nothing. A last-checked time would let it say how fresh the comparison is.
 
 ## iOS: Savings Phase 3 return on investment follow-ups (2026-11-17, branch `claude/savings-phase-3-roi`)

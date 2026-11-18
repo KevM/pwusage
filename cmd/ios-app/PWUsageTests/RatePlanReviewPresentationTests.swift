@@ -93,6 +93,18 @@ struct RatePlanReviewPresentationTests {
             rateChanged: true, periodNameChanged: true
         )
         #expect(RatePlanReviewPresentation.timeLabel(row) == "4:00 PM – 9:00 PM")
+        let odd = TariffAlignedTimeRow(
+            fromHour: 6, fromMinute: 7, toHour: 6, toMinute: 22, before: nil, after: nil,
+            buyRateDelta: nil, sellRateDelta: nil, buyRateChanged: false, sellRateChanged: false,
+            rateChanged: false, periodNameChanged: false
+        )
+        #expect(RatePlanReviewPresentation.timeLabel(odd) == "6:07 AM – 6:22 AM", "Minute boundaries are kept")
+        let toMidnight = TariffAlignedTimeRow(
+            fromHour: 21, fromMinute: 0, toHour: 24, toMinute: 0, before: nil, after: nil,
+            buyRateDelta: nil, sellRateDelta: nil, buyRateChanged: false, sellRateChanged: false,
+            rateChanged: false, periodNameChanged: false
+        )
+        #expect(RatePlanReviewPresentation.timeLabel(toMidnight) == "9:00 PM – 12:00 AM")
         let usage = RatePlanReviewPresentation.rateChange(
             before: row.before, after: row.after, rate: \.buyRate, currency: "USD"
         )

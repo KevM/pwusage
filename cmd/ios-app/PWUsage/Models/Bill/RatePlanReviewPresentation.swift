@@ -98,11 +98,25 @@ enum RatePlanReviewPresentation {
         }
     }
 
+    /// Exact boundaries, to the minute: Tesla schedules can change at times like 6:07.
     static func timeLabel(_ row: TariffAlignedTimeRow) -> String {
-        let start = row.fromHour * 2 + row.fromMinute / 30
-        let end = row.toHour == 24 ? 48 : row.toHour * 2 + row.toMinute / 30
-        if start == 0, end == 48 || end == 0 { return "All day" }
-        return "\(RatePlanTimelineFormatting.slotTimeLabel(start)) – \(RatePlanTimelineFormatting.slotTimeLabel(end))"
+        let startsAtMidnight = row.fromHour == 0 && row.fromMinute == 0
+        let endsAtMidnight = (row.toHour == 24 || row.toHour == 0) && row.toMinute == 0
+        if startsAtMidnight, endsAtMidnight { return "All day" }
+        return "\(clockTime(hour: row.fromHour, minute: row.fromMinute)) – "
+            + clockTime(hour: row.toHour, minute: row.toMinute)
+    }
+
+    private static func clockTime(hour: Int, minute: Int) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        let components = DateComponents(year: 2000, month: 1, day: 1, hour: hour % 24, minute: minute)
+        guard let date = calendar.date(from: components) else { return "\(hour):\(minute)" }
+        let style = Date.FormatStyle(locale: Locale(identifier: "en_US"), calendar: calendar, timeZone: .gmt)
+            .hour(.defaultDigits(amPM: .abbreviated))
+            .minute(.twoDigits)
+        // Match the app's other time labels, which use a plain space before AM/PM.
+        return date.formatted(style).replacingOccurrences(of: "\u{202F}", with: " ")
     }
 
     static func seasonLabel(_ season: TariffAlignedSeasonComparison) -> String {

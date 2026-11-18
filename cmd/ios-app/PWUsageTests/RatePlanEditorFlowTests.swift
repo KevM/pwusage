@@ -329,4 +329,29 @@ struct RatePlanEditorFlowTests {
         #expect(state.canSubmit)
         #expect(!state.canReview)
     }
+
+    @MainActor
+    @Test("A reviewed edit can extend a plan but not shorten it; Edit Dates handles that")
+    func reviewedEditCannotShorten() throws {
+        let spy = try RatePlanReviewModelTests.Spy(preview: RatePlanReviewModelTests.preview())
+        let manual = TariffPeriodDTO(
+            periodId: 99, tariffId: 7, name: "Manual Winter", version: 2, source: .manual,
+            effectiveFrom: "2026-01-15", effectiveTo: nil, isCurrentToday: true, updatedBy: nil,
+            seasons: Self.samplePeriod.seasons
+        )
+        let utc = TimeZone(identifier: "UTC") ?? .gmt
+        let state = RatePlanEditorState(
+            mode: .edit(manual), timeZone: utc, currency: "USD", selection: spy.actions
+        )
+        state.draft.name = "Renamed Winter"
+        #expect(state.canReview)
+
+        state.draft.end = .endsOn(RatePlanTimelineFormatting.parseYMD("2026-10-31", in: utc) ?? .now)
+        #expect(!state.canReview)
+        #expect(state.validationError == RatePlanEditorState.shortenedEditMessage)
+
+        state.draft.end = .ongoing
+        state.draft.effectiveFrom = RatePlanTimelineFormatting.parseYMD("2026-01-01", in: utc)
+        #expect(state.canReview, "Starting earlier still covers the whole plan")
+    }
 }
