@@ -75,7 +75,8 @@ struct SolarSystemView: View {
         .onChange(of: solarHealth?.hasUnreadFinding) { solarHealth?.markFindingsSeen() }
         .onDisappear { coordinator.solarSurfaceDisappeared(.settings) }
         .task { await coordinator.solarSettingsAppeared() }
-        .task { await coordinator.refreshSavings() }
+        // Older days arrive in slices; each one changes what lifetime and payback count.
+        .task(id: deepHistory?.status.daysLoaded) { await coordinator.refreshSavings() }
         .sheet(item: $savingsSheet) { sheet in
             switch sheet {
             case .fixedRatePlan(let suggestion):
@@ -186,28 +187,48 @@ struct SolarSystemView: View {
             } else if stored == nil {
                 Section { Text("Solar forecasting isn’t available for this site yet.") }
             }
-            SolarSystemSavingsSection(
-                state: coordinator.savings,
-                currency: currency,
-                hasReferencePlan: coordinator.activeReferencePeriod != nil,
-                onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
-                onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
-                onCaveatAction: routeCaveat,
-                estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
-                estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
-                onChooseEstimateSetup: { savingsSheet = .rateEstimates($0) },
-                fixedPlanNote: RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
-                    coordinator.savingsTimeline?.estimates,
-                    referencePeriods: coordinator.savingsTimeline?.referencePeriods ?? [],
-                    periods: coordinator.savingsTimeline?.periods ?? []
-                )
-            )
+            savingsSection
             paybackSection
             panelHealthSection
             if stored != nil || status != nil { locationSection }
             #if DEBUG
                 if let debugActions { SiteHistoryDebugSection(actions: debugActions) }
             #endif
+        }
+    }
+
+    private var savingsSection: some View {
+        SolarSystemSavingsSection(
+            state: coordinator.savings,
+            currency: currency,
+            hasReferencePlan: coordinator.activeReferencePeriod != nil,
+            onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
+            onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(nil) },
+            onCaveatAction: routeCaveat,
+            estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
+            estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
+            onChooseEstimateSetup: { savingsSheet = .rateEstimates($0) },
+            fixedPlanNote: RateEstimatesPresentation.fixedPlanMayBeOutdatedNote(
+                coordinator.savingsTimeline?.estimates,
+                referencePeriods: coordinator.savingsTimeline?.referencePeriods ?? [],
+                periods: coordinator.savingsTimeline?.periods ?? []
+            ),
+            historyCoverage: historyCoverage,
+            timeZone: siteTimeZone,
+            onHistoryAction: runHistoryAction
+        )
+    }
+
+    private var historyCoverage: SavingsHistoryCoverage {
+        guard case .ready(let report) = coordinator.savings else { return .complete }
+        return SavingsHistoryCoverage(firstStoredDay: report.firstStoredDay, olderHistory: deepHistory?.status)
+    }
+
+    private func runHistoryAction(_ action: SiteDeepHistoryPresentation.Action) {
+        switch action {
+        case .load, .continueLoading: deepHistory?.start()
+        case .stop: Task { await deepHistory?.stop() }
+        case .reconnectTesla: Task { await reconnectTesla?.perform() }
         }
     }
 
@@ -226,7 +247,9 @@ struct SolarSystemView: View {
             currency: currency,
             timeZone: siteTimeZone,
             onEditCosts: { savingsSheet = .systemCosts },
-            onCaveatAction: routeCaveat
+            onCaveatAction: routeCaveat,
+            historyCoverage: historyCoverage,
+            onHistoryAction: runHistoryAction
         )
     }
 

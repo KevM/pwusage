@@ -2,11 +2,8 @@ import { effectiveTariffIdSql } from './effective-tariff-sql';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Pool } from 'pg';
 import { readdir, readFile } from 'node:fs/promises';
-import {
-  activityTestSocket,
-  ensureRoles,
-  safeActivityTestSocket,
-} from './battery-hold-activity-test-db';
+import { safeActivityTestSocket } from './battery-hold-activity-test-db';
+import { createTariffTestDatabase } from './tariff-test-db';
 
 const local = vi.hoisted(() => ({ database: undefined as unknown as Pool }));
 vi.mock('./db', () => ({
@@ -19,12 +16,23 @@ vi.mock('./db', () => ({
 import { buildDefaultTariff, parseTariffContent } from './importer/tariff-parser';
 import { STORED_TARIFF_CANDIDATES_SQL } from './importer/stored-tariff-backfill';
 import { TariffRepo } from './tariff-repo';
-import { recomputeIsCurrentTariff, TariffTimelineRepo, UtilityChangedError } from './tariff-timeline-repo';
+import {
+  recomputeIsCurrentTariff,
+  TariffSelectionConflictError,
+  TariffTimelineRepo,
+  UtilityChangedError,
+} from './tariff-timeline-repo';
+import {
+  commitTariffSelection,
+  listPublicUtilityPlansForSite,
+  previewTariffSelection,
+} from './tariff-selection-service';
 import type { TariffSeasonInput } from './tariff-contract';
 import type { ExpandedRevision } from './urdb/history-expand';
 import type { TariffPlanWriteInput } from './tariff-timeline';
+import { PublicPlansIneligibleError } from './rate-plan-eligibility';
 import { siteLocalDateString, addCalendarDays, TariffValidationError } from './tariff-timeline';
-import { runUrdbEstimatesForSite } from './urdb/estimate-job';
+import { runUrdbEstimatesCron, runUrdbEstimatesForSite } from './urdb/estimate-job';
 import type { UrdbApi } from './urdb/estimate-job';
 import type { UrdbRate } from './urdb/types';
 
@@ -38,70 +46,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
   });
 
   it('splits existing tesla span, protects active manual plan from tesla overwrite, and preserves immutable rows on delete', async () => {
-    const admin = new Pool({
-      host: activityTestSocket,
-      port: 55440,
-      user: process.env.USER,
-      database: 'postgres',
-      max: 1,
-    });
-    const dbName = 'tariff_timeline_repo_test';
-    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);
-    await admin.query(`CREATE DATABASE ${dbName}`);
-    await admin.end();
-
-    local.database = new Pool({
-      host: activityTestSocket,
-      port: 55440,
-      user: process.env.USER,
-      database: dbName,
-      max: 3,
-    });
-    await ensureRoles(local.database, ['anon', 'authenticated', 'service_role']);
-
-    await local.database.query(`
-      CREATE TABLE "User" (id TEXT PRIMARY KEY, email TEXT);
-      CREATE TABLE "Site" (id TEXT PRIMARY KEY, user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL, timezone TEXT NOT NULL, json JSONB, installed TIMESTAMPTZ);
-      CREATE TABLE "Tariff" (
-        id SERIAL PRIMARY KEY, site_id TEXT NOT NULL REFERENCES "Site"(id) ON DELETE CASCADE,
-        updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, name TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
-        is_current BOOLEAN NOT NULL DEFAULT true, content_hash TEXT
-      );
-      CREATE UNIQUE INDEX tariff_site_name_version_uidx ON "Tariff"(site_id, name, version);
-      CREATE UNIQUE INDEX tariff_current_uidx ON "Tariff"(site_id, name) WHERE is_current;
-      CREATE TABLE "TariffSeason" (
-        id SERIAL PRIMARY KEY, tariff_id INTEGER NOT NULL REFERENCES "Tariff"(id) ON DELETE CASCADE,
-        name TEXT, from_month INTEGER NOT NULL, from_day INTEGER NOT NULL, to_month INTEGER NOT NULL, to_day INTEGER NOT NULL,
-        buy_rate DOUBLE PRECISION NOT NULL, sell_rate DOUBLE PRECISION NOT NULL
-      );
-      CREATE TABLE "TariffSchedule" (
-        id SERIAL PRIMARY KEY, season_id INTEGER NOT NULL REFERENCES "TariffSeason"(id) ON DELETE CASCADE,
-        name TEXT, buy_rate DOUBLE PRECISION, sell_rate DOUBLE PRECISION,
-        from_day_of_week INTEGER, from_hour INTEGER, from_minute INTEGER, to_day_of_week INTEGER, to_hour INTEGER, to_minute INTEGER
-      );
-      CREATE TABLE "EnergyDayArchive" (site_id TEXT NOT NULL, day_start TIMESTAMPTZ NOT NULL, revision UUID NOT NULL, status TEXT, PRIMARY KEY (site_id, day_start));
-      INSERT INTO "User" VALUES ('u1', 'owner@example.com'), ('u2', 'member@example.com');
-      INSERT INTO "Site" VALUES ('s1', 'u1', 'America/Chicago', '{"currency":"USD"}');
-    `);
-
-    const migFile = (await readdir('db-migrations')).find(f => f.endsWith('_historic_effective_tariffs.sql'));
-    if (!migFile) throw new Error('Migration missing');
-    await local.database.query(await readFile(`db-migrations/${migFile}`, 'utf8'));
-    const referenceMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_reference_periods.sql'));
-    if (!referenceMigration) throw new Error('Reference migration missing');
-    await local.database.query(await readFile(`db-migrations/${referenceMigration}`, 'utf8'));
-    const estimateMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_estimated_rate_plans.sql'));
-    if (!estimateMigration) throw new Error('URDB estimate migration missing');
-    await local.database.query(await readFile(`db-migrations/${estimateMigration}`, 'utf8'));
-    const newerStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_newer_plan_start.sql'));
-    if (!newerStartMigration) throw new Error('URDB newer plan start migration missing');
-    await local.database.query(await readFile(`db-migrations/${newerStartMigration}`, 'utf8'));
-    const revisionStartMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_revision_start.sql'));
-    if (!revisionStartMigration) throw new Error('URDB revision start migration missing');
-    await local.database.query(await readFile(`db-migrations/${revisionStartMigration}`, 'utf8'));
-    const ownerHistoryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_owner_history.sql'));
-    if (!ownerHistoryMigration) throw new Error('URDB owner history migration missing');
-    await local.database.query(await readFile(`db-migrations/${ownerHistoryMigration}`, 'utf8'));
+    local.database = await createTariffTestDatabase('tariff_timeline_repo_test');
 
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion('s1', {
@@ -145,6 +90,31 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(afterDelete.periods.find(p => p.isCurrentToday)?.source).toBe('tesla');
     const manualTariffStillExists = await local.database.query(`SELECT id FROM "Tariff" WHERE site_id = 's1' AND name = 'Exact 2026'`);
     expect(manualTariffStillExists.rowCount).toBe(1);
+  });
+  it('replays the selection provenance and site rate country migrations without changing data', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-replay', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    await repo.createManualPeriod('s-replay', 'u1', {
+      name: 'Replay Plan',
+      effectiveFrom: '2025-01-01',
+      effectiveTo: null,
+      seasons: [{
+        name: 'All Year', fromMonth: 1, toMonth: 12,
+        weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+        weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 }],
+      }],
+    });
+    const before = await repo.getTimeline('s-replay', 'u1');
+    const migrations = (await readdir('db-migrations'))
+      .filter(f => f.endsWith('_tariff_selection_provenance.sql') || f.endsWith('_site_rate_country.sql'))
+      .sort();
+    expect(migrations).toHaveLength(2);
+    for (const file of migrations) {
+      await local.database.query(await readFile(`db-migrations/${file}`, 'utf8'));
+    }
+    const after = await repo.getTimeline('s-replay', 'u1');
+    expect(after.periods).toEqual(before.periods);
+    expect(after.rateCountry).toEqual(before.rateCountry);
   });
   it('marks the nearest earlier plan as active when today falls in a gap, like billing does', async () => {
     await local.database.query(`INSERT INTO "Site" VALUES ('s-gap', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
@@ -331,14 +301,14 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     const refTariffRes = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
-       VALUES ('s7', 'Flat Reference', 2, FALSE, 'manual') RETURNING id`
+       VALUES ('s7', 'Flat Reference', 2, FALSE, 'estimated') RETURNING id`
     );
     const refTariffId = refTariffRes.rows[0].id;
 
     // Overlapping a Tesla span in TariffEffectivePeriod is accepted in TariffReferencePeriod.
     await local.database.query(
-      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id)
-       VALUES ('s7', $1, '2024-01-01', NULL, 'u1')`,
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, source, updated_by_user_id)
+       VALUES ('s7', $1, '2024-01-01', NULL, 'estimated', NULL)`,
       [refTariffId]
     );
 
@@ -396,6 +366,15 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     const ownerHistoryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_owner_history.sql'));
     if (!ownerHistoryMigration) throw new Error('URDB owner history migration missing');
     await local.database.query(await readFile(`db-migrations/${ownerHistoryMigration}`, 'utf8'));
+    const systemCostsMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_system_costs.sql'));
+    if (!systemCostsMigration) throw new Error('Site system costs migration missing');
+    await local.database.query(await readFile(`db-migrations/${systemCostsMigration}`, 'utf8'));
+    const selectionProvenanceMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_selection_provenance.sql'));
+    if (!selectionProvenanceMigration) throw new Error('Tariff selection provenance migration missing');
+    await local.database.query(await readFile(`db-migrations/${selectionProvenanceMigration}`, 'utf8'));
+    const rateCountryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_rate_country.sql'));
+    if (!rateCountryMigration) throw new Error('Site rate country migration missing');
+    await local.database.query(await readFile(`db-migrations/${rateCountryMigration}`, 'utf8'));
     const tariff = await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source)
        VALUES ('s-estimated-source', 'Estimated', 1, FALSE, 'estimated') RETURNING id`
@@ -485,8 +464,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
   it('parks an unknown site utility without making rate queries', async () => {
     await local.database.query('ALTER TABLE "Site" ADD COLUMN utility TEXT, ADD COLUMN orphaned_at TIMESTAMPTZ');
     await local.database.query(
-      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
-       VALUES ('s-unknown-utility', 'u1', 'America/Chicago', '{}', 'Unlisted Local Utility')`
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ('s-unknown-utility', 'u1', 'America/Chicago', '{}', 'Unlisted Local Utility', 'US', 'owner')`
     );
     const api: UrdbApi = {
       utilityNames: async () => ['We Energies'],
@@ -506,7 +485,11 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('leaves a site outside the US ready with no estimates and no OpenEI calls', async () => {
     const siteId = 's-outside-us';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'Australia/Sydney', '{}', 'AGL')`, [siteId]);
+    await local.database.query(
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ($1, 'u1', 'Australia/Sydney', '{}', 'AGL', 'AU', 'owner')`,
+      [siteId]
+    );
     const api: UrdbApi = {
       utilityNames: async () => { throw new Error('Should not list OpenEI utilities for a site outside the US'); },
       ratesEffectiveOn: async () => { throw new Error('Should not request rates for a site outside the US'); },
@@ -542,8 +525,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       defaultRates: async () => [defaultRate],
     };
     await local.database.query(
-      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
-       VALUES ('s-picked-estimate', 'u1', 'America/Chicago', '{}', 'We Energies')`
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ('s-picked-estimate', 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`
     );
 
     const now = new Date('2026-11-16T12:00:00Z');
@@ -588,8 +571,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('keeps a manual plan inserted during URDB fetch and clips the estimate around it', async () => {
     await local.database.query(
-      `INSERT INTO "Site"(id, user_id, timezone, json, utility)
-       VALUES ('s-owner-edit-during-fetch', 'u1', 'America/Chicago', '{}', 'We Energies')`
+      `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+       VALUES ('s-owner-edit-during-fetch', 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`
     );
     await local.database.query(
       `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status)
@@ -661,7 +644,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('matches every Tesla version, even one that no longer owns a span, and walks back from the earliest match', async () => {
     const siteId = 's-unspanned-first-version';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion(siteId, flatTesla('Old Tesla', 0.25));
     await tariffRepo.addTariffVersion(siteId, flatTesla('Current Tesla', 0.18));
@@ -685,7 +668,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('keeps filling around a finite owner plan added after the owner picked a public plan', async () => {
     const siteId = 's-picked-then-manual';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
     const api = chainApi([flatRate('picked', '2025-01-01', 0.2)]);
     const now = new Date('2026-11-16T12:00:00Z');
@@ -709,10 +692,10 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('fills the days between the matched revision start and an owner-dated Tesla span with that revision', async () => {
     const siteId = 's-owner-dated-gap';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Owner Dated Tesla', 0.18));
     await local.database.query(`UPDATE "Tariff" SET updated = '2025-04-01T12:00:00Z' WHERE site_id = $1`, [siteId]);
-    await local.database.query(`UPDATE "TariffEffectivePeriod" SET effective_from = '2025-03-01', effective_to = NULL, updated_by_user_id = 'u1' WHERE site_id = $1`, [siteId]);
+    await local.database.query(`UPDATE "TariffEffectivePeriod" SET effective_from = '2025-03-01', effective_to = NULL, updated_by_user_id = 'u1', selection_id = NULL WHERE site_id = $1`, [siteId]);
 
     await runUrdbEstimatesForSite(siteId, chainApi([flatRate('rev-matched', '2025-01-01', 0.18)]), new Date('2026-11-16T12:00:00Z'));
 
@@ -729,7 +712,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       seasons: { Summer: { fromMonth: 1, fromDay: 1, toMonth: 12, toDay: 31, tou_periods: { OFF_PEAK: { periods: [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 0, fromMinute: 0, toHour: 0, toMinute: 0 }] } } } },
       energy_charges: { Summer: { rates: { OFF_PEAK: 0.4 } } },
     };
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', $2, 'We Energies')`, [siteId, { site_name: 'Home', tariff_content_v2: content }]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', $2, 'We Energies', 'US', 'owner')`, [siteId, { site_name: 'Home', tariff_content_v2: content }]);
     await new TariffRepo().addTariffVersion(siteId, parseTariffContent(content as unknown as Parameters<typeof parseTariffContent>[0], 'Home'));
     // Rows stored before content hashes existed have none.
     await local.database.query(`UPDATE "Tariff" SET content_hash = NULL WHERE site_id = $1`, [siteId]);
@@ -742,7 +725,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('removes estimates as soon as the owner says their utility is not listed', async () => {
     const siteId = 's-skip-utility-now';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
     await runUrdbEstimatesForSite(siteId, { ...chainApi([flatRate('picked', '2025-01-01', 0.2)]), defaultRates: async () => [flatRate('default', '2024-01-01', 0.15)] }, new Date('2026-11-16T12:00:00Z'));
     const before = await new TariffTimelineRepo().getTimeline(siteId, 'u1');
@@ -801,7 +784,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('reports an out-of-date Tesla plan only from the latest Tesla version', async () => {
     const siteId = 's-out-of-date-latest';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     const tariffRepo = new TariffRepo();
     await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla Old', 0.2));
     await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla New', 0.21));
@@ -818,7 +801,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('reports the newer URDB revision start and the estimate freshness on the wire', async () => {
     const siteId = 's-estimate-freshness';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
     const teslaId = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`, [siteId])).rows[0]!.id;
     await local.database.query(`UPDATE "SiteUtility" SET status = 'ready', urdb_utility = 'Wisconsin Electric Power Co' WHERE site_id = $1`, [siteId]);
@@ -839,7 +822,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('dates estimate freshness from the URDB revision, not the span clipped to the site history', async () => {
     const siteId = 's-estimate-freshness-clipped';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility) VALUES ($1, 'auto', 'ready', 'Wisconsin Electric Power Co')`, [siteId]);
     const id = (await local.database.query<{ id: number }>(
       `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Residential', 1, TRUE, 'estimated') RETURNING id`, [siteId]
@@ -855,7 +838,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('starts a site\'s first Tesla plan at its first archived day and later plans at today', async () => {
     const siteId = 's-first-plan-history';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     // Site-local midnights (America/Chicago, CST): the first archived day is 2024-03-05.
     await local.database.query(
       `INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status) VALUES
@@ -945,7 +928,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
   it('clears needs_plan once the owner adds a rate plan', async () => {
     const siteId = 's-needs-plan-cleared';
-    await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'US', 'owner')`, [siteId]);
     await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status, next_check_at) VALUES ($1, 'Wisconsin Electric Power Co', 'auto', 'needs_plan', now() + interval '7 days')`, [siteId]);
 
     const timeline = await new TariffTimelineRepo().createManualPeriod(siteId, 'u1', {
@@ -982,7 +965,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       rateByLabel: async () => null,
       defaultRates: async () => [defaultRate],
     };
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
     const tariffId = await ownerHistoryTariff(siteId, 'Owner History Plan');
 
     await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
@@ -1018,7 +1001,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-16T18:00:00Z') });
     onTestFinished(() => { vi.useRealTimers(); });
     const siteId = 's-history-guide';
-    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+    await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z', 'US', 'owner')`, [siteId]);
     await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Plan', 0.2));
     // The database stamps `updated` with the real clock; pin it to the faked day.
     await local.database.query(`UPDATE "Tariff" SET updated = '2026-11-16 17:00:00' WHERE site_id = $1 AND source = 'tesla'`, [siteId]);
@@ -1058,7 +1041,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
 
     /** Harrison: history from 2023-11-14, Tesla first seen 2026-04-28 and backfilled to the history start. */
     async function harrisonSite(siteId: string, tesla: 'real' | 'default' | 'none' = 'real') {
-      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z')`, [siteId]);
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, installed, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', '2023-11-14T18:00:00Z', 'US', 'owner')`, [siteId]);
       await local.database.query(`INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status) VALUES ($1, '2023-11-14T06:00:00Z', gen_random_uuid(), 'complete')`, [siteId]);
       if (tesla !== 'none') {
         await new TariffRepo().addTariffVersion(siteId, tesla === 'real' ? flatTesla('Tesla Plan', 0.2) : buildDefaultTariff('Default Rate'));
@@ -1253,6 +1236,1110 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       await repo.deleteManualPeriod(siteId, edited.periodId, 'u1');
 
       expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([['tesla', '2023-11-14', null]]);
+    });
+  });
+
+  describe('tariff selection provenance, protection, verification, and Tesla restoration', () => {
+    const seasonsInput = (buy: number, sell = 0.04): TariffSeasonInput[] => [{
+      name: 'All Year',
+      fromMonth: 1,
+      toMonth: 12,
+      weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: sell }],
+      weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: sell }],
+    }];
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-16T18:00:00Z') });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('migration is idempotent, enforces RLS/grants, backfills owner periods unverified, and cascades on Site delete', async () => {
+      const siteId = 's-sel-mig';
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'Wisconsin Electric Power Co')`, [siteId]);
+      await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'ready')`, [siteId]);
+
+      const repo = new TariffTimelineRepo();
+      await repo.createManualPeriod(siteId, 'u1', {
+        name: 'Pre-backfill Manual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        seasons: seasonsInput(0.19),
+      });
+      await repo.createReferencePeriod(siteId, 'u1', {
+        name: 'Pre-backfill Reference',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        seasons: seasonsInput(0.14),
+      });
+      // Simulate rows imported before TariffSelection existed by unlinking selection_id cleanly.
+      await local.database.query(`UPDATE "TariffEffectivePeriod" SET selection_id = NULL WHERE site_id = $1`, [siteId]);
+      await local.database.query(`UPDATE "TariffReferencePeriod" SET selection_id = NULL WHERE site_id = $1`, [siteId]);
+      await local.database.query(`DELETE FROM "TariffSelection" WHERE site_id = $1`, [siteId]);
+
+      const migFile = (await readdir('db-migrations')).find(f => f.endsWith('_tariff_selection_provenance.sql'));
+      expect(migFile).toBeDefined();
+      const migSql = await readFile(`db-migrations/${migFile!}`, 'utf8');
+      await local.database.query(migSql);
+      await local.database.query(migSql);
+
+      const selRows = (await local.database.query<{ scope: string; choice_kind: string; selected_by_user_id: string | null }>(
+        `SELECT scope, choice_kind, selected_by_user_id FROM "TariffSelection" WHERE site_id = $1 ORDER BY scope`,
+        [siteId]
+      )).rows;
+      expect(selRows).toEqual([
+        { scope: 'actual', choice_kind: 'owner', selected_by_user_id: 'u1' },
+        { scope: 'reference', choice_kind: 'owner', selected_by_user_id: 'u1' },
+      ]);
+      const verRows = await local.database.query(`SELECT count(*)::int AS n FROM "TariffSelectionVerification" WHERE site_id = $1`, [siteId]);
+      expect(verRows.rows).toEqual([{ n: 0 }]);
+
+      const rlsRes = (await local.database.query<{ tablename: string; rowsecurity: boolean }>(
+        `SELECT c.relname AS tablename, c.relrowsecurity AS rowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname IN ('TariffSelection', 'TariffSelectionOriginal', 'TariffSelectionVerification')
+         ORDER BY c.relname`
+      )).rows;
+      expect(rlsRes).toEqual([
+        { tablename: 'TariffSelection', rowsecurity: true },
+        { tablename: 'TariffSelectionOriginal', rowsecurity: true },
+        { tablename: 'TariffSelectionVerification', rowsecurity: true },
+      ]);
+
+      await local.database.query(`DELETE FROM "Site" WHERE id = $1`, [siteId]);
+      const leftovers = await local.database.query<{ n: number }>(
+        `SELECT (
+           (SELECT count(*) FROM "TariffSelection" WHERE site_id = $1) +
+           (SELECT count(*) FROM "TariffSelectionOriginal" WHERE site_id = $1) +
+           (SELECT count(*) FROM "TariffSelectionVerification" WHERE site_id = $1) +
+           (SELECT count(*) FROM "TariffEffectivePeriod" WHERE site_id = $1) +
+           (SELECT count(*) FROM "TariffReferencePeriod" WHERE site_id = $1)
+         )::int AS n`,
+        [siteId]
+      );
+      expect(leftovers.rows).toEqual([{ n: 0 }]);
+    });
+
+    it('protects owner-selected public plans on actual and reference scopes from estimate rebuilds, Tesla imports, and utility skip', async () => {
+      const siteId = 's-sel-public-protect';
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
+      await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'urdb-auto', 'pending')`, [siteId]);
+
+      const repo = new TariffTimelineRepo();
+      await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: true,
+        candidate: {
+          kind: 'public',
+          name: 'WE Energies Public TOU',
+          seasons: seasonsInput(0.175, 0.045),
+          urdbLabel: 'urdb-owner-actual',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      await repo.applySelection(siteId, {
+        scope: 'reference',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'public',
+          name: 'WE Energies Reference TOU',
+          seasons: seasonsInput(0.135, 0.03),
+          urdbLabel: 'urdb-owner-ref',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+
+      await runUrdbEstimatesForSite(
+        siteId,
+        chainApi([flatRate('urdb-auto', '2024-01-01', 0.29)]),
+        new Date('2026-11-16T12:00:00Z')
+      );
+      await new TariffRepo().addTariffVersion(siteId, flatTesla('Tesla Sync Override Attempt', 0.21));
+      const skippedTimeline = await repo.setSiteUtility(siteId, 'u1', { skipped: true });
+
+      const activeActual = skippedTimeline.periods.find(p => p.effectiveFrom === '2025-01-01' && p.effectiveTo === null);
+      expect(activeActual?.source).toBe('estimated');
+      expect(activeActual?.choiceKind).toBe('owner');
+      expect(activeActual?.name).toBe('WE Energies Public TOU');
+      expect(activeActual?.verification).toMatchObject({ verifiedByCurrentUser: true });
+
+      const activeRef = (skippedTimeline.referencePeriods ?? []).find(p => p.effectiveFrom === '2025-01-01' && p.effectiveTo === null);
+      expect(activeRef?.source).toBe('estimated');
+      expect(activeRef?.choiceKind).toBe('owner');
+      expect(activeRef?.name).toBe('WE Energies Reference TOU');
+
+      const keptSources = await local.database.query<{ urdb_label: string; is_current_estimate: boolean }>(
+        `SELECT urdb_label, is_current_estimate FROM "TariffUrdbSource" WHERE site_id = $1 ORDER BY urdb_label`,
+        [siteId]
+      );
+      expect(keptSources.rows).toEqual([
+        { urdb_label: 'urdb-owner-actual', is_current_estimate: false },
+        { urdb_label: 'urdb-owner-ref', is_current_estimate: false },
+      ]);
+    });
+
+    it('captures original Tesla versions across intervals and restores exact saved versions while remaining protected', async () => {
+      const siteId = 's-sel-restore-exact';
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
+
+      const tariffRepo = new TariffRepo();
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v1', 0.16));
+      const t1 = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND name = 'Tesla v1'`, [siteId])).rows[0]!.id;
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v2', 0.2));
+      const t2 = (await local.database.query<{ id: number }>(`SELECT id FROM "Tariff" WHERE site_id = $1 AND name = 'Tesla v2'`, [siteId])).rows[0]!.id;
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]);
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', '2025-06-30', 'tesla'), ($1, $3, '2025-07-01', NULL, 'tesla')`,
+        [siteId, t1, t2]
+      );
+
+      const repo = new TariffTimelineRepo();
+      const firstOverride = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Public Plan 1',
+          seasons: seasonsInput(0.18),
+          urdbLabel: 'urdb-p1',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      const firstSelectionId = firstOverride.selectionIds[0]!;
+
+      // Replace again so Tesla v1 & v2 have zero effective rows and sit behind a chained override.
+      await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'manual',
+          name: 'Owner Manual Plan 2',
+          seasons: seasonsInput(0.22),
+        },
+      });
+
+      const activeEffectiveCountForT1 = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffEffectivePeriod" WHERE site_id = $1 AND tariff_id = ANY($2::int[])`,
+        [siteId, [t1, t2]]
+      );
+      expect(activeEffectiveCountForT1.rows).toEqual([{ n: 0 }]);
+
+      // Later Tesla import v3 arrives while the owner override is active.
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v3 Newer', 0.31));
+
+      // Restore the exact originally saved Tesla intervals (t1 & t2, never v3).
+      const restored = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'restore_tesla',
+          originalSelectionId: firstSelectionId,
+        },
+      });
+
+      expect(restored.timeline.periods.map(p => [p.source, p.choiceKind, p.tariffId, p.effectiveFrom, p.effectiveTo])).toEqual([
+        ['tesla', 'owner', t2, '2025-07-01', null],
+        ['tesla', 'owner', t1, '2025-01-01', '2025-06-30'],
+      ]);
+
+      // Restored Tesla spans stay protected against another newer Tesla import and URDB estimates.
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v4 Even Newer', 0.39));
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status)
+         VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'urdb-auto', 'pending')
+         ON CONFLICT (site_id) DO UPDATE
+         SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = EXCLUDED.urdb_plan_label, status = EXCLUDED.status`,
+        [siteId]
+      );
+      await runUrdbEstimatesForSite(siteId, chainApi([flatRate('urdb-auto', '2025-01-01', 0.25)]), new Date('2026-11-16T12:00:00Z'));
+
+      const afterSync = await repo.getTimeline(siteId, 'u1');
+      expect(afterSync.periods.map(p => [p.source, p.choiceKind, p.tariffId, p.effectiveFrom, p.effectiveTo])).toEqual([
+        ['tesla', 'owner', t2, '2025-07-01', null],
+        ['tesla', 'owner', t1, '2025-01-01', '2025-06-30'],
+      ]);
+    });
+
+    it('binds verification strictly to content and dates, preserves audit history across splits, and avoids duplicate versions on unchanged saves', async () => {
+      const siteId = 's-sel-verify-hash';
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies')`, [siteId]);
+      const repo = new TariffTimelineRepo();
+
+      const first = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        userId: 'u1',
+        verifiedAgainstBill: true,
+        candidate: {
+          kind: 'public',
+          name: 'Verified Public Plan',
+          seasons: seasonsInput(0.17),
+          urdbLabel: 'urdb-v1',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      expect(first.createdNewTariffVersion).toBe(true);
+      expect(first.timeline.periods[0].verification).toMatchObject({ verifiedByEmail: 'owner@example.com', verifiedByCurrentUser: true });
+
+      const viewerU2 = await repo.getTimeline(siteId, 'u2');
+      expect(viewerU2.periods[0].verification).toMatchObject({ verifiedByEmail: 'owner@example.com', verifiedByCurrentUser: false });
+
+      // Unchanged re-save must not manufacture a duplicate Tariff version.
+      const unchanged = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        userId: 'u1',
+        verifiedAgainstBill: true,
+        candidate: {
+          kind: 'public',
+          name: 'Verified Public Plan',
+          seasons: seasonsInput(0.17),
+          urdbLabel: 'urdb-v1',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      expect(unchanged.unchanged).toBe(true);
+      expect(unchanged.createdNewTariffVersion).toBe(false);
+      const tariffCount = await local.database.query<{ n: number }>(`SELECT count(*)::int AS n FROM "Tariff" WHERE site_id = $1`, [siteId]);
+      expect(tariffCount.rows).toEqual([{ n: 1 }]);
+
+      // Splitting a middle subrange suppresses verification on the altered fragments while keeping provenance & historical verification auditable.
+      const split = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-06-01',
+        effectiveTo: '2025-07-31',
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'manual',
+          name: 'Summer Exception',
+          seasons: seasonsInput(0.28),
+        },
+      });
+      const leftFrag = split.timeline.periods.find(p => p.effectiveFrom === '2025-01-01');
+      const rightFrag = split.timeline.periods.find(p => p.effectiveFrom === '2025-08-01');
+      expect(leftFrag?.choiceKind).toBe('owner');
+      expect(leftFrag?.verification).toBeNull();
+      expect(rightFrag?.choiceKind).toBe('owner');
+      expect(rightFrag?.verification).toBeNull();
+
+      const audit = await repo.getSelectionAuditHistory(siteId, 'actual', 'u1');
+      expect(
+        audit.some(
+          entry =>
+            entry.verification !== null &&
+            entry.verification.effective_from === '2025-01-01' &&
+            entry.verification.effective_to === '2025-12-31' &&
+            entry.verification.verifiedByCurrentUser
+        )
+      ).toBe(true);
+    });
+
+    it('end-to-end PostgreSQL selection preview, commit, idempotent retry, stale 409, multi-interval restore, legacy protection, and cross-site isolation', async () => {
+      const siteId = 's-sel-e2e';
+      const otherSiteId = 's-sel-other';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, installed, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z', 'US', 'owner'),
+                ($2, 'u2', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z', 'US', 'owner')`,
+        [siteId, otherSiteId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status)
+         VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'ready'),
+                ($2, 'Wisconsin Electric Power Co', 'owner', 'ready')`,
+        [siteId, otherSiteId]
+      );
+      await local.database.query(
+        `INSERT INTO "EnergyDayArchive"(site_id, day_start, revision, status)
+         VALUES ($1, '2024-01-01T06:00:00Z', gen_random_uuid(), 'complete')`,
+        [siteId]
+      );
+
+      // Seed two historical Tesla versions on siteId and one on otherSiteId.
+      const tariffRepo = new TariffRepo();
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v1', 0.14));
+      const t1 = (await local.database.query<{ id: number }>(
+        `SELECT id FROM "Tariff" WHERE site_id = $1 AND name = 'Tesla v1'`,
+        [siteId]
+      )).rows[0]!.id;
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v2', 0.18));
+      const t2 = (await local.database.query<{ id: number }>(
+        `SELECT id FROM "Tariff" WHERE site_id = $1 AND name = 'Tesla v2'`,
+        [siteId]
+      )).rows[0]!.id;
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]);
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', '2025-06-30', 'tesla'),
+                ($1, $3, '2025-07-01', NULL, 'tesla')`,
+        [siteId, t1, t2]
+      );
+
+      // Seed otherSiteId with an override so it owns a selectionId that must remain isolated from siteId.
+      await tariffRepo.addTariffVersion(otherSiteId, flatTesla('Other Tesla', 0.25));
+      const repo = new TariffTimelineRepo();
+      const otherCommit = await repo.applySelection(otherSiteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u2',
+        verifiedAgainstBill: false,
+        candidate: { kind: 'manual', name: 'Other Override', seasons: seasonsInput(0.29) },
+      });
+      const otherSiteSelectionId = otherCommit.selectionIds[0]!;
+
+      const publicRate: UrdbRate = {
+        label: 'urdb-e2e-tiered',
+        name: 'WE Public Tiered',
+        utility: 'Wisconsin Electric Power Co',
+        startdate: 1_735_689_600,
+        dgrules: 'Buy All Sell All',
+        energyratestructure: [
+          [{ rate: 0.1, max: 300, unit: 'kWh' }, { rate: 0.22, unit: 'kWh' }],
+        ],
+        energyweekdayschedule: Array.from({ length: 12 }, () => Array<number>(24).fill(0)),
+        energyweekendschedule: Array.from({ length: 12 }, () => Array<number>(24).fill(0)),
+      };
+      const urdb = {
+        ratesEffectiveOn: async () => [publicRate],
+        rateByLabel: async (label: string) => (label === publicRate.label ? publicRate : null),
+      };
+      const fixedNow = () => new Date('2026-11-16T18:00:00Z');
+
+      // 1. Browsing public plans supports chosen effectiveDate and explains approximations.
+      const listed = await listPublicUtilityPlansForSite(
+        siteId,
+        { effectiveDate: '2025-03-01', now: fixedNow() },
+        { repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(listed.effectiveDate).toBe('2025-03-01');
+      expect(listed.plans[0]).toMatchObject({
+        label: 'urdb-e2e-tiered',
+        name: 'WE Public Tiered',
+        exportRateProvenance: 'inherited',
+      });
+      expect(listed.plans[0].approximationNotes.map(n => n.kind)).toEqual([
+        'tier_blended',
+        'export_inherited_from_tesla',
+      ]);
+
+      // 2. Preview & commit an explicit finite public plan overriding Tesla across v1 + v2.
+      const previewPublic = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(previewPublic.affectedIntervals).toHaveLength(2);
+      expect(previewPublic.unchangedOutsidePeriods.map(p => [p.effectiveFrom, p.effectiveTo])).toEqual([
+        ['2025-01-01', '2025-02-28'],
+        ['2025-10-01', null],
+      ]);
+      expect(previewPublic.restoration.preservedOriginals).toHaveLength(2);
+
+      const committedPublic = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+          expectedReviewHash: previewPublic.reviewHash,
+          verifiedAgainstBill: true,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(committedPublic.unchanged).toBe(false);
+      const overrideSelectionId = committedPublic.selectionIds[0]!;
+      const activePublicPeriod = committedPublic.timeline.periods.find(p => p.effectiveFrom === '2025-03-01');
+      expect(activePublicPeriod?.source).toBe('estimated');
+      expect(activePublicPeriod?.choiceKind).toBe('owner');
+      expect(activePublicPeriod?.verification).toMatchObject({ verifiedByCurrentUser: true });
+
+      // 3. Immediate duplicate submission is idempotent and does not manufacture extra Tariff/Selection rows.
+      const retryPublic = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+          expectedReviewHash: previewPublic.reviewHash,
+          verifiedAgainstBill: true,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      expect(retryPublic.unchanged).toBe(true);
+      expect(retryPublic.selectionIds).toEqual([overrideSelectionId]);
+
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+            effectiveFrom: '2025-03-01',
+            effectiveTo: '2025-09-30',
+            expectedReviewHash: 'f'.repeat(64),
+            verifiedAgainstBill: true,
+          },
+          { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+
+      // 4. Legacy saveRatePlanHistory (PUT /utility/history) must NOT overwrite the owner-selected public plan.
+      await repo.saveRatePlanHistory(
+        siteId,
+        'u1',
+        'Wisconsin Electric Power Co',
+        [{ label: 'hist-1', revisionStart: '2024-01-01', from: '2024-01-01', to: '2025-05-31', name: 'Legacy Hist', seasons: seasonsInput(0.11) }],
+        null
+      );
+      const afterLegacyHistory = await repo.getTimeline(siteId, 'u1');
+      const keptPublicAfterHistory = afterLegacyHistory.periods.find(p => p.effectiveFrom === '2025-03-01' && p.effectiveTo === '2025-09-30');
+      expect(keptPublicAfterHistory?.source).toBe('estimated');
+      expect(keptPublicAfterHistory?.choiceKind).toBe('owner');
+      expect(keptPublicAfterHistory?.name).toBe('WE Public Tiered');
+
+      // 5. Old reviewHash MUST fail with 409 Conflict after timeline changed.
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+            effectiveFrom: '2025-03-01',
+            effectiveTo: '2025-09-30',
+            expectedReviewHash: previewPublic.reviewHash,
+            verifiedAgainstBill: true,
+          },
+          { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+
+      // 6. Legacy PATCH date-only edit on owner-selected public plan preserves source='estimated' and urdbLabel.
+      const { timeline: afterDatePatch } = await repo.updatePeriod(siteId, keptPublicAfterHistory!.periodId, 'u1', {
+        effectiveTo: '2025-08-31',
+      });
+      const patchedPublic = afterDatePatch.periods.find(p => p.effectiveFrom === '2025-03-01');
+      expect(patchedPublic?.effectiveTo).toBe('2025-08-31');
+      expect(patchedPublic?.source).toBe('estimated');
+      expect(patchedPublic?.choiceKind).toBe('owner');
+      expect(patchedPublic?.urdbLabel).toBe('urdb-e2e-tiered');
+
+      // 6b. Reference-scope owner-selected public plan + date-only updateReferencePeriod preserves source='estimated' & urdbLabel.
+      const refPreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'reference',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-01-01',
+          effectiveTo: null,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      const refCommit = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'reference',
+          candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
+          effectiveFrom: '2025-01-01',
+          effectiveTo: null,
+          expectedReviewHash: refPreview.reviewHash,
+          verifiedAgainstBill: false,
+        },
+        { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
+      );
+      const refPeriodId = refCommit.timeline.referencePeriods![0].periodId;
+      const afterRefDatePatch = await repo.updateReferencePeriod(siteId, 'u1', refPeriodId, {
+        effectiveTo: '2025-12-31',
+      });
+      expect(afterRefDatePatch.referencePeriods?.[0]).toMatchObject({
+        effectiveFrom: '2025-01-01',
+        effectiveTo: '2025-12-31',
+        source: 'estimated',
+        choiceKind: 'owner',
+        urdbLabel: 'urdb-e2e-tiered',
+      });
+
+      // 7. Later Tesla import arrives while override is active, then multi-interval restore recovers exact v1 & v2.
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla v3 Newer', 0.35));
+      const restorePreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: overrideSelectionId },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restorePreview.restoration.canApplyRestoration).toBe(true);
+      expect(restorePreview.affectedIntervals.map(i => [i.effectiveFrom, i.effectiveTo, i.after?.tariffId])).toEqual([
+        ['2025-03-01', '2025-06-30', t1],
+        ['2025-07-01', '2025-08-31', t2],
+        ['2025-09-01', '2025-09-30', t2],
+      ]);
+
+      const restored = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: overrideSelectionId },
+          effectiveFrom: '2025-03-01',
+          effectiveTo: '2025-09-30',
+          expectedReviewHash: restorePreview.reviewHash,
+          verifiedAgainstBill: false,
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restored.timeline.periods.some(p => p.tariffId === t1 && p.effectiveFrom === '2025-03-01' && p.effectiveTo === '2025-06-30' && p.choiceKind === 'owner')).toBe(true);
+      expect(restored.timeline.periods.some(p => p.tariffId === t2 && p.effectiveFrom === '2025-07-01' && p.effectiveTo === '2025-09-30' && p.choiceKind === 'owner')).toBe(true);
+
+      // 8. Cross-site originalSelectionId isolation: siteId cannot preview or commit otherSiteId's selectionId.
+      const crossSitePreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: otherSiteSelectionId },
+          effectiveFrom: '2025-01-01',
+          effectiveTo: '2025-03-01',
+        },
+        { now: fixedNow, repo }
+      );
+      expect(crossSitePreview.restoration.canApplyRestoration).toBe(false);
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'restore_tesla', originalSelectionId: otherSiteSelectionId },
+            effectiveFrom: '2025-01-01',
+            effectiveTo: '2025-03-01',
+            expectedReviewHash: crossSitePreview.reviewHash,
+            verifiedAgainstBill: false,
+          },
+          { now: fixedNow, repo }
+        )
+      ).rejects.toThrow(TariffValidationError);
+    });
+  });
+
+  describe('site rate country & US eligibility (postgres)', () => {
+    const simpleSeasons = (buy: number, sell = 0.04): TariffSeasonInput[] => [{
+      name: 'All Year',
+      fromMonth: 1,
+      toMonth: 12,
+      weekdayPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: sell }],
+      weekendPeriods: [{ touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: buy, sellRate: sell }],
+    }];
+
+    it('migration is idempotent, rejects invalid country constraints, and preserves owner precedence and clearing', async () => {
+      const migFile = (await readdir('db-migrations')).find(f => f.endsWith('_site_rate_country.sql'));
+      expect(migFile).toBeDefined();
+      const migSql = await readFile(`db-migrations/${migFile!}`, 'utf8');
+      await local.database.query(migSql);
+      await local.database.query(migSql);
+
+      const siteId = 's-country-precedence';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility) VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies')`,
+        [siteId]
+      );
+      await expect(
+        local.database.query(`UPDATE "Site" SET rate_country = 'us', rate_country_source = 'owner' WHERE id = $1`, [siteId])
+      ).rejects.toThrow();
+      await expect(
+        local.database.query(`UPDATE "Site" SET rate_country = 'US', rate_country_source = NULL WHERE id = $1`, [siteId])
+      ).rejects.toThrow();
+
+      const repo = new TariffTimelineRepo();
+      expect(await repo.getSiteRateCountry(siteId)).toEqual({
+        countryCode: null,
+        source: null,
+        updatedAt: null,
+        eligibility: 'unknown',
+      });
+
+      // solar_location sets inferred US, owner overrides to CA, stale solar_location cannot overwrite owner.
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'US', source: 'solar_location' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'US', source: 'solar_location', eligibility: 'us' });
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'CA', source: 'owner' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'CA', source: 'owner', eligibility: 'outside_us' });
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'US', source: 'solar_location' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'CA', source: 'owner', eligibility: 'outside_us' });
+
+      // Explicit owner clearing resets country and source back to unknown, after which solar_location can infer again and also be cleared.
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: null, source: 'owner' });
+      const ownerCleared = await repo.getSiteRateCountry(siteId);
+      expect(ownerCleared).toMatchObject({
+        countryCode: null,
+        source: null,
+        eligibility: 'unknown',
+      });
+      expect(ownerCleared.updatedAt).not.toBeNull();
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'US', source: 'solar_location' });
+      expect(await repo.getSiteRateCountry(siteId)).toMatchObject({ countryCode: 'US', source: 'solar_location', eligibility: 'us' });
+
+      await repo.setSiteRateCountry(siteId, 'u1', { countryCode: null, source: 'solar_location' });
+      const locationCleared = await repo.getSiteRateCountry(siteId);
+      expect(locationCleared).toMatchObject({
+        countryCode: null,
+        source: null,
+        eligibility: 'unknown',
+      });
+      expect(locationCleared.updatedAt).not.toBeNull();
+    });
+
+    it('suppresses needs_utility for unresolved US-timezone sites and cleans dirty non-US cron rows once with zero OpenEI calls', async () => {
+      const unresolvedId = 's-country-unknown-tz-us';
+      const cleanOutsideId = 's-country-clean-au';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', NULL, NULL),
+                ($2, 'u1', 'Australia/Sydney', '{"currency":"AUD"}', 'AGL', 'AU', 'owner')`,
+        [unresolvedId, cleanOutsideId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility) VALUES ($1, 'auto', 'needs_utility', 'We Energies')`,
+        [unresolvedId]
+      );
+
+      const repo = new TariffTimelineRepo();
+      const timeline = await repo.getTimeline(unresolvedId, 'u1');
+      expect(timeline.rateCountry).toMatchObject({
+        countryCode: null,
+        source: null,
+        eligibility: 'unknown',
+        hasIneligiblePublicSelection: false,
+      });
+      expect(timeline.estimates).toMatchObject({
+        status: 'ready',
+        utilityName: null,
+        eligibility: 'unknown',
+        needsCountryConfirmation: true,
+        historyGuide: null,
+      });
+
+      const urdbSpy = {
+        ratesEffectiveOn: vi.fn(async () => { throw new Error('unexpected URDB ratesEffectiveOn'); }),
+        rateByLabel: vi.fn(async () => { throw new Error('unexpected URDB rateByLabel'); }),
+      };
+      await expect(
+        listPublicUtilityPlansForSite(unresolvedId, { now: new Date('2026-11-16T18:00:00Z') }, { repo, urdb: urdbSpy })
+      ).rejects.toThrow(PublicPlansIneligibleError);
+      expect(urdbSpy.ratesEffectiveOn).not.toHaveBeenCalled();
+
+      // Park all unrelated earlier sites' SiteUtility rows so cron only observes our test sites.
+      await local.database.query(
+        `UPDATE "Site" SET orphaned_at = now() WHERE id NOT IN ($1, $2)`,
+        [unresolvedId, cleanOutsideId]
+      );
+      onTestFinished(async () => {
+        await local.database.query(`UPDATE "Site" SET orphaned_at = NULL`);
+      });
+
+      const cronApi: UrdbApi = {
+        utilityNames: vi.fn(async () => { throw new Error('unexpected OpenEI utilityNames'); }),
+        ratesEffectiveOn: vi.fn(async () => { throw new Error('unexpected OpenEI ratesEffectiveOn'); }),
+        rateByLabel: vi.fn(async () => null),
+        defaultRates: vi.fn(async () => { throw new Error('unexpected OpenEI defaultRates'); }),
+      };
+
+      // Pass 1 picks up dirty needs_utility unresolvedId once (0 OpenEI calls), leaving cleanOutsideId untouched.
+      const pass1 = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 10, api: cronApi });
+      expect(pass1.sites).toEqual([{ siteId: unresolvedId, status: 'ready' }]);
+      expect(cronApi.utilityNames).not.toHaveBeenCalled();
+      expect(cronApi.ratesEffectiveOn).not.toHaveBeenCalled();
+
+      const afterPass1 = await local.database.query<{ status: string; next_check_at: Date | null }>(
+        `SELECT status, next_check_at FROM "SiteUtility" WHERE site_id = $1`,
+        [unresolvedId]
+      );
+      expect(afterPass1.rows).toEqual([{ status: 'ready', next_check_at: null }]);
+
+      // Pass 2 skips both unresolvedId (now clean ready/next_check_at=NULL) and cleanOutsideId.
+      const pass2 = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 10, api: cronApi });
+      expect(pass2.sites).toEqual([]);
+    });
+
+    it('runs a site an owner is waiting on before older cleanup and recheck rows', async () => {
+      const cleanupId = 's-queue-cleanup-unknown';
+      const waitingId = 's-queue-waiting-us';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', NULL, NULL),
+                ($2, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', 'US', 'solar_location')`,
+        [cleanupId, waitingId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status, urdb_utility, next_check_at, updated_at)
+         VALUES ($1, 'auto', 'needs_utility', 'We Energies', 'infinity', now() - interval '2 days'),
+                ($2, 'auto', 'pending', 'We Energies', NULL, now())`,
+        [cleanupId, waitingId]
+      );
+      await local.database.query(
+        `UPDATE "Site" SET orphaned_at = now() WHERE id NOT IN ($1, $2)`,
+        [cleanupId, waitingId]
+      );
+      onTestFinished(async () => {
+        await local.database.query(`UPDATE "Site" SET orphaned_at = NULL`);
+      });
+      const cronApi: UrdbApi = {
+        utilityNames: vi.fn(async () => []),
+        ratesEffectiveOn: vi.fn(async () => []),
+        rateByLabel: vi.fn(async () => null),
+        defaultRates: vi.fn(async () => []),
+      };
+
+      const pass = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 1, api: cronApi });
+      expect(pass.sites.map(site => site.siteId)).toEqual([waitingId]);
+    });
+
+    it('cleans automatic public estimates via repricing, preserves audit/manual/Tesla history and explicit owner selections for review, and rejects 409 on mid-review eligibility flips', async () => {
+      const siteId = 's-country-cleanup-pg';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, installed, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', '2023-11-14T18:00:00Z', 'US', 'owner')`,
+        [siteId]
+      );
+
+      const tariffRepo = new TariffRepo();
+      await tariffRepo.addTariffVersion(siteId, flatTesla('Tesla Anchor', 0.16));
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [siteId]);
+      const teslaTariffId = (await local.database.query<{ id: number }>(
+        `SELECT id FROM "Tariff" WHERE site_id = $1 AND source = 'tesla'`,
+        [siteId]
+      )).rows[0]!.id;
+
+      // Seed manual history, owner_history source, automatic estimated actual+reference coverage, and an explicit owner public selection overriding Tesla.
+      const repo = new TariffTimelineRepo();
+      await repo.createManualPeriod(siteId, 'u1', {
+        name: 'Manual History 2024',
+        effectiveFrom: '2024-01-01',
+        effectiveTo: '2024-12-31',
+        seasons: simpleSeasons(0.14),
+      });
+      const autoEstTariffId = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Auto URDB Actual', 1, FALSE, 'estimated') RETURNING id`,
+        [siteId]
+      )).rows[0]!.id;
+      const autoRefTariffId = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Auto URDB Reference', 1, FALSE, 'estimated') RETURNING id`,
+        [siteId]
+      )).rows[0]!.id;
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', '2025-05-31', 'estimated'),
+                ($1, $3, '2025-06-01', NULL, 'tesla')`,
+        [siteId, autoEstTariffId, teslaTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', NULL, 'estimated')`,
+        [siteId, autoRefTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "TariffUrdbSource"(tariff_id, site_id, role, urdb_label, start_date, end_date, start_source)
+         VALUES ($1, $2, 'estimated_actual', 'auto-actual-lbl', '2025-01-01', '2025-05-31', 'urdb'),
+                ($3, $2, 'estimated_reference', 'auto-ref-lbl', '2025-01-01', NULL, 'urdb')`,
+        [autoEstTariffId, siteId, autoRefTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, status)
+         VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'ready')
+         ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = 'owner', status = 'ready'`,
+        [siteId]
+      );
+
+      // Add an explicit verified owner public selection over Tesla starting 2025-06-01.
+      const ownerPub = await repo.applySelection(siteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-06-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: true,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Picked Public',
+          seasons: simpleSeasons(0.21, 0.06),
+          urdbLabel: 'owner-pub-lbl',
+          utilityName: 'Wisconsin Electric Power Co',
+          revisionStart: '2025-06-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      const ownerSelectionId = ownerPub.selectionIds[0]!;
+
+      // First test preview -> mid-review country flip -> commit 409 before finalizing CA cleanup.
+      const fixedNow = () => new Date('2026-11-16T18:00:00Z');
+      const manualPreviewBeforeFlip = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'manual', name: 'Replacement Plan', seasons: simpleSeasons(0.24) },
+          effectiveFrom: '2025-06-01',
+          effectiveTo: null,
+        },
+        { now: fixedNow, repo }
+      );
+
+      // Flip site country US -> CA via setSiteRateCountry!
+      const switched = await repo.setSiteRateCountry(siteId, 'u1', { countryCode: 'CA', source: 'owner' });
+
+      // Mid-review manual commit created before the US -> CA flip rejects with 409 conflict.
+      await expect(
+        commitTariffSelection(
+          siteId,
+          'u1',
+          {
+            scope: 'actual',
+            candidate: { kind: 'manual', name: 'Replacement Plan', seasons: simpleSeasons(0.24) },
+            effectiveFrom: '2025-06-01',
+            effectiveTo: null,
+            expectedReviewHash: manualPreviewBeforeFlip.reviewHash,
+            verifiedAgainstBill: false,
+          },
+          { now: fixedNow, repo }
+        )
+      ).rejects.toThrow(TariffSelectionConflictError);
+
+      // Automatic public coverage & reference coverage are removed and queued for normal repricing, while audit Tariff rows remain.
+      expect(switched.reattributionRange).not.toBeNull();
+      const reattr = await local.database.query<{ status: string }>(
+        `SELECT status FROM "SiteTariffReattribution" WHERE site_id = $1`,
+        [siteId]
+      );
+      expect(reattr.rows).toEqual([{ status: 'pending' }]);
+
+      const refCount = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffReferencePeriod" WHERE site_id = $1`,
+        [siteId]
+      );
+      expect(refCount.rows).toEqual([{ n: 0 }]);
+
+      const autoActualPeriods = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffEffectivePeriod" WHERE site_id = $1 AND tariff_id = $2`,
+        [siteId, autoEstTariffId]
+      );
+      expect(autoActualPeriods.rows).toEqual([{ n: 0 }]);
+
+      const preservedAuditTariff = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Tariff" WHERE site_id = $1 AND id IN ($2, $3)`,
+        [siteId, autoEstTariffId, autoRefTariffId]
+      );
+      expect(preservedAuditTariff.rows).toEqual([{ n: 2 }]);
+
+      // Manual history + explicit owner selection (+ originals + verification) remain preserved and flagged for review!
+      expect(switched.timeline.rateCountry).toMatchObject({
+        countryCode: 'CA',
+        source: 'owner',
+        eligibility: 'outside_us',
+        hasIneligiblePublicSelection: true,
+      });
+      expect(switched.timeline.periods.map(p => [p.source, p.choiceKind, p.effectiveFrom, p.effectiveTo])).toEqual([
+        ['estimated', 'owner', '2025-06-01', null],
+        ['manual', 'owner', '2024-01-01', '2024-12-31'],
+      ]);
+
+      const verificationCount = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffSelectionVerification" WHERE selection_id = $1`,
+        [ownerSelectionId]
+      );
+      expect(verificationCount.rows).toEqual([{ n: 1 }]);
+
+      // Owner can review & commit restoring Tesla (or a manual plan) to replace the preserved ineligible public selection.
+      const restorePreview = await previewTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: ownerSelectionId },
+          effectiveFrom: '2025-06-01',
+          effectiveTo: null,
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restorePreview.restoration.canApplyRestoration).toBe(true);
+      const restored = await commitTariffSelection(
+        siteId,
+        'u1',
+        {
+          scope: 'actual',
+          candidate: { kind: 'restore_tesla', originalSelectionId: ownerSelectionId },
+          effectiveFrom: '2025-06-01',
+          effectiveTo: null,
+          expectedReviewHash: restorePreview.reviewHash,
+          verifiedAgainstBill: false,
+        },
+        { now: fixedNow, repo }
+      );
+      expect(restored.timeline.rateCountry?.hasIneligiblePublicSelection).toBe(false);
+      expect(restored.timeline.periods.map(p => [p.source, p.choiceKind, p.tariffId])).toEqual([
+        ['tesla', 'owner', teslaTariffId],
+        ['manual', 'owner', expect.any(Number)],
+      ]);
+    });
+
+    it('flags retained owner public selections on unknown sites without flagging automatic estimates, and skips owner-selected reference periods in cron cleanup', async () => {
+      const unknownSiteId = 's-unknown-owner-vs-auto';
+      const ownerRefSiteId = 's-ca-owner-ref-cron';
+      await local.database.query(
+        `INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source)
+         VALUES ($1, 'u1', 'America/Chicago', '{"currency":"USD"}', 'We Energies', NULL, NULL),
+                ($2, 'u1', 'America/Toronto', '{"currency":"CAD"}', NULL, 'CA', 'owner')`,
+        [unknownSiteId, ownerRefSiteId]
+      );
+
+      const repo = new TariffTimelineRepo();
+
+      // 1. An uncleaned automatic public estimate on an unknown site has hasIneligiblePublicSelection = false.
+      const autoEstTariffId = (await local.database.query<{ id: number }>(
+        `INSERT INTO "Tariff"(site_id, name, version, is_current, source) VALUES ($1, 'Auto Uncleaned', 1, FALSE, 'estimated') RETURNING id`,
+        [unknownSiteId]
+      )).rows[0]!.id;
+      await local.database.query(
+        `INSERT INTO "TariffEffectivePeriod"(site_id, tariff_id, effective_from, effective_to, source)
+         VALUES ($1, $2, '2025-01-01', NULL, 'estimated')`,
+        [unknownSiteId, autoEstTariffId]
+      );
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status) VALUES ($1, 'auto', 'ready')`,
+        [unknownSiteId]
+      );
+      const beforeUnknown = await repo.getTimeline(unknownSiteId, 'u1');
+      expect(beforeUnknown.rateCountry).toMatchObject({
+        countryCode: null,
+        eligibility: 'unknown',
+        hasIneligiblePublicSelection: false,
+      });
+      expect(beforeUnknown.estimates?.hasIneligiblePublicSelection).toBe(false);
+
+      // 2. Replace automatic estimate with an explicit owner public selection while country stays unknown ('unknown').
+      await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = $1`, [unknownSiteId]);
+      await repo.applySelection(unknownSiteId, {
+        scope: 'actual',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Public While Unknown',
+          seasons: simpleSeasons(0.21, 0.05),
+          urdbLabel: 'urdb-owner-unknown',
+          utilityName: 'We Energies',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      const unknownWithOwner = await repo.getTimeline(unknownSiteId, 'u1');
+      expect(unknownWithOwner.rateCountry).toMatchObject({
+        countryCode: null,
+        eligibility: 'unknown',
+        hasIneligiblePublicSelection: true,
+      });
+      expect(unknownWithOwner.estimates).toMatchObject({
+        eligibility: 'unknown',
+        needsCountryConfirmation: true,
+        hasIneligiblePublicSelection: true,
+      });
+
+      // 3. Outside-US site with ONLY an owner-selected public reference period (even with updated_by_user_id IS NULL)
+      //    must NOT be picked up as dirty automatic cleanup by runUrdbEstimatesCron.
+      await local.database.query(
+        `INSERT INTO "SiteUtility"(site_id, choice, status, next_check_at) VALUES ($1, 'auto', 'ready', NULL)`,
+        [ownerRefSiteId]
+      );
+      await repo.applySelection(ownerRefSiteId, {
+        scope: 'reference',
+        effectiveFrom: '2025-01-01',
+        effectiveTo: null,
+        userId: 'u1',
+        verifiedAgainstBill: false,
+        candidate: {
+          kind: 'public',
+          name: 'Owner Reference Public',
+          seasons: simpleSeasons(0.19, 0.04),
+          urdbLabel: 'urdb-owner-ref',
+          utilityName: 'We Energies',
+          revisionStart: '2025-01-01',
+          exportRateProvenance: 'published',
+        },
+      });
+      await local.database.query(
+        `UPDATE "TariffReferencePeriod" SET updated_by_user_id = NULL WHERE site_id = $1`,
+        [ownerRefSiteId]
+      );
+
+      await local.database.query(`UPDATE "Site" SET orphaned_at = now() WHERE id <> $1`, [ownerRefSiteId]);
+      onTestFinished(async () => {
+        await local.database.query(`UPDATE "Site" SET orphaned_at = NULL`);
+      });
+      const cronApi: UrdbApi = {
+        utilityNames: vi.fn(async () => { throw new Error('unexpected OpenEI utilityNames'); }),
+        ratesEffectiveOn: vi.fn(async () => { throw new Error('unexpected OpenEI ratesEffectiveOn'); }),
+        rateByLabel: vi.fn(async () => null),
+        defaultRates: vi.fn(async () => { throw new Error('unexpected OpenEI defaultRates'); }),
+      };
+      const cronRes = await runUrdbEstimatesCron({ maxTimeMs: 5000, maxSites: 10, api: cronApi });
+      expect(cronRes.sites).toEqual([]);
+      const refPeriodStillThere = await local.database.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "TariffReferencePeriod" WHERE site_id = $1`,
+        [ownerRefSiteId]
+      );
+      expect(refPeriodStillThere.rows).toEqual([{ n: 1 }]);
     });
   });
 });

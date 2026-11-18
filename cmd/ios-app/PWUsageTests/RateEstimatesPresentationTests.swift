@@ -64,14 +64,15 @@ struct RateEstimatesPresentationTests {
     @Test func outOfDateNoticeNamesTheNewerRevisionStart() {
         let dto = Self.estimates(teslaPlanOutOfDate: true, newerPlanStart: "2026-01-01")
         #expect(RateEstimatesPresentation.outOfDateNotice(dto)
-            == "Your Tesla rate plan looks out of date. Newer rates took effect Jan 1, 2026. "
-            + "Update it in the Tesla app or add your rate plan here.")
+            == "Your Tesla rate plan may be out of date: newer public rates took effect Jan 1, 2026. "
+            + "Check your bill, then change PWUsage’s plan, or update the plan in the Tesla app and sync.")
     }
 
     @Test func outOfDateNoticeFallsBackWithoutADate() {
         let dto = Self.estimates(teslaPlanOutOfDate: true, newerPlanStart: nil)
         #expect(RateEstimatesPresentation.outOfDateNotice(dto)
-            == "Your Tesla rate plan looks out of date. Update it in the Tesla app or add your rate plan here.")
+            == "Your Tesla rate plan may be out of date. "
+            + "Check your bill, then change PWUsage’s plan, or update the plan in the Tesla app and sync.")
     }
 
     @Test func outOfDateNoticeIsHiddenWhenThePlanIsCurrent() {
@@ -142,9 +143,31 @@ struct RateEstimatesPresentationTests {
     // MARK: Rate Plans and accessory copy
 
     @Test func utilityRowShowsTheNameOrNotSet() {
-        #expect(RateEstimatesPresentation.utilityRowValue("Pacific Gas & Electric") == "Pacific Gas & Electric")
-        #expect(RateEstimatesPresentation.utilityRowValue(nil) == "Not Set")
-        #expect(RateEstimatesPresentation.utilityRowValue("") == "Not Set")
+        #expect(RateEstimatesPresentation.utilityRowValue(Self.estimates()) == "Pacific Gas & Electric")
+        #expect(RateEstimatesPresentation.utilityRowValue(Self.estimates(utilityName: nil)) == "Not Set")
+        #expect(RateEstimatesPresentation.utilityRowValue(Self.estimates(utilityName: "")) == "Not Set")
+    }
+
+    @Test("An unconfirmed or non-US country leads to the country picker, not a US utility search")
+    func countryComesBeforeUtility() {
+        var unconfirmed = Self.estimates(status: .needsUtility, utilityName: nil)
+        unconfirmed.needsCountryConfirmation = true
+        unconfirmed.eligibility = .unknown
+        #expect(RateEstimatesPresentation.prompt(unconfirmed) == .confirmCountry)
+        #expect(RateEstimatesPresentation.utilityRowPrompt(unconfirmed) == .confirmCountry)
+        #expect(RateEstimatesPresentation.utilityRowValue(unconfirmed) == "Confirm Country")
+
+        var outside = Self.estimates(status: .skipped, utilityName: nil)
+        outside.eligibility = .outsideUS
+        #expect(RateEstimatesPresentation.prompt(outside) == nil)
+        #expect(RateEstimatesPresentation.utilityRowPrompt(outside) == .confirmCountry)
+        #expect(RateEstimatesPresentation.utilityRowValue(outside) == "US Homes Only")
+
+        var american = Self.estimates(status: .needsUtility, utilityName: nil)
+        american.eligibility = .unitedStates
+        #expect(RateEstimatesPresentation.prompt(american) == .pickUtility)
+        #expect(RateEstimatesPresentation.utilityRowPrompt(american) == .pickUtility)
+        #expect(RateEstimatesPresentation.buttonTitle(.confirmCountry) == "Confirm Country")
     }
 
     @Test func accessoryDismissAndAddRatePlanLabels() {
@@ -217,6 +240,8 @@ struct RateEstimatesPresentationTests {
         #expect(RateEstimatesPresentation.fixedPlanEstimateCoverageNote(
             editing: chain[3], referencePeriods: chain, historyStart: "2023-11-14")
             == "Estimated from public utility rates for every day since Nov 14, 2023. "
+            + "The rates below are for the revision starting Jun 1, 2025. "
+            + "You only need to enter rates if these estimates don’t match your fixed comparison plan. "
             + "Saving your own rates replaces the estimate from the start date.")
     }
 
@@ -229,6 +254,8 @@ struct RateEstimatesPresentationTests {
         #expect(RateEstimatesPresentation.fixedPlanEstimateCoverageNote(
             editing: periods[2], referencePeriods: periods, historyStart: "2023-11-14")
             == "Estimated from public utility rates for every day since Jul 1, 2024. "
+            + "The rates below are for the revision starting Jun 1, 2025. "
+            + "You only need to enter rates if these estimates don’t match your fixed comparison plan. "
             + "Saving your own rates replaces the estimate from the start date.")
     }
 

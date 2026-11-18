@@ -7,10 +7,12 @@ struct InvariantBroken: Error { let message: String }
 
 /// Polls until `condition` is true, failing at the deadline instead of hanging.
 /// The deadline only limits a failure: a passing wait returns as soon as the condition
-/// holds. It is long because hosted CI has stalled background work past 2 seconds.
+/// holds. It is long because hosted CI stalls background work: automatic forecast detection
+/// waits that finish in under a second locally routinely take 5 to 7 seconds there, and
+/// timed out at the old 10-second deadline.
 @MainActor
 func eventually(
-    timeout: Duration = .seconds(10),
+    timeout: Duration = .seconds(30),
     _ condition: @MainActor () -> Bool
 ) async throws {
     let clock = ContinuousClock()

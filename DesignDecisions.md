@@ -120,6 +120,14 @@ against the production corpus (PG 17.6): 0 constraint conflicts.
   content is a no-op instead of a spurious new version. The insert is serialized
   by locking the parent `Site` row to keep the check race-free.
 
+**Selections sit on top of versions (2026-11-17).** Which version applies on
+which dates is a separate, protected *selection* with its own chooser, saved
+Tesla originals and range-bound verification; source (`tesla`, `manual`,
+`estimated`) never changes to mark a choice. Do not use `source = manual` to
+protect a public plan, or treat `estimated` as disposable when an owner chose
+it. Every change goes through a server review whose hash the commit must
+match. Rationale: [rate plan selection design](docs/plans/2026-11-17-rate-plan-selection-design.md).
+
 ---
 
 ## 3. Loose-pending TRMNL installation flow

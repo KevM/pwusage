@@ -1,1 +1,2 @@
 cmd/ios-app/PWUsageTests/Fixtures/BillPricing/*.json linguist-generated=true
+cmd/ios-app/PWUsage/Resources/country-boundaries.bin binary linguist-generated=true

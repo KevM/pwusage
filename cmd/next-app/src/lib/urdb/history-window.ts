@@ -119,7 +119,14 @@ export async function loadHistoryWindowInput(client: Queryable, siteId: string, 
      ORDER BY t.updated, t.id LIMIT 1`, [siteId, fallbackHash])).rows[0];
   const ownerStart = tesla ? (await client.query<{ start: string | null }>(
     `SELECT min(effective_from)::text AS start FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source = 'tesla' AND updated_by_user_id IS NOT NULL`, [siteId])).rows[0]?.start ?? null : null;
-  const manual = (await client.query(`SELECT effective_from::text AS "from", effective_to::text AS "to" FROM "TariffEffectivePeriod" WHERE site_id = $1 AND source = 'manual'`, [siteId])).rows;
+  const manual = (await client.query(
+    `SELECT p.effective_from::text AS "from", p.effective_to::text AS "to"
+     FROM "TariffEffectivePeriod" p
+     LEFT JOIN "TariffSelection" s ON s.id = p.selection_id
+     WHERE p.site_id = $1
+       AND (p.source = 'manual' OR p.updated_by_user_id IS NOT NULL OR s.choice_kind = 'owner')`,
+    [siteId]
+  )).rows;
   // Only setPlanLabelOnClient sets the label, always with the owner's id; choosing a utility clears it.
   const picked = (await client.query(
     `SELECT 1 FROM "SiteUtility" WHERE site_id = $1 AND choice <> 'skipped' AND urdb_plan_label IS NOT NULL AND updated_by_user_id IS NOT NULL`, [siteId])).rowCount;

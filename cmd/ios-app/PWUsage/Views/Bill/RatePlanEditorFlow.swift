@@ -12,8 +12,11 @@ struct RatePlanEditorFlow: View {
         currency: String,
         takenNames: [String],
         onCreate: @escaping @MainActor (TariffPlanWriteRequest) async throws -> Void,
-        onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void
+        onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void,
+        selection: RatePlanSelectionActions? = nil,
+        onApplied: @escaping @MainActor (TariffSelectionCommitResponse) -> Void = { _ in }
     ) {
+        self.onApplied = onApplied
         _state = State(
             initialValue: RatePlanEditorState(
                 mode: mode,
@@ -21,10 +24,13 @@ struct RatePlanEditorFlow: View {
                 currency: currency,
                 takenNames: takenNames,
                 onCreate: onCreate,
-                onUpdate: onUpdate
+                onUpdate: onUpdate,
+                selection: selection
             )
         )
     }
+
+    private let onApplied: @MainActor (TariffSelectionCommitResponse) -> Void
 
     var body: some View {
         NavigationStack(path: $state.path) {
@@ -81,6 +87,13 @@ struct RatePlanEditorFlow: View {
                 isWizard: isWizard,
                 onFinish: { state.finishStep(from: route) }
             )
+        case .review:
+            if let review = state.review {
+                RatePlanReviewView(model: review) { response in
+                    onApplied(response)
+                    dismiss()
+                }
+            }
         }
     }
 }
@@ -110,6 +123,10 @@ private struct RatePlanSummaryScreen: View {
                 ToolbarItem(placement: .confirmationAction) {
                     if state.isSaving {
                         ProgressView()
+                    } else if state.selection != nil {
+                        Button("Review") { state.startReview() }
+                            .fontWeight(.semibold)
+                            .disabled(!state.canReview)
                     } else {
                         Button("Save", action: saveAction)
                             .fontWeight(.semibold)
@@ -162,13 +179,11 @@ private struct RatePlanSummaryScreen: View {
     }
 
     private var datesSection: some View {
-        Section("Effective Dates") {
-            RatePlanDateField(title: "Effective From", date: fromDateBinding, boundary: .first)
-            Toggle("Ongoing (no end date)", isOn: $state.draft.isOngoing)
-            if !state.draft.isOngoing {
-                RatePlanDateField(title: "Effective To", date: toDateBinding, boundary: .last)
-            }
-        }
+        RatePlanDateChoiceSection(
+            start: $state.draft.effectiveFrom,
+            end: $state.draft.end,
+            timeZone: state.draft.timeZone
+        )
     }
 
     private var seasonsSection: some View {
@@ -193,7 +208,9 @@ private struct RatePlanSummaryScreen: View {
 
     private var impactSection: some View {
         Section {
-            Text("Historical energy days covered by these dates will update in the background after saving.")
+            Text(state.selection != nil
+                ? "Next, you’ll review exactly what changes before anything is saved."
+                : "Historical energy days covered by these dates will update in the background after saving.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -204,35 +221,6 @@ private struct RatePlanSummaryScreen: View {
             get: { expandedSeasonIDs.contains(seasonID) },
             set: { isOpen in
                 if isOpen { expandedSeasonIDs.insert(seasonID) } else { expandedSeasonIDs.remove(seasonID) }
-            }
-        )
-    }
-
-    private var fromDateBinding: Binding<Date> {
-        civilDateBinding(
-            get: { state.draft.effectiveFrom },
-            set: { state.draft.effectiveFrom = $0 }
-        )
-    }
-
-    private var toDateBinding: Binding<Date> {
-        civilDateBinding(
-            get: { state.draft.effectiveTo },
-            set: { state.draft.effectiveTo = $0 }
-        )
-    }
-
-    private func civilDateBinding(get: @escaping () -> Date, set: @escaping (Date) -> Void) -> Binding<Date> {
-        Binding(
-            get: {
-                let ymd = RatePlanTimelineFormatting.formatYMD(get(), in: state.draft.timeZone)
-                return RatePlanTimelineFormatting.parseYMD(ymd, in: Calendar.current.timeZone) ?? get()
-            },
-            set: { picked in
-                let ymd = RatePlanTimelineFormatting.formatYMD(picked, in: Calendar.current.timeZone)
-                if let resolved = RatePlanTimelineFormatting.parseYMD(ymd, in: state.draft.timeZone) {
-                    set(resolved)
-                }
             }
         )
     }

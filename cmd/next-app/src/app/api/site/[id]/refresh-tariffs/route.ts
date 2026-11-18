@@ -6,8 +6,11 @@ import { isCrossOriginRequest } from '@/lib/request-security';
 import { jsonWithETag } from '@/lib/tariff-etag';
 import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import { createTeslaClientForSite } from '@/lib/tesla-client-factory';
+import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
+// The background estimate can run for up to 40 seconds after the response.
+export const maxDuration = 60;
 
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store, max-age=0' } });
@@ -49,6 +52,7 @@ export function POST(
         timeline.teslaSync.latestTariffId !== null &&
         timeline.teslaSync.latestTariffId !== beforeTimeline.teslaSync.latestTariffId;
 
+      startPendingEstimates(siteId, timeline);
       return jsonWithETag({
         success: true,
         message: 'Rate plan refreshed',

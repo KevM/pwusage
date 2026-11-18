@@ -179,7 +179,8 @@ enum SavingsCalculator {
             cycles: cycleResults.map { cycleSavings($0, in: timeZone) },
             recentCycles: yearResults.map { cycleSavings($0, in: timeZone) },
             batteryStartDay: scenarios.batteryStartDay,
-            rateGrowth: rateGrowth(actual: actual, firstStoredDay: firstStoredDay, now: now)
+            rateGrowth: rateGrowth(actual: actual, firstStoredDay: firstStoredDay, now: now),
+            firstStoredDay: firstStoredDay
         )
     }
 

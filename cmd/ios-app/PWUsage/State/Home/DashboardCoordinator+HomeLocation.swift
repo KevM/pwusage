@@ -57,6 +57,10 @@ extension DashboardCoordinator {
         }
         invalidateSolarLayout()
         await loadTimingDetailAppeared(surface: nil)
+        // A new location replaces any country inferred from the old one.
+        if let stored = await savedTimeline(for: scope)?.timeline.rateCountry {
+            Task { [weak self] in await self?.syncSiteRateCountry(stored: stored) }
+        }
         return .shared
     }
 

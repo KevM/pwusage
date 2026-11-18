@@ -42,6 +42,9 @@ and simplify the sentence.
 | job | load, load profile, run (as a noun), appliance | Something heavy you run: EV charging, dishwasher, laundry, or a custom job. Also the heavy use Battery Saver detects and waits on ("Waiting for a job to finish") |
 | Home, home use | load, home load, load power | The house's power draw (the "Home" tile, "Home use (kW)" chart series) |
 | rate plan | tariff, tariff data, active tariff | The utility pricing plan for a site, with its seasons and rate periods |
+| From Tesla, From public utility rates, Entered by you | Tesla, Estimated, Custom (as a source) | Where a rate plan came from. Separate from who chose it ("Chosen automatically", "Chosen by you") and from **Verified by you**; public rates keep their estimated label even when verified |
+| Restore Original Tesla Rate Plan | Revert, Undo override | Puts back the saved Tesla plan an override replaced, for chosen dates. It never changes the Powerwall |
+| fixed comparison plan | reference plan, baseline tariff | The flat plan savings are compared against; changing it never changes the plan for your energy |
 | export cushion | surplus, observed tariff surplus, billing-cycle balance, balance | kWh exported this billing cycle in a rate period that can cover new use in that same period |
 | import gap | deficit, shortfall | kWh imported beyond exports this billing cycle in a rate period; new use there is priced at the grid rate |
 | Even | Balanced | A rate period with neither an export cushion nor an import gap |

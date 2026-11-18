@@ -1,22 +1,27 @@
 import Foundation
 
+/// How a rate plan's date range ends. There is no default: the owner chooses one.
+enum RatePlanEnd: Equatable, Sendable {
+    case ongoing
+    case endsOn(Date)
+}
+
 struct RatePlanDraft: Equatable, Sendable {
     var name: String
-    var effectiveFrom: Date
-    var isOngoing: Bool
-    var effectiveTo: Date
+    /// Nil until the owner picks a start date. A new or copied plan never gets one by default.
+    var effectiveFrom: Date?
+    /// Nil until the owner chooses an end date or Ongoing.
+    var end: RatePlanEnd?
     var timeZone: TimeZone
     var seasons: [SeasonDraft]
     /// Names of the site's other rate plans; a plan's name must be new.
     var takenNames: [String] = []
 
     static func makeBlank(timeZone: TimeZone) -> RatePlanDraft {
-        let today = startOfToday(in: timeZone)
-        return RatePlanDraft(
+        RatePlanDraft(
             name: "",
-            effectiveFrom: today,
-            isOngoing: true,
-            effectiveTo: today,
+            effectiveFrom: nil,
+            end: nil,
             timeZone: timeZone,
             seasons: [SeasonDraft.makeDefault(name: "All year", fromMonth: 1, toMonth: 12)]
         )
@@ -24,49 +29,47 @@ struct RatePlanDraft: Equatable, Sendable {
 
     init(
         name: String,
-        effectiveFrom: Date,
-        isOngoing: Bool,
-        effectiveTo: Date,
+        effectiveFrom: Date?,
+        end: RatePlanEnd?,
         timeZone: TimeZone,
         seasons: [SeasonDraft]
     ) {
         self.name = name
         self.effectiveFrom = effectiveFrom
-        self.isOngoing = isOngoing
-        self.effectiveTo = effectiveTo
+        self.end = end
         self.timeZone = timeZone
         self.seasons = seasons
     }
 
+    /// Copies the plan's rates but never its dates: a copy is a new choice the owner dates.
     init(copyingFrom period: TariffPeriodDTO, timeZone: TimeZone) {
-        let today = Self.startOfToday(in: timeZone)
         let seasons = period.seasons.isEmpty
             ? [SeasonDraft.makeDefault(name: "All year", fromMonth: 1, toMonth: 12)]
             : period.seasons.map(SeasonDraft.init(from:))
         self.init(
             name: period.name,
-            effectiveFrom: today,
-            isOngoing: true,
-            effectiveTo: today,
+            effectiveFrom: nil,
+            end: nil,
             timeZone: timeZone,
             seasons: seasons
         )
     }
 
+    /// Editing keeps the plan's own dates, which the owner already chose.
     init(editing period: TariffPeriodDTO, timeZone: TimeZone) {
-        let today = Self.startOfToday(in: timeZone)
-        let from = RatePlanTimelineFormatting.parseYMD(period.effectiveFrom, in: timeZone) ?? today
-        let toDate = period.effectiveTo.flatMap {
-            RatePlanTimelineFormatting.parseYMD($0, in: timeZone)
-        } ?? today
+        let from = RatePlanTimelineFormatting.parseYMD(period.effectiveFrom, in: timeZone)
+        let end: RatePlanEnd? = if let effectiveTo = period.effectiveTo {
+            RatePlanTimelineFormatting.parseYMD(effectiveTo, in: timeZone).map(RatePlanEnd.endsOn)
+        } else {
+            .ongoing
+        }
         let seasons = period.seasons.isEmpty
             ? [SeasonDraft.makeDefault(name: "All year", fromMonth: 1, toMonth: 12)]
             : period.seasons.map(SeasonDraft.init(from:))
         self.init(
             name: period.name,
             effectiveFrom: from,
-            isOngoing: period.effectiveTo == nil,
-            effectiveTo: toDate,
+            end: end,
             timeZone: timeZone,
             seasons: seasons
         )
@@ -199,18 +202,36 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     func toWriteRequest() -> TariffPlanWriteRequest? {
-        guard validate() == nil else { return nil }
+        guard validate() == nil, let dates = chosenDates else { return nil }
         let compiledSeasons = seasons.compactMap { $0.toInput() }
         guard compiledSeasons.count == seasons.count else { return nil }
-        let resolvedName = effectiveName
-        let fromStr = RatePlanTimelineFormatting.formatYMD(effectiveFrom, in: timeZone)
-        let toStr = isOngoing ? nil : RatePlanTimelineFormatting.formatYMD(effectiveTo, in: timeZone)
         return TariffPlanWriteRequest(
-            name: resolvedName,
-            effectiveFrom: fromStr,
-            effectiveTo: toStr,
+            name: effectiveName,
+            effectiveFrom: dates.from,
+            effectiveTo: dates.to,
             seasons: compiledSeasons
         )
+    }
+
+    /// The manual selection to review, once the plan and both dates are valid.
+    func selectionRequest(scope: TariffSelectionScope = .actual) -> TariffSelectionRequest? {
+        guard let write = toWriteRequest() else { return nil }
+        return TariffSelectionRequest(
+            scope: scope,
+            candidate: .manual(name: write.name, seasons: write.seasons),
+            effectiveFrom: write.effectiveFrom,
+            effectiveTo: write.effectiveTo
+        )
+    }
+
+    /// Site-calendar YYYY-MM-DD dates; nil until both the start and the end are chosen.
+    var chosenDates: (from: String, to: String?)? {
+        guard let effectiveFrom, let end else { return nil }
+        let from = RatePlanTimelineFormatting.formatYMD(effectiveFrom, in: timeZone)
+        switch end {
+        case .ongoing: return (from, nil)
+        case .endsOn(let date): return (from, RatePlanTimelineFormatting.formatYMD(date, in: timeZone))
+        }
     }
 
     var effectiveName: String {
@@ -230,6 +251,8 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     private func validateDates(today: Date) -> String? {
+        guard let effectiveFrom else { return "Choose a start date." }
+        guard let end else { return "Choose an end date, or choose Ongoing." }
         let fromStr = RatePlanTimelineFormatting.formatYMD(effectiveFrom, in: timeZone)
         // The server accepts a start up to a year ahead, so an existing future-dated plan stays editable.
         let latestStart = RatePlanTimelineFormatting.formatYMD(
@@ -238,7 +261,7 @@ struct RatePlanDraft: Equatable, Sendable {
         if fromStr > latestStart {
             return "Effective start date can be at most a year from today."
         }
-        if !isOngoing {
+        if case .endsOn(let effectiveTo) = end {
             let toStr = RatePlanTimelineFormatting.formatYMD(effectiveTo, in: timeZone)
             if toStr < fromStr {
                 return "Effective end date must be on or after the start date."
@@ -276,10 +299,5 @@ struct RatePlanDraft: Equatable, Sendable {
 
     private func wrapMonth(_ raw: Int) -> Int {
         ((raw - 1) % 12 + 12) % 12 + 1
-    }
-
-    private static func startOfToday(in timeZone: TimeZone) -> Date {
-        let todayYMD = RatePlanTimelineFormatting.formatYMD(.now, in: timeZone)
-        return RatePlanTimelineFormatting.parseYMD(todayYMD, in: timeZone) ?? .now
     }
 }

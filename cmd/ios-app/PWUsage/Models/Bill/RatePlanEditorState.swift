@@ -17,6 +17,8 @@ enum RatePlanEditorRoute: Hashable, Sendable {
     case seasons(isWizard: Bool)
     case schedule(seasonIndex: Int, initialDayGroup: ScheduleDayGroup, isWizard: Bool)
     case pricing(seasonIndex: Int, isWizard: Bool)
+    /// The server's review of the change, shown before anything is saved.
+    case review
 }
 
 @Observable
@@ -24,11 +26,18 @@ enum RatePlanEditorRoute: Hashable, Sendable {
 final class RatePlanEditorState {
     let mode: RatePlanEditorMode
     let currency: String
-    var draft: RatePlanDraft
+    var draft: RatePlanDraft {
+        didSet { dropReviewIfStale() }
+    }
     private let initialDraft: RatePlanDraft
     var path: [RatePlanEditorRoute]
     var isSaving = false
     var saveError: String?
+    /// The review of the current draft; any edit to the plan or its dates discards it.
+    private(set) var review: RatePlanReviewModel?
+    /// Set when the server supports reviewed selections; Save then becomes Review.
+    let selection: RatePlanSelectionActions?
+    let scope: TariffSelectionScope
 
     private let onCreate: @MainActor (TariffPlanWriteRequest) async throws -> Void
     private let onUpdate: @MainActor (Int, TariffPlanPatchRequest) async throws -> Void
@@ -39,8 +48,12 @@ final class RatePlanEditorState {
         currency: String,
         takenNames: [String] = [],
         onCreate: @escaping @MainActor (TariffPlanWriteRequest) async throws -> Void = { _ in },
-        onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void = { _, _ in }
+        onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void = { _, _ in },
+        selection: RatePlanSelectionActions? = nil,
+        scope: TariffSelectionScope = .actual
     ) {
+        self.selection = selection
+        self.scope = scope
         self.mode = mode
         self.currency = currency
         self.onCreate = onCreate
@@ -66,7 +79,22 @@ final class RatePlanEditorState {
     /// True once the user has changed anything, so a stray swipe cannot throw the work away.
     var hasUnsavedChanges: Bool { draft != initialDraft }
 
-    var validationError: String? { draft.validate() }
+    var validationError: String? { draft.validate() ?? editRangeProblem }
+
+    static let shortenedEditMessage = "To shorten this plan’s dates, use Edit Dates instead."
+
+    /// A reviewed edit replaces the chosen range and keeps anything outside it, so it can't shorten
+    /// a plan: the cut-off part would stay. It must still cover the plan's current dates.
+    var editRangeProblem: String? {
+        guard selection != nil, case .edit(let period) = mode, let dates = draft.chosenDates else { return nil }
+        let coversStart = dates.from <= period.effectiveFrom
+        let coversEnd = switch (dates.to, period.effectiveTo) {
+        case (nil, _): true
+        case (.some, nil): false
+        case (.some(let until), .some(let originalEnd)): until >= originalEnd
+        }
+        return coversStart && coversEnd ? nil : Self.shortenedEditMessage
+    }
     var canSave: Bool { validationError == nil && !isSaving }
 
     /// Save in the toolbar: a new or customized plan can always be saved once valid, but an
@@ -77,8 +105,34 @@ final class RatePlanEditorState {
         return true
     }
 
+    /// Review in the toolbar, for servers with reviewed selections: available once the plan and
+    /// both dates are valid, and for an existing plan once something has changed.
+    var canReview: Bool {
+        guard selection != nil, draft.selectionRequest(scope: scope) != nil, editRangeProblem == nil, !isSaving else {
+            return false
+        }
+        if case .edit = mode { return hasUnsavedChanges }
+        return true
+    }
+
+    func startReview() {
+        guard canReview, let selection, let request = draft.selectionRequest(scope: scope) else { return }
+        if review?.request != request {
+            review = RatePlanReviewModel(request: request, actions: selection)
+        }
+        if path.last != .review { path.append(.review) }
+    }
+
+    private func dropReviewIfStale() {
+        guard let review, review.request != draft.selectionRequest(scope: scope) else { return }
+        self.review = nil
+        path.removeAll { $0 == .review }
+    }
+
     func finishStep(from route: RatePlanEditorRoute) {
         switch route {
+        case .review:
+            path.removeAll { $0 == .review }
         case .seasons(let isWizard):
             if isWizard {
                 path.append(.schedule(seasonIndex: 0, initialDayGroup: .weekdays, isWizard: true))

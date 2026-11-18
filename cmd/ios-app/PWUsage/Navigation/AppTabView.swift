@@ -111,6 +111,8 @@ struct AppTabView: View {
             switch sheet {
             case .batteryHold:
                 BatteryHoldSheet(coordinator: coordinator, site: site)
+            case .confirmCountry:
+                estimateSetupSheet(.confirmCountry)
             case .chooseUtility:
                 estimateSetupSheet(.pickUtility)
             case .choosePlan:

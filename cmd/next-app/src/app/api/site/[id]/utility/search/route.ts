@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { IoDeadlineError, withIoDeadline } from '@/lib/io-deadline';
 import { errorFields, observeRoute, setLogContext } from '@/lib/observability';
+import {
+  assertSiteContextUsEligible,
+  PublicPlansIneligibleError,
+  publicPlansIneligiblePayload,
+} from '@/lib/rate-plan-eligibility';
+import { TariffNotFoundError, TariffTimelineRepo } from '@/lib/tariff-timeline-repo';
 import { UrdbUnavailableError, utilityNames } from '@/lib/urdb/client';
 import { searchUtilities } from '@/lib/urdb/utility-lookup';
 
@@ -17,10 +23,15 @@ export function GET(req: NextRequest, context: { params: Promise<{ id: string }>
     const query = req.nextUrl.searchParams.get('q')?.trim() ?? '';
     if (query.length < 2 || query.length > 64) return json({ error: 'Enter 2 to 64 characters.' }, 400);
     try {
+      const site = await new TariffTimelineRepo().getSiteUtilityContext(siteId);
+      if (!site) throw new TariffNotFoundError('Site not found');
+      assertSiteContextUsEligible(site);
       const names = await withIoDeadline(30_000, () => utilityNames());
       return json({ utilities: searchUtilities(query, names) });
     } catch (error) {
       if (error instanceof UrdbUnavailableError || error instanceof IoDeadlineError) return json({ error: 'Utility rates are unavailable right now.' }, 503);
+      if (error instanceof PublicPlansIneligibleError) return json(publicPlansIneligiblePayload(error), 409);
+      if (error instanceof TariffNotFoundError) return json({ error: error.message }, 404);
       return json({ error: 'Could not search utilities.', ...errorFields(error) }, 500);
     }
   })(req);

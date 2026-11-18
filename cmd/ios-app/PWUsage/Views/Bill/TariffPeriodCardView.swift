@@ -52,6 +52,8 @@ struct TariffPeriodCardView: View {
     let onCopyPlan: () -> Void
     let onEditDates: () -> Void
     let onDelete: () -> Void
+    /// Set for an owner's override that can be put back to the Tesla plan it replaced.
+    var onRestoreTesla: (() -> Void)?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// At accessibility text sizes, rows stack so labels and badges wrap at word boundaries.
@@ -67,6 +69,7 @@ struct TariffPeriodCardView: View {
         CardContainer(padding: 15, cornerRadius: 16, spacing: 10) {
             headerRow
             metadataRow
+            provenanceRow
             startSourceRow
             estimateNotes
             Divider()
@@ -123,6 +126,14 @@ struct TariffPeriodCardView: View {
                 Button("Copy & Customize", systemImage: "doc.on.doc", action: onCopyPlan)
                 Button("Edit Dates", systemImage: "calendar", action: onEditDates)
             }
+            if let onRestoreTesla {
+                Divider()
+                Button(
+                    RatePlanReviewPresentation.restoreActionTitle,
+                    systemImage: "arrow.uturn.backward",
+                    action: onRestoreTesla
+                )
+            }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.title3)
@@ -136,6 +147,20 @@ struct TariffPeriodCardView: View {
         Text(metadataLine)
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    /// Where the plan came from, who chose it and who verified it, as separate facts.
+    @ViewBuilder private var provenanceRow: some View {
+        if period.choiceKind != nil || period.verification != nil {
+            let parts = [
+                RatePlanSourcePresentation.sourceLabel(period.source),
+                RatePlanSourcePresentation.chooserLabel(period.choiceKind, updatedBy: period.updatedBy),
+                RatePlanSourcePresentation.verificationLabel(period.verification)
+            ].compactMap(\.self)
+            Text(parts.joined(separator: " · "))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder private var startSourceRow: some View {

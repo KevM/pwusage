@@ -63,4 +63,82 @@ describe('layoutTimeline', () => {
     expect(layoutTimeline(existing, [], [{ tariffId: 20, effectiveFrom: '2025-01-01', effectiveTo: null }])).toEqual({ deleteIds: [], inserts: [], changed: [] });
   });
 
+  it('preserves owner-selected estimated plans across estimate rebuilds while filling uncovered gaps', () => {
+    const ownerPublic = {
+      ...span(1, 50, 'estimated', '2025-03-01', '2025-09-30', 'u1'),
+      selectionId: 77,
+      choiceKind: 'owner',
+    } as ExistingSpan;
+    const result = layoutTimeline(
+      [ownerPublic],
+      [],
+      [{ tariffId: 99, effectiveFrom: '2025-01-01', effectiveTo: null }]
+    );
+
+    expect(result.deleteIds).toEqual([]);
+    expect(result.inserts).toEqual([
+      { tariffId: 99, source: 'estimated', effectiveFrom: '2025-01-01', effectiveTo: '2025-02-28', updatedByUserId: null },
+      { tariffId: 99, source: 'estimated', effectiveFrom: '2025-10-01', effectiveTo: null, updatedByUserId: null },
+    ]);
+  });
+
+  it('preserves owner-selected estimated plans even when desired estimates are empty (e.g. skipped utility)', () => {
+    const ownerPublic = {
+      ...span(1, 50, 'estimated', '2025-03-01', null, 'u1'),
+      selectionId: 77,
+      choiceKind: 'owner',
+    } as ExistingSpan;
+    const result = layoutTimeline([ownerPublic], [], []);
+    expect(result).toEqual({ deleteIds: [], inserts: [], changed: [] });
+  });
+
+  it('does not move or trim restored saved Tesla spans when automatic Tesla anchors expand', () => {
+    const restoredTesla = {
+      ...span(1, 10, 'tesla', '2025-02-01', '2025-03-31', null),
+      selectionId: 88,
+      choiceKind: 'owner',
+    } as ExistingSpan;
+    const automaticTesla = {
+      ...span(2, 12, 'tesla', '2025-04-01', null, null),
+      selectionId: 89,
+      choiceKind: 'automatic',
+    } as ExistingSpan;
+
+    const result = layoutTimeline(
+      [restoredTesla, automaticTesla],
+      [
+        { tariffId: 10, startDate: '2025-01-01' },
+        { tariffId: 12, startDate: '2025-01-15' },
+      ],
+      []
+    );
+
+    expect(result.deleteIds).toEqual([]);
+    expect(result.inserts).toEqual([]);
+  });
+
+  it('preserves selectionId and choiceKind when automatic Tesla spans shift', () => {
+    const autoEstimate = span(1, 20, 'estimated', '2025-01-01', '2025-01-09');
+    const autoTesla = {
+      ...span(2, 10, 'tesla', '2025-01-10', null, null),
+      selectionId: 44,
+      choiceKind: 'automatic',
+    } as ExistingSpan;
+    const result = layoutTimeline(
+      [autoEstimate, autoTesla],
+      [{ tariffId: 10, startDate: '2025-01-05' }],
+      [{ tariffId: 20, effectiveFrom: '2025-01-01', effectiveTo: '2025-01-09' }]
+    );
+
+    expect(result.inserts).toContainEqual({
+      tariffId: 10,
+      source: 'tesla',
+      effectiveFrom: '2025-01-05',
+      effectiveTo: null,
+      updatedByUserId: null,
+      selectionId: 44,
+      choiceKind: 'automatic',
+    });
+  });
+
 });

@@ -1,6 +1,11 @@
-import { addCalendarDays, type ExistingSpan, type NewSpanRow } from './tariff-timeline';
+import { addCalendarDays, isProtectedSpan, spanChoiceKind, type ExistingSpan, type NewSpanRow } from './tariff-timeline';
 
-export interface DesiredEstimate { tariffId: number; effectiveFrom: string; effectiveTo: string | null }
+export interface DesiredEstimate {
+  tariffId: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  selectionId?: number | null;
+}
 export interface TeslaAnchor { tariffId: number; startDate: string }
 export interface EstimateLayout { deleteIds: number[]; inserts: NewSpanRow[]; changed: Array<{ from: string; to: string | null }> }
 
@@ -21,17 +26,38 @@ function uncovered(source: Interval, blockers: Interval[]): Interval[] {
   return blockers.reduce((parts, blocker) => parts.flatMap(part => subtract(part, blocker)), [source]);
 }
 function rowKey(row: NewSpanRow): string {
-  return JSON.stringify([row.tariffId, row.source, row.effectiveFrom, row.effectiveTo, row.updatedByUserId]);
+  const kind = spanChoiceKind(row);
+  const trackedSelectionId = kind === 'owner' || row.source === 'tesla' ? (row.selectionId ?? null) : null;
+  return JSON.stringify([row.tariffId, row.source, row.effectiveFrom, row.effectiveTo, row.updatedByUserId, kind, trackedSelectionId]);
+}
+function toNewSpanRow(row: Row): NewSpanRow {
+  return {
+    tariffId: row.tariffId,
+    source: row.source,
+    effectiveFrom: row.effectiveFrom,
+    effectiveTo: row.effectiveTo,
+    updatedByUserId: row.updatedByUserId,
+    ...(row.selectionId !== undefined ? { selectionId: row.selectionId } : {}),
+    ...(row.choiceKind !== undefined ? { choiceKind: row.choiceKind } : {}),
+  };
 }
 
 export function layoutTimeline(existing: ExistingSpan[], anchors: TeslaAnchor[], desired: DesiredEstimate[]): EstimateLayout {
-  let rows: Row[] = existing.filter(r => r.source !== 'estimated').map(r => ({
-    tariffId: r.tariffId, source: r.source, effectiveFrom: r.effectiveFrom,
-    effectiveTo: r.effectiveTo, updatedByUserId: r.updatedByUserId, originalId: r.id,
-  }));
+  let rows: Row[] = existing
+    .filter(r => r.source !== 'estimated' || isProtectedSpan(r))
+    .map(r => ({
+      tariffId: r.tariffId,
+      source: r.source,
+      effectiveFrom: r.effectiveFrom,
+      effectiveTo: r.effectiveTo,
+      updatedByUserId: r.updatedByUserId,
+      ...(r.selectionId !== undefined ? { selectionId: r.selectionId } : {}),
+      ...(r.choiceKind !== undefined ? { choiceKind: r.choiceKind } : {}),
+      originalId: r.id,
+    }));
   const ordered = [...rows].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
   for (const row of ordered) {
-    if (row.source !== 'tesla' || row.updatedByUserId !== null) continue;
+    if (row.source !== 'tesla' || isProtectedSpan(row)) continue;
     const target = anchors.find(a => a.tariffId === row.tariffId)?.startDate;
     if (!target || target === row.effectiveFrom || (row.effectiveTo !== null && target > row.effectiveTo)) continue;
     if (target > row.effectiveFrom) {
@@ -42,7 +68,7 @@ export function layoutTimeline(existing: ExistingSpan[], anchors: TeslaAnchor[],
     let start = target;
     for (const other of rows) {
       if (other === row || other.effectiveFrom >= row.effectiveFrom || end(other.effectiveTo) < start) continue;
-      if (other.source === 'manual' || other.updatedByUserId !== null) {
+      if (isProtectedSpan(other)) {
         if (other.effectiveTo === null) start = row.effectiveFrom;
         else start = [start, addCalendarDays(other.effectiveTo, 1)].sort().at(-1) ?? start;
       }
@@ -50,27 +76,35 @@ export function layoutTimeline(existing: ExistingSpan[], anchors: TeslaAnchor[],
     if (start >= row.effectiveFrom) continue;
     const expanded = { from: start, to: addCalendarDays(row.effectiveFrom, -1) };
     rows = rows.flatMap(other => {
-      if (other === row || other.source !== 'tesla' || other.updatedByUserId !== null || !overlap(interval(other), expanded)) return [other];
+      if (other === row || other.source !== 'tesla' || isProtectedSpan(other) || !overlap(interval(other), expanded)) return [other];
       return subtract(interval(other), expanded).map(part => ({ ...other, effectiveFrom: part.from, effectiveTo: part.to }));
     });
     row.effectiveFrom = start;
   }
   for (const estimate of [...desired].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))) {
     for (const part of uncovered(interval(estimate), rows.map(interval))) {
-      rows.push({ tariffId: estimate.tariffId, source: 'estimated', effectiveFrom: part.from, effectiveTo: part.to, updatedByUserId: null });
+      rows.push({
+        tariffId: estimate.tariffId,
+        source: 'estimated',
+        effectiveFrom: part.from,
+        effectiveTo: part.to,
+        updatedByUserId: null,
+        ...(estimate.selectionId !== undefined ? { selectionId: estimate.selectionId } : {}),
+      });
     }
   }
   rows.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
   const existingKeys = new Map(existing.map(r => [r.id, rowKey(r)]));
-  // Preserve identical rows, including estimates, so a repeated layout is a no-op.
+  // Preserve identical rows, including estimates and protected owner-selected estimated/restored rows, so a repeated layout is a no-op.
   const retained = new Set<number>();
   for (const row of rows) {
     const match = existing.find(r => !retained.has(r.id) && rowKey(r) === rowKey(row));
     if (match) retained.add(match.id);
   }
   const deleteIds = existing.filter(r => !retained.has(r.id)).map(r => r.id);
-  const inserts = rows.filter(row => !existing.some(r => retained.has(r.id) && existingKeys.get(r.id) === rowKey(row)))
-    .map(row => ({ tariffId: row.tariffId, source: row.source, effectiveFrom: row.effectiveFrom, effectiveTo: row.effectiveTo, updatedByUserId: row.updatedByUserId }));
+  const inserts = rows
+    .filter(row => !existing.some(r => retained.has(r.id) && existingKeys.get(r.id) === rowKey(row)))
+    .map(toNewSpanRow);
   const boundaries = new Set<string>();
   for (const row of [...existing, ...rows]) {
     boundaries.add(row.effectiveFrom);

@@ -40,8 +40,8 @@ struct UtilityPickerView: View {
         } header: {
             Text("Your utility’s public rates fill days without a rate plan, so bills and savings can be estimated.")
         } footer: {
-            Text("Utility names and rates come from the OpenEI Utility Rate Database. "
-                + "Only the utility name is used; never your location.")
+            Text("Utility names and rates come from the OpenEI Utility Rate Database, which covers US homes. "
+                + "Only the utility name is sent; never your location.")
         }
     }
 

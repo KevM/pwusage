@@ -40,8 +40,10 @@ jobs:
     # TODO: return to macos-latest once the arm64 pool recovers.
     runs-on: macos-15
     # The hosted macOS pool can queue longer than the tests themselves; keep the job
-    # alive for that wait. The runner still enforces its own 20-minute test deadline.
-    timeout-minutes: 45
+    # alive for that wait. run-tests.sh still enforces its own limits: 15 minutes to boot
+    # the simulator, then 20 for the tests, then 20 for the Debug build on main.
+    # A job the pool never picks up is retried by ios-runner-retry.yml.
+    timeout-minutes: 60
 
     defaults:
       run:
@@ -100,6 +102,9 @@ jobs:
           PWUSAGE_DERIVED_DATA: /tmp/pwusage-derived-data
           # 20 minutes accommodates optimized build time variance under macos-15 runner load.
           PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
+          # The simulator boots before the timed run. Cold boots on a busy runner have taken over
+          # ten minutes, which used to come out of the 20 above and time out main's full suite.
+          PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS: 900
           # Pushes to main and manual workflow dispatch force the full -O suite.
           # Pull requests use change detection via --auto.
           PWUSAGE_DETECTOR_PARITY: ${{ github.event_name != 'pull_request' && '1' || '' }}

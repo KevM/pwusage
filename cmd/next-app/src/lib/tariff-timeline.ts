@@ -1,4 +1,4 @@
-import type { Tariff, TariffSchedule, TariffSource } from './db-types';
+import type { Tariff, TariffSchedule, TariffSelectionChoiceKind, TariffSource } from './db-types';
 import type { ParsedSchedule, ParsedSeason, ParsedTariff } from './importer/tariff-parser';
 import { matchesScheduleForDay, sortSchedulesBySpecificity } from './schedule';
 import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
@@ -22,6 +22,8 @@ export interface ExistingSpan {
   effectiveFrom: string;
   effectiveTo: string | null;
   updatedByUserId: string | null;
+  selectionId?: number | null;
+  choiceKind?: TariffSelectionChoiceKind;
 }
 
 export interface NewSpanRow {
@@ -30,6 +32,21 @@ export interface NewSpanRow {
   effectiveFrom: string;
   effectiveTo: string | null;
   updatedByUserId: string | null;
+  selectionId?: number | null;
+  choiceKind?: TariffSelectionChoiceKind;
+}
+
+export function spanChoiceKind(
+  span: Pick<ExistingSpan, 'source' | 'updatedByUserId' | 'choiceKind'>
+): TariffSelectionChoiceKind {
+  if (span.choiceKind) return span.choiceKind;
+  return span.source === 'manual' || span.updatedByUserId !== null ? 'owner' : 'automatic';
+}
+
+export function isProtectedSpan(
+  span: Pick<ExistingSpan, 'source' | 'updatedByUserId' | 'choiceKind'>
+): boolean {
+  return spanChoiceKind(span) === 'owner';
 }
 
 export interface SpanMutationPlan {
@@ -321,6 +338,22 @@ export function decompileTariffToSeasons(tariff: Tariff): TariffSeasonInput[] {
   });
 }
 
+/**
+ * True when some weekday differs from Monday, or Sunday from Saturday, in any season: the
+ * weekday/weekend form `decompileTariffToSeasons` returns then hides those days, while billing
+ * (`Schedule.getTariffPeriod`) prices each actual day. JS days: 0 = Sunday ... 6 = Saturday.
+ */
+export function tariffHasDaySpecificSchedules(tariff: Tariff): boolean {
+  const same = (a: TimePeriodWindowInput[], b: TimePeriodWindowInput[]) => JSON.stringify(a) === JSON.stringify(b);
+  return (tariff.seasons ?? []).some(season => {
+    const sorted = sortSchedulesBySpecificity(season.schedules ?? []);
+    const day = (jsWeekday: number) => resolveDayWindows(sorted, jsWeekday, season.buy_rate, season.sell_rate);
+    const monday = day(1);
+    const saturday = day(6);
+    return [2, 3, 4, 5].some(d => !same(day(d), monday)) || !same(day(0), saturday);
+  });
+}
+
 function cmpEnd(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (a === null) return 1;
@@ -346,6 +379,10 @@ export function computeSpanMutations(
       continue;
     }
     deleteIds.push(span.id);
+    const provenance = {
+      ...(span.selectionId !== undefined ? { selectionId: span.selectionId } : {}),
+      ...(span.choiceKind !== undefined ? { choiceKind: span.choiceKind } : {}),
+    };
     if (span.effectiveFrom < incoming.effectiveFrom) {
       fragments.push({
         tariffId: span.tariffId,
@@ -353,6 +390,7 @@ export function computeSpanMutations(
         effectiveFrom: span.effectiveFrom,
         effectiveTo: addCalendarDays(incoming.effectiveFrom, -1),
         updatedByUserId: span.updatedByUserId,
+        ...provenance,
       });
     }
     if (incoming.effectiveTo !== null && cmpEnd(span.effectiveTo, incoming.effectiveTo) > 0) {
@@ -362,6 +400,7 @@ export function computeSpanMutations(
         effectiveFrom: addCalendarDays(incoming.effectiveTo, 1),
         effectiveTo: span.effectiveTo,
         updatedByUserId: span.updatedByUserId,
+        ...provenance,
       });
     }
   }

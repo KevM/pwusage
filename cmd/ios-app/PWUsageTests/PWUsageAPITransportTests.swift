@@ -26,6 +26,16 @@ extension PWUsageAPITests {
         await #expect(throws: PWUsageAPIError.invalidResponse) { try await api.fetchTariffTimeline(siteID: "a") }
     }
 
+    /// SwiftUI cancels a screen's load when the screen changes; the request then fails with
+    /// URLError.cancelled, which screens must treat as a cancellation, not show as an error.
+    @Test("A cancelled request surfaces as a cancellation")
+    func cancelledRequestIsCancellation() async throws {
+        StubURLProtocol.requestHandler = { _ in throw URLError(.cancelled) }
+        await #expect(throws: CancellationError.self) { try await api.fetchTariffTimeline(siteID: "a") }
+        StubURLProtocol.requestHandler = { _ in throw URLError(.timedOut) }
+        await #expect(throws: URLError.self) { try await api.fetchTariffTimeline(siteID: "a") }
+    }
+
     @Test("Tariff site ID stays in one encoded path segment")
     func tariffSiteIDIsEncoded() async throws {
         let siteID = "a/b ?#%"

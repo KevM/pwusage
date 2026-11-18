@@ -8,9 +8,9 @@ struct RatePlansPollingTests {
         #expect(RatePlansPolling.interval(reattribution: .running, estimates: .ready) == .seconds(3))
     }
 
-    @Test func pendingEstimatesKeepPollingAtTheSlowerPace() {
-        let interval = RatePlansPolling.interval(reattribution: nil, estimates: .pending)
-        #expect(interval == RatePlansPolling.estimatesInterval)
+    /// The server starts the estimate right after the change, so it usually lands within seconds.
+    @Test func pendingEstimatesPollEveryFewSeconds() {
+        #expect(RatePlansPolling.interval(reattribution: nil, estimates: .pending) == .seconds(5))
     }
 
     @Test func repricingWinsOverPendingEstimates() {
