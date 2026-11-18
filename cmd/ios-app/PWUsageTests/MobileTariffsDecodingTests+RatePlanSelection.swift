@@ -95,7 +95,7 @@ extension MobileTariffsDecodingTests {
             .decode(TariffSelectionPreviewResponse.self, from: Data(Self.previewJSON.utf8))
             .validating(siteID: "site-1")
         #expect(preview.reviewHash == "hash-1")
-        #expect(preview.approximationNotes.map(\.kind) == [.tierBlended, .other])
+        #expect(preview.approximationNotes.map(\.kind) == [.tierBlended, .daySpecificSchedule, .other])
         let interval = try #require(preview.affectedIntervals.first)
         #expect(interval.kind == .replace)
         #expect(interval.before?.source == .tesla)
@@ -171,6 +171,7 @@ extension MobileTariffsDecodingTests {
       "restoration": { "preservedOriginals": [], "restoredOriginals": [], "unavailableRanges": [],
                        "canApplyRestoration": true },
       "approximationNotes": [{ "kind": "tier_blended", "message": "Tiers blended" },
+                             { "kind": "day_specific_schedule", "message": "Days" },
                              { "kind": "something_new", "message": "New" }],
       "summary": { "hasBuyRateChanges": true, "hasSellRateChanges": false, "hasRateChanges": true,
                    "hasPeriodNameChanges": false, "fillsGap": false, "replacesExistingPlan": true }

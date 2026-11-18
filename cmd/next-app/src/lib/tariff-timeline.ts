@@ -338,6 +338,22 @@ export function decompileTariffToSeasons(tariff: Tariff): TariffSeasonInput[] {
   });
 }
 
+/**
+ * True when some weekday differs from Monday, or Sunday from Saturday, in any season: the
+ * weekday/weekend form `decompileTariffToSeasons` returns then hides those days, while billing
+ * (`Schedule.getTariffPeriod`) prices each actual day. JS days: 0 = Sunday ... 6 = Saturday.
+ */
+export function tariffHasDaySpecificSchedules(tariff: Tariff): boolean {
+  const same = (a: TimePeriodWindowInput[], b: TimePeriodWindowInput[]) => JSON.stringify(a) === JSON.stringify(b);
+  return (tariff.seasons ?? []).some(season => {
+    const sorted = sortSchedulesBySpecificity(season.schedules ?? []);
+    const day = (jsWeekday: number) => resolveDayWindows(sorted, jsWeekday, season.buy_rate, season.sell_rate);
+    const monday = day(1);
+    const saturday = day(6);
+    return [2, 3, 4, 5].some(d => !same(day(d), monday)) || !same(day(0), saturday);
+  });
+}
+
 function cmpEnd(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (a === null) return 1;

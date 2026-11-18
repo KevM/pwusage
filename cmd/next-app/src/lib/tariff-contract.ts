@@ -202,6 +202,8 @@ export type TariffApproximationKind =
   | 'export_net_metering_assumed'
   | 'export_fallback_zero'
   | 'holiday_weekend_schedule'
+  /** The plan has rules for specific days the weekday/weekend comparison can't show. */
+  | 'day_specific_schedule'
   | 'other';
 
 export interface TariffApproximationNote {

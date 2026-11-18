@@ -924,6 +924,8 @@ export function buildTariffSelectionPreview(
     // A gap in the actual timeline is billed with a borrowed plan, so compare against that.
     const fallbackPlan = !existingMatch && scope === 'actual' ? fallbackPlanForGap(sortedExisting, segFrom) : null;
     const beforePlan = existingMatch?.plan ?? fallbackPlan;
+    // The comparison can hide a replaced plan's day-specific rates as easily as a new one's.
+    if (beforePlan) collectedNotes.push(...beforePlan.approximationNotes.filter(n => n.kind === 'day_specific_schedule'));
 
     let afterPlan: TariffReviewPlanSnapshot | null;
     let kind: TariffReviewAffectedIntervalKind;

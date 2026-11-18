@@ -65,6 +65,7 @@ import {
   MAX_EFFECTIVE_PERIODS_PER_SITE,
   MAX_PLAN_NAME_LENGTH,
   siteLocalDateString,
+  tariffHasDaySpecificSchedules,
   TariffValidationError,
   validateEffectiveDates,
   validateTariffPlanInput,
@@ -1258,6 +1259,15 @@ async function loadScopePeriodRows(
   return res.rows;
 }
 
+/** The review compares Monday for weekdays and Saturday for weekends; say so when that hides days. */
+export function daySpecificScheduleNote(planName: string): TariffApproximationNote {
+  return {
+    kind: 'day_specific_schedule',
+    message: `${planName} has rates for specific days of the week. This review shows its Monday rates for weekdays `
+      + 'and its Saturday rates for weekends; bills use the rates for each actual day.',
+  };
+}
+
 function buildSnapshotFromRow(
   row: PeriodQueryRow,
   tariff: Tariff | undefined,
@@ -1285,7 +1295,10 @@ function buildSnapshotFromRow(
     exportRateProvenance,
     holidaysUseWeekendSchedule: row.holidays_use_weekend ?? true,
     seasons: tariff ? decompileTariffToSeasons(tariff) : [],
-    approximationNotes: parseApproximationNotes(row.approximation_notes),
+    approximationNotes: [
+      ...parseApproximationNotes(row.approximation_notes),
+      ...(tariff && tariffHasDaySpecificSchedules(tariff) ? [daySpecificScheduleNote(row.name || tariff.name || 'This plan')] : []),
+    ],
     verification: resolveVerifiedSummary(row, effectiveFrom, effectiveTo, viewerUserId),
   };
 }

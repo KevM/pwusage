@@ -508,6 +508,31 @@ describe('buildTariffSelectionPreview', () => {
     ]);
   });
 
+  it('carries a replaced plan\'s day-specific note into the review, but not its other notes', () => {
+    const daySpecific = { kind: 'day_specific_schedule' as const, message: 'Sunday Plan has rates for specific days.' };
+    const blended = { kind: 'tier_blended' as const, message: 'Tiers were blended.' };
+    const sunday = makePlanSnapshot({
+      tariffId: 701, version: 1, periodId: 71, name: 'Sunday Plan', source: 'tesla', seasons: summerWinterPlanA,
+      approximationNotes: [daySpecific, blended],
+    });
+    const candidate = makePlanSnapshot({ name: 'Flat', source: 'manual', seasons: shiftedWindowPlanB });
+    const preview = buildTariffSelectionPreview({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-17',
+      request: {
+        scope: 'actual',
+        candidate: { kind: 'manual', name: 'Flat', seasons: shiftedWindowPlanB },
+        effectiveFrom: '2026-01-01',
+        effectiveTo: null,
+      },
+      existingSpans: [{ effectiveFrom: '2026-01-01', effectiveTo: null, plan: sunday }],
+      candidatePlan: candidate,
+    });
+    expect(preview.approximationNotes).toEqual([daySpecific]);
+  });
+
   it('recalculates the same dates the commit reprices: all earlier history and any gap after', () => {
     const plan = makePlanSnapshot({
       tariffId: 501, version: 1, periodId: 51, name: 'Tesla Plan', source: 'tesla', seasons: summerWinterPlanA,

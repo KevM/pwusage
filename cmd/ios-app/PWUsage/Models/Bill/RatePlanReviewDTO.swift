@@ -15,6 +15,8 @@ enum TariffApproximationKind: String, Codable, Equatable, Sendable {
     case exportNetMeteringAssumed = "export_net_metering_assumed"
     case exportFallbackZero = "export_fallback_zero"
     case holidayWeekendSchedule = "holiday_weekend_schedule"
+    /// The plan has rules for specific days the weekday/weekend comparison can't show.
+    case daySpecificSchedule = "day_specific_schedule"
     case other
 
     /// A kind added on the server later reads as `other`, so the note still shows.

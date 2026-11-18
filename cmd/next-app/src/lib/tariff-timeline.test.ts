@@ -4,6 +4,7 @@ import {
   compileSeasonsToParsedTariff,
   computeSpanMutations,
   decompileTariffToSeasons,
+  tariffHasDaySpecificSchedules,
   siteLocalDateString,
   TariffValidationError,
   validateTariffPlanInput,
@@ -155,6 +156,25 @@ describe('compileSeasonsToParsedTariff & decompileTariffToSeasons', () => {
       { touName: 'ON_PEAK', fromHour: 0, fromMinute: 0, toHour: 6, toMinute: 7, buyRate: 0.4, sellRate: 0.03 },
       { touName: 'OFF_PEAK', fromHour: 6, fromMinute: 7, toHour: 24, toMinute: 0, buyRate: 0.1, sellRate: 0.03 },
     ]);
+  });
+
+  it('notices a schedule the weekday/weekend comparison would collapse, such as a Sunday-only rate', () => {
+    // Tesla days of week: 0 = Monday ... 6 = Sunday.
+    const sch = (id: number, name: string, buy: number, fromDay: number, toDay: number) => ({
+      id, season_id: 1, name, buy_rate: buy, sell_rate: 0.03, from_day_of_week: fromDay, to_day_of_week: toDay,
+      from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0,
+    });
+    const tariff = (schedules: ReturnType<typeof sch>[]) => ({
+      id: 5, site_id: 's1', updated: new Date(), name: 'Days',
+      seasons: [{
+        id: 1, tariff_id: 5, name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+        buy_rate: 0.1, sell_rate: 0.03, schedules,
+      }],
+    });
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Off-Peak', 0.1, 0, 5), sch(2, 'Peak', 0.5, 6, 6)]))).toBe(true);
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Peak', 0.3, 0, 3), sch(2, 'Off-Peak', 0.1, 4, 6)]))).toBe(true);
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Peak', 0.3, 0, 4), sch(2, 'Off-Peak', 0.1, 5, 6)]))).toBe(false);
+    expect(tariffHasDaySpecificSchedules(tariff([sch(1, 'Off-Peak', 0.1, 0, 6)]))).toBe(false);
   });
 
   it('exposes day-of-month season bounds so a mid-month Tesla season is not reduced to whole months', () => {
