@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { SiteTariffsTimelineResponse } from '@/lib/tariff-contract';
-import { AiRatePlanHandoffModal } from './AiRatePlanHandoffModal';
+import { AiRatePlanHandoffModal, renderScopePreviewSection } from './AiRatePlanHandoffModal';
 import { TariffList, teslaDivergenceCopy } from './TariffList';
 
 const baseTimeline: SiteTariffsTimelineResponse = {
@@ -224,6 +224,97 @@ describe('TariffList v2 timeline', () => {
     });
     expect(aiImportedHtml).toContain('Imported with AI assistant');
     expect(aiImportedHtml).not.toContain('Edited by you');
+
+    const previewHtml = renderToStaticMarkup(
+      <div>
+        {renderScopePreviewSection(
+          'Your Rate Plan Changes',
+          [
+            {
+              reviewHash: 'h1',
+              siteId: 'site-1',
+              scope: 'actual',
+              effectiveFrom: '2026-01-01',
+              effectiveTo: null,
+              currency: 'USD',
+              unit: 'kWh',
+              timezone: 'America/Chicago',
+              holidaysUseWeekendSchedule: true,
+              recalculatesHistory: false,
+              recalculatesFromHistoryStart: false,
+              recalculationRange: null,
+              affectsPowerwallPlan: false,
+              candidatePlan: null,
+              affectedIntervals: [
+                {
+                  effectiveFrom: '2026-01-01',
+                  effectiveTo: null,
+                  kind: 'replace',
+                  before: null,
+                  beforeIsFallback: false,
+                  after: null,
+                  hasBuyRateChanges: true,
+                  hasSellRateChanges: false,
+                  hasRateChanges: true,
+                  hasPeriodNameChanges: false,
+                  restoration: { status: 'not_applicable' },
+                  seasons: [
+                    {
+                      fromMonth: 1,
+                      fromDay: 1,
+                      toMonth: 12,
+                      toDay: 31,
+                      beforeSeasonName: 'All Year',
+                      afterSeasonName: 'All Year',
+                      hasBuyRateChanges: true,
+                      hasSellRateChanges: false,
+                      hasRateChanges: true,
+                      hasPeriodNameChanges: false,
+                      weekdayRows: [],
+                      weekendRows: [
+                        {
+                          fromHour: 0,
+                          fromMinute: 0,
+                          toHour: 24,
+                          toMinute: 0,
+                          before: { touName: 'OFF_PEAK', buyRate: 0.1, sellRate: 0.05 },
+                          after: { touName: 'OFF_PEAK', buyRate: 0.14, sellRate: 0.05 },
+                          buyRateDelta: 0.04,
+                          sellRateDelta: 0,
+                          buyRateChanged: true,
+                          sellRateChanged: false,
+                          rateChanged: true,
+                          periodNameChanged: false,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+              unchangedOutsidePeriods: [],
+              restoration: {
+                preservedOriginals: [],
+                restoredOriginals: [],
+                unavailableRanges: [],
+                canApplyRestoration: false,
+              },
+              approximationNotes: [],
+              summary: {
+                hasBuyRateChanges: true,
+                hasSellRateChanges: false,
+                hasRateChanges: true,
+                hasPeriodNameChanges: false,
+                fillsGap: false,
+                replacesExistingPlan: true,
+              },
+            },
+          ],
+          'USD'
+        )}
+      </div>
+    );
+    expect(previewHtml).toContain('Sat – Sun &amp; Holidays');
+    expect(previewHtml).toContain('0.14/kWh');
   });
 });
 

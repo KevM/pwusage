@@ -129,6 +129,29 @@ describe('tariff-ai-handoff-service', () => {
     expect(withBillDetails.citesUtilityBill).toBe(true);
   });
 
+  it('disambiguates plan name when replacing only part of an existing span so surviving fragments do not collide', () => {
+    const existingActual = [makeExistingSpan('Home Plan', '2024-01-01', null, FLAT_SEASONS, 'tesla')];
+    const preview = buildBatchAiHandoffPreview({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-18',
+      eligibility: 'us',
+      rawInput: JSON.stringify({
+        schema: AI_HANDOFF_SCHEMA,
+        actualPeriods: [
+          { name: 'Home Plan', effectiveFrom: '2025-01-01', effectiveTo: null, seasons: UPDATED_TOU_SEASONS },
+        ],
+        referencePeriods: [],
+      }),
+      actualSpans: existingActual,
+      referenceSpans: [],
+    });
+
+    expect(preview.actualPreviews).toHaveLength(1);
+    expect(preview.actualPreviews[0].candidatePlan?.name).toBe('Home Plan (2025)');
+  });
+
   it('commits reviewed batch changes via repo.commitAiHandoffSelections and rejects missing reviewHash', async () => {
     const existingActual = [makeExistingSpan('Tesla Plan', '2024-01-01', null, FLAT_SEASONS, 'tesla')];
     const rawInput = JSON.stringify({

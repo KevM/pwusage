@@ -57,6 +57,7 @@ function disambiguateBatchPlanName(
   baseName: string,
   contentHash: string,
   effectiveFrom: string,
+  effectiveTo: string | null,
   existingSpans: ExistingTimelineSpanInput[],
   assignedInBatch: Array<{ name: string; contentHash: string }>
 ): string {
@@ -70,10 +71,10 @@ function disambiguateBatchPlanName(
 
     return existingSpans.some(span => {
       if (span.plan.source === 'estimated' && span.plan.choiceKind !== 'owner') return false;
-      const overlaps =
-        (span.effectiveTo === null || span.effectiveTo >= effectiveFrom) &&
-        span.effectiveFrom <= effectiveFrom;
-      if (overlaps) return false;
+      const fullyReplaced =
+        span.effectiveFrom >= effectiveFrom &&
+        (effectiveTo === null || (span.effectiveTo !== null && span.effectiveTo <= effectiveTo));
+      if (fullyReplaced) return false;
       return span.plan.name.trim().toLowerCase() === lower && span.plan.contentHash !== contentHash;
     });
   };
@@ -166,7 +167,14 @@ function prepareScopePreviews(params: {
 
     const finalName =
       params.scope === 'actual'
-        ? disambiguateBatchPlanName(rawPeriod.name, rawHash, rawPeriod.effectiveFrom, currentSpans, assignedNames)
+        ? disambiguateBatchPlanName(
+            rawPeriod.name,
+            rawHash,
+            rawPeriod.effectiveFrom,
+            rawPeriod.effectiveTo,
+            currentSpans,
+            assignedNames
+          )
         : rawPeriod.name.trim();
     const period: TariffPlanWriteInput = { ...rawPeriod, name: finalName };
     const parsed = compileSeasonsToParsedTariff(period.name, period.seasons);

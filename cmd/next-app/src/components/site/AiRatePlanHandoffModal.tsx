@@ -6,6 +6,7 @@ import type {
   SiteTariffsTimelineResponse,
   TariffAiHandoffCommitResponse,
   TariffAiHandoffPreviewResponse,
+  TariffAlignedTimeRow,
   TariffPeriodName,
   TariffSelectionPreviewResponse,
 } from '@/lib/tariff-contract';
@@ -32,7 +33,30 @@ function formatClock(hour: number, minute: number): string {
   return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
 }
 
-function renderScopePreviewSection(
+function renderAlignedRows(
+  rows: TariffAlignedTimeRow[],
+  dayLabel: string,
+  keyPrefix: string,
+  currency: string
+) {
+  return rows.map((row, rIdx) => (
+    <div key={`${keyPrefix}-${rIdx}`} className="flex flex-wrap justify-between gap-2 text-gray-600 dark:text-gray-300">
+      <span>
+        {dayLabel} · {formatClock(row.fromHour, row.fromMinute)} – {formatClock(row.toHour, row.toMinute)}
+      </span>
+      <span>
+        {row.before
+          ? `${PERIOD_LABELS[row.before.touName]} ${currency} ${row.before.buyRate}/kWh → `
+          : ''}
+        {row.after
+          ? `${PERIOD_LABELS[row.after.touName]} ${currency} ${row.after.buyRate}/kWh (sell ${row.after.sellRate})`
+          : ''}
+      </span>
+    </div>
+  ));
+}
+
+export function renderScopePreviewSection(
   title: string,
   previews: TariffSelectionPreviewResponse[],
   currency: string
@@ -72,21 +96,8 @@ function renderScopePreviewSection(
                   <p className="font-medium text-gray-700 dark:text-gray-300">
                     {season.afterSeasonName ?? season.beforeSeasonName ?? 'Season'} (Months {season.fromMonth}–{season.toMonth})
                   </p>
-                  {season.weekdayRows.map((row, rIdx) => (
-                    <div key={`wd-${rIdx}`} className="flex flex-wrap justify-between gap-2 text-gray-600 dark:text-gray-300">
-                      <span>
-                        Mon – Fri · {formatClock(row.fromHour, row.fromMinute)} – {formatClock(row.toHour, row.toMinute)}
-                      </span>
-                      <span>
-                        {row.before
-                          ? `${PERIOD_LABELS[row.before.touName]} ${currency} ${row.before.buyRate}/kWh → `
-                          : ''}
-                        {row.after
-                          ? `${PERIOD_LABELS[row.after.touName]} ${currency} ${row.after.buyRate}/kWh (sell ${row.after.sellRate})`
-                          : ''}
-                      </span>
-                    </div>
-                  ))}
+                  {renderAlignedRows(season.weekdayRows, 'Mon – Fri', 'wd', currency)}
+                  {renderAlignedRows(season.weekendRows, 'Sat – Sun & Holidays', 'we', currency)}
                 </div>
               ))}
             </div>
