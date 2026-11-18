@@ -139,6 +139,9 @@ enum RateEstimatesPresentation {
         if let historyStart, start < historyStart { start = historyStart }
         return "Estimated from public utility rates for every day since "
             + "\(RatePlanTimelineFormatting.displayDate(start)). "
+            + "The rates below are for the revision starting "
+            + "\(RatePlanTimelineFormatting.displayDate(editing.effectiveFrom)). "
+            + "You only need to enter rates if these estimates don’t match your fixed comparison plan. "
             + "Saving your own rates replaces the estimate from the start date."
     }
 

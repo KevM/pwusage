@@ -240,6 +240,8 @@ struct RateEstimatesPresentationTests {
         #expect(RateEstimatesPresentation.fixedPlanEstimateCoverageNote(
             editing: chain[3], referencePeriods: chain, historyStart: "2023-11-14")
             == "Estimated from public utility rates for every day since Nov 14, 2023. "
+            + "The rates below are for the revision starting Jun 1, 2025. "
+            + "You only need to enter rates if these estimates don’t match your fixed comparison plan. "
             + "Saving your own rates replaces the estimate from the start date.")
     }
 
@@ -252,6 +254,8 @@ struct RateEstimatesPresentationTests {
         #expect(RateEstimatesPresentation.fixedPlanEstimateCoverageNote(
             editing: periods[2], referencePeriods: periods, historyStart: "2023-11-14")
             == "Estimated from public utility rates for every day since Jul 1, 2024. "
+            + "The rates below are for the revision starting Jun 1, 2025. "
+            + "You only need to enter rates if these estimates don’t match your fixed comparison plan. "
             + "Saving your own rates replaces the estimate from the start date.")
     }
 
