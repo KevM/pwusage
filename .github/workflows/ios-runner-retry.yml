@@ -1,0 +1,42 @@
+name: iOS CI runner retry
+
+# GitHub's hosted macOS pool sometimes never picks up the iOS test job. GitHub then cancels it
+# with "The job was not acquired by Runner of type hosted even after multiple attempts", and main
+# shows a failed iOS run although no test ran. Re-run such a run, at most twice. Runs cancelled
+# for any other reason (a newer push to the same pull request, a person) are left alone.
+on:
+  workflow_run:
+    workflows: [iOS CI]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+jobs:
+  retry:
+    if: github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run when no runner picked up the job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          unacquired=0
+          for job in $(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "cancelled" and (.runner_name // "") == "") | .id'); do
+            if gh api "repos/$REPO/check-runs/$job/annotations" --jq '.[].message' \
+              | grep -q 'was not acquired by Runner'; then
+              unacquired=1
+            fi
+          done
+          if [[ "$unacquired" == 1 ]]; then
+            echo "No hosted runner picked up iOS CI run $RUN_ID (attempt $ATTEMPT); re-running it."
+            gh run rerun "$RUN_ID" --repo "$REPO"
+          else
+            echo "iOS CI run $RUN_ID was cancelled for another reason; leaving it."
+          fi
