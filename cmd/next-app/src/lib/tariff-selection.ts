@@ -740,6 +740,25 @@ function resolveRestorationTargets(
   return [];
 }
 
+/**
+ * The plan billing uses for a day in a gap: the nearest earlier plan by end date, else (before
+ * every plan) the earliest. Same pick as `resolveTariffForDate` and `pickActivePeriodForDate`.
+ */
+function fallbackPlanForGap(
+  spans: ReadonlyArray<ExistingTimelineSpanInput>,
+  date: string
+): TariffReviewPlanSnapshot | null {
+  let nearest: ExistingTimelineSpanInput | null = null;
+  for (const span of spans) {
+    if (span.effectiveTo !== null && span.effectiveTo < date && (nearest === null || span.effectiveTo > (nearest.effectiveTo as string))) {
+      nearest = span;
+    }
+  }
+  if (nearest) return nearest.plan;
+  const earliest = [...spans].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+  return earliest?.plan ?? null;
+}
+
 function collectBoundaryStarts(
   reqFrom: string,
   reqTo: string | null,
@@ -902,7 +921,9 @@ export function buildTariffSelectionPreview(
     const segFrom = segmentStarts[i];
     const segTo = i + 1 < segmentStarts.length ? addCalendarDays(segmentStarts[i + 1], -1) : effectiveTo;
     const existingMatch = sortedExisting.find(span => spanContainsDate(span.effectiveFrom, span.effectiveTo, segFrom));
-    const beforePlan = existingMatch?.plan ?? null;
+    // A gap in the actual timeline is billed with a borrowed plan, so compare against that.
+    const fallbackPlan = !existingMatch && scope === 'actual' ? fallbackPlanForGap(sortedExisting, segFrom) : null;
+    const beforePlan = existingMatch?.plan ?? fallbackPlan;
 
     let afterPlan: TariffReviewPlanSnapshot | null;
     let kind: TariffReviewAffectedIntervalKind;
@@ -933,7 +954,7 @@ export function buildTariffSelectionPreview(
       }
     } else {
       afterPlan = input.candidatePlan as TariffReviewPlanSnapshot;
-      kind = beforePlan ? 'replace' : 'fill_gap';
+      kind = existingMatch ? 'replace' : 'fill_gap';
       const preserved = buildPreservedOriginalForSpan(existingMatch, segFrom, segTo);
       if (preserved) {
         restoration = { status: 'preserves_tesla_original', original: preserved };
@@ -957,6 +978,7 @@ export function buildTariffSelectionPreview(
       effectiveTo: segTo,
       kind,
       before: beforePlan,
+      beforeIsFallback: fallbackPlan !== null,
       after: afterPlan,
       seasons,
       hasBuyRateChanges,

@@ -90,6 +90,12 @@ enum RatePlanReviewPresentation {
         }
     }
 
+    /// Why a gap shows a plan under Before: billing borrows it for days without a plan.
+    static func fallbackNote(_ interval: TariffReviewAffectedInterval) -> String? {
+        guard interval.beforeIsFallback, let name = interval.before?.name else { return nil }
+        return "These dates have no plan of their own, so bills use \(name) for them now."
+    }
+
     static func restorationNote(_ restoration: TariffIntervalRestorationProvenance) -> String? {
         switch restoration {
         case .notApplicable: nil

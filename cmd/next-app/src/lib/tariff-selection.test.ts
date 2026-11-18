@@ -181,7 +181,8 @@ describe('buildTariffSelectionPreview', () => {
       afterName: i.after?.name ?? null,
     }))).toEqual([
       { from: '2025-03-01', to: '2025-05-31', kind: 'replace', beforeName: 'Tesla Rg2 2024', afterName: 'Rg2 Public 2025' },
-      { from: '2025-06-01', to: '2025-06-30', kind: 'fill_gap', beforeName: null, afterName: 'Rg2 Public 2025' },
+      // Billing prices the gap with the nearest earlier plan, so that is what the change replaces there.
+      { from: '2025-06-01', to: '2025-06-30', kind: 'fill_gap', beforeName: 'Tesla Rg2 2024', afterName: 'Rg2 Public 2025' },
       { from: '2025-07-01', to: '2025-09-30', kind: 'replace', beforeName: 'Tesla Rg2 2025', afterName: 'Rg2 Public 2025' },
     ]);
 
@@ -211,12 +212,17 @@ describe('buildTariffSelectionPreview', () => {
       { span: '21:0-24:0', beforeBuy: 0.1, afterBuy: 0.12, delta: 0.02 },
     ]);
 
-    // Gap interval preserves full candidate schedule with null before.
-    expect(preview.affectedIntervals[1].before).toBeNull();
+    // The gap compares against the plan billing borrows for it, flagged as a fallback; the
+    // borrowed plan's Tesla original is not preserved, since the change doesn't replace it.
+    expect(preview.affectedIntervals[1].before?.name).toBe('Tesla Rg2 2024');
+    expect(preview.affectedIntervals[1].beforeIsFallback).toBe(true);
+    expect(preview.affectedIntervals[0].beforeIsFallback).toBe(false);
+    expect(preview.affectedIntervals[1].restoration).toEqual({ status: 'not_applicable' });
     expect(preview.affectedIntervals[1].after?.source).toBe('estimated');
     expect(preview.affectedIntervals[1].seasons).toHaveLength(1);
-    expect(preview.affectedIntervals[1].seasons[0].beforeSeasonName).toBeNull();
+    expect(preview.affectedIntervals[1].seasons[0].beforeSeasonName).toBe('Summer');
     expect(preview.affectedIntervals[1].seasons[0].afterSeasonName).toBe('Summer');
+    expect(preview.affectedIntervals[1].hasRateChanges).toBe(true);
 
     // Both replaced Tesla intervals preserve their originals (with version metadata).
     expect(preview.restoration.preservedOriginals).toEqual([
@@ -374,8 +380,10 @@ describe('buildTariffSelectionPreview', () => {
       ['2025-04-01', '2025-06-30', 'replace'],
       ['2025-07-01', null, 'fill_gap'],
     ]);
-    // Ongoing tail interval covers the full canonical year (2 seasons for candidate).
-    expect(preview.affectedIntervals[1].seasons.map(s => s.afterSeasonName)).toEqual(['Summer', 'Winter']);
+    // The ongoing gap borrows the bounded plan, so the full year aligns both plans' seasons.
+    expect(preview.affectedIntervals[1].beforeIsFallback).toBe(true);
+    expect(preview.affectedIntervals[1].seasons.map(s => [s.fromMonth, s.toMonth, s.beforeSeasonName, s.afterSeasonName]))
+      .toEqual([[5, 5, 'Winter', 'Summer'], [6, 9, 'Summer', 'Summer'], [10, 10, 'Winter', 'Summer'], [11, 4, 'Winter', 'Winter']]);
     expect(preview.unchangedOutsidePeriods.map(u => [u.effectiveFrom, u.effectiveTo])).toEqual([
       ['2025-01-01', '2025-03-31'],
     ]);
@@ -398,6 +406,8 @@ describe('buildTariffSelectionPreview', () => {
 
     expect(emptyTimeline.affectedIntervals).toHaveLength(1);
     expect(emptyTimeline.affectedIntervals[0].kind).toBe('fill_gap');
+    expect(emptyTimeline.affectedIntervals[0].before).toBeNull();
+    expect(emptyTimeline.affectedIntervals[0].beforeIsFallback).toBe(false);
     expect(emptyTimeline.unchangedOutsidePeriods).toEqual([]);
     expect(emptyTimeline.summary.fillsGap).toBe(true);
     expect(emptyTimeline.summary.replacesExistingPlan).toBe(false);
@@ -459,6 +469,43 @@ describe('buildTariffSelectionPreview', () => {
 
     expect(futureActualPreview.recalculatesHistory).toBe(false);
     expect(futureActualPreview.recalculationRange).toBeNull();
+  });
+
+  it('compares days before the earliest plan against it, but never borrows for the fixed comparison plan', () => {
+    const jan = makePlanSnapshot({
+      tariffId: 601, version: 1, periodId: 61, name: 'January Plan', source: 'tesla', seasons: summerWinterPlanA,
+    });
+    const candidate = makePlanSnapshot({ name: 'Owner Plan', source: 'manual', seasons: shiftedWindowPlanB });
+    const preview = (scope: 'actual' | 'reference', effectiveFrom: string, effectiveTo: string | null) =>
+      buildTariffSelectionPreview({
+        siteId: 'site-1',
+        timezone: 'America/Chicago',
+        currency: 'USD',
+        todaySiteLocal: '2026-11-17',
+        request: {
+          scope,
+          candidate: { kind: 'manual', name: 'Owner Plan', seasons: shiftedWindowPlanB },
+          effectiveFrom,
+          effectiveTo,
+        },
+        existingSpans: [{ effectiveFrom: '2026-01-01', effectiveTo: '2026-01-31', plan: jan }],
+        candidatePlan: candidate,
+      });
+
+    const earlier = preview('actual', '2025-06-01', '2025-06-30');
+    expect(earlier.affectedIntervals.map(i => [i.kind, i.before?.name ?? null, i.beforeIsFallback])).toEqual([
+      ['fill_gap', 'January Plan', true],
+    ]);
+
+    const march = preview('actual', '2026-03-01', '2026-03-31');
+    expect(march.affectedIntervals.map(i => [i.kind, i.before?.name ?? null, i.beforeIsFallback])).toEqual([
+      ['fill_gap', 'January Plan', true],
+    ]);
+
+    const reference = preview('reference', '2026-03-01', '2026-03-31');
+    expect(reference.affectedIntervals.map(i => [i.kind, i.before?.name ?? null, i.beforeIsFallback])).toEqual([
+      ['fill_gap', null, false],
+    ]);
   });
 
   it('recalculates the same dates the commit reprices: all earlier history and any gap after', () => {

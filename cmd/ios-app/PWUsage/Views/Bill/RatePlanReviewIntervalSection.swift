@@ -11,6 +11,11 @@ struct RatePlanReviewIntervalSection: View {
         Section {
             planRow("Before", plan: interval.before)
             planRow("After", plan: interval.after)
+            if let note = RatePlanReviewPresentation.fallbackNote(interval) {
+                Text(note)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             if let note = RatePlanReviewPresentation.restorationNote(interval.restoration) {
                 Text(note)
                     .font(.subheadline)

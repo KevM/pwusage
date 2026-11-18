@@ -303,6 +303,12 @@ export interface TariffReviewAffectedInterval {
   effectiveTo: string | null;
   kind: TariffReviewAffectedIntervalKind;
   before: TariffReviewPlanSnapshot | null;
+  /**
+   * The interval is a gap (`fill_gap`) that billing currently prices with a borrowed plan, the
+   * nearest earlier one or else the earliest, so `before` is that plan rather than one saved for
+   * these dates. Always false for the fixed comparison plan, which never borrows.
+   */
+  beforeIsFallback: boolean;
   after: TariffReviewPlanSnapshot | null;
   seasons: TariffAlignedSeasonComparison[];
   hasBuyRateChanges: boolean;

@@ -133,6 +133,9 @@ struct TariffReviewAffectedInterval: Decodable, Equatable, Sendable {
     let effectiveTo: String?
     let kind: TariffReviewAffectedIntervalKind
     let before: TariffReviewPlanSnapshot?
+    /// A gap billed today with a borrowed plan (the nearest earlier one, or else the earliest), so
+    /// `before` is that plan rather than one saved for these dates.
+    let beforeIsFallback: Bool
     let after: TariffReviewPlanSnapshot?
     let seasons: [TariffAlignedSeasonComparison]
     let hasBuyRateChanges: Bool

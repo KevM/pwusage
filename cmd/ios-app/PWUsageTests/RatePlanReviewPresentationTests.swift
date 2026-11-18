@@ -79,6 +79,25 @@ struct RatePlanReviewPresentationTests {
     }
 
     @MainActor
+    @Test("A gap names the plan its bills borrow today")
+    func borrowedPlanNote() throws {
+        let replaced = try #require(RatePlanReviewModelTests.preview().affectedIntervals.first)
+        #expect(RatePlanReviewPresentation.fallbackNote(replaced) == nil)
+        let json = MobileTariffsDecodingTests.previewJSON
+            .replacingOccurrences(
+                of: "\"kind\": \"replace\", \"beforeIsFallback\": false",
+                with: "\"kind\": \"fill_gap\", \"beforeIsFallback\": true"
+            )
+        let gap = try #require(
+            MobileContractDecoder.make()
+                .decode(TariffSelectionPreviewResponse.self, from: Data(json.utf8))
+                .affectedIntervals.first
+        )
+        #expect(RatePlanReviewPresentation.fallbackNote(gap)
+            == "These dates have no plan of their own, so bills use Tesla for them now.")
+    }
+
+    @MainActor
     @Test("Review copy names the dates, recalculation and Powerwall effect")
     func reviewCopy() throws {
         #expect(RatePlanReviewPresentation.rangeLabel(from: "2025-03-01", to: nil).hasSuffix("ongoing"))

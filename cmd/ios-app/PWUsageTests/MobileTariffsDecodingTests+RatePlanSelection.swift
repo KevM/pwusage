@@ -156,7 +156,7 @@ extension MobileTariffsDecodingTests {
       "recalculationRange": { "fromDate": "2025-03-01", "toDate": null }, "affectsPowerwallPlan": false,
       "candidatePlan": null,
       "affectedIntervals": [{
-        "effectiveFrom": "2025-03-01", "effectiveTo": null, "kind": "replace",
+        "effectiveFrom": "2025-03-01", "effectiveTo": null, "kind": "replace", "beforeIsFallback": false,
         "before": { "tariffId": 17, "version": 1, "periodId": 7, "selectionId": null, "name": "Tesla",
                     "source": "tesla", "exportRateProvenance": "tesla", \(snapshotFields) },
         "after": { "tariffId": null, "version": null, "periodId": null, "selectionId": null, "name": "Public",
