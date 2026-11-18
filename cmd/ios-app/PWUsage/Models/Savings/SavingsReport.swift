@@ -47,4 +47,6 @@ struct SavingsReport: Equatable, Sendable {
     let batteryStartDay: String?
     /// The yearly rise in the actual rate plans, used to project savings forward.
     let rateGrowth: RateGrowth
+    /// The first day stored on the phone; lifetime and payback count from here.
+    var firstStoredDay: Date?
 }

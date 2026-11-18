@@ -31,6 +31,47 @@ struct SiteDeepHistoryModelTests {
         #expect(model.status == .init(phase: .finished, loadedBack: "2026-10-20", daysLoaded: 13))
     }
 
+    /// Savings and payback need the history back to install, so a site that never had a walk
+    /// starts one by itself; a user's Stop is still respected (see the background tests).
+    @Test func activationStartsAWalkThatNeverRan() async {
+        let environment = FakeOnboardingEnvironment()
+        environment.historyStart = "2026-10-20"
+        let model = make(environment)
+        await model.activate(scope: scope)
+        await model.runTask?.value
+        #expect(model.status == .init(phase: .finished, loadedBack: "2026-10-20", daysLoaded: 13))
+    }
+
+    @Test func activationLeavesAStoppedOrFinishedWalkAlone() async throws {
+        let environment = FakeOnboardingEnvironment()
+        environment.historyStart = "2026-10-20"
+        let model = make(environment)
+        await model.activate(scope: scope)
+        await model.runTask?.value
+        let requests = environment.requests.count
+        model.end()
+        await model.activate(scope: scope)
+        #expect(model.runTask == nil)
+        #expect(environment.requests.count == requests)
+
+        let stoppedEnvironment = FakeOnboardingEnvironment()
+        stoppedEnvironment.fillDelay = .seconds(60)
+        let stopped = SiteDeepHistoryModel(
+            deepHistory: SiteDeepHistory(
+                environment: stoppedEnvironment,
+                store: SiteDeepHistoryStore(directory: directory.appendingPathComponent("stopped")),
+                onboarding: SiteHistoryOnboardingStore(directory: directory.appendingPathComponent("stopped")),
+                now: { now }),
+            store: SiteDeepHistoryStore(directory: directory.appendingPathComponent("stopped")),
+            sleep: { _ in }, now: { now })
+        await stopped.activate(scope: scope)
+        try await eventually { !stoppedEnvironment.requests.isEmpty }
+        await stopped.stop()
+        stopped.end()
+        await stopped.activate(scope: scope)
+        #expect(stopped.runTask == nil)
+    }
+
     @Test func aTeslaWaitShowsAsWaitingAndStopLeavesTheCursor() async throws {
         let retryAt = now.addingTimeInterval(600)
         let environment = FakeOnboardingEnvironment()

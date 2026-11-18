@@ -9,11 +9,19 @@ struct SolarSystemPaybackSection: View {
     let timeZone: TimeZone
     let onEditCosts: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
+    /// While days from before the phone's history can still load, payback waits for them.
+    var historyCoverage: SavingsHistoryCoverage = .complete
+    var onHistoryAction: (SiteDeepHistoryPresentation.Action) -> Void = { _ in }
 
     var body: some View {
         if case .ready(let report) = state {
             Section("Payback") {
-                if let costs, let result = PaybackCalculator.compute(
+                if let costs, historyCoverage.holdsPayback(costs: costs, timeZone: timeZone) {
+                    SavingsHistoryCoverageRows(
+                        coverage: historyCoverage, notePath: \.paybackNote, onAction: onHistoryAction
+                    )
+                    Button("Edit System Costs", action: onEditCosts)
+                } else if let costs, let result = PaybackCalculator.compute(
                     report: report, costs: costs, change: change, timeZone: timeZone, now: .now
                 ) {
                     paybackRows(result)

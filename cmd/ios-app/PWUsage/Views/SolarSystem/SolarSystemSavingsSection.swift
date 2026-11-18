@@ -14,6 +14,10 @@ struct SolarSystemSavingsSection: View {
     var onChooseEstimateSetup: (RateEstimatesPrompt) -> Void = { _ in }
     /// The may-be-outdated note for a fixed plan that covers today on estimated rates.
     var fixedPlanNote: String?
+    /// How much of the site's history the phone holds, which names the lifetime block.
+    var historyCoverage: SavingsHistoryCoverage = .complete
+    var timeZone: TimeZone = .current
+    var onHistoryAction: (SiteDeepHistoryPresentation.Action) -> Void = { _ in }
 
     var body: some View {
         Section("Savings") {
@@ -54,7 +58,10 @@ struct SolarSystemSavingsSection: View {
             periodBlock(title: "Past Year", figures: report.year, alwaysShowCoverage: false)
         }
         if SavingsPresentation.showsCard(report.lifetime) {
-            periodBlock(title: "Lifetime", figures: report.lifetime, alwaysShowCoverage: true)
+            periodBlock(
+                title: historyCoverage.lifetimeTitle(timeZone: timeZone), figures: report.lifetime,
+                alwaysShowCoverage: true, historyCoverage: historyCoverage
+            )
         }
         if report.year.daysWithData == 0, !SavingsPresentation.showsCard(report.lifetime) {
             Text("No savings data for recorded days yet.")
@@ -69,7 +76,8 @@ struct SolarSystemSavingsSection: View {
     private func periodBlock(
         title: String,
         figures: SavingsFigures,
-        alwaysShowCoverage: Bool
+        alwaysShowCoverage: Bool,
+        historyCoverage: SavingsHistoryCoverage? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
@@ -94,6 +102,10 @@ struct SolarSystemSavingsSection: View {
                 Text(SavingsPresentation.coverageLine(figures))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+            if let historyCoverage {
+                SavingsHistoryCoverageRows(coverage: historyCoverage, notePath: \.note, onAction: onHistoryAction)
+                    .padding(.top, 4)
             }
             if alwaysShowCoverage {
                 SavingsCaveatRows(caveats: SavingsPresentation.caveats(figures), onAction: onCaveatAction)
