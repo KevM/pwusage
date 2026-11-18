@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { SiteTariffsTimelineResponse } from '@/lib/tariff-contract';
+import { AiRatePlanHandoffModal } from './AiRatePlanHandoffModal';
 import { TariffList, teslaDivergenceCopy } from './TariffList';
 
 const baseTimeline: SiteTariffsTimelineResponse = {
@@ -199,6 +200,23 @@ describe('TariffList v2 timeline', () => {
     const emptyHtml = renderTimeline({ ...baseTimeline, periods: [] });
     expect(emptyHtml.toLowerCase()).not.toContain('tariff');
     expect(emptyHtml).not.toMatch(/\bTOU\b/i);
+  });
+
+  it('renders Check with Your AI Assistant button and modal export view', () => {
+    const html = renderTimeline();
+    expect(html).toContain('Check with Your AI Assistant');
+
+    const modalHtml = renderToStaticMarkup(
+      <AiRatePlanHandoffModal
+        timeline={baseTimeline}
+        isOpen={true}
+        onClose={vi.fn()}
+        onApplied={vi.fn()}
+      />
+    );
+    expect(modalHtml).toContain('Check with Your AI Assistant');
+    expect(modalHtml).toContain('You can also attach a PDF or photo of your utility bill');
+    expect(modalHtml).toContain('pwusage-rate-plan-handoff/v1');
   });
 });
 

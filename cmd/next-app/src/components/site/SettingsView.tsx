@@ -343,6 +343,7 @@ export function SettingsView({ site, installations, memberEmails, tariffTimeline
                 refreshStatus={refreshStatus}
                 onRetryReattribution={handleRetryReattribution}
                 retryLoading={retryLoading}
+                onTimelineUpdated={setTimelineOverride}
             />
         </div>
     );

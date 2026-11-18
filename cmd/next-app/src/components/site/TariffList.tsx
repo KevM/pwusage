@@ -1,9 +1,12 @@
-import { Fragment } from 'react';
+'use client';
+
+import { Fragment, useState } from 'react';
 import type { SiteTariffsTimelineResponse, TariffPeriodDTO, TariffPeriodName, TimePeriodWindowInput } from '@/lib/tariff-contract';
 import { addCalendarDays } from '@/lib/tariff-timeline';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 import { Button } from '@/components/ui/Button';
+import { AiRatePlanHandoffModal } from './AiRatePlanHandoffModal';
 
 function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
@@ -30,6 +33,7 @@ interface TariffListProps {
   refreshStatus: { type: 'success' | 'error'; message: string } | null;
   onRetryReattribution?: () => Promise<void>;
   retryLoading?: boolean;
+  onTimelineUpdated?: (next: SiteTariffsTimelineResponse) => void;
 }
 
 const PERIOD_LABELS: Record<TariffPeriodName, string> = {
@@ -115,28 +119,42 @@ export function TariffList({
   refreshStatus,
   onRetryReattribution,
   retryLoading = false,
+  onTimelineUpdated,
 }: TariffListProps) {
+  const [aiModalOpen, setAiModalOpen] = useState(false);
   const currency = timeline?.currency || 'USD';
   const periods = timeline?.periods ?? [];
   const reattribution = timeline?.reattribution ?? null;
   const differsFromManual = timeline?.teslaSync.differsFromActiveManual ?? false;
 
-  const syncButton = (
-    <Button
-      onClick={onRefresh}
-      disabled={refreshLoading}
-      size="sm"
-      className="gap-2 shrink-0"
-    >
-      {refreshLoading ? (
-        <>
-          <span className="inline-block animate-spin">⟳</span>
-          Syncing...
-        </>
-      ) : (
-        'Sync from Tesla'
+  const headerActions = (
+    <div className="flex flex-wrap items-center gap-2">
+      {timeline && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setAiModalOpen(true)}
+          className="shrink-0"
+        >
+          Check with Your AI Assistant
+        </Button>
       )}
-    </Button>
+      <Button
+        onClick={onRefresh}
+        disabled={refreshLoading}
+        size="sm"
+        className="gap-2 shrink-0"
+      >
+        {refreshLoading ? (
+          <>
+            <span className="inline-block animate-spin">⟳</span>
+            Syncing...
+          </>
+        ) : (
+          'Sync from Tesla'
+        )}
+      </Button>
+    </div>
   );
 
   const headerIntro = (
@@ -194,25 +212,36 @@ export function TariffList({
 
   if (!timeline || periods.length === 0) {
     return (
-      <Card>
-        <CardHeader action={syncButton}>
-          <CardTitle>Rate Plan</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {headerIntro}
-          <p className="text-gray-500 dark:text-gray-400">
-            No rate plan found for this site yet. Sync from Tesla or add a custom rate plan in the PWUsage iOS app.
-          </p>
-        </CardContent>
-      </Card>
+      <>
+        <Card>
+          <CardHeader action={headerActions}>
+            <CardTitle>Rate Plan</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {headerIntro}
+            <p className="text-gray-500 dark:text-gray-400">
+              No rate plan found for this site yet. Sync from Tesla or add a custom rate plan in the PWUsage iOS app.
+            </p>
+          </CardContent>
+        </Card>
+        {timeline && (
+          <AiRatePlanHandoffModal
+            timeline={timeline}
+            isOpen={aiModalOpen}
+            onClose={() => setAiModalOpen(false)}
+            onApplied={next => onTimelineUpdated?.(next)}
+          />
+        )}
+      </>
     );
   }
 
   return (
-    <Card>
-      <CardHeader action={syncButton}>
-        <CardTitle>Rate Plan</CardTitle>
-      </CardHeader>
+    <>
+      <Card>
+        <CardHeader action={headerActions}>
+          <CardTitle>Rate Plan</CardTitle>
+        </CardHeader>
       <CardContent className="space-y-6">
         {headerIntro}
         <div className="space-y-6">
@@ -333,5 +362,12 @@ export function TariffList({
         </div>
       </CardContent>
     </Card>
+    <AiRatePlanHandoffModal
+      timeline={timeline}
+      isOpen={aiModalOpen}
+      onClose={() => setAiModalOpen(false)}
+      onApplied={next => onTimelineUpdated?.(next)}
+    />
+    </>
   );
 }
