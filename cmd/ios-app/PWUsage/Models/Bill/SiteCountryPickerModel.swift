@@ -77,9 +77,11 @@ final class SiteCountryPickerModel {
         defer { savingCode = nil }
         do {
             let timeline = try await save(option.code)
-            let eligible = timeline.rateCountry?.eligibility == .unitedStates
-                && timeline.estimates?.status == .needsUtility
-            outcome = eligible ? .publicPlansAvailable : .done
+            // A newly confirmed US site may still be pending utility discovery; continue to the
+            // utility picker whenever no utility is chosen yet.
+            let isUS = timeline.rateCountry?.eligibility == .unitedStates
+            let hasUtility = !(timeline.estimates?.utilityName ?? "").isEmpty
+            outcome = isUS && !hasUtility ? .publicPlansAvailable : .done
         } catch is CancellationError {
             return
         } catch {

@@ -7,7 +7,8 @@ import Testing
 struct SiteCountryPickerModelTests {
     private static func timeline(
         eligibility: RatePlanEligibility,
-        status: SiteRateEstimatesDTO.Status
+        status: SiteRateEstimatesDTO.Status,
+        utilityName: String? = nil
     ) -> SiteTariffsTimelineResponse {
         SiteTariffsTimelineResponse(
             version: 2, siteId: "site-a", timezone: "America/Chicago", currency: "USD", periods: [],
@@ -17,7 +18,7 @@ struct SiteCountryPickerModelTests {
                 activeManualUpdatedAt: nil, differsFromActiveManual: false
             ),
             estimates: SiteRateEstimatesDTO(
-                status: status, utilityName: nil, teslaPlanOutOfDate: false, newerPlanName: nil,
+                status: status, utilityName: utilityName, teslaPlanOutOfDate: false, newerPlanName: nil,
                 newerPlanStart: nil, newestRevisionStart: nil, mayBeOutdated: false
             ),
             rateCountry: SiteRateCountryDTO(countryCode: "US", source: .owner, updatedAt: nil, eligibility: eligibility)
@@ -53,10 +54,16 @@ struct SiteCountryPickerModelTests {
         var saved: [String] = []
         let usModel = SiteCountryPickerModel(inference: { .noLocation }, save: { code in
             saved.append(code)
-            return Self.timeline(eligibility: .unitedStates, status: .needsUtility)
+            return Self.timeline(eligibility: .unitedStates, status: .pending)
         })
         await usModel.select(SiteCountryOption(code: "US"))
-        #expect(usModel.outcome == .publicPlansAvailable)
+        #expect(usModel.outcome == .publicPlansAvailable, "Utility discovery may still be pending")
+
+        let chosenUtility = SiteCountryPickerModel(inference: { .noLocation }, save: { _ in
+            Self.timeline(eligibility: .unitedStates, status: .ready, utilityName: "We Energies")
+        })
+        await chosenUtility.select(SiteCountryOption(code: "US"))
+        #expect(chosenUtility.outcome == .done, "A site with a utility doesn't need the picker")
 
         let otherModel = SiteCountryPickerModel(inference: { .noLocation }, save: { code in
             saved.append(code)

@@ -86,8 +86,10 @@ struct RatePlanReviewModelTests {
         let model = RatePlanReviewModel(request: Self.request, actions: spy.actions)
         await model.load()
         model.isAcknowledged = true
+        model.isVerifiedAgainstBill = true
         #expect(await model.apply() == false)
         #expect(spy.commits.count == 1, "No automatic second commit")
+        #expect(!model.isVerifiedAgainstBill, "Bill verification was for the old rates")
         #expect(model.preview?.reviewHash == "hash-2")
         #expect(model.isRefreshedAfterConflict)
         #expect(!model.isAcknowledged)

@@ -83,7 +83,9 @@ final class RatePlanReviewModel {
             return true
         } catch RatePlanSelectionError.reviewStale(let fresh) {
             phase = .reviewing(fresh)
+            // Both choices were made against the old details; ask for them again.
             isAcknowledged = false
+            isVerifiedAgainstBill = false
             isRefreshedAfterConflict = true
         } catch {
             phase = .reviewing(preview)

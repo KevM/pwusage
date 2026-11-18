@@ -38,7 +38,7 @@ struct RatePlanChangeModelTests {
         ))
     }
 
-    @Test("Changing a date discards the plans and review chosen for the old dates")
+    @Test("A new end date discards the review but keeps the plans; a new start date reloads them")
     func dateChangeInvalidates() async throws {
         let spy = try RatePlanReviewModelTests.Spy(preview: RatePlanReviewModelTests.preview())
         let model = RatePlanChangeModel(kind: .publicPlan, timeZone: Self.utc, selection: spy.actions) { _ in
@@ -50,8 +50,10 @@ struct RatePlanChangeModelTests {
         model.startReview(publicPlanLabel: "abc")
         model.end = .endsOn(RatePlanTimelineFormatting.parseYMD("2025-02-01", in: Self.utc) ?? .now)
         #expect(model.review == nil)
-        #expect(model.plans == .idle)
+        #expect(model.plans == .loaded(Self.plansResponse), "Plans depend only on the start date")
         #expect(model.datesProblem == "The end date must be on or after the start date.")
+        model.start = RatePlanTimelineFormatting.parseYMD("2025-01-01", in: Self.utc)
+        #expect(model.plans == .idle)
     }
 
     @Test("Restoring reviews the override's saved Tesla originals for explicit dates")

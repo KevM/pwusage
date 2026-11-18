@@ -22,12 +22,17 @@ final class RatePlanChangeModel {
     let kind: Kind
     let scope: TariffSelectionScope
     let timeZone: TimeZone
+    /// Public plans are those in effect on the start date, so only a new start reloads them.
     var start: Date? {
-        didSet { datesChanged() }
+        didSet {
+            review = nil
+            plans = .idle
+        }
     }
 
+    /// A new end needs a new review, but the plans on offer stay the same.
     var end: RatePlanEnd? {
-        didSet { datesChanged() }
+        didSet { review = nil }
     }
 
     private(set) var plans: PlansState = .idle
@@ -104,10 +109,5 @@ final class RatePlanChangeModel {
             review = RatePlanReviewModel(request: request, actions: selection)
         }
         return review
-    }
-
-    private func datesChanged() {
-        review = nil
-        plans = .idle
     }
 }
