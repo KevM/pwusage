@@ -50,9 +50,17 @@ A pure serializer `buildRatePlanAiHandoffMarkdown(timeline: SiteTariffsTimelineR
      5. Record official tariff URLs or `"User-provided utility bill (YYYY-MM)"` in `sources`, and explain any tier blending or rider assumptions in `notes`.
      6. Output a single fenced ```` ```json ```` block matching the `pwusage-rate-plan-handoff/v1` schema.
 2. **Human-Readable Current Timeline Summary**:
-   - **Site Context**: Utility, Timezone, Currency, History Start Date, Export Date, and Observed Holiday Rule ("Observed US federal holidays use the weekend schedule").
-   - **Your Rate Plan**: Markdown tables for each period (newest first) showing effective range, source label, verification status, and season/day/time/rate rows, plus explicit callouts for any uncovered date gaps between `historyStart` and `exportedAt`.
-   - **Fixed Comparison Plan**: Markdown tables for each reference period, or a callout noting that no Fixed comparison plan is configured yet.
+   - **Site Context & Hints**:
+     - Utility (`estimates.utilityName`), Country (`rateCountry.countryCode`), Timezone, Currency, History Start Date (`systemCosts.siteInstalled`), Export Date, and Observed Holiday Rule ("Observed US federal holidays use the weekend schedule").
+     - **Tesla Sync Status** (`teslaSync`): latest plan name saved in Tesla (`latestTariffName`), when it was last observed (`latestUpdatedAt`), and whether PWUsage's active plan differs from Tesla's (`differsFromActiveManual`).
+     - **Public Rate Hints** (`estimates`): if `teslaPlanOutOfDate` is true, includes `newerPlanName` and `newerPlanStart` as a lead for the AI assistant to verify; includes `newestRevisionStart`, `mayBeOutdated`, and any unconfirmed history range (`historyGuide`).
+   - **Your Rate Plan (`periods`)**: For every period we know about (newest first), includes:
+     - Plan `name` and `version`.
+     - Effective dates (`effectiveFrom` to `effectiveTo` or `Present`) and whether it is `Active today` (`isCurrentToday`).
+     - Source label (**From Tesla**, **From public utility rates**, or **Entered by you**), selection provenance (`choiceKind`: automatic vs. chosen by homeowner), how the start date was determined (`startSource`: `urdb`, `site_installed`, `tesla_import`, or user-specified), OpenEI URDB identifier (`urdbLabel` when present), and bill verification status (`verification.verifiedAt` if verified, without user email).
+     - Markdown table of all seasons (`name`, `fromMonth`–`toMonth`, plus `fromDay`/`toDay` if mid-month) and all weekday/weekend rate periods (`touName`, time window, `buyRate`, `sellRate`).
+     - Explicit callouts for any uncovered date gaps between `historyStart` and `exportedAt`.
+   - **Fixed Comparison Plan (`referencePeriods`)**: For every reference period, includes the same per-period metadata (`name`, `version`, effective dates, `isCurrentToday`, source, `choiceKind`, `urdbLabel`, `verification.verifiedAt`, and season/rate tables), or a callout noting that no Fixed comparison plan is configured yet.
 3. **Schema Reference (`pwusage-rate-plan-handoff/v1`)**:
    - Concise bulleted rules matching `validateTariffPlanInput` in `cmd/next-app/src/lib/tariff-timeline.ts`:
      - `name`: 1–64 characters, unique per timeline.
