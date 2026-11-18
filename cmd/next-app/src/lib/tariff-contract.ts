@@ -417,3 +417,55 @@ export interface TariffSelectionConflictResponse {
   refreshPath: string;
   preview: TariffSelectionPreviewResponse;
 }
+
+export interface TariffAiHandoffExportResponse {
+  markdown: string;
+  filename: string;
+}
+
+export interface TariffAiHandoffPreviewRequest {
+  rawInput: string;
+}
+
+export interface TariffAiHandoffPreviewResponse {
+  reviewHash: string;
+  siteId: string;
+  currency: string;
+  unit: 'kWh';
+  timezone: string;
+  notes: string[];
+  sources: string[];
+  unchangedActualCount: number;
+  unchangedReferenceCount: number;
+  actualPreviews: TariffSelectionPreviewResponse[];
+  referencePreviews: TariffSelectionPreviewResponse[];
+  recalculatesHistory: boolean;
+  recalculatesFromHistoryStart: boolean;
+  recalculationRange: {
+    fromDate: string;
+    toDate: string | null;
+  } | null;
+  affectsPowerwallPlan: false;
+}
+
+export interface TariffAiHandoffCommitRequest {
+  rawInput: string;
+  expectedReviewHash: string;
+  verifiedAgainstBill: boolean;
+}
+
+export interface TariffAiHandoffCommitResponse {
+  selectionIds: number[];
+  tariffIds: number[];
+  appliedActualCount: number;
+  appliedReferenceCount: number;
+  unchanged: boolean;
+  reattributionRange: { fromDate: string; toDate: string | null } | null;
+  timeline: SiteTariffsTimelineResponse;
+}
+
+export interface TariffAiHandoffConflictResponse {
+  error: string;
+  code: 'REVIEW_STALE';
+  preview: TariffAiHandoffPreviewResponse;
+}
