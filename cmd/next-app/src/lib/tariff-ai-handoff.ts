@@ -62,6 +62,9 @@ export function isTimeOfUsePeriod(period: Pick<TariffPeriodDTO, 'seasons'>): boo
 }
 
 function formatSourceLabel(period: TariffPeriodDTO): string {
+  if (period.candidateKind === 'ai_handoff') {
+    return 'Imported with AI assistant';
+  }
   switch (period.source) {
     case 'tesla':
       return 'From Tesla';
@@ -409,7 +412,17 @@ function extractJsonText(rawInput: string): string {
     return (matchingSchema.at(-1) ?? candidates.at(-1)) as string;
   }
 
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+
   return trimmed;
+}
+
+export function sourcesCiteUtilityBill(sources: string[]): boolean {
+  return sources.some(source => /\butility\s+bill\b/i.test(source));
 }
 
 function parseStringList(raw: unknown, fieldName: string): string[] {

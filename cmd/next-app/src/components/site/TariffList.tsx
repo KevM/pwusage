@@ -98,6 +98,7 @@ function formatWindowRange(w: TimePeriodWindowInput): string {
 }
 
 function formatAuthor(period: TariffPeriodDTO): string | null {
+  if (period.candidateKind === 'ai_handoff') return 'Imported with AI assistant';
   if (!period.updatedBy) return null;
   if (period.updatedBy.isCurrentUser) return 'Edited by you';
   if (period.updatedBy.email) return `Edited by ${period.updatedBy.email}`;

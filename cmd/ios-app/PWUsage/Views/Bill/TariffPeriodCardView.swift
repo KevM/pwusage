@@ -153,7 +153,7 @@ struct TariffPeriodCardView: View {
     @ViewBuilder private var provenanceRow: some View {
         if period.choiceKind != nil || period.verification != nil {
             let parts = [
-                RatePlanSourcePresentation.sourceLabel(period.source),
+                RatePlanSourcePresentation.sourceLabel(period.source, candidateKind: period.candidateKind),
                 RatePlanSourcePresentation.chooserLabel(period.choiceKind, updatedBy: period.updatedBy),
                 RatePlanSourcePresentation.verificationLabel(period.verification)
             ].compactMap(\.self)
@@ -187,6 +187,9 @@ struct TariffPeriodCardView: View {
 
     private var metadataLine: String {
         let range = RatePlanTimelineFormatting.displayRange(from: period.effectiveFrom, to: period.effectiveTo)
+        if period.candidateKind == .aiHandoff {
+            return "\(range) · Imported with AI assistant"
+        }
         guard let updated = period.updatedBy else { return range }
         if updated.isCurrentUser {
             return "\(range) · Edited by you"

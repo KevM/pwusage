@@ -3,6 +3,7 @@ import type {
   RateCountrySource,
   RatePlanEligibility,
   TariffReattributionStatus,
+  TariffSelectionCandidateKind,
   TariffSelectionChoiceKind,
   TariffSelectionScope,
   TariffSource,
@@ -13,6 +14,7 @@ export type {
   ExportRateProvenance,
   RateCountrySource,
   RatePlanEligibility,
+  TariffSelectionCandidateKind,
   TariffSelectionChoiceKind,
   TariffSelectionScope,
 };
@@ -60,6 +62,7 @@ export interface TariffPeriodDTO {
   seasons: TariffSeasonInput[];
   selectionId?: number | null;
   choiceKind?: TariffSelectionChoiceKind;
+  candidateKind?: TariffSelectionCandidateKind | null;
   urdbLabel?: string | null;
   verification?: TariffVerificationSummary | null;
 }

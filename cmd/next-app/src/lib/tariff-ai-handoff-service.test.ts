@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AI_HANDOFF_SCHEMA } from './tariff-ai-handoff';
 import {
   buildBatchAiHandoffPreview,
+  buildBatchAiHandoffPreviewWithDetails,
   commitAiRatePlanHandoff,
   previewAiRatePlanHandoff,
   TariffAiHandoffConflictError,
@@ -109,6 +110,23 @@ describe('tariff-ai-handoff-service', () => {
     expect(preview.sources).toEqual(['https://austinenergy.com/rates']);
     // Second period previews against the simulated timeline after the first period split 2024
     expect(preview.actualPreviews[1].effectiveFrom).toBe('2025-01-01');
+
+    const withBillDetails = buildBatchAiHandoffPreviewWithDetails({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-18',
+      eligibility: 'us',
+      rawInput: JSON.stringify({
+        schema: AI_HANDOFF_SCHEMA,
+        sources: ['User-provided utility bill (2026-08)'],
+        actualPeriods: [{ name: 'Austin TOU', effectiveFrom: '2024-01-01', effectiveTo: null, seasons: UPDATED_TOU_SEASONS }],
+        referencePeriods: [],
+      }),
+      actualSpans: existingActual,
+      referenceSpans: [],
+    });
+    expect(withBillDetails.citesUtilityBill).toBe(true);
   });
 
   it('commits reviewed batch changes via repo.commitAiHandoffSelections and rejects missing reviewHash', async () => {

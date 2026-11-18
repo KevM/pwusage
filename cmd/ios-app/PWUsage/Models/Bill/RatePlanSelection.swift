@@ -119,7 +119,7 @@ struct TariffAiHandoffPreviewRequest: Encodable, Equatable, Sendable {
     let rawInput: String
 }
 
-struct TariffAiHandoffPreviewResponse: Decodable, Equatable, Sendable {
+struct TariffAiHandoffPreviewResponse: Decodable, Equatable, Sendable, Identifiable {
     let reviewHash: String
     let siteId: String
     let currency: String
@@ -135,6 +135,8 @@ struct TariffAiHandoffPreviewResponse: Decodable, Equatable, Sendable {
     let recalculatesFromHistoryStart: Bool
     let recalculationRange: TariffReviewDateRange?
     let affectsPowerwallPlan: Bool
+
+    var id: String { reviewHash }
 
     var hasChanges: Bool {
         !actualPreviews.isEmpty || !referencePreviews.isEmpty

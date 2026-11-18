@@ -62,7 +62,8 @@ export type TariffSelectionCandidateKind =
   | 'automatic_estimate'
   | 'manual'
   | 'public'
-  | 'restore_tesla';
+  | 'restore_tesla'
+  | 'ai_handoff';
 export type ExportRateProvenance = 'published' | 'net_metering' | 'inherited' | 'manual' | 'tesla';
 
 export interface SiteUtilityRow {

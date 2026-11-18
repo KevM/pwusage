@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { tariffContentHash } from './importer/tariff-parser';
 import { deriveRatePlanEligibility, type RatePlanEligibility } from './rate-plan-eligibility';
-import { parseRatePlanAiHandoffInput } from './tariff-ai-handoff';
+import { parseRatePlanAiHandoffInput, sourcesCiteUtilityBill } from './tariff-ai-handoff';
 import type {
   TariffAiHandoffCommitResponse,
   TariffAiHandoffPreviewResponse,
@@ -46,6 +46,7 @@ export interface BuiltBatchAiHandoffPreview {
   response: TariffAiHandoffPreviewResponse;
   changedActual: PreparedAiHandoffPeriod[];
   changedReference: PreparedAiHandoffPeriod[];
+  citesUtilityBill: boolean;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -306,6 +307,7 @@ export function buildBatchAiHandoffPreviewWithDetails(params: {
     },
     changedActual: actualResult.prepared,
     changedReference: referenceResult.prepared,
+    citesUtilityBill: sourcesCiteUtilityBill(parsed.sources),
   };
 }
 

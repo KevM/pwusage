@@ -6,6 +6,15 @@ enum TariffSource: String, Codable, Equatable, Sendable {
     case estimated
 }
 
+enum TariffSelectionCandidateKind: String, Codable, Equatable, Sendable {
+    case teslaSync = "tesla_sync"
+    case automaticEstimate = "automatic_estimate"
+    case manual
+    case publicPlan = "public"
+    case restoreTesla = "restore_tesla"
+    case aiHandoff = "ai_handoff"
+}
+
 enum TariffStartSource: String, Codable, Equatable, Sendable {
     case urdb
     case teslaFirstSeen = "tesla_first_seen"
@@ -91,6 +100,7 @@ struct TariffPeriodDTO: Codable, Equatable, Sendable, Identifiable {
     /// Selection provenance, from servers with rate plan selection.
     var selectionId: Int?
     var choiceKind: TariffSelectionChoiceKind?
+    var candidateKind: TariffSelectionCandidateKind?
     var urdbLabel: String?
     var verification: TariffVerificationSummary?
 

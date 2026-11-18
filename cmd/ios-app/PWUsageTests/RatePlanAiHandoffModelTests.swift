@@ -60,6 +60,56 @@ struct RatePlanAiHandoffModelTests {
         )
     }
 
+    @Test("Extracts JSON from surrounding Markdown and prose before previewing")
+    func stripsProseAndMarkdownAroundJSON() async {
+        var sentRawInput: String?
+        let model = RatePlanAiHandoffModel(
+            actions: RatePlanAiHandoffActions(
+                exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
+                preview: { input in
+                    sentRawInput = input
+                    return Self.makePreview()
+                },
+                commit: { _ in throw PWUsageAPIError.invalidResponse }
+            )
+        )
+        model.rawInput = """
+        Here is what I found for your utility:
+
+        ```json
+        {"schema":"pwusage-rate-plan-handoff/v1","actualPeriods":[]}
+        ```
+
+        Hope that helps!
+        """
+        await model.loadPreview()
+
+        #expect(sentRawInput == #"{"schema":"pwusage-rate-plan-handoff/v1","actualPeriods":[]}"#)
+        #expect(model.presentedPreview?.reviewHash == "hash-1")
+        #expect(model.reviewError == nil)
+    }
+
+    @Test("Shows inline validation error when pasted text has invalid JSON or wrong schema")
+    func showsInlineErrorForInvalidInput() async {
+        let model = RatePlanAiHandoffModel(
+            actions: RatePlanAiHandoffActions(
+                exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
+                preview: { _ in Self.makePreview() },
+                commit: { _ in throw PWUsageAPIError.invalidResponse }
+            )
+        )
+
+        model.rawInput = "No JSON here"
+        await model.loadPreview()
+        #expect(model.reviewError != nil)
+        #expect(model.presentedPreview == nil)
+
+        model.rawInput = #"{"schema":"wrong/v1"}"#
+        await model.loadPreview()
+        #expect(model.reviewError?.contains("pwusage-rate-plan-handoff/v1") == true)
+        #expect(model.presentedPreview == nil)
+    }
+
     @Test("Editing rawInput invalidates loaded preview and resets acknowledgement and bill verification")
     func editingInputInvalidatesReview() async {
         let model = RatePlanAiHandoffModel(
@@ -72,6 +122,7 @@ struct RatePlanAiHandoffModelTests {
         model.rawInput = #"{"schema":"pwusage-rate-plan-handoff/v1"}"#
         await model.loadPreview()
         #expect(model.preview != nil)
+        #expect(model.presentedPreview != nil)
 
         model.isAcknowledged = true
         model.isVerifiedAgainstBill = true
@@ -79,6 +130,7 @@ struct RatePlanAiHandoffModelTests {
 
         model.rawInput = #"{"schema":"pwusage-rate-plan-handoff/v1", "notes":["changed"]}"#
         #expect(model.preview == nil)
+        #expect(model.presentedPreview == nil)
         #expect(!model.isAcknowledged)
         #expect(!model.isVerifiedAgainstBill)
         #expect(!model.canApply)
@@ -94,7 +146,7 @@ struct RatePlanAiHandoffModelTests {
                 commit: { _ in throw RatePlanSelectionError.aiHandoffReviewStale(freshPreview) }
             )
         )
-        model.rawInput = "{}"
+        model.rawInput = #"{"schema":"pwusage-rate-plan-handoff/v1"}"#
         await model.loadPreview()
         model.isAcknowledged = true
         model.isVerifiedAgainstBill = true
@@ -102,8 +154,18 @@ struct RatePlanAiHandoffModelTests {
         let applied = await model.apply()
         #expect(!applied)
         #expect(model.preview?.reviewHash == "hash-fresh")
+        #expect(model.presentedPreview?.reviewHash == "hash-fresh")
         #expect(!model.isAcknowledged)
         #expect(!model.isVerifiedAgainstBill)
         #expect(model.isRefreshedAfterConflict)
+    }
+
+    @Test("AI handoff provenance displays Imported with AI assistant separately from manual edits")
+    func aiHandoffProvenanceLabel() {
+        #expect(
+            RatePlanSourcePresentation.sourceLabel(.manual, candidateKind: .aiHandoff)
+                == "Imported with AI assistant"
+        )
+        #expect(RatePlanSourcePresentation.sourceLabel(.manual, candidateKind: .manual) == "Entered by you")
     }
 }

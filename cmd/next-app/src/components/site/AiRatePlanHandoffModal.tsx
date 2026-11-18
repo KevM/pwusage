@@ -371,7 +371,7 @@ export function AiRatePlanHandoffModal({
                           checked={isVerifiedAgainstBill}
                           onChange={e => setIsVerifiedAgainstBill(e.target.checked)}
                         />
-                        <span>I checked these details against my utility bill</span>
+                        <span>Verified against my utility bill</span>
                       </label>
                     </div>
 

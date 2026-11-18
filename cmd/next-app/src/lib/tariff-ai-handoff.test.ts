@@ -5,6 +5,7 @@ import {
   buildRatePlanAiHandoffMarkdown,
   isTimeOfUsePeriod,
   parseRatePlanAiHandoffInput,
+  sourcesCiteUtilityBill,
 } from './tariff-ai-handoff';
 import { TariffValidationError } from './tariff-timeline';
 
@@ -234,6 +235,23 @@ Hope this helps!
 
     expect(() => parseRatePlanAiHandoffInput(raw, '2026-11-18')).toThrow(TariffValidationError);
     expect(() => parseRatePlanAiHandoffInput(raw, '2026-11-18')).toThrow(/overlap/i);
+  });
+
+  it('parses unfenced JSON surrounded by prose by extracting from first { to last }', () => {
+    const reply = `Here is the updated plan:\n{"schema":"pwusage-rate-plan-handoff/v1","notes":[],"sources":[],"actualPeriods":[{"name":"Flat","effectiveFrom":"2024-01-01","effectiveTo":null,"seasons":${JSON.stringify(FLAT_SEASONS)}}],"referencePeriods":[]}\nLet me know if you need changes!`;
+    const parsed = parseRatePlanAiHandoffInput(reply, '2026-11-18');
+    expect(parsed.actualPeriods).toHaveLength(1);
+    expect(parsed.actualPeriods[0].name).toBe('Flat');
+  });
+
+  it('detects utility bill citations separately from tariff URLs and labels ai_handoff provenance', () => {
+    expect(sourcesCiteUtilityBill(['User-provided utility bill (2026-08)'])).toBe(true);
+    expect(sourcesCiteUtilityBill(['https://austinenergy.com/rates'])).toBe(false);
+
+    const timeline = sampleTimeline();
+    timeline.periods[0].candidateKind = 'ai_handoff';
+    const md = buildRatePlanAiHandoffMarkdown(timeline, '2026-11-18');
+    expect(md).toContain('Imported with AI assistant');
   });
 
   it('rejects wrong schema or empty periods across both scopes', () => {

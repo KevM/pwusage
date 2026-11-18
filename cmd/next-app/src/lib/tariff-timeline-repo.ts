@@ -254,6 +254,7 @@ function mapPeriodRowToDTO(
       ? {
           selectionId: r.selection_id ?? null,
           choiceKind,
+          ...(r.candidate_kind ? { candidateKind: r.candidate_kind } : {}),
           urdbLabel: r.urdb_label ?? null,
           verification: verification ?? null,
         }
@@ -1114,6 +1115,7 @@ export interface ApplyTariffSelectionInput {
   userId: string;
   verifiedAgainstBill: boolean;
   candidate: ApplyTariffSelectionCandidate;
+  candidateKindOverride?: TariffSelectionCandidateKind;
   reviewHash?: string | null;
 }
 
@@ -1835,7 +1837,7 @@ export async function applyTariffSelectionOnClient(
       effectiveTo,
       source: targetSource,
       choiceKind: 'owner',
-      candidateKind: candidate.kind,
+      candidateKind: input.candidateKindOverride ?? candidate.kind,
       selectedByUserId: userId,
       urdbLabel: candidate.kind === 'public' ? candidate.urdbLabel : null,
       utilityName: candidate.kind === 'public' ? candidate.utilityName : null,
@@ -4244,19 +4246,22 @@ export class TariffTimelineRepo {
         throw new TariffAiHandoffConflictError(built.response);
       }
 
+      const effectiveVerified = verifiedAgainstBill || built.citesUtilityBill;
+
       for (const item of [...built.changedActual, ...built.changedReference]) {
         const res = await applyTariffSelectionOnClient(client, siteId, today, {
           scope: item.scope,
           effectiveFrom: item.period.effectiveFrom,
           effectiveTo: item.period.effectiveTo,
           userId,
-          verifiedAgainstBill,
+          verifiedAgainstBill: effectiveVerified,
           candidate: {
             kind: 'manual',
             name: item.period.name,
             seasons: item.period.seasons,
             holidaysUseWeekendSchedule: true,
           },
+          candidateKindOverride: 'ai_handoff',
           reviewHash: item.preview.reviewHash,
         });
         selectionIds.push(...res.selectionIds);

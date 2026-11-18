@@ -51,6 +51,12 @@ struct RatePlanAiHandoffSheet: View {
                     }
                 }
                 .task { await model.loadMarkdownIfNeeded() }
+                .sheet(item: $model.presentedPreview) { preview in
+                    RatePlanAiHandoffReviewSheet(model: model, preview: preview) { timeline in
+                        onApplied(timeline)
+                        dismiss()
+                    }
+                }
         }
     }
 
@@ -110,58 +116,131 @@ struct RatePlanAiHandoffSheet: View {
     }
 
     private var importStepView: some View {
-        Form {
-            importInputSection
-            if let error = model.reviewError {
-                Section {
-                    Text(error).foregroundStyle(.red)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let error = model.reviewError {
+                    AiHandoffBanner(message: error, tint: .red, systemImage: "exclamationmark.triangle.fill")
                 }
-            }
-            if model.isRefreshedAfterConflict {
-                Section {
-                    Text(
-                        "Your rate plans changed while you were reviewing. Review the updated changes before applying."
+
+                HStack {
+                    Text("Paste AI Reply")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    #if canImport(UIKit)
+                        Button {
+                            if let pasted = UIPasteboard.general.string {
+                                model.rawInput = pasted
+                            }
+                        } label: {
+                            Label("Paste from Clipboard", systemImage: "doc.on.clipboard")
+                                .font(.subheadline)
+                        }
+                    #endif
+                }
+
+                TextEditor(text: $model.rawInput)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(height: 180)
+                    .padding(8)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color(.separator), lineWidth: 0.5)
                     )
-                    .foregroundStyle(.orange)
-                }
+
+                Text(
+                    "Paste the assistant's full response or its ```json block. " +
+                        "We'll validate it and open Review Changes before anything is saved."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            if let preview = model.preview {
-                previewSections(preview)
-            }
+            .padding()
+        }
+        .background(SectionTheme.groupedBackground)
+        .safeAreaInset(edge: .bottom) {
+            importBottomBar
         }
     }
 
-    private var importInputSection: some View {
-        Section("Paste AI Reply") {
-            #if canImport(UIKit)
-                Button {
-                    if let pasted = UIPasteboard.general.string {
-                        model.rawInput = pasted
-                    }
-                } label: {
-                    Label("Paste from Clipboard", systemImage: "doc.on.clipboard")
-                }
-            #endif
-
-            TextEditor(text: $model.rawInput)
-                .font(.system(.caption, design: .monospaced))
-                .frame(minHeight: 140)
-
+    private var importBottomBar: some View {
+        VStack(spacing: 0) {
+            Divider()
             Button {
                 Task { await model.loadPreview() }
             } label: {
-                if model.isPreviewing {
-                    ProgressView()
-                } else {
-                    Text("Preview Changes")
+                Group {
+                    if model.isPreviewing {
+                        ProgressView()
+                    } else {
+                        Text("Preview Changes")
+                    }
                 }
+                .frame(maxWidth: .infinity)
             }
+            .emphasisProminentButton()
+            .controlSize(.large)
             .disabled(!model.canPreview)
+            .padding()
+        }
+        .background(.bar)
+    }
+
+    private func copyToClipboard(_ text: String) {
+        #if canImport(UIKit)
+            UIPasteboard.general.string = text
+        #endif
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
+    }
+}
+
+private struct RatePlanAiHandoffReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var model: RatePlanAiHandoffModel
+    let preview: TariffAiHandoffPreviewResponse
+    let onApplied: (SiteTariffsTimelineResponse) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if model.isRefreshedAfterConflict {
+                    Section {
+                        Text(
+                            "Your rate plans changed while you were reviewing. " +
+                                "Review the updated changes before applying."
+                        )
+                        .foregroundStyle(.orange)
+                    }
+                }
+                if let error = model.reviewError {
+                    Section {
+                        Text(error).foregroundStyle(.red)
+                    }
+                }
+                notesAndSourcesSections
+                changesSections
+            }
+            .navigationTitle("Review Changes")
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                }
+                .safeAreaInset(edge: .bottom) {
+                    applyBottomBar
+                }
         }
     }
 
     @ViewBuilder
-    private func previewSections(_ preview: TariffAiHandoffPreviewResponse) -> some View {
+    private var notesAndSourcesSections: some View {
         if !preview.notes.isEmpty {
             Section("Notes from Your AI Assistant") {
                 ForEach(preview.notes, id: \.self) { note in
@@ -176,40 +255,39 @@ struct RatePlanAiHandoffSheet: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var changesSections: some View {
         if !preview.hasChanges {
             Section {
                 Text("No rate plan changes found · The imported plans match your current timeline.")
                     .foregroundStyle(.secondary)
             }
         } else {
-            previewChangeSections(preview)
-            confirmationSection(preview)
-        }
-    }
-
-    @ViewBuilder
-    private func previewChangeSections(_ preview: TariffAiHandoffPreviewResponse) -> some View {
-        if !preview.actualPreviews.isEmpty {
-            Section("Your Rate Plan Changes") {
-                ForEach(Array(preview.actualPreviews.enumerated()), id: \.offset) { _, item in
-                    ForEach(Array(item.affectedIntervals.enumerated()), id: \.offset) { _, interval in
-                        RatePlanReviewIntervalSection(interval: interval, currency: preview.currency)
+            if !preview.actualPreviews.isEmpty {
+                Section("Your Rate Plan Changes") {
+                    ForEach(Array(preview.actualPreviews.enumerated()), id: \.offset) { _, item in
+                        ForEach(Array(item.affectedIntervals.enumerated()), id: \.offset) { _, interval in
+                            RatePlanReviewIntervalSection(interval: interval, currency: preview.currency)
+                        }
                     }
                 }
             }
-        }
-        if !preview.referencePreviews.isEmpty {
-            Section("Fixed Comparison Plan Changes") {
-                ForEach(Array(preview.referencePreviews.enumerated()), id: \.offset) { _, item in
-                    ForEach(Array(item.affectedIntervals.enumerated()), id: \.offset) { _, interval in
-                        RatePlanReviewIntervalSection(interval: interval, currency: preview.currency)
+            if !preview.referencePreviews.isEmpty {
+                Section("Fixed Comparison Plan Changes") {
+                    ForEach(Array(preview.referencePreviews.enumerated()), id: \.offset) { _, item in
+                        ForEach(Array(item.affectedIntervals.enumerated()), id: \.offset) { _, interval in
+                            RatePlanReviewIntervalSection(interval: interval, currency: preview.currency)
+                        }
                     }
                 }
             }
+            confirmationSection
         }
     }
 
-    private func confirmationSection(_ preview: TariffAiHandoffPreviewResponse) -> some View {
+    private var confirmationSection: some View {
         Section {
             if !preview.actualPreviews.isEmpty {
                 Text(
@@ -220,35 +298,53 @@ struct RatePlanAiHandoffSheet: View {
                 .foregroundStyle(.secondary)
             }
             Toggle("I reviewed these changes", isOn: $model.isAcknowledged)
-            Toggle("I checked these details against my utility bill", isOn: $model.isVerifiedAgainstBill)
+            Toggle("Verified against my utility bill", isOn: $model.isVerifiedAgainstBill)
+        }
+    }
+
+    private var applyBottomBar: some View {
+        VStack(spacing: 0) {
+            Divider()
             Button {
                 Task {
                     if await model.apply(), let timeline = model.committedResponse?.timeline {
                         onApplied(timeline)
-                        dismiss()
                     }
                 }
             } label: {
-                if model.isApplying {
-                    ProgressView()
-                } else {
-                    Text("Apply Rate Plan Changes")
-                        .frame(maxWidth: .infinity)
+                Group {
+                    if model.isApplying {
+                        ProgressView()
+                    } else {
+                        Text("Apply Changes")
+                    }
                 }
+                .frame(maxWidth: .infinity)
             }
             .emphasisProminentButton()
+            .controlSize(.large)
             .disabled(!model.canApply)
+            .padding()
         }
+        .background(.bar)
     }
+}
 
-    private func copyToClipboard(_ text: String) {
-        #if canImport(UIKit)
-            UIPasteboard.general.string = text
-        #endif
-        copied = true
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            copied = false
+private struct AiHandoffBanner: View {
+    let message: String
+    let tint: Color
+    let systemImage: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(tint)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 }

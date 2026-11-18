@@ -217,6 +217,13 @@ describe('TariffList v2 timeline', () => {
     expect(modalHtml).toContain('Check with Your AI Assistant');
     expect(modalHtml).toContain('You can also attach a PDF or photo of your utility bill');
     expect(modalHtml).toContain('pwusage-rate-plan-handoff/v1');
+
+    const aiImportedHtml = renderTimeline({
+      ...baseTimeline,
+      periods: [{ ...baseTimeline.periods[0], candidateKind: 'ai_handoff' }],
+    });
+    expect(aiImportedHtml).toContain('Imported with AI assistant');
+    expect(aiImportedHtml).not.toContain('Edited by you');
   });
 });
 
