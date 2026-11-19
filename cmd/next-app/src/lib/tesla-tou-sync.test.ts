@@ -243,6 +243,15 @@ describe('buildTeslaTariff', () => {
     expect(rebuilt.sell_tariff.energy_charges.ALL).toEqual({ rates: { ALL: 0 } });
   });
 
+  it('creates a sell tariff with the ALL placeholder when the base has none', () => {
+    const base = structuredClone(teslaFixture) as Partial<TariffV2> as TariffV2;
+    delete (base as Partial<TariffV2>).sell_tariff;
+    const rebuilt = buildTeslaTariff(base, { name: 'No Sell', seasons: validPlan() });
+    expect(rebuilt.sell_tariff.seasons).toEqual(rebuilt.seasons);
+    expect(rebuilt.sell_tariff.energy_charges.ALL).toEqual({ rates: { ALL: 0 } });
+    expect(rebuilt.sell_tariff.energy_charges.Summer.rates.ON_PEAK).toBe(0.12);
+  });
+
   it('does not mutate the base', () => {
     const before = JSON.stringify(teslaFixture);
     buildTeslaTariff(teslaFixture, { name: 'Sample', seasons: validPlan() });
@@ -324,6 +333,25 @@ describe('validateForTesla', () => {
     ]);
     expect(problems[0].message).toContain('Summer');
     expect(problems[0].message).toContain('OFF_PEAK');
+  });
+
+  it('reports season_name_conflict for two seasons with one name', () => {
+    const plan = [
+      season({ name: 'Winter', fromMonth: 6, toMonth: 9, fromDay: 1, toDay: 30 }),
+      season({ name: 'Winter', fromMonth: 10, toMonth: 5, fromDay: 1, toDay: 31 }),
+    ];
+    const problems = validateForTesla(plan, 'USD');
+    expect(problems).toEqual([expect.objectContaining({ code: 'season_name_conflict', season: 'Winter' })]);
+    expect(problems[0].message).toContain('Winter');
+  });
+
+  it('reports season_name_conflict for a season named ALL', () => {
+    const plan = [
+      season({ name: 'ALL', fromMonth: 6, toMonth: 9, fromDay: 1, toDay: 30 }),
+      season({ name: 'Winter', fromMonth: 10, toMonth: 5, fromDay: 1, toDay: 31 }),
+    ];
+    const problems = validateForTesla(plan, 'USD');
+    expect(problems).toEqual([expect.objectContaining({ code: 'season_name_conflict', season: 'ALL' })]);
   });
 
   it('reports a currency Tesla does not store', () => {

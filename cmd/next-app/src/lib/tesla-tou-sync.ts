@@ -138,7 +138,7 @@ const MONTH_NAMES = [
 ];
 
 export interface TeslaSyncProblem {
-  code: 'season_gap' | 'season_overlap' | 'hour_gap' | 'hour_overlap' | 'label_rate_conflict' | 'currency';
+  code: 'season_gap' | 'season_overlap' | 'season_name_conflict' | 'hour_gap' | 'hour_overlap' | 'label_rate_conflict' | 'currency';
   season?: string;
   period?: TariffPeriodName;
   message: string;
@@ -298,6 +298,32 @@ function seasonCoverage(seasons: TariffSeasonInput[]): TeslaSyncProblem[] {
 }
 
 /**
+ * Tesla keys seasons, energy charges and sell charges by season name (case-sensitive), so two
+ * seasons with one name would overwrite each other. The name `ALL` would overwrite Tesla's placeholder.
+ */
+function seasonNameProblems(seasons: TariffSeasonInput[]): TeslaSyncProblem[] {
+  const counts = new Map<string, number>();
+  for (const season of seasons) counts.set(season.name, (counts.get(season.name) ?? 0) + 1);
+  const problems: TeslaSyncProblem[] = [];
+  for (const [name, count] of counts) {
+    if (name === TESLA_ALL_GROUP) {
+      problems.push({
+        code: 'season_name_conflict',
+        season: name,
+        message: `A season cannot be named ${TESLA_ALL_GROUP}. Tesla uses that name for its own placeholder, so rename this season.`,
+      });
+    } else if (count > 1) {
+      problems.push({
+        code: 'season_name_conflict',
+        season: name,
+        message: `${count} seasons are named ${name}. Tesla stores each season by its name, so give every season a different name.`,
+      });
+    }
+  }
+  return problems;
+}
+
+/**
  * Problems that would stop Tesla storing the plan as PWUsage describes it. Empty when the plan
  * is valid. Messages are shown to the owner as-is.
  */
@@ -309,7 +335,7 @@ export function validateForTesla(seasons: TariffSeasonInput[], currency: string)
       message: `Tesla stores rates in USD, EUR or GBP. This plan uses ${currency}.`,
     });
   }
-  problems.push(...seasonCoverage(seasons));
+  problems.push(...seasonCoverage(seasons), ...seasonNameProblems(seasons));
   for (const season of seasons) {
     problems.push(...hourProblems(season), ...labelRateConflicts(season));
   }
@@ -319,7 +345,10 @@ export function validateForTesla(seasons: TariffSeasonInput[], currency: string)
 /**
  * Tesla's `tariff_content_v2` for PWUsage's plan. Starts from a deep copy of `base` (Tesla's
  * freshly read tariff) and replaces the name, seasons and energy charges; the `ALL` placeholder
- * is kept. Callers run `validateForTesla` first: a label with two rates keeps the last one.
+ * is kept. The rates written are PWUsage's raw rates: Tesla applies its own adjustments when it
+ * stores them (teslaPlansMatch applies the same adjustments to the PWUsage side when comparing).
+ * Callers run `validateForTesla` first: a label with two rates keeps the last one, and duplicate
+ * season names would overwrite each other.
  */
 export function buildTeslaTariff(base: TariffV2, plan: TeslaPlanPayloadInput): TariffV2 {
   const copy = structuredClone(base);
@@ -363,7 +392,16 @@ export function buildTeslaTariff(base: TariffV2, plan: TeslaPlanPayloadInput): T
   copy.name = plan.name;
   copy.seasons = structuredClone(seasons);
   copy.energy_charges = { ...keepAll(base.energy_charges), ...buyCharges };
-  copy.sell_tariff.seasons = structuredClone(seasons);
-  copy.sell_tariff.energy_charges = { ...keepAll(base.sell_tariff.energy_charges), ...sellCharges };
+  const baseSell = base.sell_tariff;
+  copy.sell_tariff = {
+    name: baseSell?.name ?? plan.name,
+    utility: baseSell?.utility ?? base.utility,
+    ...(structuredClone(baseSell ?? {}) as Partial<TariffV2['sell_tariff']>),
+    seasons: structuredClone(seasons),
+    energy_charges: {
+      ...(baseSell ? keepAll(baseSell.energy_charges) : { [TESLA_ALL_GROUP]: { rates: { [TESLA_ALL_GROUP]: 0 } } }),
+      ...sellCharges,
+    },
+  };
   return copy;
 }
