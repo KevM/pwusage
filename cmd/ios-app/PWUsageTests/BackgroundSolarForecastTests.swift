@@ -220,9 +220,12 @@ private final class BackgroundForecastAPI: PWUsageApplicationAPI {
         solarHistoryResponse
     }
 
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws { throw PWUsageAPIError.invalidResponse }
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
+        throw PWUsageAPIError.invalidResponse
+    }
+    func store(_ credential: MobileSessionCredential) {}
     func logout() async throws {}
-    func clearSiteAuthCookie() async {}
+    func clearSiteAuthCookie() {}
 }
 
 @Suite("Background forecast scheduling and file protection")

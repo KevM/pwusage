@@ -255,7 +255,11 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         do {
             guard let requestHandler = Self.requestHandler else { throw URLError(.unsupportedURL) }
             var request = request
-            if let url = request.url, let cookies = Self.cookieStorage?.cookies(for: url), !cookies.isEmpty {
+            // Like URLSession, a request that opts out of cookie handling neither sends
+            // cookies from the jar nor stores the response's Set-Cookie into it.
+            let handlesCookies = request.httpShouldHandleCookies
+            if handlesCookies, let url = request.url, let cookies = Self.cookieStorage?.cookies(for: url),
+               !cookies.isEmpty {
                 let fields = HTTPCookie.requestHeaderFields(with: cookies)
                 for (name, value) in fields where request.value(forHTTPHeaderField: name) == nil {
                     request.setValue(value, forHTTPHeaderField: name)
@@ -265,7 +269,7 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
             // URLProtocol interception bypasses URLSession's normal cookie policy hooks.
             // Simulate response storage and subsequent Cookie-header dispatch in this stub;
             // production uses URLSession's configured HTTPCookieStorage automatically.
-            if let url = request.url, let cookieStorage = Self.cookieStorage {
+            if handlesCookies, let url = request.url, let cookieStorage = Self.cookieStorage {
                 let cookieHeader = response.value(forHTTPHeaderField: "Set-Cookie")
                 if let cookieHeader, cookieHeader.hasPrefix("site_auth=") {
                     let value = String(cookieHeader.dropFirst("site_auth=".count).prefix { $0 != ";" })

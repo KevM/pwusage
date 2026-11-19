@@ -16,9 +16,12 @@ private final class OnboardingAppAPI: PWUsageApplicationAPI {
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
         throw PWUsageAPIError.invalidResponse
     }
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
+        MobileSessionCredential(cookies: [])
+    }
+    func store(_ credential: MobileSessionCredential) {}
     func logout() async throws {}
-    func clearSiteAuthCookie() async {}
+    func clearSiteAuthCookie() {}
 }
 
 @MainActor

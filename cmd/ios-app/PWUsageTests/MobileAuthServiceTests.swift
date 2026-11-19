@@ -120,7 +120,7 @@ final class MobileAuthServiceTests {
             session: session
         )
 
-        await api.clearSiteAuthCookie()
+        api.clearSiteAuthCookie()
 
         let remaining = cookieStorage.cookies(for: origin) ?? []
         #expect(!remaining.contains(where: { $0.name == "site_auth" }))
@@ -265,45 +265,69 @@ final class FakeWebAuthenticationSession: MobileAuthWebSession {
     }
 }
 
+/// Session API double backed by a real cookie jar, standing in for the App Group store
+/// the app and its widget share. The exchange answers with the server's `site_auth`
+/// cookie (valued with the handoff code) but never writes it: like `PWUsageAPI`, only
+/// `store` puts it in the jar, so the jar shows exactly what the service committed.
 @MainActor
 final class FakeMobileAuthAPI: MobileAuthAPI {
+    static let origin = URL(string: "https://pwusage.test") ?? URL(fileURLWithPath: "/")
+    let cookieStorage: HTTPCookieStorage
     private(set) var exchanges: [MobileSessionExchange] = []
     var exchangeError: Error?
     var rejectedExchangeCodes: Set<String> = []
     private(set) var logoutCount = 0
     var logoutError: Error?
     private(set) var cookieClearCount = 0
-    private(set) var hasSiteAuthCookie = false
-    private(set) var siteAuthCookieCode: String?
-    var holdCookieClear = false
-    private(set) var cookieClearStartedCount = 0
-    private var pendingCookieClear: CheckedContinuation<Void, Never>?
     private(set) var cookieEvents: [String] = []
     var holdExchange = false
     private(set) var exchangeStartedCount = 0
     private(set) var exchangeCompletedCount = 0
-    private var pendingExchange: CheckedContinuation<Void, Error>?
+    /// Every held exchange, oldest first: superseded attempts stay parked alongside newer ones.
+    private var pendingExchanges: [CheckedContinuation<Void, Error>] = []
 
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {
+    init(cookieStorage: HTTPCookieStorage? = nil) {
+        self.cookieStorage = cookieStorage
+            ?? URLSessionConfiguration.ephemeral.httpCookieStorage
+            ?? HTTPCookieStorage.sharedCookieStorage(forGroupContainerIdentifier: UUID().uuidString)
+    }
+
+    /// The `site_auth` value in the jar: what the widget, and the app's next launch, would send.
+    var siteAuthCookieCode: String? {
+        cookieStorage.cookies(for: Self.origin)?.first(where: { $0.name == "site_auth" })?.value
+    }
+
+    var hasSiteAuthCookie: Bool { siteAuthCookieCode != nil }
+
+    /// Seed the jar with a session from an earlier sign-in.
+    func seedSiteAuthCookie(_ value: String) {
+        if let cookie = Self.siteAuthCookie(value: value) { cookieStorage.setCookie(cookie) }
+    }
+
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
         exchanges.append(exchange)
         if holdExchange {
             exchangeStartedCount += 1
             try await withCheckedThrowingContinuation { continuation in
-                pendingExchange = continuation
+                pendingExchanges.append(continuation)
             }
         }
-        hasSiteAuthCookie = true
-        siteAuthCookieCode = exchange.code
-        cookieEvents.append("set")
         exchangeCompletedCount += 1
         if let exchangeError { throw exchangeError }
         if rejectedExchangeCodes.contains(exchange.code) { throw TestExchangeError.rejected }
+        return MobileSessionCredential(cookies: Self.siteAuthCookie(value: exchange.code).map { [$0] } ?? [])
     }
 
+    /// Release every held exchange, as late responses arriving together.
     func resumeExchange() {
-        let continuation = pendingExchange
-        pendingExchange = nil
-        continuation?.resume()
+        let continuations = pendingExchanges
+        pendingExchanges = []
+        for continuation in continuations { continuation.resume() }
+    }
+
+    func store(_ credential: MobileSessionCredential) {
+        for cookie in credential.cookies { cookieStorage.setCookie(cookie) }
+        cookieEvents.append("set")
     }
 
     func logout() async throws {
@@ -311,21 +335,18 @@ final class FakeMobileAuthAPI: MobileAuthAPI {
         if let logoutError { throw logoutError }
     }
 
-    func resumeCookieClear() {
-        holdCookieClear = false
-        let continuation = pendingCookieClear
-        pendingCookieClear = nil
-        continuation?.resume()
+    func clearSiteAuthCookie() {
+        cookieClearCount += 1
+        for cookie in cookieStorage.cookies(for: Self.origin) ?? [] where cookie.name == "site_auth" {
+            cookieStorage.deleteCookie(cookie)
+        }
+        cookieEvents.append("clear")
     }
 
-    func clearSiteAuthCookie() async {
-        cookieClearStartedCount += 1
-        if holdCookieClear {
-            await withCheckedContinuation { pendingCookieClear = $0 }
-        }
-        cookieClearCount += 1
-        hasSiteAuthCookie = false
-        siteAuthCookieCode = nil
-        cookieEvents.append("clear")
+    private static func siteAuthCookie(value: String) -> HTTPCookie? {
+        HTTPCookie(properties: [
+            .domain: "pwusage.test", .path: "/", .name: "site_auth", .value: value, .secure: "TRUE",
+            .expires: Date(timeIntervalSinceNow: 7 * 24 * 60 * 60)
+        ])
     }
 }
