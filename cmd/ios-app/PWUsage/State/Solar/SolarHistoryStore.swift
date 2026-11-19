@@ -290,6 +290,7 @@ actor SolarHistoryStore {
 
     func remove(scope: SolarForecastSiteScope) throws {
         scopeGenerations[scope, default: 0] += 1
+        cancelAllSyncWaiters(scope: scope)
         cache.removeValue(forKey: scope)
         let url = fileURL(scope)
         if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
@@ -300,6 +301,7 @@ actor SolarHistoryStore {
     func removeAll() throws {
         generation += 1
         scopeGenerations.removeAll()
+        cancelAllSyncWaiters()
         cache.removeAll()
         if fileManager.fileExists(atPath: directory.path) { try fileManager.removeItem(at: directory) }
     }

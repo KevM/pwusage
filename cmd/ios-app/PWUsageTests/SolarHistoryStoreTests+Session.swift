@@ -46,4 +46,69 @@ extension SolarHistoryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: folder.path))
         #expect(!FileManager.default.fileExists(atPath: layoutFolder.path))
     }
+
+    @Test("remove(scope:) wakes all queued sync waiters with CancellationError")
+    func removeScopeWakesAllQueuedWaiters() async throws {
+        let now = date("2026-10-31T12:00:00Z")
+        let store = SolarHistoryStore(directory: temporaryFolder())
+        let api = SuspendedHistoryAPI()
+        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "queued-remove")
+        let active = Task { try await store.sync(scope: scope, api: api, now: now) }
+        await api.waitUntilRequested()
+
+        let emptyPage = MobileSolarHistoryResponse.enabled(timeZone: zone("UTC"), days: [], nextFrom: nil)
+        let waiterOne = Task {
+            try await store.sync(scope: scope, api: HistoryAPI(responses: initialResponses(emptyPage)), now: now)
+        }
+        let waiterTwo = Task {
+            try await store.sync(scope: scope, api: HistoryAPI(responses: initialResponses(emptyPage)), now: now)
+        }
+        try await waitForWaiterCount(2, in: store, scope: scope)
+
+        try await store.remove(scope: scope)
+        await #expect(throws: CancellationError.self) { try await waiterOne.value }
+        await #expect(throws: CancellationError.self) { try await waiterTwo.value }
+
+        await api.resume(with: emptyPage)
+        await #expect(throws: CancellationError.self) { try await active.value }
+    }
+
+    @Test("Cancelling the first queued waiter still wakes the next waiter")
+    func cancelledFirstWaiterWakesSecondWaiter() async throws {
+        let now = date("2026-10-31T12:00:00Z")
+        let store = SolarHistoryStore(directory: temporaryFolder())
+        let api = SuspendedHistoryAPI()
+        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "queued-cancel")
+        let active = Task { try await store.sync(scope: scope, api: api, now: now) }
+        await api.waitUntilRequested()
+
+        let emptyPage = MobileSolarHistoryResponse.enabled(timeZone: zone("UTC"), days: [], nextFrom: nil)
+        let waiterOne = Task {
+            try await store.sync(scope: scope, api: HistoryAPI(responses: initialResponses(emptyPage)), now: now)
+        }
+        let waiterTwo = Task {
+            try await store.sync(scope: scope, api: HistoryAPI(responses: initialResponses(emptyPage)), now: now)
+        }
+        try await waitForWaiterCount(2, in: store, scope: scope)
+
+        waiterOne.cancel()
+        await api.resume(with: emptyPage)
+
+        _ = try await active.value
+        await #expect(throws: CancellationError.self) { try await waiterOne.value }
+        let secondResult = try await waiterTwo.value
+        #expect(secondResult == .synced(timeZone: zone("UTC")))
+    }
+
+    private func waitForWaiterCount(
+        _ expected: Int,
+        in store: SolarHistoryStore,
+        scope: SolarForecastSiteScope
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while await store.syncWaiters[scope]?.count != expected {
+            try #require(ContinuousClock.now < deadline)
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
 }
