@@ -237,6 +237,34 @@ describe('tariff-ai-handoff-service', () => {
     expect(preview.actualPreviews[0].affectedIntervals[0].seasons[0].weekdayRows[0].toMinute).toBe(7);
   });
 
+  it('recognizes unchanged plans when loadScopeSelectionSpans splits them across restoration partitions', () => {
+    const part1 = makeExistingSpan('Verified Manual Plan', '2024-01-01', '2024-06-30', FLAT_SEASONS, 'manual');
+    const part2 = makeExistingSpan('Verified Manual Plan', '2024-07-01', null, FLAT_SEASONS, 'manual');
+
+    const preview = buildBatchAiHandoffPreview({
+      siteId: 'site-1',
+      timezone: 'America/Chicago',
+      currency: 'USD',
+      todaySiteLocal: '2026-11-18',
+      eligibility: 'us',
+      rawInput: JSON.stringify({
+        schema: AI_HANDOFF_SCHEMA,
+        actualPeriods: [
+          { name: 'Verified Manual Plan', effectiveFrom: '2024-01-01', effectiveTo: null, seasons: FLAT_SEASONS },
+        ],
+        referencePeriods: [
+          { name: 'New Fixed Ref', effectiveFrom: '2024-01-01', effectiveTo: null, seasons: FLAT_SEASONS },
+        ],
+      }),
+      actualSpans: [part1, part2],
+      referenceSpans: [],
+    });
+
+    expect(preview.unchangedActualCount).toBe(1);
+    expect(preview.actualPreviews).toHaveLength(0);
+    expect(preview.referencePreviews).toHaveLength(1);
+  });
+
   it('commits reviewed batch changes via repo.commitAiHandoffSelections and rejects missing reviewHash', async () => {
     const existingActual = [makeExistingSpan('Tesla Plan', '2024-01-01', null, FLAT_SEASONS, 'tesla')];
     const rawInput = JSON.stringify({

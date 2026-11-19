@@ -130,6 +130,42 @@ function simulateSpanReplacement(
   return next.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 }
 
+function matchesContiguousSpans(
+  spans: ExistingTimelineSpanInput[],
+  rawPeriod: TariffPlanWriteInput,
+  rawHash: string
+): boolean {
+  const sorted = [...spans].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const candidates = sorted.filter(s => {
+    if (s.effectiveFrom < rawPeriod.effectiveFrom) return false;
+    if (rawPeriod.effectiveTo !== null && (s.effectiveTo === null || s.effectiveTo > rawPeriod.effectiveTo)) {
+      return false;
+    }
+    return true;
+  });
+  if (candidates.length === 0) return false;
+  if (candidates[0].effectiveFrom !== rawPeriod.effectiveFrom) return false;
+  if (candidates[candidates.length - 1].effectiveTo !== rawPeriod.effectiveTo) return false;
+
+  const targetName = rawPeriod.name.trim().toLowerCase();
+  for (let i = 0; i < candidates.length; i++) {
+    const span = candidates[i];
+    if (i > 0) {
+      const prevEnd = candidates[i - 1].effectiveTo;
+      if (prevEnd === null || addCalendarDays(prevEnd, 1) !== span.effectiveFrom) {
+        return false;
+      }
+    }
+    if (span.plan.name.trim().toLowerCase() !== targetName) return false;
+    if (span.plan.approximationNotes.some(n => n.kind === 'day_specific_schedule')) return false;
+    const normalizedExistingHash = tariffContentHash(
+      compileSeasonsToParsedTariff(span.plan.name, span.plan.seasons)
+    );
+    if (normalizedExistingHash !== rawHash) return false;
+  }
+  return true;
+}
+
 function prepareScopePreviews(params: {
   siteId: string;
   timezone: string;
@@ -152,18 +188,9 @@ function prepareScopePreviews(params: {
     const rawParsed = compileSeasonsToParsedTariff(rawPeriod.name, rawPeriod.seasons);
     const rawHash = tariffContentHash(rawParsed);
 
-    const exactMatch = currentSpans.find(s => {
-      if (s.effectiveFrom !== rawPeriod.effectiveFrom || s.effectiveTo !== rawPeriod.effectiveTo) return false;
-      if (s.plan.name.trim().toLowerCase() !== rawPeriod.name.trim().toLowerCase()) return false;
-      if (s.plan.approximationNotes.some(n => n.kind === 'day_specific_schedule')) return false;
-      const normalizedExistingHash = tariffContentHash(
-        compileSeasonsToParsedTariff(s.plan.name, s.plan.seasons)
-      );
-      return normalizedExistingHash === rawHash;
-    });
-    if (exactMatch) {
+    if (matchesContiguousSpans(currentSpans, rawPeriod, rawHash)) {
       unchangedCount += 1;
-      assignedNames.push({ name: exactMatch.plan.name, contentHash: rawHash });
+      assignedNames.push({ name: rawPeriod.name.trim(), contentHash: rawHash });
       continue;
     }
 
