@@ -81,7 +81,7 @@ describe('/api/trmnl/manage', () => {
             expect(res.status).toBe(400);
         });
 
-        it('allows GET with valid TRMNL token', async () => {
+        it('allows GET with valid TRMNL token in Authorization header', async () => {
             mocks.verifyTrmnlToken.mockResolvedValue({ sub: 'dev-1' });
             mocks.getInstallationByUuid.mockResolvedValue({
                 site_id: 'site-1',
@@ -89,12 +89,28 @@ describe('/api/trmnl/manage', () => {
                 json: { component_screens: ['solar_overview'] }
             });
 
-            const req = new Request('http://localhost/api/trmnl/manage?uuid=dev-1&token=valid-trmnl-token');
+            const req = new Request('http://localhost/api/trmnl/manage?uuid=dev-1', {
+                headers: { Authorization: 'Bearer valid-trmnl-token' }
+            });
             const res = await GET(req);
             expect(res.status).toBe(200);
             const data = await res.json();
             expect(data.site_id).toBe('site-1');
             expect(data.plugin_setting_id).toBe(12);
+        });
+
+        it('rejects GET when TRMNL token is only supplied in the query string', async () => {
+            mocks.verifyTrmnlToken.mockResolvedValue({ sub: 'dev-1' });
+            mocks.getInstallationByUuid.mockResolvedValue({
+                site_id: 'site-1',
+                plugin_setting_id: 12,
+                json: {}
+            });
+
+            const req = new Request('http://localhost/api/trmnl/manage?uuid=dev-1&token=valid-trmnl-token');
+            const res = await GET(req);
+            expect(res.status).toBe(401);
+            expect(mocks.verifyTrmnlToken).not.toHaveBeenCalled();
         });
 
         it('allows GET with site cookie for linked owned site', async () => {

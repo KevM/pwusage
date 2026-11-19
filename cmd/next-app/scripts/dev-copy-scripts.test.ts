@@ -20,9 +20,11 @@ CREATE TABLE public."TariffSchedule" (id serial PRIMARY KEY);
 INSERT INTO public."Tariff" VALUES (1);
 INSERT INTO public."TariffSchedule" VALUES (1);
 CREATE TABLE public."MobileLoginHandoff" (attempt_id uuid PRIMARY KEY, user_id text NOT NULL);
+CREATE TABLE public."TrmnlManageHandoff" (id uuid PRIMARY KEY, device_uuid text NOT NULL, trmnl_token text NOT NULL);
 CREATE TABLE public."TrmnlInstallation" (uuid text PRIMARY KEY, access_token text, refresh_token text);
 INSERT INTO public."Site" VALUES ('s1');
 INSERT INTO public."MobileLoginHandoff" VALUES ('00000000-0000-0000-0000-000000000001', 'u1');
+INSERT INTO public."TrmnlManageHandoff" VALUES ('00000000-0000-0000-0000-000000000011', 'dev-1', 'prod-trmnl-jwt');
 INSERT INTO public."TrmnlInstallation" VALUES ('t1', 'inbound-token', 'unused-refresh-token');
 CREATE TABLE public."User" (id text PRIMARY KEY, email text, access_token text, refresh_token text, auth_status text,
     tesla_refresh_state text, is_refreshing integer, refresh_lock_expires bigint, tesla_refresh_attempt_id text,
@@ -155,6 +157,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
         const result = await psql('scripts/sanitize-dev-copy.sql');
         expect(result.code, result.out).toBe(0);
         expect(await rows(`SELECT count(*)::int AS n FROM public."MobileLoginHandoff"`)).toEqual([{ n: 0 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."TrmnlManageHandoff"`)).toEqual([{ n: 0 }]);
         expect(await rows(`SELECT access_token, refresh_token FROM public."TrmnlInstallation"`))
             .toEqual([{ access_token: 'inbound-token', refresh_token: null }]);
         expect(await rows(`SELECT count(*)::int AS n FROM public."EnergyDayArchive"`)).toEqual([{ n: 1 }]);
@@ -186,6 +189,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
             '-f', 'scripts/sanitize-dev-copy.sql']);
         expect(result.stderr).not.toContain('ERROR');
         expect(await rows(`SELECT count(*)::int AS n FROM public."MobileLoginHandoff"`)).toEqual([{ n: 0 }]);
+        expect(await rows(`SELECT count(*)::int AS n FROM public."TrmnlManageHandoff"`)).toEqual([{ n: 0 }]);
     });
 
     it('parks rate estimate checks for every copied site except Harrison', async () => {
@@ -207,7 +211,7 @@ describe.skipIf(!safeSocket)('dev-only SQL scripts against isolated PostgreSQL',
     });
 
     it('skips rules for tables that do not exist yet', async () => {
-        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."User"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
+        await target!.query(`${MARK_DEV} DROP TABLE public."MobileLoginHandoff"; DROP TABLE public."TrmnlManageHandoff"; DROP TABLE public."TrmnlInstallation"; DROP TABLE public."BatteryHoldActivity"; DROP TABLE public."User"; DROP TABLE public."EnergyDaySummary"; DROP TABLE public."EnergyDayArchive";`);
         expect((await psql('scripts/sanitize-dev-copy.sql')).code).toBe(0);
         expect((await psql('scripts/prune-dev-copy.sql')).code).toBe(0);
     });

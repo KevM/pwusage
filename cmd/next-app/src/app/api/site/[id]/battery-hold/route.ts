@@ -6,6 +6,7 @@ import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { createSiteTeslaClient, parkBattery, restoreBattery } from '@/lib/battery-hold-service';
 import { createTeslaClientForSiteMember } from '@/lib/tesla-client-factory';
 import { siteMembershipEnabled } from '@/lib/site-membership-flag';
+import { isCrossOriginRequest } from '@/lib/request-security';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -18,6 +19,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (isCrossOriginRequest(req)) {
+    return NextResponse.json({ error: 'Cross-origin requests are not allowed' }, { status: 403 });
+  }
+  const contentType = req.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    return NextResponse.json({ error: 'Content-Type must be application/json' }, { status: 415 });
+  }
+
   const { id } = await params;
   if (!(await verifySiteAccess(id))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });

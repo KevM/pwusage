@@ -45,6 +45,23 @@ export function tokenPredatesAccount(origIat: number | undefined, createdAtSecon
     return origIat < Math.floor(createdAtSeconds);
 }
 
+export type SessionAuthRejectionReason = 'missing-account' | 'inactive-account' | 'revoked-session';
+
+/**
+ * Shared DB-backed session validity check for both auth-checks and SiteService.
+ * Rejects missing, inactive, session_version-revoked, and pre-recreation tokens.
+ */
+export function validateSessionAgainstAuthState(
+    decoded: { sub: string; sv?: number; orig_iat?: number },
+    authState: { isActive: boolean; sessionVersion: number; createdAtSeconds?: number | null } | null
+): SessionAuthRejectionReason | null {
+    if (!authState) return 'missing-account';
+    if (!authState.isActive) return 'inactive-account';
+    if ((decoded.sv ?? 0) < authState.sessionVersion) return 'revoked-session';
+    if (tokenPredatesAccount(decoded.orig_iat, authState.createdAtSeconds)) return 'revoked-session';
+    return null;
+}
+
 export function signSiteToken(siteIds: string[], roles: string[] = [], userId?: string, originalIat?: number, sessionVersion: number = 0): string {
     const now = Math.floor(Date.now() / 1000);
     const payload: SiteAuthClaims = {

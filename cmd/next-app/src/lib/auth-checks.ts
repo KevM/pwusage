@@ -1,6 +1,6 @@
 import { cache } from 'react';
 import { cookies } from 'next/headers';
-import { tokenPredatesAccount, verifySiteToken } from './auth-jwt';
+import { validateSessionAgainstAuthState, verifySiteToken } from './auth-jwt';
 import { UserRepo } from './user-repo';
 import { SiteRepo } from './site-repo';
 import { logSessionRejection } from './observability';
@@ -39,24 +39,20 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
     }
 
     const authState = await new UserRepo().getAuthState(decoded.sub);
-    if (!authState || !authState.isActive) {
-        logSessionRejection(authState ? 'inactive-account' : 'missing-account', decoded.sub);
-        console.warn(`[AuthChecks] Blocking access for revoked/inactive user: ${decoded.sub}`);
+    const rejection = validateSessionAgainstAuthState(
+        { sub: decoded.sub, sv: decoded.sv, orig_iat: decoded.orig_iat },
+        authState
+    );
+    if (rejection) {
+        logSessionRejection(rejection, decoded.sub);
+        if (rejection === 'inactive-account' || rejection === 'missing-account') {
+            console.warn(`[AuthChecks] Blocking access for revoked/inactive user: ${decoded.sub}`);
+        } else if ((decoded.sv ?? 0) < (authState?.sessionVersion ?? 0)) {
+            console.warn(`[AuthChecks] Blocking revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState?.sessionVersion})`);
+        }
         return null;
     }
-
-    // A token whose sv trails the DB session_version was revoked by
-    // sign-out-everywhere (or another version bump).
-    if ((decoded.sv ?? 0) < authState.sessionVersion) {
-        logSessionRejection('revoked-session', decoded.sub);
-        console.warn(`[AuthChecks] Blocking revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
-        return null;
-    }
-
-    if (tokenPredatesAccount(decoded.orig_iat, authState.createdAtSeconds)) {
-        logSessionRejection('revoked-session', decoded.sub);
-        return null;
-    }
+    if (!authState) return null;
 
     const userSites = await new SiteRepo().getSitesForUser(decoded.sub);
     return {

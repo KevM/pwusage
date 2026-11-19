@@ -252,6 +252,7 @@ export interface TrmnlInstallation {
   site_id: string;
   installed_by_user_id?: string | null;
   plugin_setting_id: number | null;
+  plugin_setting_id_verified?: boolean;
   created_at: Date;
   json?: unknown;
   access_token?: string | null;

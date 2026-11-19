@@ -44,7 +44,8 @@ export async function POST(request: Request) {
         const isJwtFormat = tokenParts.length === 3;
 
         let payload: VerifiedTrmnlTokenPayload;
-        let matchedInstallation: import('@/lib/db').TrmnlInstallation | undefined;
+        let matchedInstallation: TrmnlInstallation | undefined;
+        const service = new TrmnlService();
 
         if (isJwtFormat) {
             // Production: JWT-signed webhook
@@ -56,33 +57,36 @@ export async function POST(request: Request) {
             }
         } else {
             // Opaque token: We MUST verify it against a stored access_token in the DB.
-            const service = new TrmnlService();
+            const bodyPluginIdForLookup = coercePositiveInt(user.plugin_setting_id);
 
             // 1. Check existing installation by uuid
-            const existing = await service.getInstallationByUuid(user.uuid, { includeTokens: true });
-            if (existing && existing.access_token && safeTimingSafeEqual(token, existing.access_token)) {
-                matchedInstallation = existing;
-            }
-
-            // 2. Check pending by plugin_setting_id
-            if (!matchedInstallation && user.plugin_setting_id) {
-                const bodyPluginId = coercePositiveInt(user.plugin_setting_id);
-                if (bodyPluginId !== null) {
-                    const pending = await service.getInstallationByPendingPluginId(bodyPluginId);
-                    if (pending && pending.access_token && safeTimingSafeEqual(token, pending.access_token)) {
-                        matchedInstallation = pending;
-                    }
+            const existingByUuid = await service.getInstallationByUuid(user.uuid, { includeTokens: true });
+            if (existingByUuid) {
+                if (existingByUuid.access_token && safeTimingSafeEqual(token, existingByUuid.access_token)) {
+                    matchedInstallation = existingByUuid;
+                } else {
+                    console.warn(`[TrmnlWebhook] Rejecting opaque token for ${user.uuid}: Token mismatch on existing installation`);
+                    return NextResponse.json({ error: 'Unauthorized: Invalid opaque token' }, { status: 401 });
                 }
             }
 
-            // 3. Check latest loose pending installation (within 15 min window)
+            // 2. Check pending by plugin_setting_id
+            if (!matchedInstallation && bodyPluginIdForLookup !== null) {
+                const pending = await service.getInstallationByPendingPluginId(bodyPluginIdForLookup);
+                if (pending && pending.access_token && safeTimingSafeEqual(token, pending.access_token)) {
+                    matchedInstallation = pending;
+                }
+            }
+
+            // 3. Check recent loose pending installations (within 15 min window) by exact token match
             if (!matchedInstallation) {
-                const loosePending = await service.getLatestLoosePendingInstallation();
-                if (loosePending && loosePending.access_token && safeTimingSafeEqual(token, loosePending.access_token)) {
-                    // Check if it's within the 15-minute window
-                    const ageMs = new Date().getTime() - new Date(loosePending.created_at).getTime();
-                    if (ageMs < 15 * 60 * 1000) {
-                        matchedInstallation = loosePending;
+                const recentLoose = await service.getRecentLoosePendingInstallations(15 * 60 * 1000);
+                const nowMs = Date.now();
+                for (const candidate of recentLoose) {
+                    const ageMs = nowMs - new Date(candidate.created_at).getTime();
+                    if (ageMs < 15 * 60 * 1000 && candidate.access_token && safeTimingSafeEqual(token, candidate.access_token)) {
+                        matchedInstallation = candidate;
+                        break;
                     }
                 }
             }
@@ -118,87 +122,89 @@ export async function POST(request: Request) {
 
         console.log(`[TrmnlWebhook] Received verified webhook for UUID: ${user.uuid}, Plugin ID: ${tokenPluginId}`);
 
-        const service = new TrmnlService();
-
-        // We might not have the site_id here if it's the first time we see this UUID via webhook.
-        // However, the installation flow (screen) usually runs first and sets the site_id.
-        // If we don't have an installation yet, we can create one with a placeholder or null site_id?
-        // But createInstallation requires a siteId. 
-        // Strategy: 
-        // 1. Check if installation exists. 
-        // 2. If yes, update it with new details (plugin_setting_id, json).
-        // 3. If no, we can't create it fully without a site_id. We might just log it or fail.
-        //    However, usually the user goes through the Install Flow -> Trmnl Connect -> Setup API -> Webhook.
-        //    So the installation should exist.
-
-        // Reuse the already-fetched installation if it matches user.uuid
-        const existing = (matchedInstallation && matchedInstallation.uuid === user.uuid)
-            ? matchedInstallation
-            : await service.getInstallationByUuid(user.uuid);
-
-        if (existing) {
-            const screens = extractTrmnlComponentScreens(existing.json);
-            const carouselIndex = extractTrmnlCarouselIndex(existing.json, screens.length);
+        const claimPendingRow = async (pendingRow: TrmnlInstallation) => {
+            const screens = extractTrmnlComponentScreens(pendingRow.json);
+            const carouselIndex = extractTrmnlCarouselIndex(pendingRow.json, screens.length);
             const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
                 user,
                 screens,
                 carouselIndex
             );
-            // Update with new details
-            await service.createInstallation(
-                existing.site_id,
+            console.log(`[TrmnlWebhook] Claiming pending installation (ID: ${pendingRow.id}) for plugin ${tokenPluginId} / UUID ${user.uuid}`);
+            const claimed = await service.claimPendingInstallationById(
+                pendingRow.id,
                 user.uuid,
                 tokenPluginId,
                 mergedInstallationJson
             );
 
-            // Update user email if not present
-            if (user.email && existing.site_id) {
-                await syncUserEmail(existing, user.email);
+            if (!claimed) {
+                const current = await service.getInstallationById(pendingRow.id);
+                if (current && current.uuid === user.uuid && (current.plugin_setting_id === null || current.plugin_setting_id === tokenPluginId)) {
+                    return NextResponse.json({ success: true });
+                }
+                return NextResponse.json({ error: 'Conflict: Pending installation already claimed' }, { status: 409 });
+            }
+
+            if (user.email && pendingRow.site_id) {
+                await syncUserEmail(pendingRow, user.email);
+            }
+            return null;
+        };
+
+        const updateExistingRow = async (existingRow: TrmnlInstallation) => {
+            const screens = extractTrmnlComponentScreens(existingRow.json);
+            const carouselIndex = extractTrmnlCarouselIndex(existingRow.json, screens.length);
+            const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
+                user,
+                screens,
+                carouselIndex
+            );
+            const updated = await service.updateWebhookMetadata(
+                existingRow.id,
+                user.uuid,
+                existingRow.site_id,
+                tokenPluginId,
+                mergedInstallationJson
+            );
+            if (!updated) {
+                return NextResponse.json(
+                    { error: 'Conflict: Installation was modified or removed concurrently' },
+                    { status: 409 }
+                );
+            }
+            if (user.email && existingRow.site_id) {
+                await syncUserEmail(existingRow, user.email);
+            }
+            return null;
+        };
+
+        if (matchedInstallation) {
+            // Opaque token: carry the exact authenticated row through to the write.
+            if (matchedInstallation.uuid === user.uuid) {
+                const conflict = await updateExistingRow(matchedInstallation);
+                if (conflict) return conflict;
+            } else if (matchedInstallation.uuid === null) {
+                const conflictOrRetry = await claimPendingRow(matchedInstallation);
+                if (conflictOrRetry) return conflictOrRetry;
+            } else {
+                return NextResponse.json({ error: 'Conflict: Installation already claimed by another device' }, { status: 409 });
             }
         } else {
-            // 1. Check for Pending installation by plugin_setting_id (Strong Link)
-            // Use tokenPluginId (trusted) instead of body value
-            let pending = await service.getInstallationByPendingPluginId(tokenPluginId);
-
-            // 2. Fallback: Check for "Loose" Pending installation (NULL UUID, NULL PluginID)
-            // We take the MOST RECENT one, but only if it was created within the last 15 minutes to reduce race conditions.
-            if (!pending) {
-                const loosePending = await service.getLatestLoosePendingInstallation();
-                if (loosePending && (new Date().getTime() - new Date(loosePending.created_at).getTime()) < 15 * 60 * 1000) {
-                    pending = loosePending;
-                } else if (loosePending) {
-                    console.warn(`[TrmnlWebhook] Found a loose pending installation but it is too old to safely claim.`);
-                }
-            }
-
-            if (pending) {
-                const screens = extractTrmnlComponentScreens(pending.json);
-                const carouselIndex = extractTrmnlCarouselIndex(pending.json, screens.length);
-                const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
-                    user,
-                    screens,
-                    carouselIndex
-                );
-                console.log(`[TrmnlWebhook] Claiming pending installation (ID: ${pending.id}) for plugin ${tokenPluginId} / UUID ${user.uuid}`);
-                // If it was a "loose" pending record, it might not have the plugin_setting_id set either.
-                // We update it with BOTH.
-                // We pass the pending record's ID to ensure we update the correct row if we add a method for ID-based update, 
-                // OR we rely on claimPending... but claimPendingPluginId queries by plugin_setting_id.
-                // We need a new method to claim by Row ID.
-                await service.claimPendingInstallationById(
-                    pending.id,
-                    user.uuid,
-                    tokenPluginId,
-                    mergedInstallationJson
-                );
-
-                // Update user email if not present
-                if (user.email && pending.site_id) {
-                    await syncUserEmail(pending, user.email);
-                }
+            // Signed JWT webhook: match by verified UUID or verified plugin_setting_id.
+            // Never claim a loose pending row (NULL uuid, NULL plugin_setting_id) without correlation.
+            const existing = await service.getInstallationByUuid(user.uuid);
+            if (existing) {
+                const conflict = await updateExistingRow(existing);
+                if (conflict) return conflict;
             } else {
-                console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unknown Plugin ID: ${tokenPluginId}. details ignored.`);
+                const pending = await service.getInstallationByPendingPluginId(tokenPluginId, { requireVerified: true });
+                if (pending && pending.plugin_setting_id_verified === true) {
+                    const conflictOrRetry = await claimPendingRow(pending);
+                    if (conflictOrRetry) return conflictOrRetry;
+                } else {
+                    console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unverified/unlinked Plugin ID: ${tokenPluginId}. Leaving any loose pending installations untouched.`);
+                }
             }
         }
 

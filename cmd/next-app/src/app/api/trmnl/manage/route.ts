@@ -17,11 +17,20 @@ import {
     normalizeTrmnlComponentScreens
 } from '@/lib/trmnl-component-config';
 
+function extractBearerToken(request: Request): string | null {
+    const authHeader = request.headers.get('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+        const token = authHeader.slice('Bearer '.length).trim();
+        if (token) return token;
+    }
+    const headerToken = request.headers.get('X-Trmnl-Token')?.trim();
+    return headerToken || null;
+}
+
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const uuid = searchParams.get('uuid');
-
-    const secret = searchParams.get('token');
+    const secret = extractBearerToken(request);
 
     if (!uuid) {
         return NextResponse.json({ error: 'Missing UUID' }, { status: 400 });
@@ -41,8 +50,8 @@ export async function GET(request: Request) {
         try {
             await verifyTrmnlToken(secret, uuid);
             isDeviceAuthorized = true;
-        } catch (e) {
-            console.warn(`[TrmnlManage] GET Token verification failed: ${e}`);
+        } catch {
+            console.warn(`[TrmnlManage] GET Token verification failed for ${uuid}`);
         }
     }
 
@@ -81,7 +90,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { uuid, site_id, token: trmnlToken, plugin_setting_id: pluginSettingIdFromBody } = body;
+        const { uuid, site_id, token: bodyToken, plugin_setting_id: pluginSettingIdFromBody } = body;
+        const trmnlToken = (typeof bodyToken === 'string' && bodyToken.trim()) ? bodyToken.trim() : extractBearerToken(request);
         if (Array.isArray(body.component_screens) && (body.component_screens.length === 0 || body.component_screens.length > MAX_TRMNL_COMPONENT_SCREENS)) {
             return NextResponse.json({ error: `component_screens must have 1-${MAX_TRMNL_COMPONENT_SCREENS} entries` }, { status: 400 });
         }

@@ -50,12 +50,19 @@ describe('TrmnlInstallationRepo', () => {
         expect(params).toEqual(['site-abc']);
     });
 
-    it('findPendingByPluginId queries correct criteria', async () => {
+    it('findPendingByPluginId queries correct criteria and enforces verified flag when requested', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();
         await repo.findPendingByPluginId(999);
         expect(queryMock).toHaveBeenCalledWith(
             expect.stringContaining('plugin_setting_id = $1 AND uuid IS NULL'),
+            [999]
+        );
+
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await repo.findPendingByPluginId(999, { requireVerified: true });
+        expect(queryMock).toHaveBeenLastCalledWith(
+            expect.stringContaining('plugin_setting_id = $1 AND uuid IS NULL AND plugin_setting_id_verified = true'),
             [999]
         );
     });
@@ -100,6 +107,21 @@ describe('TrmnlInstallationRepo', () => {
         );
     });
 
+    it('updateWebhookMetadata updates only metadata when id, uuid, and site_id still match', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+        const repo = new TrmnlInstallationRepo();
+        const ok = await repo.updateWebhookMetadata(1, 'uuid-1', 'site-1', 55, { screens: [] });
+        expect(ok).toBe(true);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringMatching(/UPDATE "TrmnlInstallation"\s+SET plugin_setting_id = COALESCE\(\$4, plugin_setting_id\),\s+json = \$5\s+WHERE id = \$1\s+AND uuid = \$2\s+AND site_id = \$3\s+RETURNING id/),
+            [1, 'uuid-1', 'site-1', 55, { screens: [] }]
+        );
+
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const stale = await repo.updateWebhookMetadata(1, 'uuid-1', 'site-1', 55, { screens: [] });
+        expect(stale).toBe(false);
+    });
+
     it('updateJson updates settings config', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();
@@ -120,13 +142,34 @@ describe('TrmnlInstallationRepo', () => {
         );
     });
 
-    it('claimPendingById links pending device', async () => {
+    it('claimPendingById links pending device atomically when uuid is null', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 5 }] });
+        const repo = new TrmnlInstallationRepo();
+        const claimed = await repo.claimPendingById(5, 'uuid-abc', 99, { data: 1 });
+        expect(claimed).toBe(true);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringMatching(/UPDATE "TrmnlInstallation"\s+SET uuid = \$1, plugin_setting_id = \$2, json = \$3\s+WHERE id = \$4\s+AND uuid IS NULL\s+AND \(plugin_setting_id IS NULL OR plugin_setting_id = \$2\)\s+RETURNING id/),
+            ['uuid-abc', 99, { data: 1 }, 5]
+        );
+    });
+
+    it('claimPendingById returns false when already claimed or plugin_setting_id conflicts', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();
-        await repo.claimPendingById(5, 'uuid-abc', 99, { data: 1 });
+        const claimed = await repo.claimPendingById(5, 'uuid-other', 99, { data: 1 });
+        expect(claimed).toBe(false);
+    });
+
+    it('create with allowedExistingSiteIds enforces site_id ownership in ON CONFLICT WHERE and returns null when rejected', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const repo = new TrmnlInstallationRepo();
+        const id = await repo.create('site-a', 'uuid-b', 10, {}, 'tok-a', 'user-a', {
+            allowedExistingSiteIds: ['site-a']
+        });
+        expect(id).toBeNull();
         expect(queryMock).toHaveBeenCalledWith(
-            expect.stringMatching(/UPDATE "TrmnlInstallation"\s+SET uuid = \$1, plugin_setting_id = \$2, json = \$3\s+WHERE id = \$4/),
-            ['uuid-abc', 99, { data: 1 }, 5]
+            expect.stringContaining('WHERE "TrmnlInstallation".site_id = ANY($7::text[])'),
+            ['site-a', 'uuid-b', 10, {}, 'tok-a', 'user-a', ['site-a']]
         );
     });
 

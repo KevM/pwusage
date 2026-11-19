@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { verifyMock, currentUserMock, memberClientMock, parkMock, restoreMock, getActiveMock, getNoticeMock, ackMock, createClientMock } = vi.hoisted(() => ({
@@ -21,8 +22,15 @@ vi.mock('@/lib/battery-hold-repo', () => ({
 
 import { GET, POST } from './route';
 
-function req(body?: unknown) {
-  return { json: async () => body } as unknown as Request;
+function req(body?: unknown, headers?: Record<string, string>) {
+  return new NextRequest('https://pwusage.fm.rodeo/api/site/site-1/battery-hold', {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: {
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...headers,
+    },
+    ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
+  });
 }
 const ctx = { params: Promise.resolve({ id: 'site-1' }) };
 
@@ -130,6 +138,51 @@ describe('battery-hold route', () => {
     const res = await POST(req({ action: 'park' }) as never, ctx as never);
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: 'reserve_sync_pending' });
+  });
+
+  it('POST succeeds for same-origin browser request with application/json', async () => {
+    parkMock.mockResolvedValue({ status: 'ok', hold: { id: 3 } });
+    const res = await POST(
+      req({ action: 'park' }, { origin: 'https://pwusage.fm.rodeo', 'sec-fetch-site': 'same-origin' }) as never,
+      ctx as never
+    );
+    expect(res.status).toBe(200);
+    expect(parkMock).toHaveBeenCalled();
+  });
+
+  it('POST succeeds for native request that omits Origin', async () => {
+    restoreMock.mockResolvedValue({ status: 'ok' });
+    const res = await POST(req({ action: 'restore' }) as never, ctx as never);
+    expect(res.status).toBe(200);
+    expect(restoreMock).toHaveBeenCalled();
+  });
+
+  it('POST rejects same-site sibling origin without executing Tesla command or DB mutation', async () => {
+    const res = await POST(
+      req({ action: 'park' }, { origin: 'https://sibling.fm.rodeo', 'sec-fetch-site': 'same-site' }) as never,
+      ctx as never
+    );
+    expect(res.status).toBe(403);
+    expect(verifyMock).not.toHaveBeenCalled();
+    expect(createClientMock).not.toHaveBeenCalled();
+    expect(memberClientMock).not.toHaveBeenCalled();
+    expect(parkMock).not.toHaveBeenCalled();
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(ackMock).not.toHaveBeenCalled();
+  });
+
+  it('POST rejects unsupported content type without executing Tesla command or DB mutation', async () => {
+    const res = await POST(
+      req('action=dismiss', { 'content-type': 'application/x-www-form-urlencoded' }) as never,
+      ctx as never
+    );
+    expect(res.status).toBe(415);
+    expect(verifyMock).not.toHaveBeenCalled();
+    expect(createClientMock).not.toHaveBeenCalled();
+    expect(memberClientMock).not.toHaveBeenCalled();
+    expect(parkMock).not.toHaveBeenCalled();
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(ackMock).not.toHaveBeenCalled();
   });
 
 });

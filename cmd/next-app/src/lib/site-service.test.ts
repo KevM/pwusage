@@ -12,11 +12,15 @@ import { UserRepo } from './user-repo';
 import * as authJwt from './auth-jwt';
 import * as observability from './observability';
 
-// Mock auth-jwt to verify it's being called
-vi.mock('./auth-jwt', () => ({
-    signSiteToken: vi.fn(),
-    verifySiteToken: vi.fn(),
-}));
+// Mock auth-jwt to verify it's being called, while keeping real session validation helpers
+vi.mock('./auth-jwt', async (importActual) => {
+    const actual = await importActual<typeof import('./auth-jwt')>();
+    return {
+        ...actual,
+        signSiteToken: vi.fn(),
+        verifySiteToken: vi.fn(),
+    };
+});
 
 describe('SiteService Security', () => {
 
@@ -290,6 +294,56 @@ describe('SiteService Security', () => {
 
             expect(await service.validateSiteAccess('other-site')).toBe(false);
             expect(await service.validateSiteAccess('site-x')).toBe(true);
+        });
+
+        it('rejects old cookie issued before account recreation in both getAuthorizedSites and validateSiteAccess, while accepting fresh cookie', async () => {
+            mockEnergyRepo.getSites.mockResolvedValue([mockSite]);
+            mockEnergyRepo.getSitesForUser.mockResolvedValue([{ id: '12345' }]);
+            const recreatedAtSeconds = 2000.5;
+
+            // Old cookie: same sub and sv=0, but orig_iat predates recreated account
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({
+                sites: ['12345'],
+                roles: ['user'],
+                sub: 'u1',
+                sv: 0,
+                orig_iat: 1999
+            });
+            const oldCookieService = new SiteService({
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'old_cookie',
+                getAuthState: vi.fn().mockResolvedValue({
+                    isActive: true,
+                    sessionVersion: 0,
+                    roles: ['user'],
+                    createdAtSeconds: recreatedAtSeconds
+                }),
+            });
+
+            await expect(oldCookieService.getAuthorizedSites()).rejects.toThrow('Unauthorized');
+            expect(await oldCookieService.validateSiteAccess('12345')).toBe(false);
+
+            // Fresh cookie: issued in or after the account creation second
+            vi.mocked(authJwt.verifySiteToken).mockReturnValue({
+                sites: ['12345'],
+                roles: ['user'],
+                sub: 'u1',
+                sv: 0,
+                orig_iat: 2000
+            });
+            const freshCookieService = new SiteService({
+                siteRepo: mockEnergyRepo as unknown as SiteRepo,
+                siteAuthToken: 'fresh_cookie',
+                getAuthState: vi.fn().mockResolvedValue({
+                    isActive: true,
+                    sessionVersion: 0,
+                    roles: ['user'],
+                    createdAtSeconds: recreatedAtSeconds
+                }),
+            });
+
+            expect(await freshCookieService.getAuthorizedSites()).toEqual([mockSite]);
+            expect(await freshCookieService.validateSiteAccess('12345')).toBe(true);
         });
     });
 

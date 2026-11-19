@@ -103,7 +103,7 @@ describe('dev-only database scripts stay away from prod', () => {
         // Unquoted: the CLI reads -x as a CSV list. Day records come from the export instead;
         // EnergyData stays excluded for a production copy taken before it is dropped.
         const excluded = data?.match(/ -x (\S+)/)?.[1].split(',').sort();
-        expect(excluded).toEqual(['public.EnergyData', 'public.EnergyDayArchive', 'public.EnergyDaySummary']);
+        expect(excluded).toEqual(['public.EnergyData', 'public.EnergyDayArchive', 'public.EnergyDaySummary', 'public.TrmnlManageHandoff']);
         expect(dump).toMatch(/-f scripts\/export-dev-energy-data\.sql$/m);
         // Exported first, so every Site and Tariff a row references is already in data.sql.
         expect(dump.indexOf('export-dev-energy-data.sql')).toBeLessThan(dump.indexOf('-f data.sql'));

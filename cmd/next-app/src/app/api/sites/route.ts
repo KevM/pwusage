@@ -9,8 +9,11 @@ export async function GET(request: Request) {
     return withRequestContext(async () => {
         try {
         const { searchParams } = new URL(request.url);
-        const uuid = searchParams.get('uuid');
-        const token = searchParams.get('token');
+        const uuid = request.headers.get('X-Trmnl-Uuid')?.trim() || searchParams.get('uuid');
+        const authHeader = request.headers.get('Authorization');
+        const token = authHeader?.startsWith('Bearer ')
+            ? authHeader.slice('Bearer '.length).trim()
+            : request.headers.get('X-Trmnl-Token')?.trim() || null;
 
         const cookieStore = await cookies();
         const siteAuthToken = cookieStore.get('site_auth')?.value;
