@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildManageLoginRedirectUrl,
+  createManageLaunchController,
   loadManageInitialData,
   stripManageCredentialsFromUrl,
 } from './trmnl-manage-client';
@@ -163,5 +164,84 @@ describe('trmnl-manage-client', () => {
     expect(result.token).toBe(secretToken);
     expect(result.sites).toHaveLength(1);
     expect(result.installData?.site_id).toBeNull();
+  });
+
+  it('prevents a stale pending request from redirecting after navigating away', async () => {
+    const controller = createManageLaunchController();
+    const redirects: string[] = [];
+    let resolveSites!: (res: Response) => void;
+    const sitesPromise = new Promise<Response>((resolve) => {
+      resolveSites = resolve;
+    });
+
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/sites') return sitesPromise;
+      if (url.startsWith('/api/trmnl/manage?')) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const entry = controller.launch({
+      uuid: 'dev-1',
+      initialToken: null,
+      handoffId: null,
+      pluginSettingId: null,
+      fetchImpl: fetchMock,
+      onRedirect: (u) => redirects.push(u),
+    });
+
+    // User navigates away before /api/sites resolves
+    controller.setActive(false);
+    resolveSites(new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }));
+    await entry.promise;
+
+    expect(redirects).toEqual([]);
+  });
+
+  it('deduplicates launch across replaceState searchParams re-renders', async () => {
+    const controller = createManageLaunchController();
+    let consumeCalls = 0;
+    const redirects: string[] = [];
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/trmnl/manage/handoff/consume') {
+        consumeCalls++;
+        return new Response(JSON.stringify({ token: 'redeemed.jwt' }), { status: 200 });
+      }
+      if (url === '/api/sites') {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.startsWith('/api/trmnl/manage?')) {
+        return new Response(JSON.stringify({ site_id: null }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const first = controller.launch({
+      uuid: 'dev-unlinked',
+      initialToken: null,
+      handoffId: '22222222-2222-4222-8222-222222222222',
+      pluginSettingId: null,
+      fetchImpl: fetchMock,
+      onRedirect: (u) => redirects.push(u),
+    });
+    // Simulated re-render after replaceState strips handoffId
+    const second = controller.launch({
+      uuid: 'dev-unlinked',
+      initialToken: null,
+      handoffId: null,
+      pluginSettingId: null,
+      fetchImpl: fetchMock,
+      onRedirect: (u) => redirects.push(u),
+    });
+
+    expect(second).toBe(first);
+    const res = await second.promise;
+    expect(consumeCalls).toBe(1);
+    expect(redirects).toEqual([]);
+    expect(res.token).toBe('redeemed.jwt');
   });
 });

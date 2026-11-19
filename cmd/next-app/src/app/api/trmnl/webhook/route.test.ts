@@ -140,6 +140,8 @@ describe('POST /api/trmnl/webhook', () => {
         mocks.getInstallationByPendingPluginId.mockResolvedValue({
             id: 'pending-100',
             site_id: 'site-a',
+            plugin_setting_id: 10,
+            plugin_setting_id_verified: true,
             created_at: new Date().toISOString(),
             json: {}
         });
@@ -258,6 +260,8 @@ describe('POST /api/trmnl/webhook', () => {
             id: 500,
             uuid: null,
             site_id: 'site-a',
+            plugin_setting_id: 10,
+            plugin_setting_id_verified: true,
             installed_by_user_id: 'user-a',
             created_at: new Date().toISOString(),
             json: {}
@@ -290,6 +294,8 @@ describe('POST /api/trmnl/webhook', () => {
             id: 500,
             uuid: null,
             site_id: 'site-a',
+            plugin_setting_id: 10,
+            plugin_setting_id_verified: true,
             created_at: new Date().toISOString(),
             json: {}
         });
@@ -308,6 +314,33 @@ describe('POST /api/trmnl/webhook', () => {
         });
         const res = await POST(req);
         expect(res.status).toBe(200);
+    });
+
+    it('does not claim an unverified legacy pending installation created under the old behavior', async () => {
+        mocks.verifyTrmnlToken.mockResolvedValue({
+            sub: 'dev-b',
+            plugin_setting_id: 999
+        });
+        mocks.getInstallationByUuid.mockResolvedValue(null);
+        mocks.getInstallationByPendingPluginId.mockResolvedValue({
+            id: 901,
+            uuid: null,
+            site_id: 'site-attacker',
+            plugin_setting_id: 999,
+            plugin_setting_id_verified: false,
+            created_at: new Date().toISOString(),
+            json: {}
+        });
+
+        const req = new Request('http://localhost/api/trmnl/webhook', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer jwt.token.val' },
+            body: JSON.stringify({ user: { uuid: 'dev-b', plugin_setting_id: 999 } })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(200);
+        expect(mocks.getInstallationByPendingPluginId).toHaveBeenCalledWith(999, { requireVerified: true });
+        expect(mocks.claimPendingInstallationById).not.toHaveBeenCalled();
     });
 
     it('preserves existing component screen config when updating existing installation', async () => {

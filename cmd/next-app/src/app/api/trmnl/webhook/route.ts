@@ -198,12 +198,12 @@ export async function POST(request: Request) {
                 const conflict = await updateExistingRow(existing);
                 if (conflict) return conflict;
             } else {
-                const pending = await service.getInstallationByPendingPluginId(tokenPluginId);
-                if (pending) {
+                const pending = await service.getInstallationByPendingPluginId(tokenPluginId, { requireVerified: true });
+                if (pending && pending.plugin_setting_id_verified === true) {
                     const conflictOrRetry = await claimPendingRow(pending);
                     if (conflictOrRetry) return conflictOrRetry;
                 } else {
-                    console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unlinked Plugin ID: ${tokenPluginId}. Leaving any loose pending installations untouched.`);
+                    console.warn(`[TrmnlWebhook] Received success webhook for unknown UUID: ${user.uuid} and unverified/unlinked Plugin ID: ${tokenPluginId}. Leaving any loose pending installations untouched.`);
                 }
             }
         }

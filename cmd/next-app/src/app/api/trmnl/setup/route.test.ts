@@ -262,7 +262,8 @@ describe('POST /api/trmnl/setup', () => {
             42,
             expect.any(Object),
             'opaque-access-token',
-            'installer-1'
+            'installer-1',
+            { pluginSettingIdVerified: true }
         );
     });
 

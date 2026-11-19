@@ -124,7 +124,8 @@ export async function POST(request: Request) {
                     providerPluginSettingId,
                     defaultInstallationJson,
                     accessToken,
-                    installer.id
+                    installer.id,
+                    { pluginSettingIdVerified: true }
                 );
                 return NextResponse.json({ success: true, status: 'pending_webhook' });
             }

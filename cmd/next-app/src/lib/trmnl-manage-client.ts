@@ -131,3 +131,59 @@ export async function loadManageInitialData(params: {
 
     return { redirecting: false, token: activeToken, sites, installData };
 }
+
+export interface ManageLaunchEntry {
+    uuid: string;
+    pluginSettingId: string | null;
+    redirected: boolean;
+    promise: Promise<ManageInitialLoadResult>;
+}
+
+export function createManageLaunchController() {
+    let active = true;
+    let inFlight: ManageLaunchEntry | null = null;
+
+    return {
+        setActive(nextActive: boolean) {
+            active = nextActive;
+        },
+        isActive() {
+            return active;
+        },
+        launch(params: {
+            uuid: string;
+            initialToken: string | null;
+            handoffId: string | null;
+            pluginSettingId: string | null;
+            fetchImpl: typeof fetch;
+            onBeforeStart?: () => void;
+            onRedirect: (loginUrl: string) => void;
+        }): ManageLaunchEntry {
+            if (inFlight && inFlight.uuid === params.uuid) {
+                return inFlight;
+            }
+            params.onBeforeStart?.();
+            const entry: ManageLaunchEntry = {
+                uuid: params.uuid,
+                pluginSettingId: params.pluginSettingId,
+                redirected: false,
+                promise: Promise.resolve({ redirecting: false, token: null, sites: [], installData: null }),
+            };
+            entry.promise = loadManageInitialData({
+                uuid: params.uuid,
+                initialToken: params.initialToken,
+                handoffId: params.handoffId,
+                pluginSettingId: params.pluginSettingId,
+                fetchImpl: params.fetchImpl,
+                isCancelled: () => !active,
+                onRedirect: (loginUrl) => {
+                    if (!active) return;
+                    entry.redirected = true;
+                    params.onRedirect(loginUrl);
+                },
+            });
+            inFlight = entry;
+            return entry;
+        },
+    };
+}

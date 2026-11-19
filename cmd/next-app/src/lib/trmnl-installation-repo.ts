@@ -56,11 +56,14 @@ export class TrmnlInstallationRepo {
         return rows[0] as TrmnlInstallation | undefined;
     }
 
-    async findPendingByPluginId(pluginSettingId: number): Promise<TrmnlInstallation | undefined> {
-        const { rows } = await pool.query(
-            'SELECT * FROM "TrmnlInstallation" WHERE plugin_setting_id = $1 AND uuid IS NULL',
-            [pluginSettingId]
-        );
+    async findPendingByPluginId(
+        pluginSettingId: number,
+        options?: { requireVerified?: boolean }
+    ): Promise<TrmnlInstallation | undefined> {
+        const query = options?.requireVerified
+            ? 'SELECT * FROM "TrmnlInstallation" WHERE plugin_setting_id = $1 AND uuid IS NULL AND plugin_setting_id_verified = true'
+            : 'SELECT * FROM "TrmnlInstallation" WHERE plugin_setting_id = $1 AND uuid IS NULL';
+        const { rows } = await pool.query(query, [pluginSettingId]);
         return rows[0] as TrmnlInstallation | undefined;
     }
 
@@ -93,9 +96,10 @@ export class TrmnlInstallationRepo {
         json: unknown = null,
         accessToken: string | null = null,
         installedByUserId: string | null = null,
-        options?: { allowedExistingSiteIds?: string[] | null }
+        options?: { allowedExistingSiteIds?: string[] | null; pluginSettingIdVerified?: boolean }
     ): Promise<number | null> {
         const allowedExistingSiteIds = options?.allowedExistingSiteIds ?? null;
+        const pluginSettingIdVerified = options?.pluginSettingIdVerified ?? false;
         if (uuid && allowedExistingSiteIds !== null) {
             const params = [siteId, uuid, pluginSettingId, json, accessToken, installedByUserId, allowedExistingSiteIds];
             const query = `
@@ -112,6 +116,16 @@ export class TrmnlInstallationRepo {
             `;
             const { rows } = await pool.query(query, params);
             return (rows[0]?.id as number | undefined) ?? null;
+        }
+
+        if (!uuid && pluginSettingIdVerified) {
+            const params = [siteId, null, pluginSettingId, json, accessToken, installedByUserId, true];
+            const { rows } = await pool.query(`
+                INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token, installed_by_user_id, plugin_setting_id_verified)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+            `, params);
+            return rows[0].id;
         }
 
         const params = [siteId, uuid || null, pluginSettingId, json, accessToken, installedByUserId];

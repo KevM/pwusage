@@ -23,7 +23,7 @@ import {
     TrmnlComponentScreen
 } from '@/lib/trmnl-component-config';
 import {
-    loadManageInitialData,
+    createManageLaunchController,
     stripManageCredentialsFromUrl
 } from '@/lib/trmnl-manage-client';
 
@@ -49,12 +49,7 @@ function ManageContent() {
     const handoffParam = searchParams.get('handoff');
     const pluginSettingIdParam = searchParams.get('plugin_setting_id') || searchParams.get('plugin_id');
     const trmnlTokenRef = useRef<string | null>(urlToken);
-    const inFlightLoadRef = useRef<{
-        uuid: string;
-        pluginSettingId: string | null;
-        promise: Promise<import('@/lib/trmnl-manage-client').ManageInitialLoadResult>;
-        redirected: boolean;
-    } | null>(null);
+    const [launchController] = useState(() => createManageLaunchController());
 
     const [sites, setSites] = useState<{ id: string, name: string, utility: string }[]>([]);
     const [selectedSite, setSelectedSite] = useState('');
@@ -91,48 +86,45 @@ function ManageContent() {
     };
 
     useEffect(() => {
+        launchController.setActive(true);
+        return () => {
+            launchController.setActive(false);
+        };
+    }, [launchController]);
+
+    useEffect(() => {
         if (!uuid) return;
 
-        let cancelled = false;
-        let loadEntry = inFlightLoadRef.current;
-
-        if (!loadEntry || loadEntry.uuid !== uuid) {
-            const initialToken = trmnlTokenRef.current ?? urlToken;
-            if (initialToken) {
-                trmnlTokenRef.current = initialToken;
-            }
-
-            if (typeof window !== 'undefined') {
-                stripManageCredentialsFromUrl(window.location.href, (nextUrl) => {
-                    window.history.replaceState(null, '', nextUrl);
-                });
-            }
-
-            const entry = {
-                uuid,
-                pluginSettingId: pluginSettingIdParam,
-                redirected: false,
-                promise: Promise.resolve({ redirecting: false, token: null, sites: [], installData: null } as import('@/lib/trmnl-manage-client').ManageInitialLoadResult),
-            };
-            entry.promise = loadManageInitialData({
-                uuid,
-                initialToken,
-                handoffId: handoffParam,
-                pluginSettingId: pluginSettingIdParam,
-                fetchImpl: fetch,
-                onRedirect: (loginUrl) => {
-                    entry.redirected = true;
-                    window.location.assign(loginUrl);
-                },
-            });
-            inFlightLoadRef.current = entry;
-            loadEntry = entry;
+        const controller = launchController;
+        const initialToken = trmnlTokenRef.current ?? urlToken;
+        if (initialToken) {
+            trmnlTokenRef.current = initialToken;
         }
+
+        const loadEntry = controller.launch({
+            uuid,
+            initialToken,
+            handoffId: handoffParam,
+            pluginSettingId: pluginSettingIdParam,
+            fetchImpl: fetch,
+            onBeforeStart: () => {
+                if (typeof window !== 'undefined') {
+                    stripManageCredentialsFromUrl(window.location.href, (nextUrl) => {
+                        window.history.replaceState(null, '', nextUrl);
+                    });
+                }
+            },
+            onRedirect: (loginUrl) => {
+                window.location.assign(loginUrl);
+            },
+        });
+
+        let cancelled = false;
 
         const fetchData = async () => {
             try {
                 const result = await loadEntry.promise;
-                if (cancelled) return;
+                if (cancelled || !controller.isActive()) return;
                 if (result.token) {
                     trmnlTokenRef.current = result.token;
                 }
@@ -182,7 +174,7 @@ function ManageContent() {
         return () => {
             cancelled = true;
         };
-    }, [uuid, urlToken, handoffParam, pluginSettingIdParam]);
+    }, [uuid, urlToken, handoffParam, pluginSettingIdParam, launchController]);
 
     useEffect(() => {
         if (!selectedSite) return;

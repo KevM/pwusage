@@ -11,7 +11,7 @@ export class TrmnlService {
         details: unknown = null,
         accessToken: string | null = null,
         installedByUserId: string | null = null,
-        options?: { allowedExistingSiteIds?: string[] | null }
+        options?: { allowedExistingSiteIds?: string[] | null; pluginSettingIdVerified?: boolean }
     ): Promise<number | null> {
         return this.dbRepo.create(siteId, uuid, pluginSettingId, details, accessToken, installedByUserId, options);
     }
@@ -93,8 +93,11 @@ export class TrmnlService {
         return data;
     }
 
-    async getInstallationByPendingPluginId(pluginSettingId: number): Promise<TrmnlInstallation | undefined> {
-        return this.dbRepo.findPendingByPluginId(pluginSettingId);
+    async getInstallationByPendingPluginId(
+        pluginSettingId: number,
+        options?: { requireVerified?: boolean }
+    ): Promise<TrmnlInstallation | undefined> {
+        return this.dbRepo.findPendingByPluginId(pluginSettingId, options);
     }
 
     async getLatestLoosePendingInstallation(): Promise<TrmnlInstallation | undefined> {

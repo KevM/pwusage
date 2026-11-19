@@ -50,12 +50,19 @@ describe('TrmnlInstallationRepo', () => {
         expect(params).toEqual(['site-abc']);
     });
 
-    it('findPendingByPluginId queries correct criteria', async () => {
+    it('findPendingByPluginId queries correct criteria and enforces verified flag when requested', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();
         await repo.findPendingByPluginId(999);
         expect(queryMock).toHaveBeenCalledWith(
             expect.stringContaining('plugin_setting_id = $1 AND uuid IS NULL'),
+            [999]
+        );
+
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await repo.findPendingByPluginId(999, { requireVerified: true });
+        expect(queryMock).toHaveBeenLastCalledWith(
+            expect.stringContaining('plugin_setting_id = $1 AND uuid IS NULL AND plugin_setting_id_verified = true'),
             [999]
         );
     });
