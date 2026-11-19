@@ -8,12 +8,19 @@ actor HistoryAPI: MobileSolarHistoryDataAPI {
     private var responses: [MobileSolarHistoryResponse]
     private let failAt: Int?
     private let failure: any Error
+    private let onRequest: (@Sendable (Int) -> Void)?
     private(set) var requests: [Request] = []
 
-    init(responses: [MobileSolarHistoryResponse], failAt: Int? = nil, failure: any Error = HistoryFailure.injected) {
+    init(
+        responses: [MobileSolarHistoryResponse],
+        failAt: Int? = nil,
+        failure: any Error = HistoryFailure.injected,
+        onRequest: (@Sendable (Int) -> Void)? = nil
+    ) {
         self.responses = responses
         self.failAt = failAt
         self.failure = failure
+        self.onRequest = onRequest
     }
 
     func fetchSolarHistory(
@@ -22,6 +29,7 @@ actor HistoryAPI: MobileSolarHistoryDataAPI {
         changedSince: Date?
     ) async throws -> MobileSolarHistoryResponse {
         requests.append(Request(from: from, changedSince: changedSince))
+        onRequest?(requests.count)
         if requests.count == failAt { throw failure }
         return responses.isEmpty ? .disabled : responses.removeFirst()
     }

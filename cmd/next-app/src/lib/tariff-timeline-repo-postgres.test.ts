@@ -134,6 +134,59 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(timeline.periods.filter(p => p.isCurrentToday).map(p => p.name)).toEqual(['Ended long ago']);
   });
 
+  it('resolves many dates with one period read and one batched hydrate, matching the single-date resolver', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-batch', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    const repo = new TariffTimelineRepo();
+    const flat = (buyRate: number) => [{ touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate, sellRate: 0.03 }];
+    const plan = (name: string, effectiveFrom: string, effectiveTo: string | null, rate: number) => ({
+      name, effectiveFrom, effectiveTo,
+      seasons: [{ name: 'All Year', fromMonth: 1, toMonth: 12, weekdayPeriods: flat(rate), weekendPeriods: flat(rate) }],
+    });
+    await repo.createManualPeriod('s-batch', 'u1', plan('Plan 2024', '2024-01-01', '2024-12-31', 0.1));
+    await repo.createManualPeriod('s-batch', 'u1', plan('Plan 2026', '2026-01-01', null, 0.2));
+    const dates = ['2023-06-01', '2024-06-01', '2025-06-01', '2026-06-01'];
+
+    const client = await local.database.connect();
+    try {
+      const queries: string[] = [];
+      const counting = { query: (...args: Parameters<typeof client.query>) => {
+        queries.push(String(args[0]));
+        return Reflect.apply(client.query, client, args);
+      } } as unknown as typeof client;
+      const batch = await repo.resolveTariffsForDates(counting, 's-batch', dates);
+      // One period read, then the tariff, season and schedule reads: not four lookups per date.
+      expect(queries).toHaveLength(4);
+      const names = dates.map(date => batch.get(date)?.[0]?.name);
+      expect(names).toEqual(['Plan 2024', 'Plan 2024', 'Plan 2024', 'Plan 2026']);
+      for (const date of dates) {
+        const single = await repo.resolveTariffForDate(client, 's-batch', date);
+        expect(single.tariffs[0]?.id).toBe(batch.get(date)?.[0]?.id);
+        expect(single.schedules.length).toBeGreaterThan(0);
+      }
+    } finally {
+      client.release();
+    }
+  });
+
+  it('falls back to the current tariff for every date when a site has no effective periods', async () => {
+    await local.database.query(`INSERT INTO "Site" VALUES ('s-noperiod', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
+    await new TariffRepo().addTariffVersion('s-noperiod', {
+      name: 'Only Current',
+      seasons: [{
+        name: 'All Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, buy_rate: 0.1, sell_rate: 0.03,
+        schedules: [{ name: 'OFF_PEAK', buy_rate: 0.1, sell_rate: 0.03, from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, from_minute: 0, to_hour: 24, to_minute: 0 }],
+      }],
+    });
+    await local.database.query(`DELETE FROM "TariffEffectivePeriod" WHERE site_id = 's-noperiod'`);
+    const client = await local.database.connect();
+    try {
+      const batch = await new TariffTimelineRepo().resolveTariffsForDates(client, 's-noperiod', ['2025-01-01', '2026-01-01']);
+      expect([...batch.values()].map(t => t[0]?.name)).toEqual(['Only Current', 'Only Current']);
+    } finally {
+      client.release();
+    }
+  });
+
   it('resolves the tariff in effect today from dates, even when is_current is stale', async () => {
     await local.database.query(`INSERT INTO "Site" VALUES ('s-roll', 'u1', 'America/Chicago', '{"currency":"USD"}')`);
     const repo = new TariffTimelineRepo();

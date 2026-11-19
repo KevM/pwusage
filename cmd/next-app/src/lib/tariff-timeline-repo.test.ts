@@ -31,6 +31,7 @@ import {
   buildSiteTariffsTimelineResponse,
   loadRestorationTargets,
   loadScopeSelectionSpans,
+  pickTariffIdForDate,
   recomputeIsCurrentTariff,
   TariffTimelineRepo,
 } from './tariff-timeline-repo';
@@ -1516,5 +1517,37 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
       eligibility: 'unknown',
       hasIneligiblePublicSelection: true,
     });
+  });
+});
+
+describe('pickTariffIdForDate', () => {
+  const periods = [
+    { periodId: 1, tariffId: 10, effectiveFrom: '2024-01-01', effectiveTo: '2024-12-31' },
+    { periodId: 2, tariffId: 20, effectiveFrom: '2025-03-01', effectiveTo: '2025-12-31' },
+    { periodId: 3, tariffId: 30, effectiveFrom: '2026-01-01', effectiveTo: null },
+  ];
+
+  it('picks the period covering the date', () => {
+    expect(pickTariffIdForDate(periods, '2024-06-15')).toBe(10);
+    expect(pickTariffIdForDate(periods, '2025-12-31')).toBe(20);
+    expect(pickTariffIdForDate(periods, '2027-01-01')).toBe(30);
+  });
+
+  it('uses the period that ended most recently for a day in a gap', () => {
+    expect(pickTariffIdForDate(periods, '2025-02-01')).toBe(10);
+  });
+
+  it('uses the earliest period for a day before every plan', () => {
+    expect(pickTariffIdForDate(periods, '2023-05-01')).toBe(10);
+  });
+
+  it('prefers the latest start when periods overlap', () => {
+    const overlapping = [...periods, { periodId: 4, tariffId: 40, effectiveFrom: '2026-06-01', effectiveTo: '2026-06-30' }];
+    expect(pickTariffIdForDate(overlapping, '2026-06-15')).toBe(40);
+    expect(pickTariffIdForDate(overlapping, '2026-07-01')).toBe(30);
+  });
+
+  it('returns undefined with no periods', () => {
+    expect(pickTariffIdForDate([], '2026-01-01')).toBeUndefined();
   });
 });

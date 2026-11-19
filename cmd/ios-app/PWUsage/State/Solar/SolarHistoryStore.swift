@@ -50,8 +50,8 @@ actor SolarHistoryStore {
         defer { endSync(scope: scope) }
         var state = try load(scope)
         let zone = TimeZone(identifier: state.timeZone ?? "UTC") ?? .gmt
-        // The endpoint returns the site zone only with page one. Bootstrap in UTC, then restart
-        // the first sync at the exact site-local boundary when those dates differ.
+        // The endpoint returns the site zone only with page one. Bootstrap 366 UTC days back, which
+        // is never after the site-local 365-day boundary, then drop the boundary days it over-reads.
         let scanStart: Date
         if state.syncedThrough == nil {
             scanStart = state.timeZone == nil
@@ -71,6 +71,8 @@ actor SolarHistoryStore {
             state.syncedAt = now
             state.days.removeAll()
             state.syncedThrough = nil
+            state.flowsSyncedFrom = nil
+            state.flowsSyncedThrough = nil
             state.timeZone = nil
             try save(state, scope: scope)
             return .disabled
@@ -148,18 +150,21 @@ actor SolarHistoryStore {
                 return .disabled
             case .enabled(let siteZone, let days, let nextFrom):
                 resultZone = siteZone
+                var pageDays = days
                 if !checkedLocalStart {
                     checkedLocalStart = true
                     let exactStart = Self.dayString(
                         Self.localDay(daysBefore: 365, now: context.now, timeZone: siteZone), timeZone: siteZone)
-                    if pageFrom != exactStart {
+                    if pageFrom > exactStart {
                         state.days.removeAll()
                         maxFetchedAt = nil
                         pageFrom = exactStart
                         continue syncPages
                     }
+                    pageDays = Self.droppingBoundaryDays(
+                        days, from: pageFrom, before: exactStart, timeZone: siteZone)
                 }
-                maxFetchedAt = store(days: days, in: &state, maximumFetchedAt: maxFetchedAt)
+                maxFetchedAt = store(days: pageDays, in: &state, maximumFetchedAt: maxFetchedAt)
                 if let nextFrom { pageFrom = nextFrom } else { break syncPages }
             }
         }
@@ -172,15 +177,18 @@ actor SolarHistoryStore {
         maximumFetchedAt: Date?
     ) -> Date? {
         var latestFetchedAt = maximumFetchedAt
+        var replacements: [Date: SolarHistoryStoredDay] = [:]
         for day in days {
             if let fetchedAt = day.fetchedAt {
                 latestFetchedAt = max(latestFetchedAt ?? fetchedAt, fetchedAt)
             }
-            let storedDay = Self.makeStoredDay(from: day)
-            state.days.removeAll { $0.dayStart == day.dayStart }
-            state.days.append(storedDay)
+            replacements[day.dayStart] = Self.makeStoredDay(from: day)
             state.dirtyYears.insert(SolarHistoryYearFiles.year(of: day.dayStart))
         }
+        guard !replacements.isEmpty else { return latestFetchedAt }
+        // One pass over the stored days, not one per incoming day: a 92-day page against a year of days.
+        state.days.removeAll { replacements[$0.dayStart] != nil }
+        state.days.append(contentsOf: replacements.values.sorted { $0.dayStart < $1.dayStart })
         return latestFetchedAt
     }
 
