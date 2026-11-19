@@ -124,4 +124,44 @@ describe('trmnl-manage-client', () => {
     const url = buildManageLoginRedirectUrl({ uuid: 'dev-1' });
     expect(decodeURIComponent(url)).toBe('/login?callback=/trmnl/manage?uuid=dev-1');
   });
+
+  it('reaches management for an unlinked device returning from login with one handoff redemption and no re-redirect', async () => {
+    const secretToken = 'unlinked.device.jwt';
+    let consumeCalls = 0;
+    const redirects: string[] = [];
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/trmnl/manage/handoff/consume') {
+        consumeCalls++;
+        return new Response(JSON.stringify({ token: secretToken }), { status: 200 });
+      }
+      if (url === '/api/sites') {
+        return new Response(JSON.stringify([{ id: 'site-1', name: 'Home', utility: 'PGE' }]), { status: 200 });
+      }
+      if (url === '/api/trmnl/manage?uuid=dev-unlinked') {
+        const headers = new Headers(init?.headers);
+        if (headers.get('Authorization') !== `Bearer ${secretToken}`) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+        }
+        return new Response(JSON.stringify({ site_id: null, component_screens: [] }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await loadManageInitialData({
+      uuid: 'dev-unlinked',
+      initialToken: null,
+      handoffId: '22222222-2222-4222-8222-222222222222',
+      fetchImpl: fetchMock,
+      onRedirect: (u) => redirects.push(u),
+    });
+
+    expect(consumeCalls).toBe(1);
+    expect(redirects).toEqual([]);
+    expect(result.redirecting).toBe(false);
+    expect(result.token).toBe(secretToken);
+    expect(result.sites).toHaveLength(1);
+    expect(result.installData?.site_id).toBeNull();
+  });
 });

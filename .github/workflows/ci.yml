@@ -288,7 +288,7 @@ jobs:
           # production copy taken before 20261027120000_drop_energy_data drops it.
           psql -X -q -v ON_ERROR_STOP=1 "$DATABASE_URL" -f scripts/export-dev-energy-data.sql
           echo "Day records for dev: $(( $(wc -l < dev-day-archive.csv) - 1 )), summary rows: $(( $(wc -l < dev-day-summary.csv) - 1 ))"
-          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary
+          supabase db dump --db-url "$DATABASE_URL" -f data.sql --data-only --use-copy --schema public -x public.EnergyData,public.EnergyDayArchive,public.EnergyDaySummary,public.TrmnlManageHandoff
           
           # Dump Migration History (using Supabase CLI for reliability)
           # We use "|| true" to prevent failure if the schema doesn't exist yet (soft fail)

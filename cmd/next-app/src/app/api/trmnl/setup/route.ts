@@ -52,25 +52,43 @@ export async function POST(request: Request) {
         const accessToken = tokenData.access_token;
         const bodyUuid = typeof uuid === 'string' && uuid.trim() ? uuid.trim() : null;
 
-        // Resolve device UUID exclusively from provider credentials; treat body.uuid as a hint only.
+        // Resolve device UUID and plugin_setting_id from provider credentials; treat body fields as hints only.
         let providerUuid: string | null = null;
+        let providerPluginSettingId: number | null = null;
+        const tokenObj = tokenData as {
+            access_token: string;
+            user_uuid?: string;
+            uuid?: string;
+            plugin_setting_id?: unknown;
+            user?: { uuid?: string; plugin_setting_id?: unknown };
+        };
 
-        // 1. Check if UUID is in the OAuth response directly (some providers do this)
-        if (tokenData.user_uuid) providerUuid = tokenData.user_uuid;
-        else if (tokenData.uuid) providerUuid = tokenData.uuid;
-        else if (tokenData.user && tokenData.user.uuid) providerUuid = tokenData.user.uuid;
+        // 1. Check if UUID / plugin_setting_id are in the OAuth response directly
+        if (tokenObj.user_uuid) providerUuid = tokenObj.user_uuid;
+        else if (tokenObj.uuid) providerUuid = tokenObj.uuid;
+        else if (tokenObj.user && tokenObj.user.uuid) providerUuid = tokenObj.user.uuid;
+        providerPluginSettingId = coercePositiveInt(tokenObj.plugin_setting_id)
+            ?? coercePositiveInt(tokenObj.user?.plugin_setting_id);
 
         if (providerUuid) console.log(`[TrmnlSetup] Found UUID in OAuth response: ${providerUuid}`);
 
-        // 2. Try to extract UUID from JWT
-        if (!providerUuid) {
+        // 2. Try to extract UUID / plugin_setting_id from JWT
+        if (!providerUuid || providerPluginSettingId === null) {
             try {
                 const parts = accessToken.split('.');
                 if (parts.length === 3) {
-                    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
-                    if (payload.user_uuid) {
+                    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as {
+                        user_uuid?: string;
+                        plugin_setting_id?: unknown;
+                        user?: { plugin_setting_id?: unknown };
+                    };
+                    if (!providerUuid && payload.user_uuid) {
                         providerUuid = payload.user_uuid;
                         console.log(`[TrmnlSetup] Extracted UUID from JWT: ${providerUuid}`);
+                    }
+                    if (providerPluginSettingId === null) {
+                        providerPluginSettingId = coercePositiveInt(payload.plugin_setting_id)
+                            ?? coercePositiveInt(payload.user?.plugin_setting_id);
                     }
                 }
             } catch {
@@ -89,14 +107,21 @@ export async function POST(request: Request) {
             }
         }
 
+        if (providerPluginSettingId !== null && pluginSettingId !== null && providerPluginSettingId !== pluginSettingId) {
+            console.warn(`[TrmnlSetup] Rejecting setup: client plugin_setting_id hint (${pluginSettingId}) does not match provider (${providerPluginSettingId})`);
+            return NextResponse.json({ error: 'Plugin setting ID mismatch' }, { status: 403 });
+        }
+
         if (!providerUuid) {
-            // If we have a plugin_setting_id (from frontend), we use it.
-            if (pluginSettingId !== null) {
-                console.log(`[TrmnlSetup] Saving 'Pending' installation linked to Plugin ID: ${pluginSettingId}`);
+            // Only persist provider-verified plugin_setting_id on pending rows; never trust
+            // unverified browser hints when UUID discovery fails, or a signed webhook for
+            // another household's plugin_setting_id could claim this pending row.
+            if (providerPluginSettingId !== null) {
+                console.log(`[TrmnlSetup] Saving 'Pending' installation linked to verified Plugin ID: ${providerPluginSettingId}`);
                 await service.createInstallation(
                     site_id,
                     null,
-                    pluginSettingId,
+                    providerPluginSettingId,
                     defaultInstallationJson,
                     accessToken,
                     installer.id
@@ -106,7 +131,7 @@ export async function POST(request: Request) {
 
             // FALLBACK: Loose Linking
             // We save a "Pending" record with NO IDs, just the Site ID and Token.
-            console.warn('[TrmnlSetup] Unable to identify user/plugin. Saving generic Pending record.');
+            console.warn('[TrmnlSetup] Unable to verify device/plugin from provider. Saving generic Pending record.');
             await service.createInstallation(site_id, null, null, defaultInstallationJson, accessToken, installer.id);
             return NextResponse.json({ success: true, status: 'pending_loose' });
         }

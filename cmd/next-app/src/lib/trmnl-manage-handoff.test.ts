@@ -41,7 +41,7 @@ describe('trmnl-manage-handoff', () => {
     expect(insertParams[3]).toBe('trmnl.jwt.secret');
   });
 
-  it('consumes a valid handoff once and enforces expiry, device, and browser binding in SQL', async () => {
+  it('deletes a valid handoff atomically on redemption and rejects replay, expiry, and wrong binding', async () => {
     const handoffId = '11111111-1111-4111-8111-111111111111';
     mocks.query.mockResolvedValueOnce({ rows: [{ trmnl_token: 'trmnl.jwt.secret' }] });
 
@@ -51,8 +51,8 @@ describe('trmnl-manage-handoff', () => {
       browserBinding: 'binding-secret',
     });
     expect(token).toBe('trmnl.jwt.secret');
+    expect(mocks.query.mock.calls[0][0]).toContain('DELETE FROM "TrmnlManageHandoff"');
     expect(mocks.query.mock.calls[0][0]).toContain('expires_at > now()');
-    expect(mocks.query.mock.calls[0][0]).toContain('consumed_at IS NULL');
 
     // Replay or expired/wrong binding returns 0 rows -> null
     mocks.query.mockResolvedValueOnce({ rows: [] });

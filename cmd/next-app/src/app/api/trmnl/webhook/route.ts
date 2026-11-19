@@ -152,25 +152,38 @@ export async function POST(request: Request) {
             return null;
         };
 
+        const updateExistingRow = async (existingRow: TrmnlInstallation) => {
+            const screens = extractTrmnlComponentScreens(existingRow.json);
+            const carouselIndex = extractTrmnlCarouselIndex(existingRow.json, screens.length);
+            const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
+                user,
+                screens,
+                carouselIndex
+            );
+            const updated = await service.updateWebhookMetadata(
+                existingRow.id,
+                user.uuid,
+                existingRow.site_id,
+                tokenPluginId,
+                mergedInstallationJson
+            );
+            if (!updated) {
+                return NextResponse.json(
+                    { error: 'Conflict: Installation was modified or removed concurrently' },
+                    { status: 409 }
+                );
+            }
+            if (user.email && existingRow.site_id) {
+                await syncUserEmail(existingRow, user.email);
+            }
+            return null;
+        };
+
         if (matchedInstallation) {
             // Opaque token: carry the exact authenticated row through to the write.
             if (matchedInstallation.uuid === user.uuid) {
-                const screens = extractTrmnlComponentScreens(matchedInstallation.json);
-                const carouselIndex = extractTrmnlCarouselIndex(matchedInstallation.json, screens.length);
-                const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
-                    user,
-                    screens,
-                    carouselIndex
-                );
-                await service.createInstallation(
-                    matchedInstallation.site_id,
-                    user.uuid,
-                    tokenPluginId,
-                    mergedInstallationJson
-                );
-                if (user.email && matchedInstallation.site_id) {
-                    await syncUserEmail(matchedInstallation, user.email);
-                }
+                const conflict = await updateExistingRow(matchedInstallation);
+                if (conflict) return conflict;
             } else if (matchedInstallation.uuid === null) {
                 const conflictOrRetry = await claimPendingRow(matchedInstallation);
                 if (conflictOrRetry) return conflictOrRetry;
@@ -182,22 +195,8 @@ export async function POST(request: Request) {
             // Never claim a loose pending row (NULL uuid, NULL plugin_setting_id) without correlation.
             const existing = await service.getInstallationByUuid(user.uuid);
             if (existing) {
-                const screens = extractTrmnlComponentScreens(existing.json);
-                const carouselIndex = extractTrmnlCarouselIndex(existing.json, screens.length);
-                const mergedInstallationJson = mergeTrmnlComponentScreensIntoInstallationJson(
-                    user,
-                    screens,
-                    carouselIndex
-                );
-                await service.createInstallation(
-                    existing.site_id,
-                    user.uuid,
-                    tokenPluginId,
-                    mergedInstallationJson
-                );
-                if (user.email && existing.site_id) {
-                    await syncUserEmail(existing, user.email);
-                }
+                const conflict = await updateExistingRow(existing);
+                if (conflict) return conflict;
             } else {
                 const pending = await service.getInstallationByPendingPluginId(tokenPluginId);
                 if (pending) {

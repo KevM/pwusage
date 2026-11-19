@@ -100,6 +100,21 @@ describe('TrmnlInstallationRepo', () => {
         );
     });
 
+    it('updateWebhookMetadata updates only metadata when id, uuid, and site_id still match', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+        const repo = new TrmnlInstallationRepo();
+        const ok = await repo.updateWebhookMetadata(1, 'uuid-1', 'site-1', 55, { screens: [] });
+        expect(ok).toBe(true);
+        expect(queryMock).toHaveBeenCalledWith(
+            expect.stringMatching(/UPDATE "TrmnlInstallation"\s+SET plugin_setting_id = COALESCE\(\$4, plugin_setting_id\),\s+json = \$5\s+WHERE id = \$1\s+AND uuid = \$2\s+AND site_id = \$3\s+RETURNING id/),
+            [1, 'uuid-1', 'site-1', 55, { screens: [] }]
+        );
+
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        const stale = await repo.updateWebhookMetadata(1, 'uuid-1', 'site-1', 55, { screens: [] });
+        expect(stale).toBe(false);
+    });
+
     it('updateJson updates settings config', async () => {
         queryMock.mockResolvedValueOnce({ rows: [] });
         const repo = new TrmnlInstallationRepo();

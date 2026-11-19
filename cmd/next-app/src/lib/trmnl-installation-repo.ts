@@ -155,6 +155,25 @@ export class TrmnlInstallationRepo {
         );
     }
 
+    async updateWebhookMetadata(
+        id: number,
+        uuid: string,
+        expectedSiteId: string,
+        pluginSettingId: number,
+        json: unknown
+    ): Promise<boolean> {
+        const { rows } = await pool.query(`
+            UPDATE "TrmnlInstallation"
+            SET plugin_setting_id = COALESCE($4, plugin_setting_id),
+                json = $5
+            WHERE id = $1
+              AND uuid = $2
+              AND site_id = $3
+            RETURNING id
+        `, [id, uuid, expectedSiteId, pluginSettingId, json]);
+        return rows.length === 1;
+    }
+
     async updateJson(id: number, json: unknown): Promise<void> {
         await pool.query(
             'UPDATE "TrmnlInstallation" SET json = $1 WHERE id = $2',

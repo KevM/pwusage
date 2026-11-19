@@ -39,7 +39,7 @@ describe('TRMNL manage handoff routes', () => {
     }>();
 
     mocks.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('DELETE FROM "TrmnlManageHandoff"')) {
+      if (sql.includes('DELETE FROM "TrmnlManageHandoff"') && !sql.includes('RETURNING')) {
         return { rows: [] };
       }
       if (sql.includes('INSERT INTO "TrmnlManageHandoff"')) {
@@ -54,19 +54,18 @@ describe('TRMNL manage handoff routes', () => {
         });
         return { rows: [] };
       }
-      if (sql.includes('UPDATE "TrmnlManageHandoff"')) {
+      if (sql.includes('DELETE FROM "TrmnlManageHandoff"') && sql.includes('RETURNING trmnl_token')) {
         const [id, device_uuid, browser_binding_hash] = params as [string, string, string];
         const row = store.get(id);
         if (
           !row
           || row.device_uuid !== device_uuid
           || row.browser_binding_hash !== browser_binding_hash
-          || row.consumed_at !== null
           || row.expires_at.getTime() <= Date.now()
         ) {
           return { rows: [] };
         }
-        row.consumed_at = new Date();
+        store.delete(id);
         return { rows: [{ trmnl_token: row.trmnl_token }] };
       }
       return { rows: [] };

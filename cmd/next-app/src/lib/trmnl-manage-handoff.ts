@@ -67,13 +67,11 @@ export async function consumeTrmnlManageHandoff(
 
   const browserBindingHash = hashBinding(browserBinding);
   const { rows } = await pool.query(`
-    UPDATE "TrmnlManageHandoff"
-    SET consumed_at = now()
+    DELETE FROM "TrmnlManageHandoff"
     WHERE id = $1
       AND device_uuid = $2
       AND browser_binding_hash = $3
       AND expires_at > now()
-      AND consumed_at IS NULL
     RETURNING trmnl_token
   `, [handoffId, deviceUuid, browserBindingHash]);
 

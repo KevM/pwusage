@@ -49,6 +49,12 @@ function ManageContent() {
     const handoffParam = searchParams.get('handoff');
     const pluginSettingIdParam = searchParams.get('plugin_setting_id') || searchParams.get('plugin_id');
     const trmnlTokenRef = useRef<string | null>(urlToken);
+    const inFlightLoadRef = useRef<{
+        uuid: string;
+        pluginSettingId: string | null;
+        promise: Promise<import('@/lib/trmnl-manage-client').ManageInitialLoadResult>;
+        redirected: boolean;
+    } | null>(null);
 
     const [sites, setSites] = useState<{ id: string, name: string, utility: string }[]>([]);
     const [selectedSite, setSelectedSite] = useState('');
@@ -87,34 +93,50 @@ function ManageContent() {
     useEffect(() => {
         if (!uuid) return;
 
-        if (urlToken) {
-            trmnlTokenRef.current = urlToken;
-        }
+        let cancelled = false;
+        let loadEntry = inFlightLoadRef.current;
 
-        if (typeof window !== 'undefined') {
-            stripManageCredentialsFromUrl(window.location.href, (nextUrl) => {
-                window.history.replaceState(null, '', nextUrl);
+        if (!loadEntry || loadEntry.uuid !== uuid) {
+            const initialToken = trmnlTokenRef.current ?? urlToken;
+            if (initialToken) {
+                trmnlTokenRef.current = initialToken;
+            }
+
+            if (typeof window !== 'undefined') {
+                stripManageCredentialsFromUrl(window.location.href, (nextUrl) => {
+                    window.history.replaceState(null, '', nextUrl);
+                });
+            }
+
+            const entry = {
+                uuid,
+                pluginSettingId: pluginSettingIdParam,
+                redirected: false,
+                promise: Promise.resolve({ redirecting: false, token: null, sites: [], installData: null } as import('@/lib/trmnl-manage-client').ManageInitialLoadResult),
+            };
+            entry.promise = loadManageInitialData({
+                uuid,
+                initialToken,
+                handoffId: handoffParam,
+                pluginSettingId: pluginSettingIdParam,
+                fetchImpl: fetch,
+                onRedirect: (loginUrl) => {
+                    entry.redirected = true;
+                    window.location.assign(loginUrl);
+                },
             });
+            inFlightLoadRef.current = entry;
+            loadEntry = entry;
         }
 
         const fetchData = async () => {
-            let redirecting = false;
             try {
-                const result = await loadManageInitialData({
-                    uuid,
-                    initialToken: trmnlTokenRef.current,
-                    handoffId: handoffParam,
-                    pluginSettingId: pluginSettingIdParam,
-                    fetchImpl: fetch,
-                    onRedirect: (loginUrl) => {
-                        redirecting = true;
-                        window.location.assign(loginUrl);
-                    },
-                });
+                const result = await loadEntry.promise;
+                if (cancelled) return;
                 if (result.token) {
                     trmnlTokenRef.current = result.token;
                 }
-                if (result.redirecting) return;
+                if (result.redirecting || loadEntry.redirected) return;
 
                 const sitesData = result.sites;
                 setSites(sitesData);
@@ -129,8 +151,8 @@ function ManageContent() {
                     );
                     setComponentScreens(normalizedScreens);
                     setEditingScreenId(normalizedScreens[0]?.id ?? 'screen-1');
-                    if (!installData.plugin_setting_id && pluginSettingIdParam) {
-                        const parsed = Number.parseInt(pluginSettingIdParam, 10);
+                    if (!installData.plugin_setting_id && loadEntry.pluginSettingId) {
+                        const parsed = Number.parseInt(loadEntry.pluginSettingId, 10);
                         if (Number.isInteger(parsed) && parsed > 0) {
                             setPluginSettingId(parsed);
                         }
@@ -139,8 +161,8 @@ function ManageContent() {
                         setSelectedSite(sitesData[0].id);
                     }
                 } else {
-                    if (pluginSettingIdParam) {
-                        const parsed = Number.parseInt(pluginSettingIdParam, 10);
+                    if (loadEntry.pluginSettingId) {
+                        const parsed = Number.parseInt(loadEntry.pluginSettingId, 10);
                         if (Number.isInteger(parsed) && parsed > 0) {
                             setPluginSettingId(parsed);
                         }
@@ -150,13 +172,16 @@ function ManageContent() {
                     }
                 }
             } catch {
-                setError('Failed to load data');
+                if (!cancelled) setError('Failed to load data');
             } finally {
-                if (!redirecting) setLoading(false);
+                if (!cancelled && !loadEntry.redirected) setLoading(false);
             }
         };
 
         fetchData();
+        return () => {
+            cancelled = true;
+        };
     }, [uuid, urlToken, handoffParam, pluginSettingIdParam]);
 
     useEffect(() => {

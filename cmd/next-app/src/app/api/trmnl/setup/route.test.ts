@@ -235,10 +235,13 @@ describe('POST /api/trmnl/setup', () => {
         );
     });
 
-    it('creates pending_webhook installation when UUID discovery fails but plugin_setting_id exists', async () => {
+    it('creates pending_webhook installation when UUID discovery fails but provider returns plugin_setting_id', async () => {
         mocks.verifySiteAccess.mockResolvedValue(true);
         mocks.getSite.mockResolvedValue({ id: 'site-1' });
-        mocks.exchangeCodeForToken.mockResolvedValue({ access_token: 'opaque-access-token' });
+        mocks.exchangeCodeForToken.mockResolvedValue({
+            access_token: 'opaque-access-token',
+            plugin_setting_id: 42
+        });
         mocks.fetchMe.mockRejectedValue(new Error('API Error'));
 
         const req = new Request('http://localhost/api/trmnl/setup', {
@@ -257,6 +260,34 @@ describe('POST /api/trmnl/setup', () => {
             'site-1',
             null,
             42,
+            expect.any(Object),
+            'opaque-access-token',
+            'installer-1'
+        );
+    });
+
+    it('ignores unverified browser plugin_setting_id hint when UUID discovery fails (creates pending_loose)', async () => {
+        mocks.verifySiteAccess.mockResolvedValue(true);
+        mocks.getSite.mockResolvedValue({ id: 'site-1' });
+        mocks.exchangeCodeForToken.mockResolvedValue({ access_token: 'opaque-access-token' });
+        mocks.fetchMe.mockRejectedValue(new Error('API Error'));
+
+        const req = new Request('http://localhost/api/trmnl/setup', {
+            method: 'POST',
+            body: JSON.stringify({
+                code: 'oauth-code',
+                site_id: 'site-1',
+                plugin_setting_id: '999'
+            })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.status).toBe('pending_loose');
+        expect(mocks.createInstallation).toHaveBeenCalledWith(
+            'site-1',
+            null,
+            null,
             expect.any(Object),
             'opaque-access-token',
             'installer-1'

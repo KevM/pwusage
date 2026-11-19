@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     getLatestLoosePendingInstallation: vi.fn(),
     getRecentLoosePendingInstallations: vi.fn(),
     createInstallation: vi.fn(),
+    updateWebhookMetadata: vi.fn(),
     claimPendingInstallationById: vi.fn(),
     getSite: vi.fn(),
     getUserEmail: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/lib/trmnl-service', () => ({
         getLatestLoosePendingInstallation = mocks.getLatestLoosePendingInstallation;
         getRecentLoosePendingInstallations = mocks.getRecentLoosePendingInstallations;
         createInstallation = mocks.createInstallation;
+        updateWebhookMetadata = mocks.updateWebhookMetadata;
         claimPendingInstallationById = mocks.claimPendingInstallationById;
     }
 }));
@@ -54,6 +56,7 @@ describe('POST /api/trmnl/webhook', () => {
         mocks.safeTimingSafeEqual.mockImplementation((a: string | null | undefined, b: string | null | undefined) => a === b);
         mocks.getRecentLoosePendingInstallations.mockResolvedValue([]);
         mocks.claimPendingInstallationById.mockResolvedValue(true);
+        mocks.updateWebhookMetadata.mockResolvedValue(true);
         mocks.verifyTrmnlToken.mockImplementation(async (_token: string, uuid: string) => ({
             sub: uuid,
             plugin_setting_id: 10
@@ -341,9 +344,11 @@ describe('POST /api/trmnl/webhook', () => {
 
         const res = await POST(req);
         expect(res.status).toBe(200);
-        expect(mocks.createInstallation).toHaveBeenCalledWith(
-            'site-a',
+        expect(mocks.createInstallation).not.toHaveBeenCalled();
+        expect(mocks.updateWebhookMetadata).toHaveBeenCalledWith(
+            'inst-1',
             'dev-1',
+            'site-a',
             10,
             expect.objectContaining({
                 carousel_index: 1,
@@ -353,6 +358,34 @@ describe('POST /api/trmnl/webhook', () => {
                 ])
             })
         );
+        expect(mocks.updateUserEmail).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 and does not reverse a concurrent relink or recreate an uninstalled row', async () => {
+        mocks.verifyTrmnlToken.mockResolvedValue({
+            sub: 'dev-1',
+            plugin_setting_id: 10
+        });
+        mocks.getInstallationByUuid.mockResolvedValue({
+            id: 77,
+            uuid: 'dev-1',
+            site_id: 'site-old',
+            installed_by_user_id: 'user-1',
+            json: {}
+        });
+        mocks.updateWebhookMetadata.mockResolvedValue(false);
+
+        const req = new Request('http://localhost/api/trmnl/webhook', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer jwt.token.val' },
+            body: JSON.stringify({
+                user: { uuid: 'dev-1', plugin_setting_id: 10, email: 'user@example.com' }
+            })
+        });
+
+        const res = await POST(req);
+        expect(res.status).toBe(409);
+        expect(mocks.createInstallation).not.toHaveBeenCalled();
         expect(mocks.updateUserEmail).not.toHaveBeenCalled();
     });
 

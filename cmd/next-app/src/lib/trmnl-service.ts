@@ -24,6 +24,16 @@ export class TrmnlService {
         await this.dbRepo.updatePluginId(uuid, pluginSettingId);
     }
 
+    async updateWebhookMetadata(
+        id: number,
+        uuid: string,
+        expectedSiteId: string,
+        pluginSettingId: number,
+        json: unknown
+    ): Promise<boolean> {
+        return this.dbRepo.updateWebhookMetadata(id, uuid, expectedSiteId, pluginSettingId, json);
+    }
+
     async getInstallationByUuid(uuid: string, options: { includeTokens?: boolean } = {}): Promise<TrmnlInstallation | undefined> {
         const installation = await this.dbRepo.findByUuid(uuid);
 

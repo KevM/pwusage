@@ -55,6 +55,7 @@ export async function loadManageInitialData(params: {
     pluginSettingId?: string | null;
     fetchImpl: typeof fetch;
     onRedirect: (loginUrl: string) => void;
+    isCancelled?: () => boolean;
 }): Promise<ManageInitialLoadResult> {
     let activeToken = params.initialToken;
 
@@ -65,6 +66,9 @@ export async function loadManageInitialData(params: {
             credentials: 'include',
             body: JSON.stringify({ handoffId: params.handoffId, uuid: params.uuid }),
         });
+        if (params.isCancelled?.()) {
+            return { redirecting: false, token: null, sites: [], installData: null };
+        }
         if (consumeRes.ok) {
             const consumed = await consumeRes.json() as { token?: string };
             if (typeof consumed.token === 'string' && consumed.token) {
@@ -84,6 +88,9 @@ export async function loadManageInitialData(params: {
             headers: manageHeaders,
         }),
     ]);
+    if (params.isCancelled?.()) {
+        return { redirecting: false, token: activeToken, sites: [], installData: null };
+    }
 
     if (installRes.status === 401 || sitesRes.status === 401) {
         let handoffId: string | null = null;
@@ -94,6 +101,9 @@ export async function loadManageInitialData(params: {
                 credentials: 'include',
                 body: JSON.stringify({ uuid: params.uuid, token: activeToken }),
             });
+            if (params.isCancelled?.()) {
+                return { redirecting: false, token: activeToken, sites: [], installData: null };
+            }
             if (handoffRes.ok) {
                 const handoffData = await handoffRes.json() as { handoffId?: string };
                 if (typeof handoffData.handoffId === 'string' && handoffData.handoffId) {
@@ -102,11 +112,13 @@ export async function loadManageInitialData(params: {
             }
         }
 
-        params.onRedirect(buildManageLoginRedirectUrl({
-            uuid: params.uuid,
-            pluginSettingId: params.pluginSettingId,
-            handoffId,
-        }));
+        if (!params.isCancelled?.()) {
+            params.onRedirect(buildManageLoginRedirectUrl({
+                uuid: params.uuid,
+                pluginSettingId: params.pluginSettingId,
+                handoffId,
+            }));
+        }
         return { redirecting: true, token: activeToken, sites: [], installData: null };
     }
 
