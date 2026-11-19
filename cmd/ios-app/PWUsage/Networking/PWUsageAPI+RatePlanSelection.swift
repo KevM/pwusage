@@ -49,6 +49,39 @@ extension PWUsageAPI {
         return response
     }
 
+    func exportRatePlanAiHandoff(siteID: String) async throws -> TariffAiHandoffExportResponse {
+        let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "tariffs/ai-handoff"))
+        return try decodeSelectionPayload(TariffAiHandoffExportResponse.self, from: data)
+    }
+
+    func previewRatePlanAiHandoff(
+        siteID: String,
+        rawInput: String
+    ) async throws -> TariffAiHandoffPreviewResponse {
+        let data = try await sendSelectionRequest(
+            siteID: siteID,
+            suffix: "tariffs/ai-handoff/preview",
+            method: "POST",
+            body: TariffAiHandoffPreviewRequest(rawInput: rawInput)
+        )
+        return try decodeSelectionPayload(TariffAiHandoffPreviewResponse.self, from: data).validating(siteID: siteID)
+    }
+
+    func commitRatePlanAiHandoff(
+        siteID: String,
+        commit: TariffAiHandoffCommitRequest
+    ) async throws -> TariffAiHandoffCommitResponse {
+        let data = try await sendSelectionRequest(
+            siteID: siteID,
+            suffix: "tariffs/ai-handoff/commit",
+            method: "POST",
+            body: commit
+        )
+        let response = try decodeSelectionPayload(TariffAiHandoffCommitResponse.self, from: data)
+        _ = try response.timeline.validating(siteID: siteID)
+        return response
+    }
+
     private func sendSelectionRequest(
         siteID: String,
         suffix: String,
@@ -81,18 +114,32 @@ extension PWUsageAPI {
 }
 
 enum RatePlanSelectionConflict {
-    private struct Body: Decodable {
+    private struct CodeBody: Decodable {
         let code: String?
         let eligibility: RatePlanEligibility?
-        let preview: TariffSelectionPreviewResponse?
+    }
+
+    private struct SinglePreviewBody: Decodable {
+        let preview: TariffSelectionPreviewResponse
+    }
+
+    private struct BatchPreviewBody: Decodable {
+        let preview: TariffAiHandoffPreviewResponse
     }
 
     /// The typed error for a 409 body, or nil when it is another conflict (a changed utility).
     static func decode(from data: Data) -> RatePlanSelectionError? {
-        guard let body = try? MobileContractDecoder.make().decode(Body.self, from: data) else { return nil }
+        let decoder = MobileContractDecoder.make()
+        guard let body = try? decoder.decode(CodeBody.self, from: data) else { return nil }
         switch body.code {
         case "REVIEW_STALE":
-            return body.preview.map(RatePlanSelectionError.reviewStale)
+            if let batch = try? decoder.decode(BatchPreviewBody.self, from: data) {
+                return .aiHandoffReviewStale(batch.preview)
+            }
+            if let single = try? decoder.decode(SinglePreviewBody.self, from: data) {
+                return .reviewStale(single.preview)
+            }
+            return nil
         case "PUBLIC_PLANS_UNAVAILABLE":
             return body.eligibility.map(RatePlanSelectionError.publicPlansUnavailable)
         default:

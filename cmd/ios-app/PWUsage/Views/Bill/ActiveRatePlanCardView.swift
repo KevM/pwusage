@@ -28,9 +28,27 @@ struct TariffTimelineActions: Sendable {
     var publicPlans: @MainActor (String) async throws -> PublicUtilityPlansResponse = { _ in
         throw PWUsageAPIError.invalidResponse
     }
+    var exportAiHandoff: @MainActor () async throws -> TariffAiHandoffExportResponse = {
+        throw PWUsageAPIError.invalidResponse
+    }
+    var previewAiHandoff: @MainActor (String) async throws -> TariffAiHandoffPreviewResponse = { _ in
+        throw PWUsageAPIError.invalidResponse
+    }
+    var commitAiHandoff: @MainActor (TariffAiHandoffCommitRequest) async throws
+        -> TariffAiHandoffCommitResponse = { _ in
+            throw PWUsageAPIError.invalidResponse
+        }
 
     var selection: RatePlanSelectionActions {
         RatePlanSelectionActions(preview: previewSelection, commit: commitSelection)
+    }
+
+    var aiHandoff: RatePlanAiHandoffActions {
+        RatePlanAiHandoffActions(
+            exportMarkdown: exportAiHandoff,
+            preview: previewAiHandoff,
+            commit: commitAiHandoff
+        )
     }
 
     @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
@@ -52,7 +70,10 @@ struct TariffTimelineActions: Sendable {
             setSiteCountry: { try await coordinator.setSiteRateCountry($0, source: .owner) },
             previewSelection: { try await coordinator.previewTariffSelection($0) },
             commitSelection: { try await coordinator.commitTariffSelection($0) },
-            publicPlans: { try await coordinator.publicUtilityPlans(effectiveDate: $0) }
+            publicPlans: { try await coordinator.publicUtilityPlans(effectiveDate: $0) },
+            exportAiHandoff: { try await coordinator.exportRatePlanAiHandoff() },
+            previewAiHandoff: { try await coordinator.previewRatePlanAiHandoff(rawInput: $0) },
+            commitAiHandoff: { try await coordinator.commitRatePlanAiHandoff($0) }
         )
     }
 }

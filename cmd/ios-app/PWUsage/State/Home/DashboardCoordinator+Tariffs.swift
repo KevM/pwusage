@@ -120,6 +120,29 @@ extension DashboardCoordinator {
         return committed
     }
 
+    func exportRatePlanAiHandoff() async throws -> TariffAiHandoffExportResponse {
+        try await runTariffQuery { api, siteID in
+            try await api.exportRatePlanAiHandoff(siteID: siteID)
+        }
+    }
+
+    func previewRatePlanAiHandoff(rawInput: String) async throws -> TariffAiHandoffPreviewResponse {
+        try await runTariffQuery { api, siteID in
+            try await api.previewRatePlanAiHandoff(siteID: siteID, rawInput: rawInput).validating(siteID: siteID)
+        }
+    }
+
+    func commitRatePlanAiHandoff(_ commit: TariffAiHandoffCommitRequest) async throws -> TariffAiHandoffCommitResponse {
+        var committed: TariffAiHandoffCommitResponse?
+        _ = try await runTariffRequest { api, siteID in
+            let response = try await api.commitRatePlanAiHandoff(siteID: siteID, commit: commit)
+            committed = response
+            return response.timeline
+        }
+        guard let committed else { throw PWUsageAPIError.invalidResponse }
+        return committed
+    }
+
     /// Public plans in effect on `effectiveDate` (YYYY-MM-DD), with their full rates.
     func publicUtilityPlans(effectiveDate: String) async throws -> PublicUtilityPlansResponse {
         try await runTariffQuery { api, siteID in

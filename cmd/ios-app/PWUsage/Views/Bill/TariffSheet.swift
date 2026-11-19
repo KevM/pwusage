@@ -83,7 +83,10 @@ struct TariffSheet: View {
             VStack(alignment: .leading, spacing: 14) {
                 headerBannerSection(data)
                 timelinePeriodsSection(data)
-                addPlanButton
+                TariffSheetFooterButtons(
+                    onAddPlan: { activeModal = .editor(.add) },
+                    onAiHandoff: { activeModal = .aiHandoff }
+                )
             }
             .padding(16)
             .frame(maxWidth: SectionTheme.maxContentWidth)
@@ -169,19 +172,6 @@ struct TariffSheet: View {
         }
     }
 
-    private var addPlanButton: some View {
-        Button {
-            activeModal = .editor(.add)
-        } label: {
-            Label("Add Rate Plan", systemImage: "plus.circle.fill")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-        }
-        .emphasisProminentButton()
-        .controlSize(.large)
-        .padding(.top, 4)
-    }
-
     @ViewBuilder
     private func modalView(for modal: TariffSheetModal) -> some View {
         switch modal {
@@ -199,6 +189,8 @@ struct TariffSheet: View {
                 kind: modal.changeKind, timeline: timeline, actions: actions,
                 onEnterManually: { activeModal = .editor(.add) }, onApplied: { timeline = $0.timeline }
             )
+        case .aiHandoff:
+            RatePlanAiHandoffSheet(actions: actions.aiHandoff) { timeline = $0 }
         case .editor(let mode):
             RatePlanEditorFlow(
                 mode: mode,
@@ -379,5 +371,29 @@ struct TariffSheet: View {
                 actionError = error.localizedDescription
             }
         }
+    }
+}
+
+private struct TariffSheetFooterButtons: View {
+    let onAddPlan: () -> Void
+    let onAiHandoff: () -> Void
+
+    var body: some View {
+        Button(action: onAddPlan) {
+            Label("Add Rate Plan", systemImage: "plus.circle.fill")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+        }
+        .emphasisProminentButton()
+        .controlSize(.large)
+        .padding(.top, 4)
+
+        Button(action: onAiHandoff) {
+            Label("Check with Your AI Assistant", systemImage: "sparkles")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 }

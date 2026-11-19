@@ -51,6 +51,15 @@ protocol MobileTariffDataAPI: Sendable {
         siteID: String,
         commit: TariffSelectionCommit
     ) async throws -> TariffSelectionCommitResponse
+    func exportRatePlanAiHandoff(siteID: String) async throws -> TariffAiHandoffExportResponse
+    func previewRatePlanAiHandoff(
+        siteID: String,
+        rawInput: String
+    ) async throws -> TariffAiHandoffPreviewResponse
+    func commitRatePlanAiHandoff(
+        siteID: String,
+        commit: TariffAiHandoffCommitRequest
+    ) async throws -> TariffAiHandoffCommitResponse
 }
 
 extension MobileTariffDataAPI {
@@ -123,6 +132,24 @@ extension MobileTariffDataAPI {
         siteID _: String,
         commit _: TariffSelectionCommit
     ) async throws -> TariffSelectionCommitResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func exportRatePlanAiHandoff(siteID _: String) async throws -> TariffAiHandoffExportResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func previewRatePlanAiHandoff(
+        siteID _: String,
+        rawInput _: String
+    ) async throws -> TariffAiHandoffPreviewResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func commitRatePlanAiHandoff(
+        siteID _: String,
+        commit _: TariffAiHandoffCommitRequest
+    ) async throws -> TariffAiHandoffCommitResponse {
         throw PWUsageAPIError.invalidResponse
     }
 }
