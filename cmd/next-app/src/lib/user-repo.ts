@@ -240,8 +240,9 @@ export class UserRepo {
     }): Promise<'saved' | 'subject-conflict'> {
         // The subject binding is checked and written in this one statement: an
         // unbound row takes the login's subject, a bound row accepts only that
-        // subject, and a login without a trusted subject cannot write to a bound
-        // row. A refused update returns no row and changes nothing.
+        // subject, and a login without a trusted subject can only insert a new
+        // row, never update an existing one (bound or not). A refused update
+        // returns no row and changes nothing.
         const saved = await pool.query<{ tesla_credential_generation: number; is_active: boolean }>(`
             INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url, refresh_token_fp, tesla_subject)
             VALUES ($1, $2, $3, $4, $5, 'active', true, $6, $7, $8)
@@ -256,7 +257,8 @@ export class UserRepo {
                 tesla_credential_generation = "User".tesla_credential_generation + 1,
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 tesla_refresh_retry_after = 0, is_refreshing = 0, refresh_lock_expires = 0
-            WHERE "User".tesla_subject IS NULL OR "User".tesla_subject = EXCLUDED.tesla_subject
+            WHERE EXCLUDED.tesla_subject IS NOT NULL
+              AND ("User".tesla_subject IS NULL OR "User".tesla_subject = EXCLUDED.tesla_subject)
             RETURNING tesla_credential_generation, is_active
         `, [params.userId, params.email,
             encryptToken(params.accessToken, 'access_token', params.userId),

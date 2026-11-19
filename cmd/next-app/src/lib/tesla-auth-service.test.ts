@@ -865,7 +865,7 @@ describe('TeslaAuthService', () => {
         }
     });
 
-    it('(a2) unknown-kid -> userInfo without sub/vault_uuid -> uses authenticated email identity (P2 guard)', async () => {
+    it('(a2) unknown-kid -> userInfo without sub/vault_uuid -> a new account uses the authenticated email identity (P2 guard)', async () => {
         const { KidNotFoundError } = await import('./tesla-auth-service');
         const tokenExchange = vi.fn().mockResolvedValue({
             id_token: 'id_token_unconfirmed_sub',
@@ -880,8 +880,11 @@ describe('TeslaAuthService', () => {
         mockTeslaClient.getUserInfo.mockResolvedValue({
             email: 'user@example.com'
         });
-        mockTeslaClient.getProducts.mockResolvedValue([]);
-        mockUserRepo.getById.mockResolvedValue({ id: 'user@example.com', roles: ['user'] });
+        mockTeslaClient.getProducts.mockResolvedValue([
+            { energy_site_id: 98765, resource_type: 'battery', site_name: 'Home Powerwall' }
+        ]);
+        // No account owns this email or id yet.
+        mockUserRepo.getById.mockResolvedValueOnce(null).mockResolvedValue({ id: 'user@example.com', roles: ['user'] });
 
         const service = new TeslaAuthService({
             userRepo: mockUserRepo as unknown as UserRepo,
@@ -917,6 +920,10 @@ describe('TeslaAuthService', () => {
             // Must use authenticated email, NEVER unconfirmed decoded.sub
             expect(result.userId).toBe('user@example.com');
         }
+        // Created unbound: an unconfirmed sub is never recorded.
+        expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user@example.com', teslaSubject: null,
+        }));
     });
 
     it('(a3) unknown-kid -> unconfirmed sub matching a subject-keyed account found by email -> rejected without writes', async () => {
@@ -1214,8 +1221,12 @@ describe('TeslaAuthService', () => {
             email: 'user@example.com',
             vault_uuid: 'vault-uuid-different-namespace'
         });
-        mockTeslaClient.getProducts.mockResolvedValue([]);
-        mockUserRepo.getById.mockResolvedValue({ id: 'token-sub-123', roles: ['user'] });
+        mockTeslaClient.getProducts.mockResolvedValue([
+            { energy_site_id: 98765, resource_type: 'battery', site_name: 'Home Powerwall' }
+        ]);
+        // A new account: with the sub unconfirmed, the email identity may only
+        // create one (an existing account would need a trusted subject).
+        mockUserRepo.getById.mockResolvedValueOnce(null).mockResolvedValue({ id: 'user@example.com', roles: ['user'] });
 
         const service = new TeslaAuthService({
             userRepo: mockUserRepo as unknown as UserRepo,
@@ -1613,6 +1624,51 @@ describe('TeslaAuthService', () => {
 
                 expect(result).toEqual({ status: 'identity-conflict' });
                 expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('an unbound legacy admin account and a login with no trusted subject', () => {
+            const legacyAdmin = { id: 'shared@example.com', email: 'shared@example.com', tesla_subject: null, roles: ['admin'] };
+            const emailOnlyLogin = async (decodedSub?: string) => {
+                const { KidNotFoundError } = await import('./tesla-auth-service');
+                // Fleet confirms only the email; the token's sub (if any) is unconfirmed.
+                mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'shared@example.com' });
+                vi.spyOn(jwt, 'decode').mockReturnValue({
+                    iss: 'https://auth.tesla.com/oauth2/v3', aud: 'client-id-123',
+                    exp: Math.floor(Date.now() / 1000) + 3600, nonce: 'good-nonce',
+                    ...(decodedSub ? { sub: decodedSub } : {}), email: 'shared@example.com',
+                } as unknown as JwtPayload);
+                return makeService(vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6')))
+                    .handleTeslaCallback(conflictParams);
+            };
+
+            beforeEach(() => {
+                mockUserRepo.getById.mockImplementation(async (id: string) => (id === legacyAdmin.id ? legacyAdmin : null));
+            });
+
+            it.each([['an unconfirmed sub', 'some-sub'], ['no sub at all', undefined]])(
+                'refuses to adopt it by email with %s', async (_label, decodedSub) => {
+                    mockUserRepo.getByEmail.mockResolvedValue(legacyAdmin);
+                    expect(await emailOnlyLogin(decodedSub)).toEqual({ status: 'identity-conflict' });
+                    expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+                    expectNothingWritten();
+                });
+
+            it('refuses to write it by id when the email lookup misses', async () => {
+                mockUserRepo.getByEmail.mockResolvedValue(null);
+                expect(await emailOnlyLogin()).toEqual({ status: 'identity-conflict' });
+                expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+                expectNothingWritten();
+            });
+
+            it('refuses it on the unique-violation retry', async () => {
+                mockUserRepo.getById.mockResolvedValue(null);
+                mockUserRepo.getByEmail.mockResolvedValueOnce(null).mockResolvedValueOnce(legacyAdmin);
+                mockUserRepo.upsertOnTeslaAuth.mockRejectedValueOnce(Object.assign(
+                    new Error('duplicate key value violates unique constraint "idx_user_email_lower"'), { code: '23505' }));
+                expect(await emailOnlyLogin()).toEqual({ status: 'identity-conflict' });
+                expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+                expectNothingWritten();
             });
         });
 

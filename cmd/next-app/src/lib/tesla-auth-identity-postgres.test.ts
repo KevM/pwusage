@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import jwt, { type JwtPayload } from 'jsonwebtoken';
 import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 
@@ -7,7 +8,7 @@ vi.mock('./db', async importOriginal => ({ ...await importOriginal<typeof import
 const syncLogin = vi.hoisted(() => vi.fn());
 vi.mock('./site-membership-service', () => ({ SiteMembershipService: class { syncLogin = syncLogin; } }));
 
-import { TeslaAuthService, type TeslaCallbackParams } from './tesla-auth-service';
+import { KidNotFoundError, TeslaAuthService, type TeslaCallbackParams } from './tesla-auth-service';
 import { UserRepo } from './user-repo';
 import type { SiteRepo } from './site-repo';
 import type { TeslaClient } from './tesla-client';
@@ -161,6 +162,75 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('Tesla login identity 
 
         it('still lets A sign in again', async () => {
             expect(await login(new UserRepo(), 'sub-a')).toMatchObject({ status: 'success', userId: legacyId });
+        });
+    });
+
+    describe('an unbound legacy admin account and a login Fleet confirms only by email', () => {
+        const legacyId = 'shared@example.com';
+        /** Unknown signing key; Fleet user info returns only the email. */
+        const emailOnlyLogin = (repo: UserRepo) => {
+            vi.spyOn(jwt, 'decode').mockReturnValue({
+                iss: 'https://auth.tesla.com/oauth2/v3', aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID,
+                exp: Math.floor(Date.now() / 1000) + 3600, nonce: 'nonce', sub: 'unconfirmed-sub',
+                email: 'shared@example.com',
+            } as unknown as JwtPayload);
+            return new TeslaAuthService({
+                userRepo: repo,
+                siteRepo: siteRepo as unknown as SiteRepo,
+                teslaClientCreator: () => teslaClient as unknown as TeslaClient,
+                importerCreator: () => importer,
+                tokenExchange: async () => ({
+                    id_token: 'id', access_token: 'access-intruder', refresh_token: 'refresh-intruder', expires_in: 3600,
+                }),
+                verifyIdToken: async () => { throw new KidNotFoundError('unknown'); },
+            }).handleTeslaCallback(params);
+        };
+
+        beforeEach(async () => {
+            await pool.query('TRUNCATE "User"');
+            await pool.query('TRUNCATE "SiteMember"');
+            await pool.query(
+                `INSERT INTO "User" (id, email, roles, access_token, refresh_token, refresh_token_fp)
+                 VALUES ($1, $1, ARRAY['admin'], $2, $3, $4)`,
+                [legacyId, encryptToken('legacy-access', 'access_token', legacyId),
+                    encryptToken('legacy-refresh', 'refresh_token', legacyId), tokenFingerprint('legacy-refresh')],
+            );
+            await pool.query(`INSERT INTO "SiteMember" (site_id, user_id, role) VALUES ('98765', $1, 'owner')`, [legacyId]);
+        });
+        afterEach(() => { vi.restoreAllMocks(); });
+
+        const expectLegacyIntact = async () => {
+            const rows = (await pool.query('SELECT id, tesla_subject, roles, access_token, refresh_token FROM "User"')).rows;
+            expect(rows.map(row => [row.id, row.tesla_subject])).toEqual([[legacyId, null]]);
+            expect(rows[0].roles).toEqual(['admin']);
+            expect(decryptToken(rows[0].access_token, 'access_token', legacyId)).toBe('legacy-access');
+            expect(decryptToken(rows[0].refresh_token, 'refresh_token', legacyId)).toBe('legacy-refresh');
+            expect((await pool.query('SELECT site_id, user_id, role FROM "SiteMember"')).rows)
+                .toEqual([{ site_id: '98765', user_id: legacyId, role: 'owner' }]);
+            expect(siteRepo.assignSiteToUser).not.toHaveBeenCalled();
+            expect(syncLogin).not.toHaveBeenCalled();
+        };
+
+        it('refuses to adopt it and leaves it unbound', async () => {
+            expect(await emailOnlyLogin(new UserRepo())).toEqual({ status: 'identity-conflict' });
+            await expectLegacyIntact();
+        });
+
+        it('refuses on the unique-violation retry', async () => {
+            const repo = new UserRepo();
+            // Both pre-write lookups miss (the race window), so the insert reaches the email index.
+            vi.spyOn(repo, 'getByEmail').mockResolvedValueOnce(null);
+            vi.spyOn(repo, 'getById').mockResolvedValueOnce(null);
+            expect(await emailOnlyLogin(repo)).toEqual({ status: 'identity-conflict' });
+            await expectLegacyIntact();
+        });
+
+        it('cannot be overwritten by an upsert that has no trusted subject', async () => {
+            expect(await new UserRepo().upsertOnTeslaAuth({
+                userId: legacyId, email: legacyId, accessToken: 'access-intruder',
+                refreshToken: 'refresh-intruder', tokenExpiresAt: Date.now(), teslaSubject: null,
+            })).toBe('subject-conflict');
+            await expectLegacyIntact();
         });
     });
 });

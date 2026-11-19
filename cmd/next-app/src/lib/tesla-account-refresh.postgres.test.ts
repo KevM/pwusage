@@ -180,7 +180,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         expect((await storedUser())).toMatchObject({
             is_active: true, tesla_refresh_state: 'reconnect_required',
         });
-        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
+        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', teslaSubject: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
         expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('login-R')).toEqual(rotated);
     });
 
@@ -271,7 +271,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
         await expect(repo.getLockedUserRefreshHandler('owner').refreshHandler('refresh-A')).rejects.toBeInstanceOf(TeslaRefreshBackoffError);
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(await new UserRepo().getAuthState('owner')).toMatchObject({ isActive: true, sessionVersion });
-        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() + 3600000 });
+        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', teslaSubject: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() + 3600000 });
         expect((await pool.query('SELECT user_id FROM "Site" WHERE id = $1', ['site'])).rows[0].user_id).toBe('owner');
         fetchMock.mockResolvedValue(Response.json(rotated));
         expect(await repo.getLockedUserRefreshHandler('owner').refreshHandler('login-R')).toEqual(rotated);
@@ -281,7 +281,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('account refresh again
 
     it('OAuth replaces the credential generation without reactivating a suspended account', async () => {
         await pool.query(`UPDATE "User" SET is_active = false, tesla_refresh_state = 'uncertain'`);
-        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
+        await new UserRepo().upsertOnTeslaAuth({ userId: 'owner', teslaSubject: 'owner', email: null, accessToken: 'login-A', refreshToken: 'login-R', tokenExpiresAt: Date.now() });
         expect((await storedUser())).toMatchObject({
             is_active: false, tesla_refresh_state: 'ready', tesla_credential_generation: 1,
         });

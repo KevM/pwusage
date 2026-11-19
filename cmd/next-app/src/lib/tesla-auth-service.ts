@@ -430,6 +430,9 @@ function parseExchangedTokens(payload: unknown): ExchangedTokens {
  * ID-token signature verified, or (on the unknown-signing-key path) Fleet user
  * info confirmed it. An unconfirmed `sub` is never passed here.
  *
+ * - Without a trusted subject nothing is adopted: an email alone cannot prove
+ *   which Tesla account an existing row belongs to, so such a login may only
+ *   create a new account.
  * - An account bound to a subject (`tesla_subject`) is never adopted by email:
  *   its own subject would have found it by `getByTeslaSubject` first.
  * - An unbound legacy row keyed by email address (a Tesla subject never
@@ -441,8 +444,9 @@ function parseExchangedTokens(payload: unknown): ExchangedTokens {
 function mayAdoptAccountByEmail(
     existing: { id: string; tesla_subject?: string | null }, trustedSubject: string | undefined,
 ): boolean {
+    if (trustedSubject === undefined) return false;
     if (existing.tesla_subject) return existing.tesla_subject === trustedSubject;
-    return existing.id.includes('@') || (trustedSubject !== undefined && existing.id === trustedSubject);
+    return existing.id.includes('@') || existing.id === trustedSubject;
 }
 
 export type TeslaCallbackResult =
@@ -845,6 +849,10 @@ export class TeslaAuthService {
             console.error('[TeslaAuthService] Failed to look up the Tesla account:', dbError);
             return { status: 'db-error' };
         }
+        // A login without a trusted subject may only create a new account. An
+        // existing row with this id (one the email lookup did not reach) is
+        // never written on its authority; the upsert enforces the same rule.
+        if (accountExists && !trustedSubject) return identityConflict(userId, userId, 'lookup');
         if (!accountExists) {
             await fetchProducts();
             if (productsFetched && !products.some(product => Boolean(product.energy_site_id))) {

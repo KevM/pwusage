@@ -243,15 +243,18 @@ account. The ordinary lookup, the unknown-signing-key path and the
 unique-violation retry all resolve the account the same way
 (`reconcileAccount` / `mayAdoptAccountByEmail` in `tesla-auth-service.ts`):
 - The account bound to the trusted subject wins, even if the Tesla email changed.
-- Otherwise the account that owns the email is adopted only if it is unbound and
-  either a legacy row keyed by an email address (its id contains `@`; a Tesla
-  `sub` never does), which is the intended migration of pre-fix accounts, or a
-  row keyed by that same trusted subject. A bound row, or a subject-keyed row
-  reached without a trusted subject, is never adopted.
-- `UserRepo.upsertOnTeslaAuth` binds the trusted subject in the same statement
-  that writes the credentials: an unbound row takes the subject, a bound row
-  accepts only its own subject, and a login without a trusted subject cannot
-  write to a bound row. So a legacy account is bound to the first trusted subject
+- Otherwise the account that owns the email is adopted only by a login with a
+  trusted subject, and only if it is unbound and either a legacy row keyed by an
+  email address (its id contains `@`; a Tesla `sub` never does), which is the
+  intended migration of pre-fix accounts, or a row keyed by that same subject.
+- A login without a trusted subject never adopts or writes an existing account,
+  bound or not (an email alone cannot prove which Tesla account a row belongs
+  to). It may only create a new account, which stays unbound until a trusted
+  login binds it.
+- `UserRepo.upsertOnTeslaAuth` enforces the same rules in the statement that
+  writes the credentials: an unbound row takes the trusted subject, a bound row
+  accepts only its own subject, and a login without a trusted subject can only
+  insert a new row. So a legacy account is bound to the first trusted subject
   that migrates it, and every later login must present that subject.
 - Anything else is two distinct Tesla subjects sharing an email (or a login that
   cannot prove its subject). The login fails closed with `identity-conflict`
@@ -263,8 +266,9 @@ unique-violation retry all resolve the account the same way
   manual admin task.
 
 Consequence: while Tesla's signing key is unknown and Fleet user info does not
-confirm the `sub`, a subject-bound account cannot sign in (it fails closed);
-unbound legacy email-keyed accounts and brand-new accounts still can.
+confirm the `sub`, no existing account can sign in (it fails closed with
+`identity-conflict`); only a brand-new account can be created. Existing users
+sign in again normally once the signature verifies.
 
 
 ### 3. Runtime authorization checks
