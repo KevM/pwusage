@@ -101,12 +101,15 @@ extension SolarHistoryStore {
         guard case .completed(let maxFetchedAt) = try await fetchFlowPages(currentCycleRequest, state: &state) else {
             return .complete
         }
-        if changedSince == nil { state.flowsSyncedFrom = cycleStartDay }
-        if let maxFetchedAt {
-            let watermark = maxFetchedAt.addingTimeInterval(-300)
-            state.flowsSyncedThrough = max(state.flowsSyncedThrough ?? watermark, watermark)
+        // Only `[cycleStartDay, …)` is known synced through the new watermark: an incremental read
+        // skips any days before it, so a cycle start that later moves back must read in full.
+        let watermark = maxFetchedAt.map { $0.addingTimeInterval(-300) }
+        let syncedThrough = [state.flowsSyncedThrough, watermark].compactMap(\.self).max()
+        if state.flowsSyncedFrom != cycleStartDay || state.flowsSyncedThrough != syncedThrough {
+            state.flowsSyncedFrom = cycleStartDay
+            state.flowsSyncedThrough = syncedThrough
+            try save(state, scope: scope)
         }
-        try save(state, scope: scope)
 
         guard let oldestMissing = try oldestDayMissingFlows(scope: scope) else {
             return .complete

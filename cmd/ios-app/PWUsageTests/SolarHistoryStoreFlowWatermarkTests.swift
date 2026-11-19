@@ -67,6 +67,33 @@ struct SolarHistoryStoreFlowWatermarkTests {
         #expect(requests.map(\.changedSince) == [nil])
     }
 
+    @Test("A cycle start moved back into a gap the incremental read skipped reads the whole cycle")
+    func cycleStartMovedIntoSkippedGapReadsFully() async throws {
+        let history = SolarHistoryStore(directory: temporaryFolder())
+        defer { Task { try? await history.removeAll() } }
+        let october = HistoryAPI(responses: [.enabled(
+            timeZone: utc,
+            days: [try flowDay("2026-10-01", fetchedAt: try date("2026-10-24T11:00:00Z"))],
+            nextFrom: nil
+        )])
+        _ = try await history.syncFlows(
+            scope: scope, api: october, cycleStartDay: "2026-10-01", now: try date("2026-10-24T12:00:00Z"))
+        // November's incremental read starts at Nov 1, so Oct 25–31 are never asked for.
+        let november = HistoryAPI(responses: [.enabled(
+            timeZone: utc,
+            days: [try flowDay("2026-11-01", fetchedAt: try date("2026-11-02T11:00:00Z"))],
+            nextFrom: nil
+        )])
+        let now = try date("2026-11-02T12:00:00Z")
+        _ = try await history.syncFlows(scope: scope, api: november, cycleStartDay: "2026-11-01", now: now)
+
+        let moved = HistoryAPI(responses: [.enabled(timeZone: utc, days: [], nextFrom: nil)])
+        _ = try await history.syncFlows(scope: scope, api: moved, cycleStartDay: "2026-10-15", now: now)
+
+        #expect(await november.requests.map(\.changedSince) == [try date("2026-10-24T10:55:00Z")])
+        #expect(await moved.requests.map(\.changedSince) == [nil])
+    }
+
     @Test("An interrupted cycle read leaves no watermark, so the next read is full")
     func interruptedReadKeepsFullFetch() async throws {
         let history = SolarHistoryStore(directory: temporaryFolder())
