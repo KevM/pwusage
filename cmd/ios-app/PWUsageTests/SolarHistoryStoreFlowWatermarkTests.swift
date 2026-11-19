@@ -142,6 +142,36 @@ struct SolarHistoryStoreFlowWatermarkTests {
             atPath: yearFile.deletingLastPathComponent().appendingPathComponent("2026.json").path))
     }
 
+    @Test("Overlapping solar sync and flow sync serialize instead of cancelling each other")
+    func overlappingSyncAndFlowSyncSerialize() async throws {
+        let history = SolarHistoryStore(directory: temporaryFolder())
+        defer { Task { try? await history.removeAll() } }
+        let now = try date("2026-10-24T12:00:00Z")
+        let flowAPI = SuspendedHistoryAPI()
+        let solarDay = try flowDay("2026-10-24", fetchedAt: now)
+        let solarAPI = HistoryAPI(responses: [.enabled(timeZone: utc, days: [solarDay], nextFrom: nil)])
+
+        let flows = Task {
+            try await history.syncFlows(scope: scope, api: flowAPI, cycleStartDay: "2026-10-01", now: now)
+        }
+        await flowAPI.waitUntilRequested()
+        let solar = Task {
+            try await history.sync(scope: scope, api: solarAPI, now: now)
+        }
+        await Task.yield()
+
+        await flowAPI.resume(with: .enabled(timeZone: utc, days: [solarDay], nextFrom: nil))
+        let flowProgress = try await flows.value
+        let solarResult = try await solar.value
+
+        #expect(flowProgress == .complete)
+        #expect(solarResult == .synced(timeZone: utc))
+        let stored = try await history.flowDays(
+            scope: scope, from: try date("2026-10-01T00:00:00Z"), to: try date("2026-10-25T00:00:00Z")
+        )
+        #expect(stored?.map(\.day) == ["2026-10-24"])
+    }
+
     private func flowDay(_ day: String, fetchedAt: Date) throws -> MobileSolarHistoryDay {
         let start = try date("\(day)T00:00:00Z")
         return MobileSolarHistoryDay(

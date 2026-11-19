@@ -45,6 +45,26 @@ extension SmartShiftPresentationTests {
         #expect(stale.contains("older than one hour"))
     }
 
+    @Test("Smart Shift waits on loading instead of flashing stale observations before refresh settles")
+    @MainActor
+    func staleObservationsWaitForUnsettledRefresh() {
+        #expect(LoadTimingView.waitsForFreshObservations(
+            unavailableReason: .staleBalance, refreshSettled: false, billUnavailable: false
+        ))
+        #expect(!LoadTimingView.waitsForFreshObservations(
+            unavailableReason: .staleBalance, refreshSettled: true, billUnavailable: false
+        ))
+        #expect(!LoadTimingView.waitsForFreshObservations(
+            unavailableReason: .staleBalance, refreshSettled: false, billUnavailable: true
+        ))
+        #expect(!LoadTimingView.waitsForFreshObservations(
+            unavailableReason: nil, refreshSettled: false, billUnavailable: false
+        ))
+        #expect(!LoadTimingView.waitsForFreshObservations(
+            unavailableReason: .missingTariff, refreshSettled: false, billUnavailable: false
+        ))
+    }
+
     @Test func missingRatePlanBlocks() throws {
         #expect(try Self.blocked(Self.make(timing: Self.timing(hasTariff: false)))
             .localizedCaseInsensitiveContains("rate plan"))
