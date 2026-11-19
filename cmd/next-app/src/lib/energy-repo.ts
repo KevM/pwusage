@@ -447,7 +447,9 @@ FROM w`,
         siteId: string,
         cycleStart: Date,
         todayStart: Date,
-        end: Date
+        end: Date,
+        /** Today's raw samples already read from `start`; reused when they cover the range needed here. */
+        todayRows?: { start: Date; rows: EnergyData[] }
     ): Promise<{ cycle: UsageData[]; today: UsageData[] }> {
         const context=await this.usageContext(siteId);
         if(!context)return {cycle:[],today:[]};
@@ -458,7 +460,9 @@ FROM w`,
         const todayPrior=+todayStart===+cycleStart?cyclePrior:todayStart<todaySplit?this.getCycleAggregates(siteId,todayStart,todaySplit):Promise.resolve([]);
         const rawStart=new Date(Math.min(+cycleSplit,+todaySplit));
         const [cycleAggregates,todayAggregates,raw]=await Promise.all([cyclePrior,todayPrior,
-            rawStart<end?this.getRawEnergyData(siteId,rawStart,end):Promise.resolve([])]);
+            rawStart>=end?Promise.resolve([])
+                :todayRows&&+todayRows.start<=+rawStart?Promise.resolve(todayRows.rows.filter(r=>r.timestamp>=rawStart&&r.timestamp<end))
+                :this.getRawEnergyData(siteId,rawStart,end)]);
         // Net the cycle and today independently; a cycle credit cannot price today's usage.
         return {
             cycle:EnergyRepo.aggregateUsageByTOU({...context,start:cycleStart,priorAggregates:cycleAggregates,

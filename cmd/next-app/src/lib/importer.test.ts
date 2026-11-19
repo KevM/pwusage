@@ -158,7 +158,7 @@ describe('Importer Sync Logic', () => {
         await importer.ensureDataForRange('site-123', start, end);
 
         expect(importSpy).toHaveBeenCalled();
-        expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything());
+        expect(importSpy).toHaveBeenCalledWith('site-123', expect.anything(), expect.anything(), expect.any(Function));
     });
 
     it('returns an empty result when the DB import lock is not acquired', async () => {
@@ -173,6 +173,7 @@ describe('Importer Sync Logic', () => {
             rows: [],
             processedWindows: 0,
             totalWindows: 0,
+            changedDays: [],
         });
         expect(importSpy).not.toHaveBeenCalled();
     });
@@ -464,7 +465,7 @@ describe('Importer.refetchDays', () => {
 
         expect(importSpy.mock.calls.map(c => [c[1], c[2]])).toEqual(days.map(d => [d.start, d.end]));
         expect(mockRepo.acquireImportLock).toHaveBeenCalledWith(expect.objectContaining({ siteId: 'site-123', force: false }));
-        expect(result).toEqual({ complete: true, rows: [], processedWindows: 3, totalWindows: 3 });
+        expect(result).toEqual({ complete: true, rows: [], processedWindows: 3, totalWindows: 3, changedDays: [] });
     });
 
     it('returns 0/0 without importing when the import lock is busy', async () => {
@@ -472,7 +473,7 @@ describe('Importer.refetchDays', () => {
         const importSpy = importDays(importer).mockResolvedValue([]);
 
         await expect(importer.refetchDays('site-123', days, { maxTimeMs: 45000, maxWindows: 30 }))
-            .resolves.toEqual({ complete: false, rows: [], processedWindows: 0, totalWindows: 0 });
+            .resolves.toEqual({ complete: false, rows: [], processedWindows: 0, totalWindows: 0, changedDays: [] });
         expect(importSpy).not.toHaveBeenCalled();
     });
 

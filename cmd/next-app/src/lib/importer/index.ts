@@ -90,6 +90,12 @@ export interface EnsureDataResult {
     rows: EnergyDataRow[];
     processedWindows: number;
     totalWindows: number;
+    /**
+     * Site-local day starts whose stored record this run rewrote (`writeDay`
+     * status `written`). Empty when every fetched day was unchanged or nothing
+     * was planned, so callers can skip re-reading history.
+     */
+    changedDays: Date[];
 }
 
 export class Importer {
@@ -163,6 +169,8 @@ export class Importer {
             force?: boolean;
             maxTimeMs?: number;
             maxWindows?: number;
+            /** Called as each day record is rewritten, including before a run that later throws. */
+            onDayChanged?: (dayStart: Date) => void;
         }
     ): Promise<EnsureDataResult> {
         const force = options?.force ?? false;
@@ -174,7 +182,7 @@ export class Importer {
             const windows = await planMissingWindows(site, start, end, force, this.getDayStore());
 
             const toImport = selectWindows(windows, maxWindows);
-            return this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress);
+            return this.importWindows(siteId, toImport, windows.length, options?.maxTimeMs, onProgress, options?.onDayChanged);
         });
     }
 
@@ -208,7 +216,7 @@ export class Importer {
     ): Promise<EnsureDataResult> {
         if (Importer.pendingSyncs.has(siteId) && !force) {
             logSync(`Skip: Data for range already being synced for site ${siteId}`);
-            return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
+            return { complete: false, rows: [], processedWindows: 0, totalWindows: 0, changedDays: [] };
         }
 
         let inMemoryAdded = false;
@@ -234,7 +242,7 @@ export class Importer {
 
             if (lockResult.status === 'not-acquired') {
                 logSync(`Skip: DB lock busy for site ${siteId}`);
-                return { complete: false, rows: [], processedWindows: 0, totalWindows: 0 };
+                return { complete: false, rows: [], processedWindows: 0, totalWindows: 0, changedDays: [] };
             }
 
             return lockResult.value;
@@ -251,9 +259,15 @@ export class Importer {
         toImport: DateWindow[],
         totalWindows: number,
         maxTimeMs?: number,
-        onProgress?: (msg: string) => void
+        onProgress?: (msg: string) => void,
+        onDayChanged?: (dayStart: Date) => void
     ): Promise<EnsureDataResult> {
         const allRows: EnergyDataRow[] = [];
+        const changedDays: Date[] = [];
+        const dayChanged = (dayStart: Date) => {
+            changedDays.push(dayStart);
+            onDayChanged?.(dayStart);
+        };
         let successCount = 0;
         let lastError: Error | null = null;
         let timeBudgetExceeded = false;
@@ -271,7 +285,7 @@ export class Importer {
             if (onProgress) onProgress(`Importing ${dateStr}...`);
             logSync(`Importing window: ${window.start.toISOString()} - ${window.end.toISOString()}`);
             try {
-                const rows = await this.importDayRecords(siteId, window.start, window.end);
+                const rows = await this.importDayRecords(siteId, window.start, window.end, dayChanged);
                 allRows.push(...rows);
                 successCount++;
             } catch (error) {
@@ -299,7 +313,8 @@ export class Importer {
             complete: isComplete,
             rows: allRows,
             processedWindows: successCount,
-            totalWindows
+            totalWindows,
+            changedDays
         };
     }
 
@@ -308,14 +323,14 @@ export class Importer {
      * of the whole day (SOE required). The record replaces the day, so a partial
      * window still writes its whole day.
      */
-    private async importDayRecords(siteId: string, start: Date, end: Date): Promise<EnergyDataRow[]> {
+    private async importDayRecords(siteId: string, start: Date, end: Date, onDayChanged?: (dayStart: Date) => void): Promise<EnergyDataRow[]> {
         const site = await this.siteRepo.getSite(siteId);
         if (!site) throw new Error(`Site ${siteId} not found in database`);
         const rows: EnergyDataRow[] = [];
         for (const chunk of splitAtSiteMidnight({ start, end }, site.timezone)) {
             const dayStart = getSiteMidnight(chunk.start, site.timezone);
             const day = await this.fetchDay(site, dayStart);
-            await this.writeFetchedDay(site, dayStart, day);
+            if (await this.writeFetchedDay(site, dayStart, day) === 'written') onDayChanged?.(dayStart);
             rows.push(...day.rows);
         }
         return rows;

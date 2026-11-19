@@ -504,7 +504,7 @@ describe('SiteService Security', () => {
                 importerCreator: vi.fn().mockReturnValue(mockImporter)
             });
 
-            const result = await service.loadSitePageData('12345', '2026-07-02');
+            const result = await service.loadSitePageData('12345', '2026-07-02', { view: 'settings' });
             expect(result.status).toBe('ready');
             if (result.status === 'ready') {
                 expect(result.currencySymbol).toBe('£');
@@ -513,10 +513,81 @@ describe('SiteService Security', () => {
                 expect(result.prevDateStr).toBeDefined();
                 expect(result.nextDateStr).toBeDefined();
                 expect(result.dateRangeLabel).toBeDefined();
-                expect(result.usage).toEqual([{ some: 'usage' }]);
+                expect(result.usage).toBeNull();
                 expect(result.installation).toEqual({ id: 'inst-123' });
                 expect(result.installations).toEqual([{ id: 'inst-123' }, { id: 'inst-456' }]);
             }
+        });
+
+        describe('reads only what the selected tab shows', () => {
+            const readySiteRepo = () => ({
+                getSites: vi.fn(),
+                getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }]),
+                getSite: vi.fn().mockResolvedValue(mockSiteData)
+            });
+            const serviceFor = (siteRepo: ReturnType<typeof readySiteRepo>) => new SiteService({
+                siteRepo: siteRepo as unknown as SiteRepo,
+                siteAuthToken: 'valid_token',
+                getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] }),
+                energyRepo: mockEnergyRepo as unknown as EnergyRepo,
+                teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+                trmnlService: mockTrmnlService as unknown as TrmnlService,
+                teslaClientCreator: vi.fn().mockReturnValue({}),
+                importerCreator: vi.fn().mockReturnValue(mockImporter),
+                readHistoryRevision
+            });
+            const readHistoryRevision = vi.fn();
+
+            beforeEach(() => {
+                readHistoryRevision.mockResolvedValue('rev-1');
+                mockEnergyRepo.hasData.mockResolvedValue(true);
+                mockEnergyRepo.getUsageByTOU.mockResolvedValue([{ some: 'usage' }]);
+            });
+
+            it('defaults to the bill: usage, and no TRMNL installation read', async () => {
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345');
+                expect(result.status).toBe('ready');
+                if (result.status !== 'ready') return;
+                expect(mockEnergyRepo.getUsageByTOU).toHaveBeenCalledTimes(1);
+                expect(mockTrmnlService.getInstallationsBySiteId).not.toHaveBeenCalled();
+                expect(result.usage).toEqual([{ some: 'usage' }]);
+                expect(result.installations).toBeNull();
+                // The revision the bill was rendered from, so sync can tell when it is outdated.
+                expect(result.historyRevision).toBe('rev-1');
+                expect(readHistoryRevision).toHaveBeenCalledWith('12345', result.start, result.end);
+                // The sync window and date navigation are the same on every tab.
+                expect(result.start).toBeInstanceOf(Date);
+                expect(result.prevDateStr).toBeDefined();
+            });
+
+            it('settings reads installations but not the bill usage', async () => {
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345', undefined, { view: 'settings' });
+                expect(result.status).toBe('ready');
+                if (result.status !== 'ready') return;
+                expect(mockEnergyRepo.getUsageByTOU).not.toHaveBeenCalled();
+                expect(mockTrmnlService.getInstallationsBySiteId).toHaveBeenCalledTimes(1);
+                expect(result.usage).toBeNull();
+                expect(result.installations).toEqual([{ id: 'inst-123' }, { id: 'inst-456' }]);
+                expect(result.historyRevision).toBeNull();
+                expect(readHistoryRevision).not.toHaveBeenCalled();
+            });
+
+            it('a failed revision read keeps the bill and falls back to write-only detection', async () => {
+                readHistoryRevision.mockRejectedValue(new Error('db busy'));
+                vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345');
+                expect(result.status).toBe('ready');
+                if (result.status === 'ready') expect(result.historyRevision).toBeNull();
+            });
+
+            it('history reads neither usage nor installations', async () => {
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345', '2026-07-02', { view: 'history' });
+                expect(result.status).toBe('ready');
+                if (result.status !== 'ready') return;
+                expect(mockEnergyRepo.getUsageByTOU).not.toHaveBeenCalled();
+                expect(mockTrmnlService.getInstallationsBySiteId).not.toHaveBeenCalled();
+                expect(result.dateStr).toBe('2026-07-02');
+            });
         });
 
         it('pins page recovery to the selected Tesla connection owner, not the legacy site owner', async () => {
