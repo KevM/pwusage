@@ -27,10 +27,20 @@ enum PWUsageAPIError: Error, Equatable, LocalizedError {
     }
 }
 
+/// The `site_auth` cookie a session exchange returned, not yet stored. The exchange
+/// opts out of URLSession's cookie handling, so the cookie reaches the shared jar only
+/// when `MobileAuthService` stores it for the sign-in that still owns it.
+struct MobileSessionCredential: Sendable, Equatable {
+    let cookies: [HTTPCookie]
+}
+
 protocol MobileAuthAPI: Sendable {
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential
+    /// Synchronous and on the main actor, so the sign-in ownership check that precedes
+    /// it cannot be overtaken before the cookie lands.
+    @MainActor func store(_ credential: MobileSessionCredential)
     func logout() async throws
-    func clearSiteAuthCookie() async
+    @MainActor func clearSiteAuthCookie()
 }
 
 final class PWUsageAPI: MobileAuthAPI, MobileBillShadowAPI, Sendable {
@@ -270,15 +280,33 @@ final class PWUsageAPI: MobileAuthAPI, MobileBillShadowAPI, Sendable {
         }
     }
 
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
         let url = try makeURL(path: "/api/mobile/session")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(exchange)
-        let data = try await perform(request)
+        // URLSession must not store this response's Set-Cookie on its own: a sign-in
+        // cancelled while the request is in flight would otherwise still sign the app in,
+        // and could replace the session it already had. The caller stores it instead.
+        request.httpShouldHandleCookies = false
+        let (body, http) = try await send(request)
+        let data = try check(http, data: body)
         guard (try? JSONDecoder().decode(SessionResponse.self, from: data).succeeded) == true else {
             throw PWUsageAPIError.invalidResponse
+        }
+        let headers = http.allHeaderFields.reduce(into: [String: String]()) { fields, field in
+            if let name = field.key as? String, let value = field.value as? String { fields[name] = value }
+        }
+        let cookies = HTTPCookie.cookies(withResponseHeaderFields: headers, for: url)
+            .filter { $0.name == "site_auth" && !$0.value.isEmpty }
+        guard !cookies.isEmpty else { throw PWUsageAPIError.invalidResponse }
+        return MobileSessionCredential(cookies: cookies)
+    }
+
+    func store(_ credential: MobileSessionCredential) {
+        for cookie in credential.cookies {
+            cookieStorage.setCookie(cookie)
         }
     }
 
@@ -286,15 +314,21 @@ final class PWUsageAPI: MobileAuthAPI, MobileBillShadowAPI, Sendable {
         let url = try makeURL(path: "/logout")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // The local cookie is cleared before this request. Its response's cookie deletion
+        // must not reach the jar later, where it could remove a newer sign-in's session.
+        request.httpShouldHandleCookies = false
         _ = try await perform(request)
     }
 
-    func clearSiteAuthCookie() async {
-        let cookieStorage = session.configuration.httpCookieStorage ?? .shared
+    func clearSiteAuthCookie() {
         guard let cookies = cookieStorage.cookies(for: origin) else { return }
         for cookie in cookies where cookie.name == "site_auth" {
             cookieStorage.deleteCookie(cookie)
         }
+    }
+
+    private var cookieStorage: HTTPCookieStorage {
+        session.configuration.httpCookieStorage ?? .shared
     }
 
     private func request(path: String) async throws -> Data {

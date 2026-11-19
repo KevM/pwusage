@@ -338,7 +338,11 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only")
     }
 
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
+        MobileSessionCredential(cookies: [])
+    }
+
+    func store(_ credential: MobileSessionCredential) {}
     func logout() async throws {}
-    func clearSiteAuthCookie() async {}
+    func clearSiteAuthCookie() {}
 }

@@ -183,6 +183,9 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
                 webSession?.cancel()
                 webSession = nil
                 activeAttempt = nil
+                // While this attempt owns the slot, any exchange in flight is its own.
+                exchangeTask?.cancel()
+                exchangeTask = nil
                 completeSignIn(generation: generation, pending.continuation, with: .failure(AuthError.cancelled))
             }
         }
@@ -190,10 +193,11 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
 
     func logout() async throws {
         endLocalSession()
+        // Clear before the first suspension: a cleanup that ran after the server call
+        // could erase a sign-in that completed in the meantime.
+        api.clearSiteAuthCookie()
         var serverError: Error?
         do { try await api.logout() } catch { serverError = error }
-        await api.clearSiteAuthCookie()
-        isAuthenticated = false
         do { try await forecastCleanup.signOut() } catch { throw AuthError.forecastCleanupFailed }
         if let serverError { throw serverError }
     }
@@ -207,17 +211,16 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
     /// End the local session after an API request reports that the cookie expired.
     func invalidateAuthenticatedSession() async throws {
         endLocalSession()
-        await api.clearSiteAuthCookie()
-        isAuthenticated = false
+        api.clearSiteAuthCookie()
         do { try await forecastCleanup.signOut() } catch { throw AuthError.forecastCleanupFailed }
     }
 
     /// Revoke ownership before any suspension or web-session cancellation callback.
     private func endLocalSession() {
         sessionEpoch += 1
+        // A response that still arrives is dropped unstored (see applySessionExchange).
         exchangeTask?.cancel()
-        // Keep the tail: a cancelled request can still persist Set-Cookie. A new
-        // exchange must wait for its response AND its stale-cookie cleanup.
+        exchangeTask = nil
         let pending = pendingSignIn
         pendingSignIn = nil
         activeAttempt = nil
@@ -279,9 +282,10 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
                 state: callback.state
             )
             let epoch = sessionEpoch
-            let previousExchange = exchangeTask
+            // No queueing behind a superseded exchange: its response can no longer touch
+            // the cookie jar, so there is nothing to wait for.
+            exchangeTask?.cancel()
             exchangeTask = Task { @MainActor in
-                await previousExchange?.value
                 await performSessionExchange(
                     exchange, generation: generation, continuation: continuation, epoch: epoch
                 )
@@ -301,33 +305,36 @@ final class MobileAuthService: NSObject, ObservableObject, ASWebAuthenticationPr
         guard sessionEpoch == epoch,
               pendingSignIn?.generation == generation,
               !Task.isCancelled else { return }
+        let result: Result<MobileSessionCredential, Error>
         do {
-            try await api.exchangeSession(exchange)
-            await applySessionExchange(.success(()), generation: generation,
-                                       continuation: continuation, epoch: epoch)
+            result = try await .success(api.exchangeSession(exchange))
         } catch {
-            await applySessionExchange(.failure(error), generation: generation,
-                                       continuation: continuation, epoch: epoch)
+            result = .failure(error)
         }
+        applySessionExchange(result, generation: generation, continuation: continuation, epoch: epoch)
     }
 
+    /// The cookie is committed here or never. Only the attempt that still owns the sign-in
+    /// may store it, and the check and the store run on the main actor with no suspension
+    /// between them. A cancelled, superseded or signed-out attempt drops its credential
+    /// unstored, so it cannot replace a session the app already had, cannot erase a newer
+    /// sign-in, and is not in the jar for the next launch to find.
     private func applySessionExchange(
-        _ result: Result<Void, Error>,
+        _ result: Result<MobileSessionCredential, Error>,
         generation: Int,
         continuation: CheckedContinuation<Void, Error>,
         epoch: Int
-    ) async {
-        guard sessionEpoch == epoch else {
-            // URLSession may already have persisted Set-Cookie, even when
-            // cancellation was requested. Revoke that late credential too.
-            await api.clearSiteAuthCookie()
-            return
-        }
-        if pendingSignIn?.generation == generation { exchangeTask = nil }
-        guard completeSignIn(generation: generation, continuation, with: result) else { return }
+    ) {
+        guard sessionEpoch == epoch, pendingSignIn?.generation == generation else { return }
+        exchangeTask = nil
         switch result {
-        case .success: isAuthenticated = true
-        case .failure: isAuthenticated = false
+        case .success(let credential):
+            api.store(credential)
+            completeSignIn(generation: generation, continuation, with: .success(()))
+            isAuthenticated = true
+        case .failure(let error):
+            completeSignIn(generation: generation, continuation, with: .failure(error))
+            isAuthenticated = false
         }
     }
 

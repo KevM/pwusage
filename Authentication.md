@@ -103,7 +103,9 @@ Route: `GET /auth/tesla-callback`
 - Decodes `id_token` and validates `nonce`.
 
 User and site provisioning:
-- Builds stable user id from ID token `sub` (fallback email).
+- Builds stable user id from ID token `sub` (fallback email), and binds the
+  login to that Tesla subject (see "Email uniqueness" below): an account keyed
+  by a different subject is never adopted, even when the email matches.
 - Looks up whether the `User` row already exists. A **new** account has its
   Fleet products fetched first: if the list loads but holds no energy product,
   nothing is stored (no `User` row, no tokens, no session) and the web callback
@@ -229,6 +231,44 @@ account by email before upserting, and the upsert retries once on a unique
 violation to handle concurrent first logins. This prevents the account
 splitting that previously occurred when the degraded path keyed a User row by
 email and a later verified login keyed a second row by Tesla `sub`.
+
+Reconciliation is bound to the Tesla subject. `User.tesla_subject` (unique,
+migration `20261118193518`) records the Tesla ID-token `sub` an account belongs
+to; the migration backfills it from every subject-keyed id (ids without `@`).
+
+A login's subject is **trusted** only when the ID-token signature verified, or,
+on the unknown-signing-key path, when Fleet user info confirmed it (`sub`/`id`
+or `vault_uuid`). An unconfirmed `sub` is never used to find, adopt or bind an
+account. The ordinary lookup, the unknown-signing-key path and the
+unique-violation retry all resolve the account the same way
+(`reconcileAccount` / `mayAdoptAccountByEmail` in `tesla-auth-service.ts`):
+- The account bound to the trusted subject wins, even if the Tesla email changed.
+- Otherwise the account that owns the email is adopted only by a login with a
+  trusted subject, and only if it is unbound and either a legacy row keyed by an
+  email address (its id contains `@`; a Tesla `sub` never does), which is the
+  intended migration of pre-fix accounts, or a row keyed by that same subject.
+- A login without a trusted subject never adopts or writes an existing account,
+  bound or not (an email alone cannot prove which Tesla account a row belongs
+  to). It may only create a new account, which stays unbound until a trusted
+  login binds it.
+- `UserRepo.upsertOnTeslaAuth` enforces the same rules in the statement that
+  writes the credentials: an unbound row takes the trusted subject, a bound row
+  accepts only its own subject, and a login without a trusted subject can only
+  insert a new row. So a legacy account is bound to the first trusted subject
+  that migrates it, and every later login must present that subject.
+- Anything else is two distinct Tesla subjects sharing an email (or a login that
+  cannot prove its subject). The login fails closed with `identity-conflict`
+  before any write: no credentials stored, no memberships or sites changed, no
+  session or mobile handoff issued. The web callback answers 409; the native app
+  receives `error=account_conflict`. The event `tesla.sign-in.identity-conflict`
+  carries hashed ids of both accounts, the stage (`lookup`, `unique-retry` or
+  `bind`) and whether the subject was trusted. Resolving such a conflict is a
+  manual admin task.
+
+Consequence: while Tesla's signing key is unknown and Fleet user info does not
+confirm the `sub`, no existing account can sign in (it fails closed with
+`identity-conflict`); only a brand-new account can be created. Existing users
+sign in again normally once the signature verifies.
 
 
 ### 3. Runtime authorization checks
@@ -389,9 +429,17 @@ Account verification (`UserRepo.verifyUserStatus`):
   statement snapshot. Even a rotation triggered by the probe supersedes it.
 
 ### 5. Logout
-Local logout — Route: `GET|POST /logout`
-- Deletes `site_auth` cookie and redirects to `/`. Does not bump
-  `session_version`; other devices stay signed in.
+Local logout — Route: `POST /logout`
+- Signing out takes an intentional POST: the web header's form, or the iOS app's
+  URLSession request. The same origin/`sec-fetch-site` check as
+  sign-out-everywhere (`isCrossOriginRequest`) runs first; a cross-origin POST
+  gets 403 and the cookie is left alone. A request without `Origin` is allowed,
+  because URLSession may omit it.
+- Clears `site_auth` (`Max-Age=0`, path `/`) and answers `303` to `/`, so the
+  browser follows with `GET /` instead of re-posting to the home page.
+- `GET /logout` never signs out (a link, prefetch or image must not end a
+  session): it answers `405` with `Allow: POST`.
+- Does not bump `session_version`; other devices stay signed in.
 
 Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
 - Requires an authenticated user (with origin/`sec-fetch-site` checks as
@@ -542,26 +590,47 @@ cookies being shared between `ASWebAuthenticationSession` and the app's
 3. The normal Tesla callback validates OAuth state and nonce and provisions the
    user/sites as it does for web login. For the mobile path only, it stores a
    five-minute handoff row containing the user/site/role claims, PKCE challenge,
-   app state, attempt UUID, expiry, and a SHA-256 hash of a random opaque code.
+   app state, attempt UUID, expiry, a SHA-256 hash of a random opaque code, and
+   the account's `session_version`, read in the same INSERT statement.
    The browser is redirected only to the fixed `pwusage://auth/callback` scheme,
    host, and path. That URL contains the opaque code, attempt UUID, and app state;
    it never contains the site JWT or Tesla tokens. No `site_auth` cookie is issued
    to the browser for this mobile flow.
 4. The app POSTs the code, attempt UUID, app state, and PKCE verifier to
    `/api/mobile/session` using its own `URLSession`. One conditional SQL UPDATE
-   atomically consumes only a matching, unexpired, unconsumed handoff. The
-   verifier is hashed and compared to the stored challenge. Replays, wrong state,
-   wrong attempt, expired code, and wrong verifier fail closed. The route accepts
+   atomically consumes only a matching, unexpired, unconsumed handoff whose
+   `session_version` still equals the account's. The verifier is hashed and
+   compared to the stored challenge. Replays, wrong state, wrong attempt, expired
+   code, wrong verifier, a handoff revoked by sign-out-everywhere, and a handoff
+   row with no `session_version` (written before that column existed) fail closed. The route accepts
    only `application/json`; a supplied `Origin` must match the pwusage origin,
    and `Sec-Fetch-Site: cross-site` is rejected. It does not require `Origin`,
    since URLSession requests may omit it.
 5. Before issuing a session, the exchange reloads the user and current site
    assignments. Inactive/missing accounts and sites no longer assigned to the
-   account are rejected. The response sets the existing `site_auth` cookie with
-   `HttpOnly`, `SameSite=Lax`, path `/`, and `Secure` on HTTPS (always in
-   production). URLSession stores the cookie and sends it to existing APIs such as
+   account are rejected, and so is a handoff whose version no longer matches the
+   reloaded account (a sign-out-everywhere that commits after the consume). The
+   token is stamped with the handoff's `session_version`, never a newer value read
+   later, so an exchange that overlaps revocation cannot mint a usable cookie on the
+   older handoff's authority. A fresh login after revocation creates a handoff
+   under the new version and succeeds. The response sets the existing `site_auth`
+   cookie with `HttpOnly`, `SameSite=Lax`, path `/`, and `Secure` on HTTPS (always
+   in production). The app's exchange request opts out of URLSession cookie
+   handling (`httpShouldHandleCookies = false`) and returns the cookie to
+   `MobileAuthService`, which stores it only while that sign-in attempt still owns
+   the sign-in (see below). Later requests send it to existing APIs such as
    `/api/site-live-data` and `/api/mobile/bill-summary`; those routes continue to
    call `verifySiteAccess`.
+
+Native sign-in ownership of the cookie (`MobileAuthService`): the ownership check
+and the store run together on the main actor with no suspension between them. A
+sign-in cancelled after its exchange started, superseded by a newer attempt, or
+ended by logout/session expiry drops its credential unstored. So a cancelled
+first sign-in leaves no cookie for the next launch to find, a cancelled reconnect
+keeps the session the app already had, and a late response cannot replace or erase
+a newer sign-in's cookie. Logout and session invalidation clear the local cookie
+before their first suspension; the server `/logout` request also opts out of
+cookie handling, so its cookie deletion cannot land on a newer session.
 
 The iOS app and its widget extension share the persistent `site_auth` cookie via
 Foundation's App Group cookie store (separate Debug and Release groups). The app
@@ -579,10 +648,15 @@ expired rows, keeping cleanup bounded and preventing indefinite table growth
 during normal login activity. Dashboard polls
 do not query the handoff table. The migration enables RLS, revokes access from
 `PUBLIC`, `anon`, and `authenticated`, and grants access to `service_role`.
+`session_version` was added later (`20261118191802`) as a nullable column, so rows
+written by the previous deploy remain readable and are simply rejected; they expire
+within five minutes. A database-backed test
+(`session-revocation-postgres.test.ts`) covers creation, revocation, then exchange;
+the race with the consume; a fresh login after revocation; and a pre-column row.
 
 The existing proxy still performs sliding JWT renewal. Renewal reloads active
-user status, roles, and site assignments near token expiry. `/logout` clears the
-same cookie and works from the app's URLSession. A connected server test passes
+user status, roles, and site assignments near token expiry. `POST /logout` clears
+the same cookie and works from the app's URLSession without an `Origin` header. A connected server test passes
 the exchange-issued cookie through `verifySiteAccess`, confirms site isolation,
 then exercises proxy renewal after a site assignment changes, revoked-user
 denial, and logout clearing. The test uses controlled handoff/repository

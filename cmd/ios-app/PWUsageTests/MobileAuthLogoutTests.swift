@@ -5,7 +5,7 @@ import Foundation
 import Testing
 
 extension MobileAuthServiceTests {
-    @Test("Logout also revokes an exchange queued behind an old response")
+    @Test("Logout also revokes a second exchange still in flight")
     func logoutRevokesQueuedExchange() async throws {
         let api = FakeMobileAuthAPI()
         api.holdExchange = true
@@ -23,16 +23,17 @@ extension MobileAuthServiceTests {
         try await eventually { self.fakeSession.startCount == 2 }
         let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
         fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
-        try await staysTrue { api.exchanges.count == 1 }
+        try await eventually { api.exchangeStartedCount == 2 }
         try await service.logout()
         await #expect(throws: MobileAuthService.AuthError.cancelled) {
             try await Self.boundedValue(of: second)
         }
         api.holdExchange = false
         api.resumeExchange()
-        try await eventually { api.cookieClearCount == 3 }
-        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
-        #expect(!api.hasSiteAuthCookie)
+        try await eventually { api.exchangeCompletedCount == 2 }
+        // Both late responses are dropped unstored; only the two logouts touched the jar.
+        try await staysTrue { !api.hasSiteAuthCookie && !service.isAuthenticated }
+        #expect(api.cookieEvents == ["clear", "clear"])
     }
 
     @Test("Ending a session cancels its browser and ignores the later callback", arguments: [false, true])
@@ -63,7 +64,7 @@ extension MobileAuthServiceTests {
         #expect(fakeAPI.exchanges.isEmpty)
     }
 
-    @Test("Ending a session rejects a parked exchange and clears its late cookie",
+    @Test("Ending a session rejects a parked exchange and never stores its late cookie",
           arguments: [false, true], [false, true])
     func endingSessionRejectsLateExchange(invalidate: Bool, exchangeFails: Bool) async throws {
         fakeAPI.holdExchange = true
@@ -93,15 +94,13 @@ extension MobileAuthServiceTests {
         #expect(!service.hasWebSessionForTesting)
         #expect(fakeAPI.cookieClearCount == 1)
 
-        // Simulate URLSession applying Set-Cookie even though cancellation was requested.
+        // The response arrives anyway, with Set-Cookie on success.
         if exchangeFails { fakeAPI.exchangeError = TestExchangeError.rejected }
         fakeAPI.resumeExchange()
         try #require(await waitUpTo { fakeAPI.exchangeCompletedCount == 1 && attemptSucceeded != nil })
-        #expect(await waitUpTo { fakeAPI.cookieClearCount == 2 })
-        #expect(!service.isAuthenticated)
+        try await staysTrue { !fakeAPI.hasSiteAuthCookie && !service.isAuthenticated }
         #expect(attemptSucceeded == false)
-        #expect(!fakeAPI.hasSiteAuthCookie)
-        #expect(fakeAPI.cookieEvents == ["clear", "set", "clear"])
+        #expect(fakeAPI.cookieEvents == ["clear"])
     }
 
     @Test("Logout clears cookie even when server request fails")

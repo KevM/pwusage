@@ -65,6 +65,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const user = await new UserRepo().getById(claims.userId);
   if (!user || user.is_active !== true) return jsonError('Account is inactive', 401);
+  // A sign out everywhere that commits after the consume above still wins:
+  // the handoff's authority ends with the version it was created under.
+  if ((user.session_version ?? 0) !== claims.sessionVersion) {
+    return jsonError('Login handoff is invalid or expired', 401);
+  }
 
   const currentSites = await new SiteRepo().getSitesForUser(claims.userId);
   const currentSiteIds = new Set(currentSites.map(site => site.id));
@@ -74,9 +79,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return jsonError('No authorized sites remain', 403);
   }
 
-  // Stamp the user's current session_version so a fresh mobile login after a
-  // sign-out-everywhere bump is not immediately treated as revoked.
-  const siteToken = signSiteToken(siteIds, roles, claims.userId, undefined, user.session_version ?? 0);
+  // Stamp the version the handoff was created under, never a newer one read
+  // later: a revocation that races this response leaves the cookie revoked.
+  // A fresh login after sign out everywhere carries the new version already.
+  const siteToken = signSiteToken(siteIds, roles, claims.userId, undefined, claims.sessionVersion);
   const response = NextResponse.json({ ok: true }, {
     headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
   });
