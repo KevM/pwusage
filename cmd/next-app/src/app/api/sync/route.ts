@@ -43,6 +43,10 @@ export async function GET(request: Request) {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
             async start(controller) {
+                // Days rewritten so far, reported on every terminal event (even an
+                // error after some days were written) so the client refreshes only
+                // when stored history really changed.
+                const changedDays: string[] = [];
                 try {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "checking" })}\n\n`));
 
@@ -57,11 +61,11 @@ export async function GET(request: Request) {
                             });
                             controller.enqueue(encoder.encode(`data: ${progressJson}\n\n`));
                         },
-                        { maxTimeMs: 40000 }
+                        { maxTimeMs: 40000, onDayChanged: day => { changedDays.push(day.toISOString()); } }
                     );
 
                     if (result.complete) {
-                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete" })}\n\n`));
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: "complete", changedDays })}\n\n`));
                     } else {
                         const message = result.processedWindows > 0
                             ? `Synced ${result.processedWindows} days, continuing...`
@@ -70,13 +74,14 @@ export async function GET(request: Request) {
                             status: "partial",
                             message,
                             processedWindows: result.processedWindows,
-                            totalWindows: result.totalWindows
+                            totalWindows: result.totalWindows,
+                            changedDays
                         })}\n\n`));
                     }
                     controller.close();
                 } catch (err) {
                     const message = (err instanceof Error) ? err.message : String(err);
-                    const errJson = JSON.stringify({ status: "error", message });
+                    const errJson = JSON.stringify({ status: "error", message, changedDays });
                     controller.enqueue(encoder.encode(`data: ${errJson}\n\n`));
                     controller.close();
                 }

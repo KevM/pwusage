@@ -158,6 +158,38 @@ describe('range imports', () => {
         expect(client.getEnergyHistory).toHaveBeenCalledTimes(2);
     });
 
+    it('reports a changed day only when the record was rewritten', async () => {
+        const written = await new Importer(teslaClient() as unknown as TeslaClient, dayStore())
+            .ensureDataForRange('site', day, nextDay);
+        expect(written.changedDays).toEqual([day]);
+
+        const unchangedStore = dayStore();
+        unchangedStore.writeDay.mockResolvedValue({ status: 'unchanged' } as never);
+        const unchanged = await new Importer(teslaClient() as unknown as TeslaClient, unchangedStore)
+            .ensureDataForRange('site', day, nextDay);
+        expect(unchanged).toMatchObject({ complete: true, processedWindows: 1, changedDays: [] });
+
+        // Nothing planned: an already-covered range changes nothing.
+        mocks.coverage.mockResolvedValue([{ localDayKey: '2026-10-20', count: 288, first: day, last: new Date(+day + 287 * 300000), maxInteriorGapMs: 300000 }]);
+        const covered = await new Importer(teslaClient() as unknown as TeslaClient, dayStore())
+            .ensureDataForRange('site', day, nextDay);
+        expect(covered).toMatchObject({ complete: true, totalWindows: 0, changedDays: [] });
+    });
+
+    it('reports days written before a run fails, through onDayChanged', async () => {
+        mocks.coverage.mockResolvedValue([]);
+        const client = teslaClient();
+        const history = client.getEnergyHistory.getMockImplementation()!;
+        client.getEnergyHistory
+            .mockImplementationOnce(history)
+            .mockRejectedValueOnce(new TeslaRateLimitError(new Date('2026-11-02T13:00:00Z'), 'header'));
+        const changed: Date[] = [];
+        await new Importer(client as unknown as TeslaClient, dayStore())
+            .ensureDataForRange('site', day, new Date(+nextDay + 2 * 86400000), undefined, { onDayChanged: d => changed.push(d) })
+            .catch(() => undefined);
+        expect(changed).toEqual([day]);
+    });
+
     it('refetchDays writes each listed day as a record', async () => {
         const store = dayStore();
         const result = await new Importer(teslaClient() as unknown as TeslaClient, store)

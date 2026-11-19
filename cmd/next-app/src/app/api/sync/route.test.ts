@@ -87,9 +87,33 @@ describe('GET /api/sync', () => {
         const streamText = await readStream(res.body!);
         expect(streamText).toContain('{"status":"checking"}');
         expect(streamText).toContain('{"status":"progress","message":"Syncing day 1..."}');
-        expect(streamText).toContain('{"status":"complete"}');
-        // Re-fetched days past retention go back into the archive.
-        expect(mocks.ensureDataForRange.mock.calls[0][4]).toEqual({ maxTimeMs: 40000 });
+        // Nothing was rewritten, so the client has nothing to refresh.
+        expect(streamText).toContain('{"status":"complete","changedDays":[]}');
+        expect(mocks.ensureDataForRange.mock.calls[0][4]).toMatchObject({ maxTimeMs: 40000 });
+    });
+
+    it('reports the days a partial run rewrote', async () => {
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.createTeslaClientForSite.mockResolvedValue({ siteId: 'site-1' });
+        mocks.ensureDataForRange.mockImplementation(async (_s: string, _a: Date, _b: Date, _p: unknown, options: { onDayChanged: (d: Date) => void }) => {
+            options.onDayChanged(new Date('2026-05-01T05:00:00Z'));
+            return { complete: false, processedWindows: 2, totalWindows: 5, changedDays: [new Date('2026-05-01T05:00:00Z')] };
+        });
+        const res = await GET(new Request('http://localhost/api/sync?siteId=site-1&start=2026-05-01&end=2026-05-06'));
+        const frames = (await readStream(res.body!)).split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+        expect(frames.at(-1)).toMatchObject({ status: 'partial', changedDays: ['2026-05-01T05:00:00.000Z'] });
+    });
+
+    it('reports days written before an error', async () => {
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.createTeslaClientForSite.mockResolvedValue({ siteId: 'site-1' });
+        mocks.ensureDataForRange.mockImplementation(async (_s: string, _a: Date, _b: Date, _p: unknown, options: { onDayChanged: (d: Date) => void }) => {
+            options.onDayChanged(new Date('2026-05-01T05:00:00Z'));
+            throw new Error('Tesla throttled');
+        });
+        const res = await GET(new Request('http://localhost/api/sync?siteId=site-1&start=2026-05-01&end=2026-05-06'));
+        const frames = (await readStream(res.body!)).split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+        expect(frames.at(-1)).toMatchObject({ status: 'error', changedDays: ['2026-05-01T05:00:00.000Z'] });
     });
 
     it('emits partial SSE frame when importer hits time budget', async () => {

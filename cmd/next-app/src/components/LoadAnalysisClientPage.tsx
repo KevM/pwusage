@@ -15,6 +15,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { todayDateStrInTimeZone } from '@/lib/format-utils';
 
 import TagModal from '@/components/TagModal';
+import { HISTORY_CHANGED_EVENT, changedDaysTouchDate, type HistoryChangedDetail } from '@/lib/data-sync-client';
 
 interface LoadAnalysisClientPageProps {
     siteId: string;
@@ -182,6 +183,17 @@ export default function LoadAnalysisClientPage({ siteId, defaultDate, siteTimezo
             cancelled = true;
         };
     }, [siteId, date, displayMode, siteTimezone]);
+
+    // The page's sync imported days near this one: re-read the chart. History
+    // fetches on the client, so a server refresh alone would not update it.
+    useEffect(() => {
+        const onHistoryChanged = (event: Event) => {
+            const detail = (event as CustomEvent<HistoryChangedDetail>).detail;
+            if (detail?.siteId === siteId && changedDaysTouchDate(detail.changedDays, date)) fetchData(false);
+        };
+        window.addEventListener(HISTORY_CHANGED_EVENT, onHistoryChanged);
+        return () => window.removeEventListener(HISTORY_CHANGED_EVENT, onHistoryChanged);
+    }, [siteId, date, fetchData]);
 
     // Live Refresh for Today
     useEffect(() => {
