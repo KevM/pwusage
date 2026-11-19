@@ -16,6 +16,26 @@ extension LoadTimingView {
         let context: LoadTimingForecastEstimator.PlanningContext?
     }
 
+    /// While a foreground/sign-in refresh is still importing today's history, hold
+    /// back the stale-observations warning so it doesn't flash over readings about to be replaced.
+    static func waitsForFreshObservations(
+        unavailableReason: LoadTimingForecastEstimator.UnavailableReason?,
+        refreshSettled: Bool,
+        billUnavailable: Bool
+    ) -> Bool {
+        unavailableReason == .staleBalance && !refreshSettled && !billUnavailable
+    }
+
+    var loadingCard: some View {
+        HStack(spacing: 12) {
+            ProgressView()
+            Text("Loading Smart Shift").foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(22)
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
+    }
+
     /// Re-run on scroll and when the hero moves without one (banner, job or layout change).
     func heroFrameChanged(_ frame: CGRect) {
         heroTracking.frame = frame

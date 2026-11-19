@@ -84,7 +84,7 @@ extension SolarHistoryStore {
         cycleStartDay: String,
         now: Date = .now
     ) async throws -> FlowSyncProgress {
-        let token = beginSync(scope: scope)
+        let token = try await acquireSync(scope: scope)
         defer { endSync(scope: scope) }
 
         var state = try load(scope)
@@ -228,6 +228,104 @@ extension SolarHistoryStore {
         calendar.timeZone = timeZone
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", components.year ?? 1970, components.month ?? 1, components.day ?? 1)
+    }
+
+    /// Serializes `sync` and `syncFlows` per scope so overlapping callers (bill refresh, solar
+    /// actuals, history onboarding) wait their turn instead of cancelling each other's fetches.
+    /// `remove(scope:)` and `removeAll()` still invalidate waiting and active syncs via generation.
+    func acquireSync(scope: SolarForecastSiteScope) async throws -> SolarHistorySyncToken {
+        let initialGeneration = generation
+        let initialScopeGeneration = scopeGenerations[scope, default: 0]
+        do {
+            while activeSyncs[scope, default: 0] > 0 {
+                try Task.checkCancellation()
+                try await waitForSyncTurn(scope: scope)
+                try validateGeneration(initialGeneration, scope: scope, scopeGeneration: initialScopeGeneration)
+            }
+            try Task.checkCancellation()
+            try validateGeneration(initialGeneration, scope: scope, scopeGeneration: initialScopeGeneration)
+        } catch {
+            wakeNextSyncWaiterIfIdle(scope: scope)
+            throw error
+        }
+        activeSyncs[scope, default: 0] += 1
+        return SolarHistorySyncToken(generation: initialGeneration, scopeGeneration: initialScopeGeneration)
+    }
+
+    private func waitForSyncTurn(scope: SolarForecastSiteScope) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                self.enqueueSyncWaiter(scope: scope, id: waiterID, continuation: continuation)
+            }
+        } onCancel: {
+            Task { await self.cancelSyncWaiter(scope: scope, id: waiterID) }
+        }
+    }
+
+    private func enqueueSyncWaiter(
+        scope: SolarForecastSiteScope,
+        id: UUID,
+        continuation: CheckedContinuation<Void, any Error>
+    ) {
+        if Task.isCancelled {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        if activeSyncs[scope, default: 0] == 0 {
+            continuation.resume()
+            return
+        }
+        syncWaiters[scope, default: []].append(SyncWaiter(id: id, continuation: continuation))
+    }
+
+    func endSync(scope: SolarForecastSiteScope) {
+        activeSyncs[scope, default: 1] -= 1
+        guard activeSyncs[scope] == 0 else { return }
+        activeSyncs.removeValue(forKey: scope)
+        lateDays.removeValue(forKey: scope)
+        wakeNextSyncWaiterIfIdle(scope: scope)
+    }
+
+    private func wakeNextSyncWaiterIfIdle(scope: SolarForecastSiteScope) {
+        guard activeSyncs[scope, default: 0] == 0,
+              var waiters = syncWaiters[scope], !waiters.isEmpty else { return }
+        let next = waiters.removeFirst()
+        if waiters.isEmpty {
+            syncWaiters.removeValue(forKey: scope)
+        } else {
+            syncWaiters[scope] = waiters
+        }
+        next.continuation.resume()
+    }
+
+    func cancelAllSyncWaiters(scope: SolarForecastSiteScope) {
+        guard let waiters = syncWaiters.removeValue(forKey: scope) else { return }
+        for waiter in waiters {
+            waiter.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    func cancelAllSyncWaiters() {
+        let allWaiters = syncWaiters
+        syncWaiters.removeAll()
+        for waiters in allWaiters.values {
+            for waiter in waiters {
+                waiter.continuation.resume(throwing: CancellationError())
+            }
+        }
+    }
+
+    private func cancelSyncWaiter(scope: SolarForecastSiteScope, id: UUID) {
+        guard var waiters = syncWaiters[scope],
+              let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        if waiters.isEmpty {
+            syncWaiters.removeValue(forKey: scope)
+        } else {
+            syncWaiters[scope] = waiters
+        }
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     private static func date(daysBefore days: Int, now: Date, timeZone: TimeZone) -> Date {
