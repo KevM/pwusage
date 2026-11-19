@@ -508,4 +508,55 @@ describe('site-live-data mobile response', () => {
         expect(usageMock).toHaveBeenLastCalledWith('site-a', new Date('2026-09-24T00:00:00Z'), new Date(), []);
     });
 
+
+    describe('Products card view', () => {
+        /** 96 quarter-hour buckets: a full rolling day of synthetic history. */
+        function quarterHourBuckets() {
+            const now = Date.now();
+            return Array.from({ length: 96 }, (_, i) => {
+                const timestamp = new Date(now - (96 - i) * 15 * 60 * 1000);
+                return {
+                    timestamp, sample_timestamp: timestamp, site_id: 'site-a', tariff_id: 1, tariff_schedule_id: 3,
+                    load_power: 900 + i, solar_power: 1200 + i, grid_power: 200 - i, battery_power: -100 + i,
+                    battery_soc: null, sample_count: 3,
+                };
+            });
+        }
+
+        it('reads no chart history and computes no headroom', async () => {
+            bucketedMock.mockResolvedValue(quarterHourBuckets());
+            const response = await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=card'));
+            expect(response.status).toBe(200);
+            const body = await response.json();
+            expect(body).toEqual({
+                solarPower: 1200, loadPower: 900, batteryPower: -100, gridPower: 200,
+                percentageCharged: 73, stateOfCharge: null, currentTariff: 'All year - Current',
+            });
+            expect(bucketedMock).not.toHaveBeenCalled();
+            expect(rawMock).not.toHaveBeenCalled();
+            expect(usageMock).not.toHaveBeenCalled();
+            expect(historyRevisionMock).not.toHaveBeenCalled();
+            expect(refreshTodayMock).not.toHaveBeenCalled();
+            // Power only: the live refresh skips site metadata and tariff rows.
+            expect(refreshMock).toHaveBeenCalledWith('site-a', { cacheTtlMs: 60 * 1000, liveOnly: true });
+        });
+
+        it('is a fraction of the full web payload (synthetic 96-bucket day)', async () => {
+            bucketedMock.mockResolvedValue(quarterHourBuckets());
+            const full = await (await GET(new Request('https://example.test/api/site-live-data?siteId=site-a'))).text();
+            const fullBody = JSON.parse(full);
+            const chartBytes = JSON.stringify({ sparklines: fullBody.sparklines, sparklineScales: fullBody.sparklineScales }).length;
+            const card = await (await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=card'))).text();
+            if (process.env.PRINT_PAYLOAD_SIZES) process.stdout.write(`[payload] full web=${full.length} B (chart fields ${chartBytes} B), card=${card.length} B\n`);
+            expect(card.length).toBeLessThan(300);
+            expect(card.length * 10).toBeLessThan(full.length);
+        });
+
+        it('keeps the reconnect and access answers', async () => {
+            refreshMock.mockResolvedValue({ status: 'connection-required' });
+            expect((await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=card'))).status).toBe(409);
+            verifyAccessMock.mockResolvedValue(false);
+            expect((await GET(new Request('https://example.test/api/site-live-data?siteId=site-a&view=card'))).status).toBe(401);
+        });
+    });
 });
