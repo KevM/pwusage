@@ -78,6 +78,7 @@ import {
   type SpanMutationPlan,
   type TariffPlanWriteInput,
 } from './tariff-timeline';
+import { teslaPlansMatch } from './tesla-tou-sync';
 
 export { PublicPlansIneligibleError, UtilityChangedError };
 
@@ -359,8 +360,16 @@ export function buildSiteTariffsTimelineResponse(
     });
     return chosenInPwusage && from <= today && (to === null || to >= today);
   });
+  // Compare plan content, not hashes: a Tesla import and the same rates stored by PWUsage can carry
+  // different hashes. Fall back to the hash only when either tariff is not loaded.
+  const activeManualTariff = activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id)) : undefined;
+  const latestTeslaTariff = latestTesla ? tariffMap.get(Number(latestTesla.id)) : undefined;
   const differsFromActiveManual = Boolean(
-    activeManualRow && latestTesla && latestTesla.content_hash !== activeManualRow.content_hash
+    activeManualRow && latestTesla && (
+      activeManualTariff && latestTeslaTariff
+        ? !teslaPlansMatch(decompileTariffToSeasons(activeManualTariff), decompileTariffToSeasons(latestTeslaTariff))
+        : latestTesla.content_hash !== activeManualRow.content_hash
+    )
   );
 
   const currentYear = Number(today.slice(0, 4));
@@ -3067,9 +3076,17 @@ export class TariffTimelineRepo {
     const periodsRes = { rows: await loadScopePeriodRows(pool, siteId, 'actual') };
     const referencePeriodsRes = { rows: await loadScopePeriodRows(pool, siteId, 'reference') };
 
+    const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
+      `SELECT id, name, updated, content_hash
+       FROM "Tariff"
+       WHERE site_id = $1 AND source = 'tesla'
+       ORDER BY id DESC LIMIT 1`,
+      [siteId]
+    );
     const tariffIds = [...new Set([
       ...periodsRes.rows.map(r => Number(r.tariff_id)),
       ...referencePeriodsRes.rows.map(r => Number(r.tariff_id)),
+      ...(latestTeslaRes.rows[0] ? [Number(latestTeslaRes.rows[0].id)] : []),
     ])];
     const tariffMap = await hydrateTariffs(pool, tariffIds);
 
@@ -3079,13 +3096,6 @@ export class TariffTimelineRepo {
       [siteId]
     );
 
-    const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
-      `SELECT id, name, updated, content_hash
-       FROM "Tariff"
-       WHERE site_id = $1 AND source = 'tesla'
-       ORDER BY id DESC LIMIT 1`,
-      [siteId]
-    );
     const reattrRes = await pool.query<SiteTariffReattributionRow>(
       'SELECT * FROM "SiteTariffReattribution" WHERE site_id = $1',
       [siteId]

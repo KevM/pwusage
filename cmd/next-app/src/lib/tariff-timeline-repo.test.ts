@@ -555,6 +555,38 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(synced.teslaSync.differsFromActiveManual).toBe(false);
   });
 
+  it('differsFromActiveManual is false when the active plan matches Tesla content under a different hash', () => {
+    // Tesla raises the PWUsage buy rate (0.10) to the 0.12 sell rate, so the stored plans match.
+    const season = (id: number, tariffId: number, buy: number, sell: number) => ({
+      id, tariff_id: tariffId, name: 'Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+      buy_rate: buy, sell_rate: sell, schedules: [],
+    });
+    const base = {
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
+      currency: 'USD',
+      today: '2026-11-17',
+      viewerUserId: 'u1',
+      latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-11-01T00:00:00Z') } as never,
+    };
+    const tariffsWith = (teslaBuy: number) => new Map([
+      [10, { id: 10, updated: new Date('2026-10-01T00:00:00Z'), content_hash: 'public-hash', seasons: [season(1, 10, 0.1, 0.12)] } as never],
+      [9, { id: 9, updated: new Date('2026-11-01T00:00:00Z'), content_hash: 'tesla-hash', seasons: [season(2, 9, teslaBuy, 0.12)] } as never],
+    ]);
+    const periodRows = [{
+      period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+      updated_by_user_id: 'u1', name: 'Public', version: 1, content_hash: 'public-hash',
+      selection_id: 5, choice_kind: 'owner',
+    }] as never;
+
+    const matching = buildSiteTariffsTimelineResponse({ ...base, tariffMap: tariffsWith(0.12), periodRows });
+    expect(matching.teslaSync.differsFromActiveManual).toBe(false);
+
+    const diverged = buildSiteTariffsTimelineResponse({ ...base, tariffMap: tariffsWith(0.2), periodRows });
+    expect(diverged.teslaSync.differsFromActiveManual).toBe(true);
+  });
+
   it('buildSiteTariffsTimelineResponse retains choiceKind and displays verification only when exact hash and range match', () => {
     const res = buildSiteTariffsTimelineResponse({
       siteId: 's1',
