@@ -141,6 +141,49 @@ extension MobileTariffsDecodingTests {
         #expect(plan.seasons == [])
     }
 
+    @Test("AI handoff export, preview, commit, and 409 REVIEW_STALE decode cleanly")
+    func decodesAiHandoffPayloadsAndConflict() throws {
+        let exportJSON = ##"{"markdown":"# Prompt","filename":"pwusage-rate-plan-check.md"}"##
+        let exported = try MobileContractDecoder.make().decode(
+            TariffAiHandoffExportResponse.self, from: Data(exportJSON.utf8)
+        )
+        #expect(exported.filename == "pwusage-rate-plan-check.md")
+
+        let batchPreviewJSON = """
+        {
+          "reviewHash": "batch-hash-1",
+          "siteId": "site-1",
+          "currency": "USD",
+          "unit": "kWh",
+          "timezone": "America/Chicago",
+          "notes": ["Added rider"],
+          "sources": ["https://austinenergy.com/rates"],
+          "unchangedActualCount": 0,
+          "unchangedReferenceCount": 1,
+          "actualPreviews": [\(Self.previewJSON)],
+          "referencePreviews": [],
+          "recalculatesHistory": true,
+          "recalculatesFromHistoryStart": false,
+          "recalculationRange": { "fromDate": "2025-03-01", "toDate": null },
+          "affectsPowerwallPlan": false
+        }
+        """
+        let batchPreview = try MobileContractDecoder.make().decode(
+            TariffAiHandoffPreviewResponse.self, from: Data(batchPreviewJSON.utf8)
+        )
+        #expect(batchPreview.reviewHash == "batch-hash-1")
+        #expect(batchPreview.hasChanges)
+        #expect(batchPreview.actualPreviews.count == 1)
+
+        let conflictJSON = "{\"error\":\"Stale\",\"code\":\"REVIEW_STALE\",\"preview\":\(batchPreviewJSON)}"
+        let decodedConflict = RatePlanSelectionConflict.decode(from: Data(conflictJSON.utf8))
+        guard case .aiHandoffReviewStale(let freshBatch) = decodedConflict else {
+            Issue.record("Expected aiHandoffReviewStale")
+            return
+        }
+        #expect(freshBatch.reviewHash == "batch-hash-1")
+    }
+
     private static let snapshotFields = """
     "utilityName": null, "choiceKind": "automatic", "urdbLabel": null, "revisionStart": null,
     "contentHash": "c", "holidaysUseWeekendSchedule": true, "seasons": [], "approximationNotes": [],
