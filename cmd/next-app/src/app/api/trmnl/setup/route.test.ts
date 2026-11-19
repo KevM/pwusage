@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     verifySiteAccess: vi.fn(),
     getCurrentUser: vi.fn(),
+    getAuthorizedSiteIds: vi.fn(),
+    isUserAdmin: vi.fn(),
     getSite: vi.fn(),
     exchangeCodeForToken: vi.fn(),
     fetchMe: vi.fn(),
+    getInstallationByUuid: vi.fn(),
     createInstallation: vi.fn(),
     withRequestContext: vi.fn((fn: () => unknown) => fn()),
 }));
@@ -13,6 +16,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/auth-checks', () => ({
     verifySiteAccess: mocks.verifySiteAccess,
     getCurrentUser: mocks.getCurrentUser,
+    getAuthorizedSiteIds: mocks.getAuthorizedSiteIds,
+    isUserAdmin: mocks.isUserAdmin,
 }));
 
 vi.mock('@/lib/site-repo', () => ({
@@ -25,6 +30,7 @@ vi.mock('@/lib/trmnl-service', () => ({
     TrmnlService: class {
         exchangeCodeForToken = mocks.exchangeCodeForToken;
         fetchMe = mocks.fetchMe;
+        getInstallationByUuid = mocks.getInstallationByUuid;
         createInstallation = mocks.createInstallation;
     }
 }));
@@ -41,6 +47,10 @@ describe('POST /api/trmnl/setup', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: 'installer-1' });
+        mocks.isUserAdmin.mockResolvedValue(false);
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.getInstallationByUuid.mockResolvedValue(null);
+        mocks.createInstallation.mockResolvedValue(1);
         process.env = {
             ...origEnv,
             TRMNL_CLIENT_ID: 'client-id-123',
@@ -90,31 +100,110 @@ describe('POST /api/trmnl/setup', () => {
         expect(mocks.exchangeCodeForToken).not.toHaveBeenCalled();
     });
 
-    it('prioritizes UUID from body over token response, JWT payload, and fetchMe', async () => {
+    it('rejects setup when body UUID hint does not match provider UUID (device A code cannot change device B)', async () => {
         mocks.verifySiteAccess.mockResolvedValue(true);
         mocks.getSite.mockResolvedValue({ id: 'site-1' });
         mocks.exchangeCodeForToken.mockResolvedValue({
-            access_token: 'access-token-1',
-            user_uuid: 'uuid-from-token'
+            access_token: 'device-a-token',
+            user_uuid: 'device-a-uuid'
+        });
+
+        const req = new Request('http://localhost/api/trmnl/setup', {
+            method: 'POST',
+            body: JSON.stringify({
+                code: 'oauth-code-device-a',
+                site_id: 'site-1',
+                uuid: 'device-b-uuid'
+            })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(403);
+        expect(mocks.createInstallation).not.toHaveBeenCalled();
+    });
+
+    it('rejects reassignment of an existing device owned by another site and enforces ownership at the write', async () => {
+        mocks.verifySiteAccess.mockImplementation(async (siteId: string) => siteId === 'site-attacker');
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-attacker']);
+        mocks.getSite.mockResolvedValue({ id: 'site-attacker' });
+        mocks.exchangeCodeForToken.mockResolvedValue({
+            access_token: 'attacker-token',
+            user_uuid: 'device-b-uuid'
+        });
+        mocks.getInstallationByUuid.mockResolvedValue({
+            id: 42,
+            uuid: 'device-b-uuid',
+            site_id: 'site-victim',
+            access_token: 'victim-token'
         });
 
         const req = new Request('http://localhost/api/trmnl/setup', {
             method: 'POST',
             body: JSON.stringify({
                 code: 'oauth-code',
+                site_id: 'site-attacker',
+                uuid: 'device-b-uuid'
+            })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(403);
+        expect(mocks.createInstallation).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 when concurrent write ownership guard rejects overwrite', async () => {
+        mocks.verifySiteAccess.mockResolvedValue(true);
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.getSite.mockResolvedValue({ id: 'site-1' });
+        mocks.exchangeCodeForToken.mockResolvedValue({
+            access_token: 'access-token-1',
+            user_uuid: 'device-b-uuid'
+        });
+        mocks.getInstallationByUuid.mockResolvedValue(null);
+        mocks.createInstallation.mockResolvedValue(null);
+
+        const req = new Request('http://localhost/api/trmnl/setup', {
+            method: 'POST',
+            body: JSON.stringify({
+                code: 'oauth-code',
                 site_id: 'site-1',
-                uuid: 'uuid-from-body'
+                uuid: 'device-b-uuid'
+            })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(403);
+    });
+
+    it('allows legitimate setup when body UUID hint matches provider UUID and relinking across owned sites', async () => {
+        mocks.verifySiteAccess.mockResolvedValue(true);
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1', 'site-2']);
+        mocks.getSite.mockResolvedValue({ id: 'site-2' });
+        mocks.exchangeCodeForToken.mockResolvedValue({
+            access_token: 'access-token-2',
+            user_uuid: 'uuid-from-token'
+        });
+        mocks.getInstallationByUuid.mockResolvedValue({
+            id: 10,
+            uuid: 'uuid-from-token',
+            site_id: 'site-1'
+        });
+
+        const req = new Request('http://localhost/api/trmnl/setup', {
+            method: 'POST',
+            body: JSON.stringify({
+                code: 'oauth-code',
+                site_id: 'site-2',
+                uuid: 'uuid-from-token'
             })
         });
         const res = await POST(req);
         expect(res.status).toBe(200);
         expect(mocks.createInstallation).toHaveBeenCalledWith(
-            'site-1',
-            'uuid-from-body',
+            'site-2',
+            'uuid-from-token',
             null,
             expect.any(Object),
-            'access-token-1',
-            'installer-1'
+            'access-token-2',
+            'installer-1',
+            { allowedExistingSiteIds: ['site-1', 'site-2'] }
         );
     });
 
@@ -141,7 +230,8 @@ describe('POST /api/trmnl/setup', () => {
             null,
             expect.any(Object),
             mockJwt,
-            'installer-1'
+            'installer-1',
+            { allowedExistingSiteIds: ['site-1'] }
         );
     });
 

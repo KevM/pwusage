@@ -17,21 +17,25 @@ export async function POST(request: Request) {
         const now = new Date();
         const autoBackfillLimit = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-        // Instantiate client once using the credentials for the primary authorized site
-        const client = await createTeslaClientForSite(authorizedSites[0], {
-            onTokenUpdate: () => console.log('Tokens refreshed during import')
-        });
-
-        if (!client) {
-            return NextResponse.json({ error: 'Unauthorized or no credentials found' }, { status: 401 });
-        }
-
-        const importer = new Importer(client);
         const errors: Record<string, string> = {};
         let successCount = 0;
+        let noCredentialsCount = 0;
 
         for (const siteId of authorizedSites) {
             try {
+                // Construct a dedicated Tesla client and importer per destination site so
+                // each site's pinned Tesla site mapping and credentials are isolated.
+                const client = await createTeslaClientForSite(siteId, {
+                    onTokenUpdate: () => console.log('Tokens refreshed during import')
+                });
+
+                if (!client) {
+                    noCredentialsCount++;
+                    errors[siteId] = 'Unauthorized or no credentials found';
+                    continue;
+                }
+
+                const importer = new Importer(client);
                 console.log(`Auto-importing site ${siteId} (last 14 days)`);
                 await importer.ensureDataForRange(siteId, autoBackfillLimit, now);
                 successCount++;
@@ -39,6 +43,10 @@ export async function POST(request: Request) {
                 console.error(`Auto-import failed for site ${siteId}:`, err);
                 errors[siteId] = err instanceof Error ? err.message : String(err);
             }
+        }
+
+        if (successCount === 0 && noCredentialsCount === authorizedSites.length) {
+            return NextResponse.json({ error: 'Unauthorized or no credentials found' }, { status: 401 });
         }
 
         const allFailed = authorizedSites.length > 0 && successCount === 0;

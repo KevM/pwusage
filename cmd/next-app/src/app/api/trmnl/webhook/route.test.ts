@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     verifyTrmnlToken: vi.fn(),
     safeTimingSafeEqual: vi.fn((a: string | null | undefined, b: string | null | undefined) => a === b),
+    getInstallationById: vi.fn(),
     getInstallationByUuid: vi.fn(),
     getInstallationByPendingPluginId: vi.fn(),
     getLatestLoosePendingInstallation: vi.fn(),
+    getRecentLoosePendingInstallations: vi.fn(),
     createInstallation: vi.fn(),
     claimPendingInstallationById: vi.fn(),
     getSite: vi.fn(),
@@ -21,9 +23,11 @@ vi.mock('@/lib/trmnl-auth', () => ({
 
 vi.mock('@/lib/trmnl-service', () => ({
     TrmnlService: class {
+        getInstallationById = mocks.getInstallationById;
         getInstallationByUuid = mocks.getInstallationByUuid;
         getInstallationByPendingPluginId = mocks.getInstallationByPendingPluginId;
         getLatestLoosePendingInstallation = mocks.getLatestLoosePendingInstallation;
+        getRecentLoosePendingInstallations = mocks.getRecentLoosePendingInstallations;
         createInstallation = mocks.createInstallation;
         claimPendingInstallationById = mocks.claimPendingInstallationById;
     }
@@ -48,6 +52,8 @@ describe('POST /api/trmnl/webhook', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.safeTimingSafeEqual.mockImplementation((a: string | null | undefined, b: string | null | undefined) => a === b);
+        mocks.getRecentLoosePendingInstallations.mockResolvedValue([]);
+        mocks.claimPendingInstallationById.mockResolvedValue(true);
         mocks.verifyTrmnlToken.mockImplementation(async (_token: string, uuid: string) => ({
             sub: uuid,
             plugin_setting_id: 10
@@ -150,47 +156,146 @@ describe('POST /api/trmnl/webhook', () => {
         );
     });
 
-    it('claims loose pending install only when younger than 15 minutes', async () => {
-        mocks.verifyTrmnlToken.mockResolvedValue({
-            sub: 'dev-1',
-            plugin_setting_id: 10
-        });
+    it('claims exact loose pending install for matching opaque token across overlapping installations', async () => {
         mocks.getInstallationByUuid.mockResolvedValue(null);
         mocks.getInstallationByPendingPluginId.mockResolvedValue(null);
-        mocks.getLatestLoosePendingInstallation.mockResolvedValue({
-            id: 'loose-1',
-            site_id: 'site-b',
-            created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            json: {}
-        });
+        mocks.getRecentLoosePendingInstallations.mockResolvedValue([
+            {
+                id: 202,
+                uuid: null,
+                site_id: 'site-b',
+                access_token: 'opaque-token-b',
+                created_at: new Date(Date.now() - 1 * 60 * 1000).toISOString(),
+                json: {}
+            },
+            {
+                id: 101,
+                uuid: null,
+                site_id: 'site-a',
+                access_token: 'opaque-token-a',
+                created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+                json: {}
+            }
+        ]);
 
         const req = new Request('http://localhost/api/trmnl/webhook', {
             method: 'POST',
-            headers: { Authorization: 'Bearer jwt.token.val' },
-            body: JSON.stringify({ user: { uuid: 'dev-1', plugin_setting_id: 10 } })
+            headers: { Authorization: 'Bearer opaque-token-a' },
+            body: JSON.stringify({ user: { uuid: 'dev-a', plugin_setting_id: 10 } })
         });
         const res = await POST(req);
         expect(res.status).toBe(200);
         expect(mocks.claimPendingInstallationById).toHaveBeenCalledWith(
-            'loose-1',
-            'dev-1',
+            101,
+            'dev-a',
             10,
             expect.any(Object)
         );
     });
 
-    it('does not claim stale loose pending install older than 15 minutes', async () => {
+    it('leaves loose pending install untouched when signed JWT webhook has no plugin_setting_id correlation', async () => {
+        mocks.verifyTrmnlToken.mockResolvedValue({
+            sub: 'dev-b',
+            plugin_setting_id: 99
+        });
+        mocks.getInstallationByUuid.mockResolvedValue(null);
+        mocks.getInstallationByPendingPluginId.mockResolvedValue(null);
+        mocks.getRecentLoosePendingInstallations.mockResolvedValue([
+            {
+                id: 101,
+                uuid: null,
+                site_id: 'site-a',
+                access_token: 'opaque-token-a',
+                created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+                json: {}
+            }
+        ]);
+
+        const req = new Request('http://localhost/api/trmnl/webhook', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer jwt.token.val' },
+            body: JSON.stringify({ user: { uuid: 'dev-b', plugin_setting_id: 99 } })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(200);
+        expect(mocks.claimPendingInstallationById).not.toHaveBeenCalled();
+    });
+
+    it('does not claim stale loose pending install older than 15 minutes even with matching opaque token', async () => {
+        mocks.getInstallationByUuid.mockResolvedValue(null);
+        mocks.getInstallationByPendingPluginId.mockResolvedValue(null);
+        mocks.getRecentLoosePendingInstallations.mockResolvedValue([
+            {
+                id: 'stale-1',
+                uuid: null,
+                site_id: 'site-b',
+                access_token: 'opaque-secret',
+                created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+                json: {}
+            }
+        ]);
+
+        const req = new Request('http://localhost/api/trmnl/webhook', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer opaque-secret' },
+            body: JSON.stringify({ user: { uuid: 'dev-1', plugin_setting_id: 10 } })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(401);
+        expect(mocks.claimPendingInstallationById).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 Conflict when a competing claim already claimed the pending row', async () => {
+        mocks.verifyTrmnlToken.mockResolvedValue({
+            sub: 'dev-2',
+            plugin_setting_id: 10
+        });
+        mocks.getInstallationByUuid.mockResolvedValue(null);
+        mocks.getInstallationByPendingPluginId.mockResolvedValue({
+            id: 500,
+            uuid: null,
+            site_id: 'site-a',
+            installed_by_user_id: 'user-a',
+            created_at: new Date().toISOString(),
+            json: {}
+        });
+        mocks.claimPendingInstallationById.mockResolvedValue(false);
+        mocks.getInstallationById.mockResolvedValue({
+            id: 500,
+            uuid: 'dev-1',
+            plugin_setting_id: 10,
+            site_id: 'site-a'
+        });
+
+        const req = new Request('http://localhost/api/trmnl/webhook', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer jwt.token.val' },
+            body: JSON.stringify({ user: { uuid: 'dev-2', plugin_setting_id: 10, email: 'attacker@example.com' } })
+        });
+        const res = await POST(req);
+        expect(res.status).toBe(409);
+        expect(mocks.updateUserEmail).not.toHaveBeenCalled();
+    });
+
+    it('handles a legitimate retry idempotently when the same device already won the claim', async () => {
         mocks.verifyTrmnlToken.mockResolvedValue({
             sub: 'dev-1',
             plugin_setting_id: 10
         });
         mocks.getInstallationByUuid.mockResolvedValue(null);
-        mocks.getInstallationByPendingPluginId.mockResolvedValue(null);
-        mocks.getLatestLoosePendingInstallation.mockResolvedValue({
-            id: 'stale-1',
-            site_id: 'site-b',
-            created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        mocks.getInstallationByPendingPluginId.mockResolvedValue({
+            id: 500,
+            uuid: null,
+            site_id: 'site-a',
+            created_at: new Date().toISOString(),
             json: {}
+        });
+        mocks.claimPendingInstallationById.mockResolvedValue(false);
+        mocks.getInstallationById.mockResolvedValue({
+            id: 500,
+            uuid: 'dev-1',
+            plugin_setting_id: 10,
+            site_id: 'site-a'
         });
 
         const req = new Request('http://localhost/api/trmnl/webhook', {
@@ -200,7 +305,6 @@ describe('POST /api/trmnl/webhook', () => {
         });
         const res = await POST(req);
         expect(res.status).toBe(200);
-        expect(mocks.claimPendingInstallationById).not.toHaveBeenCalled();
     });
 
     it('preserves existing component screen config when updating existing installation', async () => {

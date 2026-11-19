@@ -22,6 +22,10 @@ import {
     TrmnlComponentConfig,
     TrmnlComponentScreen
 } from '@/lib/trmnl-component-config';
+import {
+    loadManageInitialData,
+    stripManageCredentialsFromUrl
+} from '@/lib/trmnl-manage-client';
 
 interface ScreenPreviewState {
     html: string;
@@ -41,8 +45,10 @@ function getScreenLabel(index: number): string {
 function ManageContent() {
     const searchParams = useSearchParams();
     const uuid = searchParams.get('uuid');
-    const token = searchParams.get('token') || searchParams.get('jwt');
+    const urlToken = searchParams.get('token') || searchParams.get('jwt');
+    const handoffParam = searchParams.get('handoff');
     const pluginSettingIdParam = searchParams.get('plugin_setting_id') || searchParams.get('plugin_id');
+    const trmnlTokenRef = useRef<string | null>(urlToken);
 
     const [sites, setSites] = useState<{ id: string, name: string, utility: string }[]>([]);
     const [selectedSite, setSelectedSite] = useState('');
@@ -81,56 +87,67 @@ function ManageContent() {
     useEffect(() => {
         if (!uuid) return;
 
-        if (!token) {
-            console.warn('Missing Trmnl security token in URL');
+        if (urlToken) {
+            trmnlTokenRef.current = urlToken;
+        }
+
+        if (typeof window !== 'undefined') {
+            stripManageCredentialsFromUrl(window.location.href, (nextUrl) => {
+                window.history.replaceState(null, '', nextUrl);
+            });
         }
 
         const fetchData = async () => {
             let redirecting = false;
             try {
-                const [sitesRes, installRes] = await Promise.all([
-                    fetch('/api/sites'),
-                    fetch(`/api/trmnl/manage?uuid=${uuid}&token=${encodeURIComponent(token || '')}`)
-                ]);
-
-                if (installRes.status === 401 || sitesRes.status === 401) {
-                    redirecting = true;
-                    const siteToken = token || searchParams.get('jwt') || searchParams.get('token');
-                    const tokenParam = siteToken ? `&jwt=${encodeURIComponent(siteToken)}` : '';
-                    const callbackUrl = encodeURIComponent(`/trmnl/manage?uuid=${uuid}${tokenParam}`);
-                    // OAuth starts in a route handler; use document navigation to avoid RSC retries.
-                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-                    window.location.assign(`/login?callback=${callbackUrl}`);
-                    return;
+                const result = await loadManageInitialData({
+                    uuid,
+                    initialToken: trmnlTokenRef.current,
+                    handoffId: handoffParam,
+                    pluginSettingId: pluginSettingIdParam,
+                    fetchImpl: fetch,
+                    onRedirect: (loginUrl) => {
+                        redirecting = true;
+                        window.location.assign(loginUrl);
+                    },
+                });
+                if (result.token) {
+                    trmnlTokenRef.current = result.token;
                 }
+                if (result.redirecting) return;
 
-                let sitesData: { id: string, name: string, utility: string }[] = [];
-                if (sitesRes.ok) {
-                    sitesData = await sitesRes.json();
-                    setSites(sitesData);
-                }
+                const sitesData = result.sites;
+                setSites(sitesData);
 
-                if (installRes.ok) {
-                    const installData = await installRes.json();
-                    if (installData) {
-                        if (installData.site_id) setSelectedSite(installData.site_id);
-                        if (installData.plugin_setting_id) setPluginSettingId(installData.plugin_setting_id);
+                const installData = result.installData;
+                if (installData) {
+                    if (installData.site_id) setSelectedSite(installData.site_id);
+                    if (installData.plugin_setting_id) setPluginSettingId(installData.plugin_setting_id);
 
-                        const normalizedScreens = normalizeTrmnlComponentScreens(installData.component_screens ?? null);
-                        setComponentScreens(normalizedScreens);
-                        setEditingScreenId(normalizedScreens[0]?.id ?? 'screen-1');
-                    }
-                    if ((!installData || !installData.plugin_setting_id) && pluginSettingIdParam) {
+                    const normalizedScreens = normalizeTrmnlComponentScreens(
+                        (installData.component_screens ?? null) as Parameters<typeof normalizeTrmnlComponentScreens>[0]
+                    );
+                    setComponentScreens(normalizedScreens);
+                    setEditingScreenId(normalizedScreens[0]?.id ?? 'screen-1');
+                    if (!installData.plugin_setting_id && pluginSettingIdParam) {
                         const parsed = Number.parseInt(pluginSettingIdParam, 10);
                         if (Number.isInteger(parsed) && parsed > 0) {
                             setPluginSettingId(parsed);
                         }
                     }
-                    if ((!installData || !installData.site_id) && sitesData.length > 0) {
+                    if (!installData.site_id && sitesData.length > 0) {
                         setSelectedSite(sitesData[0].id);
                     }
-                } else if (sitesData.length > 0) {
-                    setSelectedSite(sitesData[0].id);
+                } else {
+                    if (pluginSettingIdParam) {
+                        const parsed = Number.parseInt(pluginSettingIdParam, 10);
+                        if (Number.isInteger(parsed) && parsed > 0) {
+                            setPluginSettingId(parsed);
+                        }
+                    }
+                    if (sitesData.length > 0) {
+                        setSelectedSite(sitesData[0].id);
+                    }
                 }
             } catch {
                 setError('Failed to load data');
@@ -140,7 +157,7 @@ function ManageContent() {
         };
 
         fetchData();
-    }, [uuid, token, searchParams, pluginSettingIdParam]);
+    }, [uuid, urlToken, handoffParam, pluginSettingIdParam]);
 
     useEffect(() => {
         if (!selectedSite) return;
@@ -308,7 +325,7 @@ function ManageContent() {
                 body: JSON.stringify({
                     uuid,
                     site_id: selectedSite,
-                    token: token || null,
+                    token: trmnlTokenRef.current || null,
                     plugin_setting_id: pluginSettingId,
                     component_screens: payloadScreens
                 })

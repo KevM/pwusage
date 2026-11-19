@@ -2,7 +2,7 @@ import { assertTeslaConnection, isTeslaConnectionRequired } from './tesla-refres
 import { Site, SiteWithTariffs, TrmnlInstallation } from './db';
 import { TeslaClient, TeslaClientConfig, isTeslaAuthError } from './tesla-client';
 import { SiteRepo } from './site-repo';
-import { verifySiteToken } from './auth-jwt';
+import { validateSessionAgainstAuthState, verifySiteToken } from './auth-jwt';
 import { UserRepo, UserAuthState } from './user-repo';
 import { createEnergyRepo } from './energy-repo-factory';
 import { EnergyRepo, UsageData } from './energy-repo';
@@ -80,15 +80,18 @@ export class SiteService {
                 // access until the token expires. Re-check against the DB.
                 if (decoded.sub) {
                     const authState = await this.getAuthState(decoded.sub);
-                    if (!authState || !authState.isActive) {
-                        logSessionRejection(authState ? 'inactive-account' : 'missing-account', decoded.sub);
+                    const rejection = validateSessionAgainstAuthState(
+                        { sub: decoded.sub, sv: decoded.sv, orig_iat: decoded.orig_iat },
+                        authState
+                    );
+                    if (rejection) {
+                        logSessionRejection(rejection, decoded.sub);
+                        if (rejection === 'revoked-session') {
+                            console.warn(`[SiteService] getAuthorizedSites blocked revoked session for user ${decoded.sub}`);
+                            throw new Error('Unauthorized: Revoked session');
+                        }
                         console.warn(`[SiteService] getAuthorizedSites blocked for revoked/inactive user: ${decoded.sub}`);
                         throw new Error('Unauthorized: Revoked or inactive user');
-                    }
-                    if ((decoded.sv ?? 0) < authState.sessionVersion) {
-                        logSessionRejection('revoked-session', decoded.sub);
-                        console.warn(`[SiteService] getAuthorizedSites blocked revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
-                        throw new Error('Unauthorized: Revoked session');
                     }
                     // Close stale claims: derive site membership from the DB, not the JWT.
                     const userSites = await this.deps.siteRepo.getSitesForUser(decoded.sub);
@@ -310,17 +313,16 @@ export class SiteService {
             if (decoded) {
                 if (decoded.sub) {
                     // The JWT claims are trusted offline, so a revoked/deactivated
-                    // user or a session revoked by sign-out-everywhere would
-                    // otherwise keep access until the token expires. Re-check.
+                    // user, a session revoked by sign-out-everywhere, or a token
+                    // predating a recreated account would otherwise keep access.
                     const authState = await this.getAuthState(decoded.sub);
-                    if (!authState || !authState.isActive) {
-                        logSessionRejection(authState ? 'inactive-account' : 'missing-account', decoded.sub);
-                        console.warn(`[SiteService] validateSiteAccess blocked for revoked/inactive user: ${decoded.sub}`);
-                        return false;
-                    }
-                    if ((decoded.sv ?? 0) < authState.sessionVersion) {
-                        logSessionRejection('revoked-session', decoded.sub);
-                        console.warn(`[SiteService] validateSiteAccess blocked revoked session for user ${decoded.sub} (token sv=${decoded.sv ?? 0} < db sv=${authState.sessionVersion})`);
+                    const rejection = validateSessionAgainstAuthState(
+                        { sub: decoded.sub, sv: decoded.sv, orig_iat: decoded.orig_iat },
+                        authState
+                    );
+                    if (rejection || !authState) {
+                        logSessionRejection(rejection ?? 'missing-account', decoded.sub);
+                        console.warn(`[SiteService] validateSiteAccess blocked session for user ${decoded.sub}: ${rejection}`);
                         return false;
                     }
                     // Close stale claims: authorize from DB roles + DB site membership.

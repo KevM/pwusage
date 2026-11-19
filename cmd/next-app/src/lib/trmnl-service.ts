@@ -4,8 +4,20 @@ import { TrmnlInstallationRepo } from './trmnl-installation-repo';
 export class TrmnlService {
     private dbRepo = new TrmnlInstallationRepo();
 
-    async createInstallation(siteId: string, uuid: string | null = null, pluginSettingId: number | null = null, details: unknown = null, accessToken: string | null = null, installedByUserId: string | null = null): Promise<number> {
-        return this.dbRepo.create(siteId, uuid, pluginSettingId, details, accessToken, installedByUserId);
+    async createInstallation(
+        siteId: string,
+        uuid: string | null = null,
+        pluginSettingId: number | null = null,
+        details: unknown = null,
+        accessToken: string | null = null,
+        installedByUserId: string | null = null,
+        options?: { allowedExistingSiteIds?: string[] | null }
+    ): Promise<number | null> {
+        return this.dbRepo.create(siteId, uuid, pluginSettingId, details, accessToken, installedByUserId, options);
+    }
+
+    async getInstallationById(id: number): Promise<TrmnlInstallation | undefined> {
+        return this.dbRepo.findById(id);
     }
 
     async updateInstallation(uuid: string, pluginSettingId: number) {
@@ -79,8 +91,12 @@ export class TrmnlService {
         return this.dbRepo.findLatestLoosePending();
     }
 
-    async claimPendingInstallationById(id: number, uuid: string, pluginSettingId: number, json: unknown) {
-        await this.dbRepo.claimPendingById(id, uuid, pluginSettingId, json);
+    async getRecentLoosePendingInstallations(maxAgeMs: number = 15 * 60 * 1000): Promise<TrmnlInstallation[]> {
+        return this.dbRepo.findRecentLoosePending(maxAgeMs);
+    }
+
+    async claimPendingInstallationById(id: number, uuid: string, pluginSettingId: number, json: unknown): Promise<boolean> {
+        return this.dbRepo.claimPendingById(id, uuid, pluginSettingId, json);
     }
 
     async claimPendingInstallation(pluginSettingId: number, uuid: string, json: unknown) {

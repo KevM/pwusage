@@ -134,36 +134,34 @@ match. Rationale: [rate plan selection design](docs/plans/2026-11-17-rate-plan-s
 
 **Decision:** `POST /api/trmnl/setup` may create a "loose pending"
 `TrmnlInstallation` row with **NULL `uuid` and NULL `plugin_setting_id`** — just
-`site_id` + the Trmnl access token. The next Trmnl webhook to arrive within a
-15-minute window claims it (`getLatestLoosePendingInstallation` →
-`claimPendingInstallationById`). See `src/app/api/trmnl/setup/route.ts` and
+`site_id` + the Trmnl access token. See `src/app/api/trmnl/setup/route.ts` and
 `src/app/api/trmnl/webhook/route.ts`.
+
+**How claiming is bound:**
+- **Opaque-token webhooks** (`findRecentLoosePending` within the 15-minute window)
+  verify the `Bearer` token against the stored `access_token` (timing-safe) and
+  carry that exact authenticated row through to an atomic `claimPendingById`
+  (`WHERE id = $4 AND uuid IS NULL AND (plugin_setting_id IS NULL OR plugin_setting_id = $2)`).
+- **Signed JWT webhooks** only claim by verified `uuid` or `plugin_setting_id`.
+  When neither correlates to a pending row, loose pending rows are left
+  untouched for authenticated completion rather than guessing by recency.
+- **Competing claims & retries:** `claimPendingById` is atomic (`AND uuid IS NULL`);
+  a legitimate retry by the same device succeeds idempotently, while a competing
+  device receives `409 Conflict`.
 
 **Why it exists:** At setup time we try three ways to learn the device UUID (OAuth
 response fields → JWT decode → Trmnl `/api/me`). All three can fail. When they
-do, we still want the install to succeed, so we persist what we have and let the
-webhook — which *does* carry `user.uuid` and `plugin_setting_id` — finish the
-link. The matching is intentionally loose (most-recent, time-boxed) because the
-setup call and the webhook can't always be correlated by ID.
-
-**Why it's safe here:** this is a single-user / sequential-install personal app,
-so "the most recent loose pending record within 15 minutes is the one this
-webhook belongs to" holds. The 15-minute window and most-recent heuristic bound
-the mis-claim risk.
+do, we still want the install to succeed, so we persist what we have rather than
+discarding the setup.
 
 **Guardrails — do not "simplify" by:**
 - Deleting the loose-pending fallback because the UUID "should always be
   available." It isn't always; removing it makes installs silently fail when
   UUID resolution fails.
-- Widening or removing the 15-minute freshness window, or matching without it —
-  that's the safety bound against claiming an unrelated install.
-- Assuming this generalizes to multi-tenant. If this app ever becomes
-  multi-user, the most-recent heuristic must be replaced with a real correlation
-  token; flag it, don't quietly keep it.
-
-The webhook path also still requires the opaque token to match the stored
-`access_token` (timing-safe) before claiming — the loose match narrows *which*
-row, it does not replace authentication.
+- Allowing signed JWT webhooks to claim an uncorrelated loose pending row by
+  recency — that lets an unrelated installation hijack another user's pending setup.
+- Removing `AND uuid IS NULL` from `claimPendingById` — that reopens the race
+  where a competing webhook overwrites a completed claim.
 
 ---
 

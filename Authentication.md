@@ -233,11 +233,14 @@ email and a later verified login keyed a second row by Tesla `sub`.
 
 ### 3. Runtime authorization checks
 
-Common checks (all DB-derived after JWT verification):
+Common checks (all DB-derived after JWT verification via `validateSessionAgainstAuthState`):
 - `verifySiteAccess(siteId)` in `auth-checks.ts`: verifies the `site_auth` JWT,
   then checks the user is active, that the token's `sv` is not behind the DB
-  `session_version`, and authorizes against DB site memberships and roles.
-- `SiteService.validateSiteAccess(siteId)`: same checks, then Tesla API fallback if client exists.
+  `session_version`, that `orig_iat` does not predate account creation
+  (`tokenPredatesAccount`), and authorizes against DB site memberships and roles.
+- `SiteService.getAuthorizedSites()` and `SiteService.validateSiteAccess(siteId)`:
+  apply the same `validateSessionAgainstAuthState` checks (including
+  `tokenPredatesAccount`), then Tesla API fallback if client exists.
 
 Protected surfaces include:
 - Site pages (`/site/[id]`)
@@ -450,31 +453,54 @@ Route: `POST /api/trmnl/setup`
 - Requires `{ code, site_id }`.
 - Verifies user can access `site_id` via `verifySiteAccess`.
 - Exchanges Trmnl OAuth code for Trmnl access token.
-- Resolves device UUID via:
-1. OAuth payload fields
-2. JWT payload decode attempt
-3. Trmnl `/api/me`
+- Resolves device UUID exclusively from provider credentials via:
+  1. OAuth payload fields
+  2. JWT payload decode attempt
+  3. Trmnl `/api/me`
+- Any client-supplied `uuid` is treated as a hint only: mismatches against the
+  provider UUID are rejected with `403`, and an unverified client `uuid` is
+  never used when provider UUID resolution fails.
+- If the resolved device UUID already exists on another site, requires
+  ownership of that existing site (or admin role) and enforces the ownership
+  condition atomically at the SQL write (`WHERE "TrmnlInstallation".site_id = ANY(...)`).
 - Creates/updates `TrmnlInstallation` with `site_id`, `uuid` (if known), plugin setting id, and Trmnl token.
 
 Pending flows:
-- If UUID lookup fails, records a pending installation (with or without `plugin_setting_id`) for later claim by webhook.
+- If UUID lookup fails, records a pending installation (with or without `plugin_setting_id`) for later claim.
 
 ### 3. Webhook finalization
 Route: `POST /api/trmnl/webhook`
 - Accepts webhook payload with `user.uuid` and `plugin_setting_id`.
-- If installation exists by UUID, updates details.
-- Else claims pending installation record (plugin-id match first, then latest loose pending).
+- For opaque-token webhooks, verifies the token against stored `access_token`
+  values (existing UUID row, pending `plugin_setting_id` row, or recent loose
+  pending rows within 15 minutes) and carries that exact authenticated row
+  through to the write.
+- For signed JWT webhooks, matches by verified `uuid` or `plugin_setting_id`;
+  if neither correlates to an installation, loose pending rows are left
+  untouched for authenticated completion.
+- Pending claims execute atomically (`WHERE id = $4 AND uuid IS NULL AND (plugin_setting_id IS NULL OR plugin_setting_id = $2)`):
+  legitimate retries by the same device are idempotent (`200`), while competing
+  claims return `409`.
 - Also opportunistically backfills user email when possible.
 
 ### 4. Manage page and manage API
-Page: `/trmnl/manage?uuid=...&token=...`
-- Fetches current install plus sites via `/api/trmnl/manage` and `/api/sites`.
-- If unauthorized, redirects to login with callback preserving UUID/token.
+Page: `/trmnl/manage?uuid=...&token=...` (provider launch format)
+- Immediately strips `token`, `jwt`, and `handoff` from the visible browser URL
+  via `history.replaceState` and keeps the credential out of subsequent API URLs
+  and login return URLs.
+- Fetches current install and sites via `GET /api/trmnl/manage?uuid=...`
+  (passing any TRMNL JWT in the `Authorization: Bearer` header) and `GET /api/sites`.
+- If unauthorized (`401`) while holding a TRMNL JWT, exchanges it via
+  `POST /api/trmnl/manage/handoff` for a short-lived server-side
+  `TrmnlManageHandoff` ID bound to an HttpOnly `trmnl_manage_binding` cookie and
+  `uuid`, then redirects to `/login?callback=/trmnl/manage?uuid=...&handoff=...`.
+  On return, `POST /api/trmnl/manage/handoff/consume` atomically redeems the
+  one-time handoff.
 
 Route: `GET /api/trmnl/manage`
 - Authorizes with either:
-1. Valid Trmnl JWT (`token` query) for UUID, or
-2. Valid `site_auth` ownership fallback for an existing installation (user must own the currently linked site, unless admin).
+  1. Valid Trmnl JWT (`Authorization: Bearer` / `X-Trmnl-Token` header) for UUID, or
+  2. Valid `site_auth` ownership fallback for an existing installation (user must own the currently linked site, unless admin).
 - Returns current linked `site_id` and `plugin_setting_id`.
 
 Route: `POST /api/trmnl/manage`
