@@ -283,6 +283,42 @@ Hope this helps!
     expect(parsed.actualPeriods[0].seasons).toEqual(midMonthSeasons);
   });
 
+  it('allows minute-resolution schedules (e.g., 06:07) to round-trip and rejects uncovered Feb 29', () => {
+    const timeline = sampleTimeline();
+    timeline.periods[0].seasons = [
+      {
+        name: 'All Year',
+        fromMonth: 1,
+        toMonth: 12,
+        weekdayPeriods: [
+          { touName: 'OFF_PEAK', fromHour: 0, fromMinute: 0, toHour: 6, toMinute: 7, buyRate: 0.1, sellRate: 0.05 },
+          { touName: 'ON_PEAK', fromHour: 6, fromMinute: 7, toHour: 24, toMinute: 0, buyRate: 0.25, sellRate: 0.05 },
+        ],
+        weekendPeriods: FLAT_SEASONS[0].weekendPeriods,
+      },
+    ];
+    const md = buildRatePlanAiHandoffMarkdown(timeline, '2026-11-18');
+    const parsed = parseRatePlanAiHandoffInput(md, '2026-11-18');
+    expect(parsed.actualPeriods[0].seasons[0].weekdayPeriods[0].toMinute).toBe(7);
+
+    const missingLeapDay = JSON.stringify({
+      schema: AI_HANDOFF_SCHEMA,
+      actualPeriods: [
+        {
+          name: 'Gap On Leap Day',
+          effectiveFrom: '2024-01-01',
+          effectiveTo: null,
+          seasons: [
+            { ...FLAT_SEASONS[0], name: 'JanFeb', fromMonth: 1, fromDay: 1, toMonth: 2, toDay: 28 },
+            { ...FLAT_SEASONS[0], name: 'Rest', fromMonth: 3, fromDay: 1, toMonth: 12, toDay: 31 },
+          ],
+        },
+      ],
+      referencePeriods: [],
+    });
+    expect(() => parseRatePlanAiHandoffInput(missingLeapDay, '2026-11-18')).toThrow(/without gaps/i);
+  });
+
   it('rejects wrong schema or empty periods across both scopes', () => {
     expect(() =>
       parseRatePlanAiHandoffInput(JSON.stringify({ schema: 'wrong/v1', actualPeriods: [], referencePeriods: [] }), '2026-11-18')

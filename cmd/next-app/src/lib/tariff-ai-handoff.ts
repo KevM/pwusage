@@ -482,7 +482,8 @@ function parseScopePeriods(
         effectiveTo: item.effectiveTo === null ? null : item.effectiveTo.trim(),
         seasons: item.seasons as TariffSeasonInput[],
       },
-      todaySiteLocal
+      todaySiteLocal,
+      { allowMinuteResolution: true }
     );
   });
 

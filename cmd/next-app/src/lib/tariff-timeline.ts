@@ -6,14 +6,13 @@ import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from 
 export const MAX_EFFECTIVE_PERIODS_PER_SITE = 50;
 const VALID_TOU_NAMES = new Set<TariffPeriodName>(['ON_PEAK', 'PARTIAL_PEAK', 'OFF_PEAK', 'SUPER_OFF_PEAK']);
 const MONTH_MAX_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-const NON_LEAP_MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-function dayOfYear365(month: number, day: number): number {
+function dayOfYear366(month: number, day: number): number {
   let offset = 0;
   for (let i = 0; i < month - 1; i++) {
-    offset += NON_LEAP_MONTH_DAYS[i];
+    offset += MONTH_MAX_DAYS[i];
   }
-  return offset + Math.min(day, NON_LEAP_MONTH_DAYS[month - 1]) - 1;
+  return offset + day - 1;
 }
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -118,33 +117,48 @@ function checkRate(value: number, label: string): number {
   return rounded;
 }
 
-function slotIndex(hour: number, minute: number, allow24 = false): number {
-  if (!Number.isInteger(hour) || (minute !== 0 && minute !== 30)) {
+function slotIndex(hour: number, minute: number, allow24 = false, allowMinuteResolution = false): number {
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) {
+    throw new TariffValidationError('Period boundaries must use integer hours and minutes');
+  }
+  if (!allowMinuteResolution && minute !== 0 && minute !== 30) {
     throw new TariffValidationError('Period boundaries must use 30-minute increments');
   }
-  if (hour === 24 && minute === 0 && allow24) return 48;
+  if (minute < 0 || minute > 59) {
+    throw new TariffValidationError('Minute out of range (0..59)');
+  }
+  if (hour === 24 && minute === 0 && allow24) {
+    return allowMinuteResolution ? 1440 : 48;
+  }
   if (hour < 0 || hour > 23) throw new TariffValidationError('Hour out of range (0..23)');
-  return hour * 2 + (minute === 30 ? 1 : 0);
+  return allowMinuteResolution ? hour * 60 + minute : hour * 2 + (minute === 30 ? 1 : 0);
 }
 
-function validateDaySlots(periods: TimePeriodWindowInput[], label: string): TimePeriodWindowInput[] {
+function validateDaySlots(
+  periods: TimePeriodWindowInput[],
+  label: string,
+  allowMinuteResolution = false
+): TimePeriodWindowInput[] {
   if (!Array.isArray(periods) || periods.length === 0 || periods.length > 48) {
     throw new TariffValidationError(`${label} must contain 1–48 periods covering 24 hours`);
   }
-  const seen = new Array<boolean>(48).fill(false);
+  const totalSlots = allowMinuteResolution ? 1440 : 48;
+  const seen = new Array<boolean>(totalSlots).fill(false);
   const normalized: TimePeriodWindowInput[] = periods.map(p => {
     if (!VALID_TOU_NAMES.has(p.touName)) {
       throw new TariffValidationError(`Invalid period name: ${p.touName}`);
     }
-    const startSlot = slotIndex(p.fromHour, p.fromMinute, false);
-    const endSlot = slotIndex(p.toHour, p.toMinute, true);
-    const isSingleAllDay = periods.length === 1 && startSlot === 0 && (endSlot === 48 || endSlot === 0);
+    const startSlot = slotIndex(p.fromHour, p.fromMinute, false, allowMinuteResolution);
+    const endSlot = slotIndex(p.toHour, p.toMinute, true, allowMinuteResolution);
+    const isSingleAllDay = periods.length === 1 && startSlot === 0 && (endSlot === totalSlots || endSlot === 0);
     if (startSlot === endSlot && !isSingleAllDay) {
       throw new TariffValidationError(`${label} contains a zero-length period`);
     }
-    const span = isSingleAllDay ? 48 : (endSlot > startSlot ? endSlot - startSlot : (48 - startSlot) + endSlot);
+    const span = isSingleAllDay
+      ? totalSlots
+      : (endSlot > startSlot ? endSlot - startSlot : (totalSlots - startSlot) + endSlot);
     for (let offset = 0; offset < span; offset++) {
-      const idx = (startSlot + offset) % 48;
+      const idx = (startSlot + offset) % totalSlots;
       if (seen[idx]) {
         throw new TariffValidationError(`${label} contains overlapping rate periods`);
       }
@@ -168,7 +182,16 @@ function validateDaySlots(periods: TimePeriodWindowInput[], label: string): Time
 
 export const MAX_PLAN_NAME_LENGTH = 64;
 
-export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLocal: string): TariffPlanWriteInput {
+export interface ValidateTariffPlanOptions {
+  allowMinuteResolution?: boolean;
+}
+
+export function validateTariffPlanInput(
+  input: TariffPlanWriteInput,
+  todaySiteLocal: string,
+  options?: ValidateTariffPlanOptions
+): TariffPlanWriteInput {
+  const allowMinuteResolution = options?.allowMinuteResolution ?? false;
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   if (!name || name.length > MAX_PLAN_NAME_LENGTH) {
     throw new TariffValidationError('Rate plan name must be 1–64 characters');
@@ -177,7 +200,7 @@ export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLo
   if (!Array.isArray(input.seasons) || input.seasons.length < 1 || input.seasons.length > 6) {
     throw new TariffValidationError('Rate plan must include 1–6 seasons');
   }
-  const dayOwners = new Array<boolean>(365).fill(false);
+  const dayOwners = new Array<boolean>(366).fill(false);
   const seasons: TariffSeasonInput[] = input.seasons.map(season => {
     const seasonName = typeof season.name === 'string' ? season.name.trim() : '';
     if (!seasonName || seasonName.length > 64) {
@@ -193,16 +216,16 @@ export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLo
     if (season.toDay !== undefined && (!Number.isInteger(season.toDay) || season.toDay < 1 || season.toDay > MONTH_MAX_DAYS[season.toMonth - 1])) {
       throw new TariffValidationError('Season toDay must be a valid day of the end month');
     }
-    const startDoy = dayOfYear365(season.fromMonth, season.fromDay ?? 1);
-    const endDoy = dayOfYear365(season.toMonth, season.toDay ?? MONTH_MAX_DAYS[season.toMonth - 1]);
+    const startDoy = dayOfYear366(season.fromMonth, season.fromDay ?? 1);
+    const endDoy = dayOfYear366(season.toMonth, season.toDay ?? MONTH_MAX_DAYS[season.toMonth - 1]);
     let d = startDoy;
-    for (let guard = 0; guard < 365; guard++) {
+    for (let guard = 0; guard < 366; guard++) {
       if (dayOwners[d]) {
         throw new TariffValidationError('Seasons must cover all 12 months without overlap');
       }
       dayOwners[d] = true;
       if (d === endDoy) break;
-      d = (d + 1) % 365;
+      d = (d + 1) % 366;
     }
     return {
       name: seasonName,
@@ -210,8 +233,8 @@ export function validateTariffPlanInput(input: TariffPlanWriteInput, todaySiteLo
       ...(season.fromDay !== undefined ? { fromDay: season.fromDay } : {}),
       toMonth: season.toMonth,
       ...(season.toDay !== undefined ? { toDay: season.toDay } : {}),
-      weekdayPeriods: validateDaySlots(season.weekdayPeriods, `${seasonName} weekday schedule`),
-      weekendPeriods: validateDaySlots(season.weekendPeriods, `${seasonName} weekend schedule`),
+      weekdayPeriods: validateDaySlots(season.weekdayPeriods, `${seasonName} weekday schedule`, allowMinuteResolution),
+      weekendPeriods: validateDaySlots(season.weekendPeriods, `${seasonName} weekend schedule`, allowMinuteResolution),
     };
   });
   if (dayOwners.some(v => !v)) {
