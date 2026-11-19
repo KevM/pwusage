@@ -102,6 +102,13 @@ extension DashboardCoordinator {
         // Older servers omit the outcome. Preserve the existing follow-up for them.
         guard let status = response.historyRefresh?.status else { return true }
         if status == .changed { return true }
+        // On a fresh sign-in `live.response` is still nil while Smart Shift may have
+        // already priced an older snapshot; recover whenever live reports newer data.
+        if let liveThrough = response.sources.energyDataThrough,
+           let billResponse = bill.response,
+           liveThrough > (billResponse.sources.energyDataThrough ?? .distantPast) {
+            return true
+        }
         guard let previous = live.response else { return false }
         return previous.sources.energyDataThrough != response.sources.energyDataThrough
             || (previous.historyRevision != nil && previous.historyRevision != response.historyRevision)

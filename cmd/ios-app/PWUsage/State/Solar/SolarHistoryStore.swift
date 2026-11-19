@@ -25,15 +25,21 @@ actor SolarHistoryStore {
         let scopeGeneration: Int
     }
 
+    struct SyncWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
     private let directory: URL
     private let fileManager: FileManager
     private var cache: [SolarForecastSiteScope: Persisted] = [:]
-    private var generation = 0
-    private var scopeGenerations: [SolarForecastSiteScope: Int] = [:]
-    /// Syncs running per scope, and days merged while one ran: a sync saves the state it loaded
-    /// before its pages, so it reapplies these first.
-    private var activeSyncs: [SolarForecastSiteScope: Int] = [:]
-    private var lateDays: [SolarForecastSiteScope: [MobileSolarHistoryDay]] = [:]
+    var generation = 0
+    var scopeGenerations: [SolarForecastSiteScope: Int] = [:]
+    /// Syncs running per scope, waiters serialized behind them, and days merged while one ran:
+    /// a sync saves the state it loaded before its pages, so it reapplies these first.
+    var activeSyncs: [SolarForecastSiteScope: Int] = [:]
+    var syncWaiters: [SolarForecastSiteScope: [SyncWaiter]] = [:]
+    var lateDays: [SolarForecastSiteScope: [MobileSolarHistoryDay]] = [:]
 
     init(fileManager: FileManager = .default, directory customDirectory: URL? = nil) {
         self.fileManager = fileManager
@@ -46,7 +52,7 @@ actor SolarHistoryStore {
         api: any MobileSolarHistoryDataAPI,
         now: Date = .now
     ) async throws -> SolarHistorySyncResult {
-        let token = beginSync(scope: scope)
+        let token = try await acquireSync(scope: scope)
         defer { endSync(scope: scope) }
         var state = try load(scope)
         let zone = TimeZone(identifier: state.timeZone ?? "UTC") ?? .gmt
@@ -85,23 +91,6 @@ actor SolarHistoryStore {
         try validateGeneration(token.generation, scope: scope, scopeGeneration: token.scopeGeneration)
         try save(state, scope: scope)
         return .synced(timeZone: timeZone)
-    }
-
-    func beginSync(scope: SolarForecastSiteScope) -> SolarHistorySyncToken {
-        scopeGenerations[scope, default: 0] += 1
-        activeSyncs[scope, default: 0] += 1
-        return SolarHistorySyncToken(
-            generation: generation,
-            scopeGeneration: scopeGenerations[scope, default: 0]
-        )
-    }
-
-    func endSync(scope: SolarForecastSiteScope) {
-        activeSyncs[scope, default: 1] -= 1
-        if activeSyncs[scope] == 0 {
-            activeSyncs.removeValue(forKey: scope)
-            lateDays.removeValue(forKey: scope)
-        }
     }
 
     func applyLateDays(scope: SolarForecastSiteScope, to state: inout SolarHistoryPersisted) {
@@ -301,6 +290,7 @@ actor SolarHistoryStore {
 
     func remove(scope: SolarForecastSiteScope) throws {
         scopeGenerations[scope, default: 0] += 1
+        cancelAllSyncWaiters(scope: scope)
         cache.removeValue(forKey: scope)
         let url = fileURL(scope)
         if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
@@ -311,6 +301,7 @@ actor SolarHistoryStore {
     func removeAll() throws {
         generation += 1
         scopeGenerations.removeAll()
+        cancelAllSyncWaiters()
         cache.removeAll()
         if fileManager.fileExists(atPath: directory.path) { try fileManager.removeItem(at: directory) }
     }
@@ -373,7 +364,7 @@ actor SolarHistoryStore {
         scope: SolarForecastSiteScope,
         scopeGeneration expectedScopeGeneration: Int
     ) throws {
-        guard generation == expected, scopeGenerations[scope] == expectedScopeGeneration else {
+        guard generation == expected, scopeGenerations[scope, default: 0] == expectedScopeGeneration else {
             throw CancellationError()
         }
     }

@@ -84,30 +84,32 @@ struct LoadTimingView: View {
                         nextStartPhraseByKey: [:]
                     )
                     let state = smartShiftState(now: Date(), timing: timingForDisplay, response: response)
-                    jobCard(state)
-                        // Reading the counter re-runs this pass after a scheduled refresh so the task re-arms.
-                        .onChange(of: staleRefreshes) { _, _ in }
-                        .task(id: SmartShiftPresentation.nextRefresh(comparison: state.evaluation?.result.comparison,
-                                                                     now: state.now)) {
-                            guard let refresh = SmartShiftPresentation.nextRefresh(
-                                comparison: state.evaluation?.result.comparison, now: state.now) else { return }
-                            // A second past the boundary, so the next pass sees it as passed.
-                            let delay = max(0, refresh.timeIntervalSinceNow) + 1
-                            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                            staleRefreshes &+= 1
-                        }
-                    SolarLocationInvitationCard(coordinator: coordinator)
-                    metadata(response, usesSolar: state.evaluation?.projection == .forecast)
+                    if Self.waitsForFreshObservations(
+                        unavailableReason: state.evaluation?.result.unavailableReason,
+                        refreshSettled: coordinator.refreshSettled,
+                        billUnavailable: coordinator.bill.isUnavailable
+                    ) {
+                        loadingCard
+                    } else {
+                        jobCard(state)
+                            // Reading the counter re-runs this pass after a scheduled refresh so the task re-arms.
+                            .onChange(of: staleRefreshes) { _, _ in }
+                            .task(id: SmartShiftPresentation.nextRefresh(
+                                comparison: state.evaluation?.result.comparison, now: state.now)) {
+                                    guard let refresh = SmartShiftPresentation.nextRefresh(
+                                        comparison: state.evaluation?.result.comparison, now: state.now) else { return }
+                                    // A second past the boundary, so the next pass sees it as passed.
+                                    let delay = max(0, refresh.timeIntervalSinceNow) + 1
+                                    do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                                    staleRefreshes &+= 1
+                            }
+                        SolarLocationInvitationCard(coordinator: coordinator)
+                        metadata(response, usesSolar: state.evaluation?.projection == .forecast)
+                    }
                 } else if coordinator.bill.isUnavailable {
                     noResponseJobCard
                 } else {
-                    HStack(spacing: 12) {
-                        ProgressView()
-                        Text("Loading Smart Shift").foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(22)
-                    .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 20))
+                    loadingCard
                 }
             }
             .padding(20)
