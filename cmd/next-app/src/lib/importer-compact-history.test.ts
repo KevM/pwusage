@@ -12,7 +12,7 @@ it('recognizes complete archived coverage without planning a paid Tesla backfill
     coverage.mockResolvedValue({timezone:'UTC',aggregates:[],coverage:[{localDayKey:'2026-01-01',count:288,first:start,last:new Date(+end-300000),maxInteriorGapMs:300000}],detail:{raw:[],days:[]}});
     const importer=new Importer({} as TeslaClient);
     const importDays=vi.spyOn(importer as unknown as {importDayRecords:()=>Promise<unknown>},'importDayRecords').mockRejectedValue(new Error('Unexpected paid request'));
-    expect(await importer.ensureDataForRange('site',start,end)).toEqual({complete:true,rows:[],processedWindows:0,totalWindows:0});
+    expect(await importer.ensureDataForRange('site',start,end)).toEqual({complete:true,rows:[],processedWindows:0,totalWindows:0,changedDays:[]});
     expect(importDays).not.toHaveBeenCalled();expect(rawQuery).not.toHaveBeenCalled();
     const audit=await importer.auditRange('site',start,end);
     expect(audit).toMatchObject([{count:288}]);

@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatTouName } from '../lib/format-utils';
-import { fetchSiteLiveData, isValidSiteId } from '@/lib/site-live-data-client';
+import { fetchSiteLiveCardData } from '@/lib/site-live-data-client';
+import { pollProductCards } from '@/lib/product-card-polling';
+import { useVisiblePolling } from '@/lib/use-visible-polling';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StatusPill } from '@/components/ui/StatusPill';
 
@@ -46,72 +48,33 @@ function EnergySiteIcon() {
 export function DashboardCards({ initialProducts }: { initialProducts: ProductWithLiveData[] }) {
     const [products, setProducts] = useState(initialProducts);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-    const productsRef = useRef(products);
+    const controllerRef = useRef<AbortController | null>(null);
 
+    // Cancel any request still in flight when the page unmounts.
     useEffect(() => {
-        productsRef.current = products;
-    }, [products]);
-
-    useEffect(() => {
-        let isMounted = true;
         const controller = new AbortController();
-        const initialTimer = setTimeout(() => setLastUpdate(new Date()), 0);
+        controllerRef.current = controller;
+        return () => controller.abort();
+    }, []);
 
-        productsRef.current = initialProducts;
-
-        // Initial update
-
-        async function fetchLiveForProduct(p: ProductWithLiveData) {
-            if (p.type === 'vehicle' || !isValidSiteId(p.energy_site_id)) return;
-
-            try {
-                const data = await fetchSiteLiveData(p.energy_site_id, controller.signal);
-                if (!isMounted) return;
-
-                setProducts(prev => prev.map(prod => {
-                    if (prod.id === p.id) {
-                        return {
-                            ...prod,
-                            liveSolarPower: data.solarPower,
-                            liveBatteryPower: data.batteryPower,
-                            liveGridPower: data.gridPower,
-                            liveLoadPower: data.loadPower,
-                            percentage_charged: data.percentageCharged,
-                            currentTariff: prod.currentTariff === 'Loading...' ? (data.currentTariff || 'Standard') : prod.currentTariff
-                        };
-                    }
-                    return prod;
-                }));
-                setLastUpdate(new Date());
-            } catch (e) {
-                if (e instanceof DOMException && e.name === 'AbortError') {
-                    return;
-                }
-                console.error(`Failed to load live data for ${p.site_name}`, e);
-            }
-        }
-
-        // Trigger fetch for all energy sites
-        initialProducts.forEach(p => {
-            if (p.type !== 'vehicle') {
-                fetchLiveForProduct(p);
-            }
+    // Each energy-site card polls the lightweight card response once a minute,
+    // only while the page is visible; returning to the page refreshes at once.
+    useVisiblePolling(async () => {
+        const signal = controllerRef.current?.signal;
+        if (!signal || signal.aborted) return;
+        await pollProductCards(initialProducts, fetchSiteLiveCardData, signal, (product, data) => {
+            setProducts(prev => prev.map(prod => prod.id !== product.id ? prod : {
+                ...prod,
+                liveSolarPower: data.solarPower,
+                liveBatteryPower: data.batteryPower,
+                liveGridPower: data.gridPower,
+                liveLoadPower: data.loadPower,
+                percentage_charged: data.percentageCharged,
+                currentTariff: prod.currentTariff === 'Loading...' ? (data.currentTariff || 'Standard') : prod.currentTariff,
+            }));
+            setLastUpdate(new Date());
         });
-
-        // Poll every 60s
-        const interval = setInterval(() => {
-            productsRef.current.forEach(p => {
-                if (p.type !== 'vehicle') fetchLiveForProduct(p);
-            });
-        }, 60000);
-
-        return () => {
-            isMounted = false;
-            clearTimeout(initialTimer);
-            controller.abort();
-            clearInterval(interval);
-        };
-    }, [initialProducts]);
+    }, 60000);
 
     return (
         <>
