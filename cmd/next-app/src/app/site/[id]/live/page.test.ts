@@ -86,7 +86,13 @@ describe('Live page', () => {
         const refresher = find(boundary!.props.children as ReactNode, 'LiveDataRefresh')!;
         const render = (refresher.type as (p: unknown) => Promise<Element>)(refresher.props);
         finishTesla({ changed: true });
-        expect((await render).props.changed).toBe(true);
+        const first = (await render).props;
+        expect(first.changed).toBe(true);
+
+        // A later render (e.g. the half-hour refresh) gets its own cycle, so its change applies too.
+        m.refreshLivePage.mockResolvedValue({ changed: true });
+        const second = (await (refresher.type as (p: unknown) => Promise<Element>)(refresher.props)).props;
+        expect(second.cycle).not.toBe(first.cycle);
     });
 
     it('reads today\'s raw history once', async () => {

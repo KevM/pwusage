@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
@@ -32,7 +33,8 @@ export const dynamic = 'force-dynamic';
  */
 async function LiveDataRefresh({ siteId }: { siteId: string }) {
     const { changed } = await refreshLivePage(siteId);
-    return <RefreshWhenChanged changed={changed} />;
+    // A fresh id per server render, so each later refresh can apply its own change.
+    return <RefreshWhenChanged changed={changed} cycle={randomUUID()} />;
 }
 
 function ReadingsAsOf({ asOf, timezone, checking }: { asOf: Date | null; timezone: string; checking: boolean }) {
