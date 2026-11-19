@@ -168,4 +168,32 @@ struct RatePlanAiHandoffModelTests {
         )
         #expect(RatePlanSourcePresentation.sourceLabel(.manual, candidateKind: .manual) == "Entered by you")
     }
+
+    @Test("Discards in-flight preview response if rawInput changes before completion")
+    func discardsStalePreviewWhenInputChangesInFlight() async {
+        final class ModelBox: @unchecked Sendable {
+            weak var model: RatePlanAiHandoffModel?
+        }
+        let box = ModelBox()
+        let model = RatePlanAiHandoffModel(
+            actions: RatePlanAiHandoffActions(
+                exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
+                preview: { _ in
+                    await Task.yield()
+                    await MainActor.run {
+                        box.model?.rawInput = #"{"schema":"pwusage-rate-plan-handoff/v1","notes":["newer"]}"#
+                    }
+                    return Self.makePreview(hash: "stale-hash")
+                },
+                commit: { _ in throw PWUsageAPIError.invalidResponse }
+            )
+        )
+        box.model = model
+        model.rawInput = #"{"schema":"pwusage-rate-plan-handoff/v1"}"#
+
+        await model.loadPreview()
+
+        #expect(model.preview == nil)
+        #expect(model.presentedPreview == nil)
+    }
 }

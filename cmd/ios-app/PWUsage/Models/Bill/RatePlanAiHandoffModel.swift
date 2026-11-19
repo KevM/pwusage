@@ -47,6 +47,7 @@ final class RatePlanAiHandoffModel {
     var rawInput = "" {
         didSet {
             guard rawInput != oldValue else { return }
+            inputRevision += 1
             extractedJSON = nil
             preview = nil
             presentedPreview = nil
@@ -70,6 +71,7 @@ final class RatePlanAiHandoffModel {
 
     @ObservationIgnored private let actions: RatePlanAiHandoffActions
     @ObservationIgnored private var extractedJSON: String?
+    @ObservationIgnored private var inputRevision = 0
 
     init(actions: RatePlanAiHandoffActions) {
         self.actions = actions
@@ -134,12 +136,14 @@ final class RatePlanAiHandoffModel {
             return
         }
 
+        let requestRevision = inputRevision
         isPreviewing = true
         reviewError = nil
         isRefreshedAfterConflict = false
         defer { isPreviewing = false }
         do {
             let loaded = try await actions.preview(cleanedJSON)
+            guard inputRevision == requestRevision else { return }
             extractedJSON = cleanedJSON
             preview = loaded
             presentedPreview = loaded
@@ -148,6 +152,7 @@ final class RatePlanAiHandoffModel {
         } catch is CancellationError {
             return
         } catch {
+            guard inputRevision == requestRevision else { return }
             reviewError = error.localizedDescription
         }
     }
