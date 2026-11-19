@@ -1,8 +1,8 @@
-import {readLiveBillingAvailability} from '@/lib/billing-availability';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { createEnergyRepo } from '@/lib/energy-repo-factory';
-import { EnergyRepo, sumTodayRows } from '@/lib/energy-repo';
+import { EnergyRepo } from '@/lib/energy-repo';
 import { BatteryHoldRepo } from '@/lib/battery-hold-repo';
 import { SiteRepo } from '@/lib/site-repo';
 import { Schedule } from '@/lib/schedule';
@@ -13,7 +13,9 @@ import type { ActivePeriod } from '@/components/site/live/PeriodCardRow';
 import { buildSnapshotModel, buildCumulativeModel } from '@/lib/sankey/build-flow-model';
 import { getRenderer } from '@/lib/sankey/renderers/registry';
 import { computeLoadTiming } from '@/lib/load-timing';
-import { refreshTodayData, refreshLiveStatus } from '@/lib/today-refresh';
+import { readLiveTodayHistory, storedLiveReading } from '@/lib/live-page-data';
+import { refreshLivePage } from '@/lib/live-page-refresh';
+import { RefreshWhenChanged } from '@/components/site/live/RefreshWhenChanged';
 import { energyToAveragePower } from '@/lib/energy-utils';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -23,6 +25,23 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Fetches fresh Tesla data after the stored snapshot has streamed, then
+ * re-renders the open page once if anything new was stored.
+ */
+async function LiveDataRefresh({ siteId }: { siteId: string }) {
+    const { changed } = await refreshLivePage(siteId);
+    return <RefreshWhenChanged changed={changed} />;
+}
+
+function ReadingsAsOf({ asOf, timezone, checking }: { asOf: Date | null; timezone: string; checking: boolean }) {
+    const time = asOf
+        ? new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: timezone }).format(asOf)
+        : null;
+    const parts = [time ? `Readings as of ${time}.` : 'No readings stored yet.', checking ? 'Checking Tesla for newer readings.' : null];
+    return <p role="status" className="text-xs text-gray-500 dark:text-gray-400">{parts.filter(Boolean).join(' ')}</p>;
+}
 
 export default async function SiteLivePage({
     params,
@@ -74,14 +93,10 @@ export default async function SiteLivePage({
     const cycleStart = getCurrentCycleStart(site.billing_start_day, now, site.timezone);
     const todayStart = EnergyRepo.getSiteMidnight(now, site.timezone);
 
-    // Pull today's data from Tesla into the DB before reading totals. Trmnl
-    // does this every poll; the live page needs the same so "Today so far"
-    // isn't blank when no Trmnl device is driving the refresh. Throttled and
-    // bounded — failures fall through to whatever's already in the DB.
-    const refreshResult = await refreshTodayData(id);
-    if (refreshResult.status === 'error') {
-        console.warn(`[SiteLivePage] today refresh failed for ${id}: ${refreshResult.errorMessage}`);
-    }
+    // Render the stored, timestamped snapshot right away. Fresh Tesla data
+    // (today's samples and the live reading) is fetched by <LiveDataRefresh>,
+    // streamed after this content, which re-renders the page if it stored
+    // anything new. Trmnl and the mobile app drive the same throttled refresh.
 
     const hasTariff = (site.tariffs?.length ?? 0) > 0;
     let activePeriod: ActivePeriod | null = null;
@@ -100,18 +115,18 @@ export default async function SiteLivePage({
         }
     }
 
-    const [billing, todayChartRows, rawEnergyRows, latestEnergyData, liveStatus, activeHold, activeNotice] = await Promise.all([
-        readLiveBillingAvailability(()=>repo.getCycleAndTodayTotals(id, cycleStart, todayStart, now),()=>repo.getUsageByTOU(id,todayStart,now)),
-        repo.getBucketedEnergyData(id, todayStart, now),
-        repo.getRawEnergyData(id, todayStart, now),
+    // One decoded read of today's samples feeds billing, the chart and the totals.
+    const [todayHistory, latestEnergyData, activeHold, activeNotice] = await Promise.all([
+        readLiveTodayHistory(repo, id, cycleStart, todayStart, now),
         repo.getLatestEnergyData(id),
-        refreshLiveStatus(id, { cacheTtlMs: 60 * 1000 }).then(res => res.liveStatus ?? null).catch(() => null),
         holdRepo.getActiveHold(id),
         holdRepo.getLatestCancelledUnacked(id),
     ]);
+    const { billing, todayChartRows, todayRows: rawEnergyRows, todayTotals } = todayHistory;
+    const reading = storedLiveReading(site, latestEnergyData, now);
+    const liveStatus = reading.liveStatus;
 
     const {cycle,today}=billing;
-    const todayTotals = sumTodayRows(rawEnergyRows);
 
     const loadTiming = billing.cycleStatus==='complete' && schedule
         ? computeLoadTiming(schedule, cycle, now, site.timezone, activePeriod)
@@ -149,6 +164,10 @@ export default async function SiteLivePage({
             <div className="space-y-6">
                 <PageBreadcrumbs items={[{ label: site.name, href: `/site/${id}` }, { label: 'Live' }]} />
                 <PageHeader title="Live detail" density="compact" />
+                <Suspense fallback={<ReadingsAsOf asOf={reading.asOf} timezone={site.timezone} checking />}>
+                    <ReadingsAsOf asOf={reading.asOf} timezone={site.timezone} checking={false} />
+                    <LiveDataRefresh siteId={id} />
+                </Suspense>
                 <LiveDetailView
                     siteId={id}
                     siteName={site.name}
