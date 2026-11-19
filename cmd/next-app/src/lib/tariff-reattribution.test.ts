@@ -5,7 +5,7 @@ import type { Tariff } from './db-types';
 const mocks = vi.hoisted(() => ({
   connectMock: vi.fn(),
   queryMock: vi.fn(),
-  resolveTariffForDateMock: vi.fn(),
+  resolveTariffsForDatesMock: vi.fn(),
   reattributeArchiveChunkMock: vi.fn(),
   logEventMock: vi.fn(),
   flushLogEventsMock: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock('./db', () => ({
 
 vi.mock('./tariff-timeline-repo', () => ({
   TariffTimelineRepo: class {
-    resolveTariffForDate = mocks.resolveTariffForDateMock;
+    resolveTariffsForDates = mocks.resolveTariffsForDatesMock;
   },
 }));
 
@@ -107,10 +107,8 @@ describe('tariff-reattribution engine', () => {
   it('fast-skips legacy current-tariff and matching effective-tariff rows without rewriting, while rewriting changed rows', async () => {
     const t2025 = makeTariff(10, 100);
     const t2026 = makeTariff(20, 200);
-    mocks.resolveTariffForDateMock.mockImplementation(async (_c: unknown, _s: string, date: string) => {
-      const tariff = date.startsWith('2026') ? t2026 : t2025;
-      return { tariffs: [tariff], schedules: tariff.seasons![0].schedules! };
-    });
+    mocks.resolveTariffsForDatesMock.mockImplementation(async (_c: unknown, _s: string, dates: string[]) =>
+      new Map(dates.map(date => [date, [date.startsWith('2026') ? t2026 : t2025]])));
 
     const scanRows = [
       // Legacy 'current-tariff:20' whose segments and attribution_complete ALREADY match t2026 -> fast-skip!
@@ -184,11 +182,15 @@ describe('tariff-reattribution engine', () => {
     expect(passedCandidates).toHaveLength(1);
     expect(passedCandidates[0].dayStart.toISOString()).toBe('2025-07-15T05:00:00.000Z');
     expect(passedCandidates[0].tariffs[0].id).toBe(10);
+    // One batched lookup for the chunk, not one per archive day.
+    expect(mocks.resolveTariffsForDatesMock).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveTariffsForDatesMock.mock.calls[0][2]).toEqual(['2026-07-15', '2025-07-15']);
   });
 
   it('stops cleanly at maxTimeMs preserving cursor_day_start and sets status back to pending', async () => {
     const t2026 = makeTariff(20, 200);
-    mocks.resolveTariffForDateMock.mockResolvedValue({ tariffs: [t2026], schedules: t2026.seasons![0].schedules! });
+    mocks.resolveTariffsForDatesMock.mockImplementation(async (_c: unknown, _s: string, dates: string[]) =>
+      new Map(dates.map(date => [date, [t2026]])));
 
     let now = 1000;
     const clock = () => {
@@ -241,7 +243,8 @@ describe('tariff-reattribution engine', () => {
 
   it('aborts cleanly when generation fence matches 0 rows (superseded by concurrent edit)', async () => {
     const t2026 = makeTariff(20, 200);
-    mocks.resolveTariffForDateMock.mockResolvedValue({ tariffs: [t2026], schedules: t2026.seasons![0].schedules! });
+    mocks.resolveTariffsForDatesMock.mockImplementation(async (_c: unknown, _s: string, dates: string[]) =>
+      new Map(dates.map(date => [date, [t2026]])));
 
     mocks.queryMock.mockImplementation(async (sql: string) => {
       if (sql.includes('UPDATE "SiteTariffReattribution"') && sql.includes("status = 'running'")) {

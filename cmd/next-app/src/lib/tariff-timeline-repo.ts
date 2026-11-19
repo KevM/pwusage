@@ -162,6 +162,37 @@ export interface BuildSiteTariffsTimelineInput {
   rateCountryUpdatedAt?: Date | string | null;
 }
 
+export interface EffectivePeriodPick {
+  periodId: number;
+  tariffId: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+/**
+ * The billing plan for a site-local date: the period covering it (latest start wins), else, in a
+ * gap, the period that ended most recently, else, before every plan, the earliest. Used by
+ * `resolveTariffForDate` and `resolveTariffsForDates`; `effectiveTariffIdSql` is the same policy in SQL.
+ */
+export function pickTariffIdForDate(periods: readonly EffectivePeriodPick[], date: string): number | undefined {
+  let covering: EffectivePeriodPick | undefined;
+  let prior: EffectivePeriodPick | undefined;
+  let earliest: EffectivePeriodPick | undefined;
+  for (const p of periods) {
+    if (p.effectiveFrom <= date && (p.effectiveTo === null || p.effectiveTo >= date)) {
+      if (!covering || p.effectiveFrom > covering.effectiveFrom
+        || (p.effectiveFrom === covering.effectiveFrom && p.periodId > covering.periodId)) covering = p;
+    }
+    if (p.effectiveTo !== null && p.effectiveTo < date) {
+      if (!prior || p.effectiveTo > (prior.effectiveTo as string)
+        || (p.effectiveTo === prior.effectiveTo && p.periodId > prior.periodId)) prior = p;
+    }
+    if (!earliest || p.effectiveFrom < earliest.effectiveFrom
+      || (p.effectiveFrom === earliest.effectiveFrom && p.periodId < earliest.periodId)) earliest = p;
+  }
+  return (covering ?? prior ?? earliest)?.tariffId;
+}
+
 /**
  * Same pick as `resolveTariffForDate`: the plan covering `date`, else (in a gap)
  * the nearest earlier plan by end date, else (before every plan) the earliest.
@@ -3532,44 +3563,54 @@ export class TariffTimelineRepo {
     siteId: string,
     siteLocalDate: string
   ): Promise<{ tariffs: Tariff[]; schedules: TariffSchedule[] }> {
-    const exact = await client.query<{ tariff_id: number }>(
-      `SELECT tariff_id FROM "TariffEffectivePeriod"
-       WHERE site_id = $1 AND effective_from <= $2::date AND (effective_to IS NULL OR effective_to >= $2::date)
-       ORDER BY effective_from DESC LIMIT 1`,
-      [siteId, siteLocalDate]
+    const tariffs = (await this.resolveTariffsForDates(client, siteId, [siteLocalDate])).get(siteLocalDate) ?? [];
+    const schedules = tariffs[0]?.seasons?.flatMap(s => s.schedules ?? []) ?? [];
+    return { tariffs, schedules };
+  }
+
+  /**
+   * The billing tariff for each site-local date, with one period read and one batched hydrate
+   * however many dates are asked: a reattribution chunk resolves its days together.
+   * Dates with no plan at all map to an empty list.
+   */
+  async resolveTariffsForDates(
+    client: Pick<PoolClient, 'query'>,
+    siteId: string,
+    siteLocalDates: readonly string[]
+  ): Promise<Map<string, Tariff[]>> {
+    const result = new Map<string, Tariff[]>();
+    if (siteLocalDates.length === 0) return result;
+    const periodRes = await client.query<{ id: number; tariff_id: number; effective_from: string; effective_to: string | null }>(
+      `SELECT id, tariff_id, effective_from::text AS effective_from, effective_to::text AS effective_to
+       FROM "TariffEffectivePeriod" WHERE site_id = $1`,
+      [siteId]
     );
-    let tariffId = exact.rows[0]?.tariff_id;
-    if (tariffId === undefined) {
-      const prior = await client.query<{ tariff_id: number }>(
-        `SELECT tariff_id FROM "TariffEffectivePeriod"
-         WHERE site_id = $1 AND effective_to IS NOT NULL AND effective_to < $2::date
-         ORDER BY effective_to DESC LIMIT 1`,
-        [siteId, siteLocalDate]
-      );
-      tariffId = prior.rows[0]?.tariff_id;
-    }
-    if (tariffId === undefined) {
-      const earliest = await client.query<{ tariff_id: number }>(
-        'SELECT tariff_id FROM "TariffEffectivePeriod" WHERE site_id = $1 ORDER BY effective_from ASC LIMIT 1',
-        [siteId]
-      );
-      tariffId = earliest.rows[0]?.tariff_id;
-    }
-    if (tariffId === undefined) {
+    const periods: EffectivePeriodPick[] = periodRes.rows.map(r => ({
+      periodId: Number(r.id),
+      tariffId: Number(r.tariff_id),
+      effectiveFrom: r.effective_from,
+      effectiveTo: r.effective_to,
+    }));
+    let fallbackTariffId: number | undefined;
+    if (periods.length === 0) {
       const current = await client.query<{ id: number }>(
         'SELECT id FROM "Tariff" WHERE site_id = $1 AND is_current = TRUE LIMIT 1',
         [siteId]
       );
-      tariffId = current.rows[0]?.id;
+      const id = current.rows[0]?.id;
+      fallbackTariffId = id === undefined ? undefined : Number(id);
     }
-    if (tariffId === undefined) {
-      return { tariffs: [], schedules: [] };
+    const tariffIdByDate = new Map<string, number | undefined>();
+    for (const date of siteLocalDates) {
+      tariffIdByDate.set(date, pickTariffIdForDate(periods, date) ?? fallbackTariffId);
     }
-    const map = await hydrateTariffs(client, [Number(tariffId)]);
-    const tariff = map.get(Number(tariffId));
-    if (!tariff) return { tariffs: [], schedules: [] };
-    const schedules = tariff.seasons?.flatMap(s => s.schedules ?? []) ?? [];
-    return { tariffs: [tariff], schedules };
+    const ids = [...new Set([...tariffIdByDate.values()].filter((id): id is number => id !== undefined))];
+    const hydrated = await hydrateTariffs(client, ids);
+    for (const [date, id] of tariffIdByDate) {
+      const tariff = id === undefined ? undefined : hydrated.get(id);
+      result.set(date, tariff ? [tariff] : []);
+    }
+    return result;
   }
 
   async createReferencePeriod(

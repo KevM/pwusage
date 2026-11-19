@@ -156,18 +156,14 @@ export async function runSiteReattribution(params: {
       }
 
       const candidates: Array<{ dayStart: Date; dayEnd: Date; tariffs: Tariff[] }> = [];
-      const tariffCache = new Map<string, Tariff[]>();
+      // Each archive row is a different day: resolve the chunk's dates together, not one by one.
+      const localDates = scannedRows.map(row => siteLocalDateString(new Date(row.day_start), timezone));
+      const tariffsByDate = await timelineRepo.resolveTariffsForDates(pool, params.siteId, [...new Set(localDates)]);
 
-      for (const row of scannedRows) {
+      for (const [index, row] of scannedRows.entries()) {
         const dayStart = new Date(row.day_start);
         const dayEnd = new Date(row.day_end);
-        const localDate = siteLocalDateString(dayStart, timezone);
-        let tariffs = tariffCache.get(localDate);
-        if (!tariffs) {
-          const resolved = await timelineRepo.resolveTariffForDate(pool, params.siteId, localDate);
-          tariffs = resolved.tariffs;
-          tariffCache.set(localDate, tariffs);
-        }
+        const tariffs = tariffsByDate.get(localDates[index]) ?? [];
         if (tariffs.length === 0) continue;
 
         const nextAttribution = deriveDayAttribution(
