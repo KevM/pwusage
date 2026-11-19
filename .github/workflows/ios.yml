@@ -100,8 +100,8 @@ jobs:
         env:
           TMPDIR: /tmp
           PWUSAGE_DERIVED_DATA: /tmp/pwusage-derived-data
-          # 20 minutes accommodates optimized build time variance under macos-15 runner load.
-          PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
+          # 30 minutes: full --auto/--full runs (parity + 10-year solar health budget) now take ~20 min on macos-26 runners.
+          PWUSAGE_TEST_TIMEOUT_SECONDS: 1800
           # The simulator boots before the timed run. Cold boots on a busy runner have taken over
           # ten minutes, which used to come out of the 20 above and time out main's full suite.
           PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS: 900
