@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
@@ -61,6 +62,10 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('Tesla login identity 
             refresh_lock_expires bigint DEFAULT 0, created_at timestamptz DEFAULT now()
         )`);
         await pool.query('CREATE UNIQUE INDEX idx_user_email_lower ON "User" (LOWER(email)) WHERE email IS NOT NULL');
+        // The real subject-binding migration, twice to prove it is idempotent.
+        const bindingMigration = readFileSync('db-migrations/20261118193518_user_tesla_subject_binding.sql', 'utf8');
+        await pool.query(bindingMigration);
+        await pool.query(bindingMigration);
         await pool.query('CREATE TEMP TABLE "SiteMember" (site_id text, user_id text, role text, PRIMARY KEY (site_id, user_id))');
         query.mockImplementation((sql: string, values?: unknown[]) => pool.query(sql, values));
     });
@@ -70,8 +75,8 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('Tesla login identity 
         await pool.query('TRUNCATE "User"');
         await pool.query('TRUNCATE "SiteMember"');
         await pool.query(
-            `INSERT INTO "User" (id, email, roles, access_token, refresh_token, refresh_token_fp)
-             VALUES ('admin-sub', 'shared@example.com', ARRAY['admin'], $1, $2, $3)`,
+            `INSERT INTO "User" (id, tesla_subject, email, roles, access_token, refresh_token, refresh_token_fp)
+             VALUES ('admin-sub', 'admin-sub', 'shared@example.com', ARRAY['admin'], $1, $2, $3)`,
             [encryptToken('admin-access', 'access_token', 'admin-sub'),
                 encryptToken('admin-refresh', 'refresh_token', 'admin-sub'), tokenFingerprint('admin-refresh')],
         );
@@ -113,5 +118,49 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('Tesla login identity 
         expect(result).toMatchObject({ status: 'success', userId: 'shared@example.com' });
         const [row] = await storedRows();
         expect(decryptToken(row.refresh_token, 'refresh_token', row.id)).toBe('refresh-new-sub');
+    });
+
+    describe('after subject A migrates a legacy email-keyed account', () => {
+        const legacyId = 'shared@example.com';
+        beforeEach(async () => {
+            await pool.query('TRUNCATE "User"');
+            await pool.query('TRUNCATE "SiteMember"');
+            await pool.query(`INSERT INTO "User" (id, email, roles) VALUES ($1, $1, ARRAY['admin'])`, [legacyId]);
+            await pool.query(`INSERT INTO "SiteMember" (site_id, user_id, role) VALUES ('98765', $1, 'owner')`, [legacyId]);
+            expect(await login(new UserRepo(), 'sub-a')).toMatchObject({ status: 'success', userId: legacyId });
+            vi.clearAllMocks();
+        });
+
+        const expectAIntact = async () => {
+            const rows = (await pool.query('SELECT id, tesla_subject, roles, access_token, refresh_token FROM "User"')).rows;
+            expect(rows.map(row => [row.id, row.tesla_subject])).toEqual([[legacyId, 'sub-a']]);
+            expect(rows[0].roles).toEqual(['admin']);
+            expect(decryptToken(rows[0].access_token, 'access_token', legacyId)).toBe('access-sub-a');
+            expect(decryptToken(rows[0].refresh_token, 'refresh_token', legacyId)).toBe('refresh-sub-a');
+            expect((await pool.query('SELECT site_id, user_id, role FROM "SiteMember"')).rows)
+                .toEqual([{ site_id: '98765', user_id: legacyId, role: 'owner' }]);
+            expect(siteRepo.assignSiteToUser).not.toHaveBeenCalled();
+            expect(syncLogin).not.toHaveBeenCalled();
+        };
+
+        it('records A as the account subject', async () => {
+            await expectAIntact();
+        });
+
+        it('rejects subject B presenting the same email', async () => {
+            expect(await login(new UserRepo(), 'sub-b')).toEqual({ status: 'identity-conflict' });
+            await expectAIntact();
+        });
+
+        it('rejects subject B when the email unique index fires on the upsert', async () => {
+            const repo = new UserRepo();
+            vi.spyOn(repo, 'getByEmail').mockResolvedValueOnce(null);
+            expect(await login(repo, 'sub-b')).toEqual({ status: 'identity-conflict' });
+            await expectAIntact();
+        });
+
+        it('still lets A sign in again', async () => {
+            expect(await login(new UserRepo(), 'sub-a')).toMatchObject({ status: 'success', userId: legacyId });
+        });
     });
 });

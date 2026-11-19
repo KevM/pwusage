@@ -424,20 +424,25 @@ function parseExchangedTokens(payload: unknown): ExchangedTokens {
 
 /**
  * Whether a login may take over `existing`, the account that already owns the
- * login's email.
+ * login's email, when no account is bound to the login's subject yet.
  *
- * `User.id` is the Tesla subject (`sub`) for every account created by a login
- * that knew it. Only the pre-fix degraded path keyed rows by email address, and
- * a Tesla subject never contains '@', so an '@' in the id marks such a legacy
- * row. Adopting it is the intended migration: the row carries no subject that
- * could disagree. A subject-keyed row may be adopted only by that same
- * subject. `subject` is the login's token `sub`; on the unknown-signing-key
- * path it is unverified, which is safe because it can only refuse a match,
- * never create one. Without any subject a subject-keyed row cannot be matched,
- * so that also fails closed.
+ * `trustedSubject` is the login's Tesla `sub` only when it is trustworthy: the
+ * ID-token signature verified, or (on the unknown-signing-key path) Fleet user
+ * info confirmed it. An unconfirmed `sub` is never passed here.
+ *
+ * - An account bound to a subject (`tesla_subject`) is never adopted by email:
+ *   its own subject would have found it by `getByTeslaSubject` first.
+ * - An unbound legacy row keyed by email address (a Tesla subject never
+ *   contains '@') is adopted: the intended migration. The upsert then binds
+ *   the trusted subject to it atomically.
+ * - An unbound subject-keyed row (written before `tesla_subject` existed) is
+ *   adopted only by that same trusted subject.
  */
-function mayAdoptAccountByEmail(existingId: string, subject: string | undefined): boolean {
-    return existingId.includes('@') || (subject !== undefined && existingId === subject);
+function mayAdoptAccountByEmail(
+    existing: { id: string; tesla_subject?: string | null }, trustedSubject: string | undefined,
+): boolean {
+    if (existing.tesla_subject) return existing.tesla_subject === trustedSubject;
+    return existing.id.includes('@') || (trustedSubject !== undefined && existing.id === trustedSubject);
 }
 
 export type TeslaCallbackResult =
@@ -662,18 +667,44 @@ export class TeslaAuthService {
 
         let userEmail: string | undefined;
         let userId: string | undefined;
-        // The token's subject decides which existing account this login may
-        // take over (see mayAdoptAccountByEmail).
-        const subject = typeof decoded.sub === 'string' && decoded.sub !== '' ? decoded.sub : undefined;
+        // The login's Tesla subject, set only when it is trustworthy (verified
+        // signature, or confirmed by Fleet user info). It alone decides which
+        // existing account this login may take over and is bound to that account.
+        let trustedSubject: string | undefined;
+        const tokenSubject = typeof decoded.sub === 'string' && decoded.sub !== '' ? decoded.sub : undefined;
         // Fail closed before any write: no credentials, memberships or session.
         const identityConflict = (
-            loginId: string, existingId: string, stage: 'lookup' | 'unique-retry',
+            loginId: string, existingId: string, stage: 'lookup' | 'unique-retry' | 'bind',
         ): TeslaCallbackResult => {
             logEvent('warn', 'tesla.sign-in.identity-conflict', {
                 accountId: accountFingerprint(loginId), existingAccountId: accountFingerprint(existingId),
-                stage, signatureVerified,
+                stage, signatureVerified, subjectTrusted: trustedSubject !== undefined,
             });
             return { status: 'identity-conflict' };
+        };
+        /**
+         * The account this login belongs to: the one bound to its trusted
+         * subject, else the adoptable account that owns its email, else
+         * `candidateId` for a new account.
+         */
+        const reconcileAccount = async (
+            candidateId: string, stage: 'lookup' | 'unique-retry',
+        ): Promise<{ userId: string } | { conflict: TeslaCallbackResult }> => {
+            if (trustedSubject) {
+                const bound = await userRepo.getByTeslaSubject(trustedSubject);
+                if (bound) return { userId: bound.id };
+            }
+            const existing = userEmail ? await userRepo.getByEmail(userEmail) : null;
+            if (!existing) return { userId: candidateId };
+            if (!mayAdoptAccountByEmail(existing, trustedSubject)) {
+                return { conflict: identityConflict(candidateId, existing.id, stage) };
+            }
+            if (existing.id !== candidateId) {
+                console.log('[TeslaAuthService] Reconciled login to existing user account by email:', {
+                    email: userEmail, existingUserId: existing.id, stage,
+                });
+            }
+            return { userId: existing.id };
         };
 
         let userInfo: { email?: string; id?: string; sub?: string; vault_uuid?: string } | null = null;
@@ -695,29 +726,23 @@ export class TeslaAuthService {
             if (!userEmail && decoded.email) {
                 userEmail = decoded.email as string;
             }
-            if (decoded.sub) {
-                userId = decoded.sub;
+            // The signature verified, so the token's subject is trusted.
+            trustedSubject = tokenSubject;
+            if (trustedSubject) {
+                userId = trustedSubject;
             } else if (userEmail) {
                 userId = userEmail;
             }
-            // Reconcile to an existing account that owns this email (e.g. a
-            // legacy row keyed by the email from the pre-fix degraded path).
-            // The DB enforces one User row per email (idx_user_email_lower),
-            // so adopting the existing id prevents both account splitting and
-            // a unique violation on the upsert below. An account keyed by a
-            // different Tesla subject is never adopted.
-            if (userEmail && userId) {
-                const existingUser = await userRepo.getByEmail(userEmail);
-                if (existingUser && existingUser.id !== userId) {
-                    if (!mayAdoptAccountByEmail(existingUser.id, subject)) {
-                        return identityConflict(userId, existingUser.id, 'lookup');
-                    }
-                    console.log('[TeslaAuthService] Reconciled verified sub to existing user account by email:', {
-                        email: userEmail,
-                        existingUserId: existingUser.id
-                    });
-                    userId = existingUser.id;
-                }
+            // Reconcile to the account bound to this subject, or to an
+            // adoptable account that owns this email (e.g. a legacy row keyed
+            // by email from the pre-fix degraded path). The DB enforces one
+            // User row per email (idx_user_email_lower), so adopting the
+            // existing id prevents both account splitting and a unique
+            // violation on the upsert below.
+            if (userId) {
+                const reconciled = await reconcileAccount(userId, 'lookup');
+                if ('conflict' in reconciled) return reconciled.conflict;
+                userId = reconciled.userId;
             }
         } else {
             // Degraded path (unpublished kid): getUserInfo() is MANDATORY!
@@ -764,23 +789,14 @@ export class TeslaAuthService {
                 (userInfo.vault_uuid && decoded.sub === userInfo.vault_uuid)
             );
 
-            if (isSubConfirmed && decoded.sub) {
-                userId = decoded.sub;
-            } else {
-                const existingUser = await userRepo.getByEmail(userEmail);
-                if (existingUser && !mayAdoptAccountByEmail(existingUser.id, subject)) {
-                    return identityConflict(userEmail, existingUser.id, 'lookup');
-                }
-                if (existingUser) {
-                    console.log('[TeslaAuthService] Reconciled unconfirmed sub to existing user account by email:', {
-                        email: userEmail,
-                        existingUserId: existingUser.id
-                    });
-                    userId = existingUser.id;
-                } else {
-                    userId = userEmail;
-                }
-            }
+            // An unconfirmed sub is never trusted: it can neither adopt a
+            // subject-keyed account nor be bound to one. Such a login is
+            // identified by its authenticated email alone, which can reach
+            // only an unbound legacy email-keyed account or a new one.
+            if (isSubConfirmed && tokenSubject) trustedSubject = tokenSubject;
+            const reconciled = await reconcileAccount(trustedSubject ?? userEmail, 'lookup');
+            if ('conflict' in reconciled) return reconciled.conflict;
+            userId = reconciled.userId;
         }
 
         if (!userId) {
@@ -798,6 +814,7 @@ export class TeslaAuthService {
             refreshToken: authData.refresh_token,
             tokenExpiresAt: Date.now() + (authData.expires_in * 1000),
             fleetApiBaseUrl: client.getBaseUrl(),
+            teslaSubject: trustedSubject ?? null,
         });
 
         let products: FleetProduct[] = [];
@@ -841,25 +858,27 @@ export class TeslaAuthService {
         // Persist before any product import: a Fleet failure must not discard a
         // rotated refresh token, and it must not be reported as a successful login.
         try {
+            let persisted: 'saved' | 'subject-conflict' | void;
             try {
-                await persistCredentials(userId);
+                persisted = await persistCredentials(userId);
             } catch (err) {
-                // idx_user_email_lower rejected the insert: a concurrent login
-                // created a row with this email after our getByEmail lookup.
-                // Adopt that row's id and retry once.
-                if (!isUniqueViolation(err) || !userEmail) throw err;
-                const existingUser = await userRepo.getByEmail(userEmail);
-                if (!existingUser) throw err;
-                if (!mayAdoptAccountByEmail(existingUser.id, subject)) {
-                    return identityConflict(userId, existingUser.id, 'unique-retry');
-                }
-                console.warn('[TeslaAuthService] Upsert hit email unique violation; adopting existing account:', {
+                // idx_user_email_lower or idx_user_tesla_subject rejected the
+                // insert: a concurrent login created or bound a row after our
+                // lookup. Reconcile again under the same rules and retry once.
+                if (!isUniqueViolation(err)) throw err;
+                const reconciled = await reconcileAccount(trustedSubject ?? userEmail ?? userId, 'unique-retry');
+                if ('conflict' in reconciled) return reconciled.conflict;
+                if (reconciled.userId === userId) throw err;
+                console.warn('[TeslaAuthService] Upsert hit a unique violation; adopting existing account:', {
                     email: userEmail,
-                    existingUserId: existingUser.id
+                    existingUserId: reconciled.userId
                 });
-                userId = existingUser.id;
-                await persistCredentials(userId);
+                userId = reconciled.userId;
+                persisted = await persistCredentials(userId);
             }
+            // The row was bound to another subject (or to one this login
+            // cannot prove) between the lookup and the write; nothing changed.
+            if (persisted === 'subject-conflict') return identityConflict(trustedSubject ?? userId, userId, 'bind');
         } catch (dbError) {
             console.error('[TeslaAuthService] Failed to persist Tesla credentials:', dbError);
             return { status: 'db-error' };

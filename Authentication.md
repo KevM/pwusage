@@ -232,22 +232,39 @@ violation to handle concurrent first logins. This prevents the account
 splitting that previously occurred when the degraded path keyed a User row by
 email and a later verified login keyed a second row by Tesla `sub`.
 
-Reconciliation is bound to the Tesla subject (`mayAdoptAccountByEmail` in
-`tesla-auth-service.ts`). The ordinary lookup, the unknown-signing-key path and
-the unique-violation retry all apply one rule to the account that owns the email:
-- A legacy row keyed by an email address (its id contains `@`; a Tesla `sub`
-  never does) is adopted. This is the intended migration of pre-fix accounts.
-- A row keyed by a Tesla subject is adopted only by a login with that same
-  subject. On the unknown-signing-key path the token `sub` is unverified, which
-  is safe here because it can only refuse a match, never create one; a token
-  with no `sub` cannot match a subject-keyed row either.
-- Anything else is two distinct Tesla subjects sharing an email. The login fails
-  closed with `identity-conflict` before any write: no credentials stored, no
-  memberships or sites changed, no session or mobile handoff issued. The web
-  callback answers 409; the native app receives `error=account_conflict`. The
-  event `tesla.sign-in.identity-conflict` carries hashed ids of both accounts and
-  the stage (`lookup` or `unique-retry`). Resolving such a conflict is a manual
-  admin task.
+Reconciliation is bound to the Tesla subject. `User.tesla_subject` (unique,
+migration `20261118193518`) records the Tesla ID-token `sub` an account belongs
+to; the migration backfills it from every subject-keyed id (ids without `@`).
+
+A login's subject is **trusted** only when the ID-token signature verified, or,
+on the unknown-signing-key path, when Fleet user info confirmed it (`sub`/`id`
+or `vault_uuid`). An unconfirmed `sub` is never used to find, adopt or bind an
+account. The ordinary lookup, the unknown-signing-key path and the
+unique-violation retry all resolve the account the same way
+(`reconcileAccount` / `mayAdoptAccountByEmail` in `tesla-auth-service.ts`):
+- The account bound to the trusted subject wins, even if the Tesla email changed.
+- Otherwise the account that owns the email is adopted only if it is unbound and
+  either a legacy row keyed by an email address (its id contains `@`; a Tesla
+  `sub` never does), which is the intended migration of pre-fix accounts, or a
+  row keyed by that same trusted subject. A bound row, or a subject-keyed row
+  reached without a trusted subject, is never adopted.
+- `UserRepo.upsertOnTeslaAuth` binds the trusted subject in the same statement
+  that writes the credentials: an unbound row takes the subject, a bound row
+  accepts only its own subject, and a login without a trusted subject cannot
+  write to a bound row. So a legacy account is bound to the first trusted subject
+  that migrates it, and every later login must present that subject.
+- Anything else is two distinct Tesla subjects sharing an email (or a login that
+  cannot prove its subject). The login fails closed with `identity-conflict`
+  before any write: no credentials stored, no memberships or sites changed, no
+  session or mobile handoff issued. The web callback answers 409; the native app
+  receives `error=account_conflict`. The event `tesla.sign-in.identity-conflict`
+  carries hashed ids of both accounts, the stage (`lookup`, `unique-retry` or
+  `bind`) and whether the subject was trusted. Resolving such a conflict is a
+  manual admin task.
+
+Consequence: while Tesla's signing key is unknown and Fleet user info does not
+confirm the `sub`, a subject-bound account cannot sign in (it fails closed);
+unbound legacy email-keyed accounts and brand-new accounts still can.
 
 
 ### 3. Runtime authorization checks
