@@ -15,7 +15,7 @@ concurrency:
 jobs:
   testflight:
     name: Test, archive and upload
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 60
     defaults:
       run:

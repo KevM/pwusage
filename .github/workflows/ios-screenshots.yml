@@ -13,7 +13,7 @@ concurrency:
 jobs:
   screenshots:
     name: Capture App Store screenshots
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 45
     defaults:
       run:
