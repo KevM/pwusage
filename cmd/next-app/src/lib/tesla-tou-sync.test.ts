@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
-import { applyTeslaAdjustments, teslaPlansMatch } from './tesla-tou-sync';
+import fixtureJson from './__fixtures__/tesla-tariff-two-season.json';
+import type { TariffV2 } from './tesla-client';
+import type { Tariff } from './db-types';
+import { parseTariffContent } from './importer/tariff-parser';
+import { decompileTariffToSeasons } from './tariff-timeline';
+import {
+  applyTeslaAdjustments,
+  buildTeslaTariff,
+  teslaPlansMatch,
+  validateForTesla,
+} from './tesla-tou-sync';
 
 function win(
   touName: TimePeriodWindowInput['touName'],
@@ -141,5 +151,184 @@ describe('applyTeslaAdjustments', () => {
     const pwusage = [season({ weekdayPeriods: [win('ON_PEAK', 16, 21, 0.1, 0.12)], weekendPeriods: [] })];
     applyTeslaAdjustments(pwusage);
     expect(pwusage[0].weekdayPeriods[0].buyRate).toBe(0.1);
+  });
+});
+
+const teslaFixture = fixtureJson as unknown as TariffV2;
+
+/** Parse Tesla's content, then decompile it back into PWUsage's season shape. */
+function seasonsOf(content: TariffV2): TariffSeasonInput[] {
+  const parsed = parseTariffContent(content, 'Site');
+  const tariff: Tariff = {
+    id: 0,
+    site_id: 'test-site',
+    updated: new Date(0),
+    name: parsed.name,
+    seasons: parsed.seasons.map((season, seasonIndex) => ({
+      id: seasonIndex,
+      tariff_id: 0,
+      ...season,
+      schedules: season.schedules.map((schedule, i) => ({ id: i, season_id: seasonIndex, ...schedule })),
+    })),
+  };
+  return decompileTariffToSeasons(tariff);
+}
+
+const FOUR_LABELS = new Set(['ON_PEAK', 'PARTIAL_PEAK', 'OFF_PEAK', 'SUPER_OFF_PEAK']);
+
+function winterSeason(): TariffSeasonInput {
+  return season({ name: 'Winter', fromMonth: 10, toMonth: 5, fromDay: 1, toDay: 31 });
+}
+
+/** Full-year, valid plan: Summer Jun-Sep, Winter Oct-May. */
+function validPlan(): TariffSeasonInput[] {
+  return [
+    season({ name: 'Summer' }),
+    season({ name: 'Winter', fromMonth: 10, toMonth: 5, fromDay: 1, toDay: 31 }),
+  ];
+}
+
+describe('buildTeslaTariff', () => {
+  it('round-trips Tesla\'s own plan', () => {
+    const rebuilt = buildTeslaTariff(teslaFixture, { name: 'Sample', seasons: seasonsOf(teslaFixture) });
+    expect(teslaPlansMatch(seasonsOf(teslaFixture), seasonsOf(rebuilt))).toBe(true);
+  });
+
+  it('rebuilds Tesla\'s season periods and rates exactly', () => {
+    const rebuilt = buildTeslaTariff(teslaFixture, { name: 'Sample', seasons: seasonsOf(teslaFixture) });
+    expect(rebuilt.seasons).toEqual(teslaFixture.seasons);
+    expect(rebuilt.energy_charges).toEqual(teslaFixture.energy_charges);
+    expect(rebuilt.sell_tariff.seasons).toEqual(teslaFixture.sell_tariff.seasons);
+    expect(rebuilt.sell_tariff.energy_charges).toEqual(teslaFixture.sell_tariff.energy_charges);
+  });
+
+  it('keeps unmodeled fields from the base', () => {
+    const rebuilt = buildTeslaTariff(teslaFixture, { name: 'Sample', seasons: seasonsOf(teslaFixture) }) as unknown as Record<string, unknown>;
+    const base = teslaFixture as unknown as Record<string, unknown>;
+    expect(rebuilt.daily_charges).toEqual(base.daily_charges);
+    expect(rebuilt.demand_charges).toEqual(base.demand_charges);
+    expect(rebuilt.utility).toBe(base.utility);
+    expect(rebuilt.code).toBe(base.code);
+    expect(rebuilt.currency).toBe(base.currency);
+    expect(rebuilt.sell_tariff).toMatchObject({ name: 'Sample Export', utility: 'Sample Electric' });
+  });
+
+  it('sets the name and uses only Tesla period labels', () => {
+    const rebuilt = buildTeslaTariff(teslaFixture, { name: 'PWUsage Plan', seasons: validPlan() });
+    expect(rebuilt.name).toBe('PWUsage Plan');
+    const labels = new Set<string>();
+    for (const charges of [rebuilt.energy_charges, rebuilt.sell_tariff.energy_charges]) {
+      for (const [group, charge] of Object.entries(charges)) {
+        if (group === 'ALL') continue;
+        Object.keys(charge.rates).forEach(label => labels.add(label));
+      }
+    }
+    for (const season of Object.values(rebuilt.seasons)) {
+      Object.keys(season.tou_periods).forEach(label => labels.add(label));
+    }
+    labels.forEach(label => expect(FOUR_LABELS.has(label)).toBe(true));
+  });
+
+  it('keeps five decimals', () => {
+    const plan = validPlan();
+    plan[0].weekdayPeriods[1] = win('ON_PEAK', 16, 21, 0.12345, 0.012346);
+    const rebuilt = buildTeslaTariff(teslaFixture, { name: 'Five', seasons: plan });
+    expect(rebuilt.energy_charges.Summer.rates.ON_PEAK).toBe(0.12345);
+    expect(rebuilt.sell_tariff.energy_charges.Summer.rates.ON_PEAK).toBe(0.01235);
+  });
+
+  it('keeps the ALL placeholder from the base', () => {
+    const rebuilt = buildTeslaTariff(teslaFixture, { name: 'Sample', seasons: validPlan() });
+    expect(rebuilt.energy_charges.ALL).toEqual({ rates: { ALL: 0 } });
+    expect(rebuilt.sell_tariff.energy_charges.ALL).toEqual({ rates: { ALL: 0 } });
+  });
+
+  it('does not mutate the base', () => {
+    const before = JSON.stringify(teslaFixture);
+    buildTeslaTariff(teslaFixture, { name: 'Sample', seasons: validPlan() });
+    expect(JSON.stringify(teslaFixture)).toBe(before);
+  });
+});
+
+describe('validateForTesla', () => {
+  const codes = (problems: ReturnType<typeof validateForTesla>) => problems.map(p => p.code);
+
+  it('passes a Tesla plan, a manual plan and a public plan', () => {
+    expect(validateForTesla(seasonsOf(teslaFixture), 'USD')).toEqual([]);
+    expect(validateForTesla(validPlan(), 'USD')).toEqual([]);
+    const publicPlan: TariffSeasonInput[] = [
+      {
+        name: 'All Year',
+        fromMonth: 1,
+        toMonth: 12,
+        weekdayPeriods: [
+          win('SUPER_OFF_PEAK', 0, 6, 0.08123, 0.02),
+          win('PARTIAL_PEAK', 6, 16, 0.13456, 0.03),
+          win('ON_PEAK', 16, 21, 0.31789, 0.06),
+          win('PARTIAL_PEAK', 21, 24, 0.13456, 0.03),
+        ],
+        weekendPeriods: [win('OFF_PEAK', 0, 24, 0.1, 0.02)],
+      },
+    ];
+    expect(validateForTesla(publicPlan, 'USD')).toEqual([]);
+  });
+
+  it('reports a season_gap for a plan missing December', () => {
+    const plan = [season({ name: 'Summer', fromMonth: 1, toMonth: 11, fromDay: 1, toDay: 30 })];
+    const problems = validateForTesla(plan, 'USD');
+    expect(codes(problems)).toEqual(['season_gap']);
+    expect(problems[0].message).toContain('December');
+  });
+
+  it('reports a season_overlap when two seasons cover July', () => {
+    const plan = [
+      season({ name: 'Summer', fromMonth: 6, toMonth: 9, fromDay: 1, toDay: 30 }),
+      season({ name: 'Winter', fromMonth: 7, toMonth: 5, fromDay: 1, toDay: 31 }),
+    ];
+    const problems = validateForTesla(plan, 'USD');
+    expect(codes(problems)).toContain('season_overlap');
+    expect(problems.find(p => p.code === 'season_overlap')?.message).toContain('July');
+  });
+
+  it('reports an hour_gap for weekdays uncovered from 23:00 to 24:00', () => {
+    const plan = [season({ weekdayPeriods: [
+      win('OFF_PEAK', 0, 16, 0.1, 0.05),
+      win('ON_PEAK', 16, 21, 0.3, 0.12),
+      win('OFF_PEAK', 21, 23, 0.1, 0.05),
+    ] }), winterSeason()];
+    const problems = validateForTesla(plan, 'USD');
+    expect(codes(problems)).toEqual(['hour_gap']);
+    expect(problems[0]).toMatchObject({ season: 'Summer' });
+    expect(problems[0].message).toContain('23:00');
+    expect(problems[0].message).toContain('weekday');
+  });
+
+  it('reports an hour_overlap when two weekday windows share an hour', () => {
+    const plan = [season({ weekdayPeriods: [
+      win('OFF_PEAK', 0, 16, 0.1, 0.05),
+      win('ON_PEAK', 15, 21, 0.3, 0.12),
+      win('OFF_PEAK', 21, 24, 0.1, 0.05),
+    ] }), winterSeason()];
+    expect(codes(validateForTesla(plan, 'USD'))).toEqual(['hour_overlap']);
+  });
+
+  it('names the season and label when one label has two rates', () => {
+    const plan = [season({ weekdayPeriods: [
+      win('OFF_PEAK', 0, 16, 0.1, 0.05),
+      win('ON_PEAK', 16, 21, 0.3, 0.12),
+      win('OFF_PEAK', 21, 24, 0.12, 0.05),
+    ] }), winterSeason()];
+    const problems = validateForTesla(plan, 'USD');
+    expect(problems).toEqual([
+      expect.objectContaining({ code: 'label_rate_conflict', season: 'Summer', period: 'OFF_PEAK' }),
+    ]);
+    expect(problems[0].message).toContain('Summer');
+    expect(problems[0].message).toContain('OFF_PEAK');
+  });
+
+  it('reports a currency Tesla does not store', () => {
+    const problems = validateForTesla(validPlan(), 'CAD');
+    expect(codes(problems)).toEqual(['currency']);
+    expect(problems[0].message).toContain('CAD');
   });
 });

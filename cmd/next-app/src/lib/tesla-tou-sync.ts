@@ -1,4 +1,6 @@
 import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
+import type { EnergyChargeRates, Season, SeasonPeriods, TariffV2 } from './tesla-client';
+import { compileSeasonsToParsedTariff } from './tariff-timeline';
 
 export type TeslaRateAdjustment = {
   season: string;
@@ -124,4 +126,244 @@ export function teslaPlansMatch(
   const teslaSignatures = tesla.map(seasonSignature).sort();
   if (pwusageSignatures.length !== teslaSignatures.length) return false;
   return pwusageSignatures.every((sig, i) => sig === teslaSignatures[i]);
+}
+
+const TESLA_CURRENCIES = ['USD', 'EUR', 'GBP'];
+const TESLA_ALL_GROUP = 'ALL';
+const MINUTES_PER_DAY = 1440;
+const MONTH_MAX_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+export interface TeslaSyncProblem {
+  code: 'season_gap' | 'season_overlap' | 'hour_gap' | 'hour_overlap' | 'label_rate_conflict' | 'currency';
+  season?: string;
+  period?: TariffPeriodName;
+  message: string;
+}
+
+export interface TeslaPlanPayloadInput {
+  name: string;
+  seasons: TariffSeasonInput[];
+}
+
+/** Tesla's payload keeps one rate per period label within each season, so windows must agree. */
+function labelRateConflicts(season: TariffSeasonInput): TeslaSyncProblem[] {
+  const seen = new Map<TariffPeriodName, { buy: number; sell: number }>();
+  const conflicts = new Map<TariffPeriodName, TeslaSyncProblem>();
+  for (const window of [...season.weekdayPeriods, ...season.weekendPeriods]) {
+    const rates = { buy: round5(window.buyRate), sell: round5(window.sellRate) };
+    const previous = seen.get(window.touName);
+    if (!previous) {
+      seen.set(window.touName, rates);
+    } else if (previous.buy !== rates.buy || previous.sell !== rates.sell) {
+      conflicts.set(window.touName, {
+        code: 'label_rate_conflict',
+        season: season.name,
+        period: window.touName,
+        message: `${season.name} has more than one ${window.touName} rate. Tesla keeps one rate per period, so give every ${window.touName} window in ${season.name} the same buy and export rate.`,
+      });
+    }
+  }
+  return [...conflicts.values()];
+}
+
+function formatMinute(minute: number): string {
+  const hour = Math.floor(minute / 60);
+  const min = minute % 60;
+  return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** Start and end (exclusive, minutes from midnight) of each run where `predicate` holds. */
+function runsWhere(counts: number[], predicate: (count: number) => boolean): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  let start: number | null = null;
+  for (let minute = 0; minute <= MINUTES_PER_DAY; minute++) {
+    const hit = minute < MINUTES_PER_DAY && predicate(counts[minute]);
+    if (hit && start === null) start = minute;
+    if (!hit && start !== null) {
+      runs.push([start, minute]);
+      start = null;
+    }
+  }
+  return runs;
+}
+
+/** Minute-by-minute coverage of one day type. A window ending at 00:00 runs to midnight. */
+function coverageCounts(windows: TimePeriodWindowInput[]): number[] {
+  const counts = new Array<number>(MINUTES_PER_DAY).fill(0);
+  for (const window of windows) {
+    const start = window.fromHour * 60 + window.fromMinute;
+    let end = window.toHour * 60 + window.toMinute;
+    if (end === 0 && start > 0) end = MINUTES_PER_DAY;
+    if (start === end) continue;
+    const spans: Array<[number, number]> = end > start
+      ? [[start, end]]
+      : [[start, MINUTES_PER_DAY], [0, end]];
+    for (const [from, to] of spans) {
+      for (let minute = from; minute < to; minute++) counts[minute]++;
+    }
+  }
+  return counts;
+}
+
+function hourProblems(season: TariffSeasonInput): TeslaSyncProblem[] {
+  const problems: TeslaSyncProblem[] = [];
+  const dayTypes: Array<[string, TimePeriodWindowInput[]]> = [
+    ['weekday', season.weekdayPeriods],
+    ['weekend', season.weekendPeriods],
+  ];
+  for (const [dayType, windows] of dayTypes) {
+    const counts = coverageCounts(windows);
+    for (const [from, to] of runsWhere(counts, count => count === 0)) {
+      problems.push({
+        code: 'hour_gap',
+        season: season.name,
+        message: `${season.name} ${dayType} schedule has no period from ${formatMinute(from)} to ${formatMinute(to)}.`,
+      });
+    }
+    for (const [from, to] of runsWhere(counts, count => count > 1)) {
+      problems.push({
+        code: 'hour_overlap',
+        season: season.name,
+        message: `${season.name} ${dayType} schedule has overlapping periods from ${formatMinute(from)} to ${formatMinute(to)}.`,
+      });
+    }
+  }
+  return problems;
+}
+
+/** Day-of-year index on a 366-day year, as tariff-timeline counts them (Feb 29 included). */
+function dayOfYear(month: number, day: number): number {
+  let offset = 0;
+  for (let i = 0; i < month - 1; i++) offset += MONTH_MAX_DAYS[i];
+  return offset + day - 1;
+}
+
+function dayLabel(index: number): string {
+  let remaining = index;
+  for (let month = 0; month < 12; month++) {
+    if (remaining < MONTH_MAX_DAYS[month]) return `${MONTH_NAMES[month]} ${remaining + 1}`;
+    remaining -= MONTH_MAX_DAYS[month];
+  }
+  return `${MONTH_NAMES[11]} 31`;
+}
+
+function seasonCoverage(seasons: TariffSeasonInput[]): TeslaSyncProblem[] {
+  const owners = new Array<string | null>(366).fill(null);
+  const problems: TeslaSyncProblem[] = [];
+  const overlapPairs = new Set<string>();
+
+  for (const season of seasons) {
+    const start = dayOfYear(season.fromMonth, season.fromDay ?? 1);
+    const end = dayOfYear(season.toMonth, season.toDay ?? MONTH_MAX_DAYS[season.toMonth - 1]);
+    for (let day = start; ; day = (day + 1) % 366) {
+      const owner = owners[day];
+      if (owner !== null) {
+        const pair = [owner, season.name].sort().join('\u0000');
+        if (!overlapPairs.has(pair)) {
+          overlapPairs.add(pair);
+          problems.push({
+            code: 'season_overlap',
+            season: season.name,
+            message: `${owner} and ${season.name} both cover ${dayLabel(day)}. Each day needs exactly one season.`,
+          });
+        }
+      } else {
+        owners[day] = season.name;
+      }
+      if (day === end) break;
+    }
+  }
+
+  let gapStart: number | null = null;
+  for (let day = 0; day <= 366; day++) {
+    const uncovered = day < 366 && owners[day] === null;
+    if (uncovered && gapStart === null) gapStart = day;
+    if (!uncovered && gapStart !== null) {
+      const from = dayLabel(gapStart);
+      const to = dayLabel(day - 1);
+      problems.push({
+        code: 'season_gap',
+        message: from === to
+          ? `No season covers ${from}. Seasons must cover every day of the year.`
+          : `No season covers ${from} through ${to}. Seasons must cover every day of the year.`,
+      });
+      gapStart = null;
+    }
+  }
+  return problems;
+}
+
+/**
+ * Problems that would stop Tesla storing the plan as PWUsage describes it. Empty when the plan
+ * is valid. Messages are shown to the owner as-is.
+ */
+export function validateForTesla(seasons: TariffSeasonInput[], currency: string): TeslaSyncProblem[] {
+  const problems: TeslaSyncProblem[] = [];
+  if (!TESLA_CURRENCIES.includes(currency.toUpperCase())) {
+    problems.push({
+      code: 'currency',
+      message: `Tesla stores rates in USD, EUR or GBP. This plan uses ${currency}.`,
+    });
+  }
+  problems.push(...seasonCoverage(seasons));
+  for (const season of seasons) {
+    problems.push(...hourProblems(season), ...labelRateConflicts(season));
+  }
+  return problems;
+}
+
+/**
+ * Tesla's `tariff_content_v2` for PWUsage's plan. Starts from a deep copy of `base` (Tesla's
+ * freshly read tariff) and replaces the name, seasons and energy charges; the `ALL` placeholder
+ * is kept. Callers run `validateForTesla` first: a label with two rates keeps the last one.
+ */
+export function buildTeslaTariff(base: TariffV2, plan: TeslaPlanPayloadInput): TariffV2 {
+  const copy = structuredClone(base);
+  const compiled = compileSeasonsToParsedTariff(plan.name, plan.seasons);
+
+  const seasons: Record<string, Season> = {};
+  const buyCharges: Record<string, EnergyChargeRates> = {};
+  const sellCharges: Record<string, EnergyChargeRates> = {};
+
+  for (const season of compiled.seasons) {
+    const touPeriods: Record<string, SeasonPeriods> = {};
+    const buyRates: Record<string, number> = {};
+    const sellRates: Record<string, number> = {};
+    for (const schedule of season.schedules) {
+      if (!touPeriods[schedule.name]) touPeriods[schedule.name] = { periods: [] };
+      touPeriods[schedule.name].periods.push({
+        fromDayOfWeek: schedule.from_day_of_week,
+        toDayOfWeek: schedule.to_day_of_week,
+        fromHour: schedule.from_hour,
+        fromMinute: schedule.from_minute,
+        toHour: schedule.to_hour,
+        toMinute: schedule.to_minute,
+      });
+      buyRates[schedule.name] = round5(schedule.buy_rate);
+      sellRates[schedule.name] = round5(schedule.sell_rate);
+    }
+    seasons[season.name] = {
+      fromDay: season.from_day,
+      toDay: season.to_day,
+      fromMonth: season.from_month,
+      toMonth: season.to_month,
+      tou_periods: touPeriods,
+    };
+    buyCharges[season.name] = { rates: buyRates };
+    sellCharges[season.name] = { rates: sellRates };
+  }
+
+  const keepAll = (charges: Record<string, EnergyChargeRates>): Record<string, EnergyChargeRates> =>
+    charges[TESLA_ALL_GROUP] ? { [TESLA_ALL_GROUP]: structuredClone(charges[TESLA_ALL_GROUP]) } : {};
+
+  copy.name = plan.name;
+  copy.seasons = structuredClone(seasons);
+  copy.energy_charges = { ...keepAll(base.energy_charges), ...buyCharges };
+  copy.sell_tariff.seasons = structuredClone(seasons);
+  copy.sell_tariff.energy_charges = { ...keepAll(base.sell_tariff.energy_charges), ...sellCharges };
+  return copy;
 }
