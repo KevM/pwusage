@@ -2,29 +2,40 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ReactNode, useEffect, useRef } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { isSiteTabId, type SiteTabId } from '@/lib/site-tabs';
 
-type TabId = 'history' | 'bill' | 'settings';
+const LAST_TAB_KEY = 'pwusage_last_site_tab';
 
 interface SiteTabsProps {
-    children?: ReactNode; // We might not need children if we pass slots, or we use children as content
-    historySlot: ReactNode;
-    billSlot: ReactNode;
-    settingsSlot: ReactNode;
+    /** The tab the server rendered (from `?view=`). Only its content is passed in. */
+    activeTab: SiteTabId;
+    /** The active tab's content. */
+    children: ReactNode;
     breadcrumbs?: ReactNode;
 }
 
-export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: SiteTabsProps) {
+function readLastTab(): SiteTabId | null {
+    try {
+        const value = localStorage.getItem(LAST_TAB_KEY);
+        return isSiteTabId(value) ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+function rememberTab(tab: SiteTabId) {
+    try {
+        localStorage.setItem(LAST_TAB_KEY, tab);
+    } catch {
+        // Private windows can refuse storage; the tab still opens.
+    }
+}
+
+export function SiteTabs({ activeTab, children, breadcrumbs }: SiteTabsProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
-
-    // Default to 'bill' as it was the main page content previously? 
-    // Or user asked for History, Bill, Settings. Let's default to History or Bill.
-    // Given the prompt "History: remove chart... Estimated Bill: site page currently has this",
-    // maybe 'bill' is a safer default for existing users, or 'history'.
-    // Let's default to 'bill' as it feels like the "Dashboard".
-    const activeTab = (searchParams.get('view') as TabId) || 'bill';
     const initialized = useRef(false);
 
     useEffect(() => {
@@ -32,19 +43,20 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
         if (initialized.current) return;
         initialized.current = true;
 
-        // If no view is specified in URL, check localStorage
+        // With no view in the URL, reopen the last tab the person chose.
         if (!searchParams.has('view')) {
-            const lastTab = localStorage.getItem('pwusage_last_site_tab') as TabId;
-            if (lastTab && ['history', 'bill', 'settings'].includes(lastTab) && lastTab !== 'bill') {
+            const lastTab = readLastTab();
+            if (lastTab && lastTab !== activeTab) {
                 const params = new URLSearchParams(searchParams);
                 params.set('view', lastTab);
                 router.replace(`${pathname}?${params.toString()}`);
             }
         }
-    }, [pathname, router, searchParams]);
+    }, [activeTab, pathname, router, searchParams]);
 
-    const setTab = (tab: TabId) => {
-        localStorage.setItem('pwusage_last_site_tab', tab);
+    // Each tab is its own server render, so the URL (and back/forward) decides what loads.
+    const setTab = (tab: SiteTabId) => {
+        rememberTab(tab);
         const params = new URLSearchParams(searchParams);
         params.set('view', tab);
         router.push(`${pathname}?${params.toString()}`);
@@ -62,7 +74,7 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
 
                 {/* Center: Tabs */}
                 <div className="z-0">
-                    <Tabs value={activeTab} onValueChange={(value) => setTab(value as TabId)}>
+                    <Tabs value={activeTab} onValueChange={(value) => { if (isSiteTabId(value)) setTab(value); }}>
                         <TabsList className="overflow-x-auto max-w-full">
                             <TabsTrigger value="history" className="flex items-center gap-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -89,17 +101,7 @@ export function SiteTabs({ historySlot, billSlot, settingsSlot, breadcrumbs }: S
             </div>
 
             <div className="mt-4">
-                <Tabs value={activeTab} onValueChange={(value) => setTab(value as TabId)}>
-                    <TabsContent value="history">
-                    {historySlot}
-                    </TabsContent>
-                    <TabsContent value="bill">
-                    {billSlot}
-                    </TabsContent>
-                    <TabsContent value="settings">
-                    {settingsSlot}
-                    </TabsContent>
-                </Tabs>
+                {children}
             </div>
         </div>
     );

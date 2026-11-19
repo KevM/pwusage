@@ -1,4 +1,8 @@
 import { layoutTimeline } from './tariff-estimates';
+import {
+  buildBatchAiHandoffPreviewWithDetails,
+  TariffAiHandoffConflictError,
+} from './tariff-ai-handoff-service';
 import { estimateFreshness } from './urdb/match';
 import type { PoolClient } from 'pg';
 import { pool } from './db';
@@ -158,6 +162,37 @@ export interface BuildSiteTariffsTimelineInput {
   rateCountryUpdatedAt?: Date | string | null;
 }
 
+export interface EffectivePeriodPick {
+  periodId: number;
+  tariffId: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+/**
+ * The billing plan for a site-local date: the period covering it (latest start wins), else, in a
+ * gap, the period that ended most recently, else, before every plan, the earliest. Used by
+ * `resolveTariffForDate` and `resolveTariffsForDates`; `effectiveTariffIdSql` is the same policy in SQL.
+ */
+export function pickTariffIdForDate(periods: readonly EffectivePeriodPick[], date: string): number | undefined {
+  let covering: EffectivePeriodPick | undefined;
+  let prior: EffectivePeriodPick | undefined;
+  let earliest: EffectivePeriodPick | undefined;
+  for (const p of periods) {
+    if (p.effectiveFrom <= date && (p.effectiveTo === null || p.effectiveTo >= date)) {
+      if (!covering || p.effectiveFrom > covering.effectiveFrom
+        || (p.effectiveFrom === covering.effectiveFrom && p.periodId > covering.periodId)) covering = p;
+    }
+    if (p.effectiveTo !== null && p.effectiveTo < date) {
+      if (!prior || p.effectiveTo > (prior.effectiveTo as string)
+        || (p.effectiveTo === prior.effectiveTo && p.periodId > prior.periodId)) prior = p;
+    }
+    if (!earliest || p.effectiveFrom < earliest.effectiveFrom
+      || (p.effectiveFrom === earliest.effectiveFrom && p.periodId < earliest.periodId)) earliest = p;
+  }
+  return (covering ?? prior ?? earliest)?.tariffId;
+}
+
 /**
  * Same pick as `resolveTariffForDate`: the plan covering `date`, else (in a gap)
  * the nearest earlier plan by end date, else (before every plan) the earliest.
@@ -250,6 +285,7 @@ function mapPeriodRowToDTO(
       ? {
           selectionId: r.selection_id ?? null,
           choiceKind,
+          ...(r.candidate_kind ? { candidateKind: r.candidate_kind } : {}),
           urdbLabel: r.urdb_label ?? null,
           verification: verification ?? null,
         }
@@ -1110,6 +1146,8 @@ export interface ApplyTariffSelectionInput {
   userId: string;
   verifiedAgainstBill: boolean;
   candidate: ApplyTariffSelectionCandidate;
+  candidateKindOverride?: TariffSelectionCandidateKind;
+  allowMinuteResolution?: boolean;
   reviewHash?: string | null;
 }
 
@@ -1709,7 +1747,7 @@ export async function applyTariffSelectionOnClient(
       effectiveFrom,
       effectiveTo,
       seasons: candidate.seasons,
-    }, today);
+    }, today, { allowMinuteResolution: input.allowMinuteResolution });
     const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
     const newHash = tariffContentHash(parsed);
     const targetSource: TariffSource = candidate.kind === 'public' ? 'estimated' : 'manual';
@@ -1831,7 +1869,7 @@ export async function applyTariffSelectionOnClient(
       effectiveTo,
       source: targetSource,
       choiceKind: 'owner',
-      candidateKind: candidate.kind,
+      candidateKind: input.candidateKindOverride ?? candidate.kind,
       selectedByUserId: userId,
       urdbLabel: candidate.kind === 'public' ? candidate.urdbLabel : null,
       utilityName: candidate.kind === 'public' ? candidate.utilityName : null,
@@ -3525,44 +3563,54 @@ export class TariffTimelineRepo {
     siteId: string,
     siteLocalDate: string
   ): Promise<{ tariffs: Tariff[]; schedules: TariffSchedule[] }> {
-    const exact = await client.query<{ tariff_id: number }>(
-      `SELECT tariff_id FROM "TariffEffectivePeriod"
-       WHERE site_id = $1 AND effective_from <= $2::date AND (effective_to IS NULL OR effective_to >= $2::date)
-       ORDER BY effective_from DESC LIMIT 1`,
-      [siteId, siteLocalDate]
+    const tariffs = (await this.resolveTariffsForDates(client, siteId, [siteLocalDate])).get(siteLocalDate) ?? [];
+    const schedules = tariffs[0]?.seasons?.flatMap(s => s.schedules ?? []) ?? [];
+    return { tariffs, schedules };
+  }
+
+  /**
+   * The billing tariff for each site-local date, with one period read and one batched hydrate
+   * however many dates are asked: a reattribution chunk resolves its days together.
+   * Dates with no plan at all map to an empty list.
+   */
+  async resolveTariffsForDates(
+    client: Pick<PoolClient, 'query'>,
+    siteId: string,
+    siteLocalDates: readonly string[]
+  ): Promise<Map<string, Tariff[]>> {
+    const result = new Map<string, Tariff[]>();
+    if (siteLocalDates.length === 0) return result;
+    const periodRes = await client.query<{ id: number; tariff_id: number; effective_from: string; effective_to: string | null }>(
+      `SELECT id, tariff_id, effective_from::text AS effective_from, effective_to::text AS effective_to
+       FROM "TariffEffectivePeriod" WHERE site_id = $1`,
+      [siteId]
     );
-    let tariffId = exact.rows[0]?.tariff_id;
-    if (tariffId === undefined) {
-      const prior = await client.query<{ tariff_id: number }>(
-        `SELECT tariff_id FROM "TariffEffectivePeriod"
-         WHERE site_id = $1 AND effective_to IS NOT NULL AND effective_to < $2::date
-         ORDER BY effective_to DESC LIMIT 1`,
-        [siteId, siteLocalDate]
-      );
-      tariffId = prior.rows[0]?.tariff_id;
-    }
-    if (tariffId === undefined) {
-      const earliest = await client.query<{ tariff_id: number }>(
-        'SELECT tariff_id FROM "TariffEffectivePeriod" WHERE site_id = $1 ORDER BY effective_from ASC LIMIT 1',
-        [siteId]
-      );
-      tariffId = earliest.rows[0]?.tariff_id;
-    }
-    if (tariffId === undefined) {
+    const periods: EffectivePeriodPick[] = periodRes.rows.map(r => ({
+      periodId: Number(r.id),
+      tariffId: Number(r.tariff_id),
+      effectiveFrom: r.effective_from,
+      effectiveTo: r.effective_to,
+    }));
+    let fallbackTariffId: number | undefined;
+    if (periods.length === 0) {
       const current = await client.query<{ id: number }>(
         'SELECT id FROM "Tariff" WHERE site_id = $1 AND is_current = TRUE LIMIT 1',
         [siteId]
       );
-      tariffId = current.rows[0]?.id;
+      const id = current.rows[0]?.id;
+      fallbackTariffId = id === undefined ? undefined : Number(id);
     }
-    if (tariffId === undefined) {
-      return { tariffs: [], schedules: [] };
+    const tariffIdByDate = new Map<string, number | undefined>();
+    for (const date of siteLocalDates) {
+      tariffIdByDate.set(date, pickTariffIdForDate(periods, date) ?? fallbackTariffId);
     }
-    const map = await hydrateTariffs(client, [Number(tariffId)]);
-    const tariff = map.get(Number(tariffId));
-    if (!tariff) return { tariffs: [], schedules: [] };
-    const schedules = tariff.seasons?.flatMap(s => s.schedules ?? []) ?? [];
-    return { tariffs: [tariff], schedules };
+    const ids = [...new Set([...tariffIdByDate.values()].filter((id): id is number => id !== undefined))];
+    const hydrated = await hydrateTariffs(client, ids);
+    for (const [date, id] of tariffIdByDate) {
+      const tariff = id === undefined ? undefined : hydrated.get(id);
+      result.set(date, tariff ? [tariff] : []);
+    }
+    return result;
   }
 
   async createReferencePeriod(
@@ -4161,6 +4209,168 @@ export class TariffTimelineRepo {
         verification: verBySel.get(sid) ?? null,
       };
     });
+  }
+
+  async loadAiHandoffSpans(
+    siteId: string,
+    viewerUserId: string | null
+  ): Promise<{
+    actualSpans: ExistingTimelineSpanInput[];
+    referenceSpans: ExistingTimelineSpanInput[];
+  }> {
+    const [actualSpans, referenceSpans] = await Promise.all([
+      loadScopeSelectionSpans(pool, siteId, 'actual', viewerUserId),
+      loadScopeSelectionSpans(pool, siteId, 'reference', viewerUserId),
+    ]);
+    return { actualSpans, referenceSpans };
+  }
+
+  async commitAiHandoffSelections(
+    siteId: string,
+    input: {
+      userId: string;
+      rawInput: string;
+      expectedReviewHash: string;
+      verifiedAgainstBill: boolean;
+      now?: Date;
+    }
+  ): Promise<import('./tariff-contract').TariffAiHandoffCommitResponse> {
+    const { userId, rawInput, expectedReviewHash, verifiedAgainstBill } = input;
+    const now = input.now ?? new Date();
+    const client = await pool.connect();
+    const selectionIds: number[] = [];
+    const tariffIds: number[] = [];
+    let appliedActualCount = 0;
+    let appliedReferenceCount = 0;
+    let reattributionFrom: string | null = null;
+    let reattributionTo: string | null = null;
+    let hasReattribution = false;
+    let reattribution: EnqueueReattributionParams | null = null;
+    let queued: EnqueuedReattribution | null = null;
+
+    try {
+      await client.query('BEGIN');
+      const siteRes = await client.query<{
+        id: string;
+        timezone: string;
+        currency: string;
+        rate_country?: string | null;
+      }>(
+        `SELECT id, timezone,
+                COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
+                rate_country
+         FROM "Site" WHERE id = $1 FOR UPDATE`,
+        [siteId]
+      );
+      const site = siteRes.rows[0];
+      if (!site) throw new TariffNotFoundError('Site not found');
+
+      const timezone = site.timezone || 'UTC';
+      const currency = (site.currency || 'USD').trim().toUpperCase();
+      const today = siteLocalDateString(now, timezone);
+      const eligibility = deriveRatePlanEligibility(site.rate_country ?? null);
+
+      const actualSpans = await loadScopeSelectionSpans(client, siteId, 'actual', userId);
+      const referenceSpans = await loadScopeSelectionSpans(client, siteId, 'reference', userId);
+
+      const built = buildBatchAiHandoffPreviewWithDetails({
+        siteId,
+        timezone,
+        currency,
+        todaySiteLocal: today,
+        eligibility,
+        rawInput,
+        actualSpans,
+        referenceSpans,
+      });
+
+      if (built.response.reviewHash !== expectedReviewHash) {
+        throw new TariffAiHandoffConflictError(built.response);
+      }
+
+      const effectiveVerified = verifiedAgainstBill || built.citesUtilityBill;
+
+      for (const item of [...built.changedActual, ...built.changedReference]) {
+        const res = await applyTariffSelectionOnClient(client, siteId, today, {
+          scope: item.scope,
+          effectiveFrom: item.period.effectiveFrom,
+          effectiveTo: item.period.effectiveTo,
+          userId,
+          verifiedAgainstBill: effectiveVerified,
+          candidate: {
+            kind: 'manual',
+            name: item.period.name,
+            seasons: item.period.seasons,
+            holidaysUseWeekendSchedule: true,
+          },
+          candidateKindOverride: 'ai_handoff',
+          allowMinuteResolution: true,
+          reviewHash: item.preview.reviewHash,
+        });
+        selectionIds.push(...res.selectionIds);
+        tariffIds.push(...res.tariffIds);
+        if (!res.unchanged) {
+          if (item.scope === 'actual') appliedActualCount += 1;
+          else appliedReferenceCount += 1;
+        }
+        if (item.scope === 'actual' && res.reattributionRange) {
+          if (!hasReattribution) {
+            hasReattribution = true;
+            reattributionFrom = res.reattributionRange.fromDate;
+            reattributionTo = res.reattributionRange.toDate;
+          } else {
+            reattributionFrom = minDate(reattributionFrom as string, res.reattributionRange.fromDate);
+            reattributionTo = maxEnd(reattributionTo, res.reattributionRange.toDate);
+          }
+        }
+      }
+
+      if (hasReattribution && reattributionFrom !== null) {
+        reattribution = {
+          siteId,
+          fromDate: reattributionFrom,
+          toDate: reattributionTo,
+          requestedByUserId: userId,
+          trigger: 'update',
+        };
+        queued = await enqueueReattributionOnClient(client, reattribution);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const unchanged = appliedActualCount === 0 && appliedReferenceCount === 0;
+    if (!unchanged) {
+      new SiteRepo().invalidateCache(siteId);
+    }
+    if (reattribution && queued) {
+      logReattributionEnqueued(reattribution, queued);
+    }
+    logEvent('info', 'tariff.ai_handoff.committed', {
+      appliedActualCount,
+      appliedReferenceCount,
+      unchanged,
+      verifiedAgainstBill,
+      accountId: accountFingerprint(userId),
+    });
+
+    return {
+      selectionIds,
+      tariffIds: [...new Set(tariffIds)],
+      appliedActualCount,
+      appliedReferenceCount,
+      unchanged,
+      reattributionRange:
+        hasReattribution && reattributionFrom !== null
+          ? { fromDate: reattributionFrom, toDate: reattributionTo }
+          : null,
+      timeline: await this.getTimeline(siteId, userId),
+    };
   }
 }
 

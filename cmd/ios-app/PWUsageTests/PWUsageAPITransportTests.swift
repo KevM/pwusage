@@ -134,7 +134,7 @@ extension PWUsageAPITests {
         ])
     }
 
-    @Test("Exchange cookie is sent on later API request")
+    @Test("Exchange cookie reaches the jar only when stored, then is sent on later API requests")
     func exchangeCookieIsSentOnLaterAPIRequest() async throws {
         var recordedRequests: [(URLRequest, Data)] = []
         StubURLProtocol.requestHandler = { request in
@@ -157,9 +157,15 @@ extension PWUsageAPITests {
             return (response, Data(#"[{"id":"site-1","name":"Home","utility":"Utility Co"}]"#.utf8))
         }
 
-        try await api.exchangeSession(
+        let credential = try await api.exchangeSession(
             MobileSessionExchange(attemptId: "attempt", code: "opaque-code",
                                   verifier: String(repeating: "v", count: 43), state: "app-state"))
+        let origin = try #require(URL(string: "https://pwusage.test"))
+        // The exchange opts out of URLSession's cookie handling: nothing is in the jar
+        // (so nothing a relaunch could find) until the sign-in that owns it stores it.
+        #expect(credential.cookies.map(\.value) == ["session-value"])
+        #expect(!(cookieStorage.cookies(for: origin) ?? []).contains(where: { $0.name == "site_auth" }))
+        api.store(credential)
         let sites = try await api.fetchSites()
         #expect(sites.map(\.id) == ["site-1"])
         #expect(recordedRequests.count == 2)

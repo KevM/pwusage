@@ -42,6 +42,18 @@ export interface SiteLiveData {
     sparklineScales?: SiteLiveSparklineScales;
 }
 
+/** `view=card`: the lightweight response a Products card polls. */
+export interface SiteLiveCardData {
+    solarPower: number;
+    loadPower: number;
+    batteryPower: number;
+    gridPower: number;
+    percentageCharged: number;
+    /** `percentageCharged` when the reading is recent enough to be current; otherwise null. */
+    stateOfCharge: number | null;
+    currentTariff?: string;
+}
+
 export class SiteLiveDataFetchError extends Error {
     readonly status: number;
 
@@ -66,6 +78,14 @@ export async function fetchSiteLiveData(siteId: string, signal?: AbortSignal): P
     }
 
     return response.json() as Promise<SiteLiveData>;
+}
+
+export async function fetchSiteLiveCardData(siteId: string, signal?: AbortSignal): Promise<SiteLiveCardData> {
+    const response = await fetch(`/api/site-live-data?siteId=${encodeURIComponent(siteId)}&view=card`, { signal });
+    if (!response.ok) {
+        throw new SiteLiveDataFetchError(response.status, `Failed to fetch site live data (${response.status})`);
+    }
+    return response.json() as Promise<SiteLiveCardData>;
 }
 
 export async function fetchMobileDashboardContract(

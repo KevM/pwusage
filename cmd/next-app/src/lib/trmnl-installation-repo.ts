@@ -3,6 +3,11 @@ import { SiteRepo } from './site-repo';
 
 export class TrmnlInstallationRepo {
     // === Queries (Read Operations) ===
+    async findById(id: number): Promise<TrmnlInstallation | undefined> {
+        const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE id = $1', [id]);
+        return rows[0] as TrmnlInstallation | undefined;
+    }
+
     async findByUuid(uuid: string): Promise<TrmnlInstallation | undefined> {
         const { rows } = await pool.query('SELECT * FROM "TrmnlInstallation" WHERE uuid = $1', [uuid]);
         return rows[0] as TrmnlInstallation | undefined;
@@ -51,11 +56,14 @@ export class TrmnlInstallationRepo {
         return rows[0] as TrmnlInstallation | undefined;
     }
 
-    async findPendingByPluginId(pluginSettingId: number): Promise<TrmnlInstallation | undefined> {
-        const { rows } = await pool.query(
-            'SELECT * FROM "TrmnlInstallation" WHERE plugin_setting_id = $1 AND uuid IS NULL',
-            [pluginSettingId]
-        );
+    async findPendingByPluginId(
+        pluginSettingId: number,
+        options?: { requireVerified?: boolean }
+    ): Promise<TrmnlInstallation | undefined> {
+        const query = options?.requireVerified
+            ? 'SELECT * FROM "TrmnlInstallation" WHERE plugin_setting_id = $1 AND uuid IS NULL AND plugin_setting_id_verified = true'
+            : 'SELECT * FROM "TrmnlInstallation" WHERE plugin_setting_id = $1 AND uuid IS NULL';
+        const { rows } = await pool.query(query, [pluginSettingId]);
         return rows[0] as TrmnlInstallation | undefined;
     }
 
@@ -69,6 +77,17 @@ export class TrmnlInstallationRepo {
         return rows[0] as TrmnlInstallation | undefined;
     }
 
+    async findRecentLoosePending(maxAgeMs: number = 15 * 60 * 1000): Promise<TrmnlInstallation[]> {
+        const { rows } = await pool.query(`
+            SELECT * FROM "TrmnlInstallation"
+            WHERE uuid IS NULL
+              AND plugin_setting_id IS NULL
+              AND created_at >= NOW() - ($1 * interval '1 millisecond')
+            ORDER BY created_at DESC, id DESC
+        `, [maxAgeMs]);
+        return rows as TrmnlInstallation[];
+    }
+
     // === Commands (Write/Mutate Operations) ===
     async create(
         siteId: string,
@@ -76,8 +95,39 @@ export class TrmnlInstallationRepo {
         pluginSettingId: number | null = null,
         json: unknown = null,
         accessToken: string | null = null,
-        installedByUserId: string | null = null
-    ): Promise<number> {
+        installedByUserId: string | null = null,
+        options?: { allowedExistingSiteIds?: string[] | null; pluginSettingIdVerified?: boolean }
+    ): Promise<number | null> {
+        const allowedExistingSiteIds = options?.allowedExistingSiteIds ?? null;
+        const pluginSettingIdVerified = options?.pluginSettingIdVerified ?? false;
+        if (uuid && allowedExistingSiteIds !== null) {
+            const params = [siteId, uuid, pluginSettingId, json, accessToken, installedByUserId, allowedExistingSiteIds];
+            const query = `
+                INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token, installed_by_user_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT(uuid) DO UPDATE SET 
+                    site_id = EXCLUDED.site_id,
+                    plugin_setting_id = COALESCE(EXCLUDED.plugin_setting_id, "TrmnlInstallation".plugin_setting_id),
+                    json = COALESCE(EXCLUDED.json, "TrmnlInstallation".json),
+                    access_token = COALESCE(EXCLUDED.access_token, "TrmnlInstallation".access_token),
+                    installed_by_user_id = COALESCE(EXCLUDED.installed_by_user_id, "TrmnlInstallation".installed_by_user_id)
+                WHERE "TrmnlInstallation".site_id = ANY($7::text[])
+                RETURNING id
+            `;
+            const { rows } = await pool.query(query, params);
+            return (rows[0]?.id as number | undefined) ?? null;
+        }
+
+        if (!uuid && pluginSettingIdVerified) {
+            const params = [siteId, null, pluginSettingId, json, accessToken, installedByUserId, true];
+            const { rows } = await pool.query(`
+                INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token, installed_by_user_id, plugin_setting_id_verified)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+            `, params);
+            return rows[0].id;
+        }
+
         const params = [siteId, uuid || null, pluginSettingId, json, accessToken, installedByUserId];
         const query = uuid ? `
             INSERT INTO "TrmnlInstallation" (site_id, uuid, plugin_setting_id, json, access_token, installed_by_user_id)
@@ -119,6 +169,25 @@ export class TrmnlInstallationRepo {
         );
     }
 
+    async updateWebhookMetadata(
+        id: number,
+        uuid: string,
+        expectedSiteId: string,
+        pluginSettingId: number,
+        json: unknown
+    ): Promise<boolean> {
+        const { rows } = await pool.query(`
+            UPDATE "TrmnlInstallation"
+            SET plugin_setting_id = COALESCE($4, plugin_setting_id),
+                json = $5
+            WHERE id = $1
+              AND uuid = $2
+              AND site_id = $3
+            RETURNING id
+        `, [id, uuid, expectedSiteId, pluginSettingId, json]);
+        return rows.length === 1;
+    }
+
     async updateJson(id: number, json: unknown): Promise<void> {
         await pool.query(
             'UPDATE "TrmnlInstallation" SET json = $1 WHERE id = $2',
@@ -133,12 +202,16 @@ export class TrmnlInstallationRepo {
         );
     }
 
-    async claimPendingById(id: number, uuid: string, pluginSettingId: number, json: unknown): Promise<void> {
-        await pool.query(`
+    async claimPendingById(id: number, uuid: string, pluginSettingId: number, json: unknown): Promise<boolean> {
+        const { rows } = await pool.query(`
             UPDATE "TrmnlInstallation"
             SET uuid = $1, plugin_setting_id = $2, json = $3
             WHERE id = $4
+              AND uuid IS NULL
+              AND (plugin_setting_id IS NULL OR plugin_setting_id = $2)
+            RETURNING id
         `, [uuid, pluginSettingId, json, id]);
+        return rows.length === 1;
     }
 
     async claimPending(pluginSettingId: number, uuid: string, json: unknown): Promise<void> {

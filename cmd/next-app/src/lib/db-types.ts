@@ -20,6 +20,7 @@ export interface User {
   auth_lost_at?: Date | null;
   auth_restored_at?: Date | null;
   session_version?: number; // Bumped on sign-out-everywhere; embedded in site_auth JWT as `sv`
+  tesla_subject?: string | null; // Tesla ID-token `sub` this account is bound to (see Authentication.md "Email uniqueness")
 }
 
 export type RateCountrySource = 'solar_location' | 'owner';
@@ -62,7 +63,8 @@ export type TariffSelectionCandidateKind =
   | 'automatic_estimate'
   | 'manual'
   | 'public'
-  | 'restore_tesla';
+  | 'restore_tesla'
+  | 'ai_handoff';
 export type ExportRateProvenance = 'published' | 'net_metering' | 'inherited' | 'manual' | 'tesla';
 
 export interface SiteUtilityRow {
@@ -250,6 +252,7 @@ export interface TrmnlInstallation {
   site_id: string;
   installed_by_user_id?: string | null;
   plugin_setting_id: number | null;
+  plugin_setting_id_verified?: boolean;
   created_at: Date;
   json?: unknown;
   access_token?: string | null;

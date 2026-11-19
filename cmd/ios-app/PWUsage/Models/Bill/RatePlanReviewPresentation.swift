@@ -3,11 +3,17 @@ import Foundation
 /// Labels for where a plan came from, who chose it and who verified it. The three are separate:
 /// a public plan an owner chose and verified still reads as public rates.
 enum RatePlanSourcePresentation {
-    static func sourceLabel(_ source: TariffSource) -> String {
+    static func sourceLabel(
+        _ source: TariffSource,
+        candidateKind: TariffSelectionCandidateKind? = nil
+    ) -> String {
+        if candidateKind == .aiHandoff {
+            return "Imported with AI assistant"
+        }
         switch source {
-        case .tesla: "From Tesla"
-        case .estimated: "From public utility rates"
-        case .manual: "Entered by you"
+        case .tesla: return "From Tesla"
+        case .estimated: return "From public utility rates"
+        case .manual: return "Entered by you"
         }
     }
 

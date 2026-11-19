@@ -25,15 +25,21 @@ actor SolarHistoryStore {
         let scopeGeneration: Int
     }
 
+    struct SyncWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
     private let directory: URL
     private let fileManager: FileManager
     private var cache: [SolarForecastSiteScope: Persisted] = [:]
-    private var generation = 0
-    private var scopeGenerations: [SolarForecastSiteScope: Int] = [:]
-    /// Syncs running per scope, and days merged while one ran: a sync saves the state it loaded
-    /// before its pages, so it reapplies these first.
-    private var activeSyncs: [SolarForecastSiteScope: Int] = [:]
-    private var lateDays: [SolarForecastSiteScope: [MobileSolarHistoryDay]] = [:]
+    var generation = 0
+    var scopeGenerations: [SolarForecastSiteScope: Int] = [:]
+    /// Syncs running per scope, waiters serialized behind them, and days merged while one ran:
+    /// a sync saves the state it loaded before its pages, so it reapplies these first.
+    var activeSyncs: [SolarForecastSiteScope: Int] = [:]
+    var syncWaiters: [SolarForecastSiteScope: [SyncWaiter]] = [:]
+    var lateDays: [SolarForecastSiteScope: [MobileSolarHistoryDay]] = [:]
 
     init(fileManager: FileManager = .default, directory customDirectory: URL? = nil) {
         self.fileManager = fileManager
@@ -46,12 +52,12 @@ actor SolarHistoryStore {
         api: any MobileSolarHistoryDataAPI,
         now: Date = .now
     ) async throws -> SolarHistorySyncResult {
-        let token = beginSync(scope: scope)
+        let token = try await acquireSync(scope: scope)
         defer { endSync(scope: scope) }
         var state = try load(scope)
         let zone = TimeZone(identifier: state.timeZone ?? "UTC") ?? .gmt
-        // The endpoint returns the site zone only with page one. Bootstrap in UTC, then restart
-        // the first sync at the exact site-local boundary when those dates differ.
+        // The endpoint returns the site zone only with page one. Bootstrap 366 UTC days back, which
+        // is never after the site-local 365-day boundary, then drop the boundary days it over-reads.
         let scanStart: Date
         if state.syncedThrough == nil {
             scanStart = state.timeZone == nil
@@ -71,6 +77,8 @@ actor SolarHistoryStore {
             state.syncedAt = now
             state.days.removeAll()
             state.syncedThrough = nil
+            state.flowsSyncedFrom = nil
+            state.flowsSyncedThrough = nil
             state.timeZone = nil
             try save(state, scope: scope)
             return .disabled
@@ -83,23 +91,6 @@ actor SolarHistoryStore {
         try validateGeneration(token.generation, scope: scope, scopeGeneration: token.scopeGeneration)
         try save(state, scope: scope)
         return .synced(timeZone: timeZone)
-    }
-
-    func beginSync(scope: SolarForecastSiteScope) -> SolarHistorySyncToken {
-        scopeGenerations[scope, default: 0] += 1
-        activeSyncs[scope, default: 0] += 1
-        return SolarHistorySyncToken(
-            generation: generation,
-            scopeGeneration: scopeGenerations[scope, default: 0]
-        )
-    }
-
-    func endSync(scope: SolarForecastSiteScope) {
-        activeSyncs[scope, default: 1] -= 1
-        if activeSyncs[scope] == 0 {
-            activeSyncs.removeValue(forKey: scope)
-            lateDays.removeValue(forKey: scope)
-        }
     }
 
     func applyLateDays(scope: SolarForecastSiteScope, to state: inout SolarHistoryPersisted) {
@@ -148,18 +139,21 @@ actor SolarHistoryStore {
                 return .disabled
             case .enabled(let siteZone, let days, let nextFrom):
                 resultZone = siteZone
+                var pageDays = days
                 if !checkedLocalStart {
                     checkedLocalStart = true
                     let exactStart = Self.dayString(
                         Self.localDay(daysBefore: 365, now: context.now, timeZone: siteZone), timeZone: siteZone)
-                    if pageFrom != exactStart {
+                    if pageFrom > exactStart {
                         state.days.removeAll()
                         maxFetchedAt = nil
                         pageFrom = exactStart
                         continue syncPages
                     }
+                    pageDays = Self.droppingBoundaryDays(
+                        days, from: pageFrom, before: exactStart, timeZone: siteZone)
                 }
-                maxFetchedAt = store(days: days, in: &state, maximumFetchedAt: maxFetchedAt)
+                maxFetchedAt = store(days: pageDays, in: &state, maximumFetchedAt: maxFetchedAt)
                 if let nextFrom { pageFrom = nextFrom } else { break syncPages }
             }
         }
@@ -172,15 +166,18 @@ actor SolarHistoryStore {
         maximumFetchedAt: Date?
     ) -> Date? {
         var latestFetchedAt = maximumFetchedAt
+        var replacements: [Date: SolarHistoryStoredDay] = [:]
         for day in days {
             if let fetchedAt = day.fetchedAt {
                 latestFetchedAt = max(latestFetchedAt ?? fetchedAt, fetchedAt)
             }
-            let storedDay = Self.makeStoredDay(from: day)
-            state.days.removeAll { $0.dayStart == day.dayStart }
-            state.days.append(storedDay)
+            replacements[day.dayStart] = Self.makeStoredDay(from: day)
             state.dirtyYears.insert(SolarHistoryYearFiles.year(of: day.dayStart))
         }
+        guard !replacements.isEmpty else { return latestFetchedAt }
+        // One pass over the stored days, not one per incoming day: a 92-day page against a year of days.
+        state.days.removeAll { replacements[$0.dayStart] != nil }
+        state.days.append(contentsOf: replacements.values.sorted { $0.dayStart < $1.dayStart })
         return latestFetchedAt
     }
 
@@ -293,6 +290,7 @@ actor SolarHistoryStore {
 
     func remove(scope: SolarForecastSiteScope) throws {
         scopeGenerations[scope, default: 0] += 1
+        cancelAllSyncWaiters(scope: scope)
         cache.removeValue(forKey: scope)
         let url = fileURL(scope)
         if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
@@ -303,6 +301,7 @@ actor SolarHistoryStore {
     func removeAll() throws {
         generation += 1
         scopeGenerations.removeAll()
+        cancelAllSyncWaiters()
         cache.removeAll()
         if fileManager.fileExists(atPath: directory.path) { try fileManager.removeItem(at: directory) }
     }
@@ -365,7 +364,7 @@ actor SolarHistoryStore {
         scope: SolarForecastSiteScope,
         scopeGeneration expectedScopeGeneration: Int
     ) throws {
-        guard generation == expected, scopeGenerations[scope] == expectedScopeGeneration else {
+        guard generation == expected, scopeGenerations[scope, default: 0] == expectedScopeGeneration else {
             throw CancellationError()
         }
     }

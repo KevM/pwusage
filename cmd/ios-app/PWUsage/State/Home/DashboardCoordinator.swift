@@ -325,7 +325,7 @@ final class DashboardCoordinator: ObservableObject {
         refreshSettled = false
         holdStaleReadings(at: now())
         startTimer()
-        Task { await refreshDue() }
+        Task { await refreshAll(trigger: .scheduled, revalidatingHistory: true) }
     }
 
     /// Invalidates all in-flight authenticated work before the app state is

@@ -12,7 +12,13 @@ private struct FlowPageRequest {
     let startingFrom: String
     let stopAtOrAfter: String?
     let now: Date?
+    let changedSince: Date?
     let token: SolarHistorySyncToken
+}
+
+private enum FlowPagesOutcome {
+    case disabled
+    case completed(maxFetchedAt: Date?)
 }
 
 struct EnergyFlowDay: Equatable, Sendable {
@@ -70,27 +76,39 @@ extension SolarHistoryStore {
     }
 
     /// Backfills energy flow series via `GET /api/mobile/solar-history`: current billing cycle
-    /// first, then forward from the oldest stored day still missing flows.
+    /// first, then forward from the oldest stored day still missing flows. Once a full read has
+    /// covered the cycle, later reads ask only for days changed since the flow watermark.
     func syncFlows(
         scope: SolarForecastSiteScope,
         api: any MobileSolarHistoryDataAPI,
         cycleStartDay: String,
         now: Date = .now
     ) async throws -> FlowSyncProgress {
-        let token = beginSync(scope: scope)
+        let token = try await acquireSync(scope: scope)
         defer { endSync(scope: scope) }
 
         var state = try load(scope)
+        let changedSince = Self.flowChangedSince(state, cycleStartDay: cycleStartDay)
         let currentCycleRequest = FlowPageRequest(
             scope: scope,
             api: api,
             startingFrom: cycleStartDay,
             stopAtOrAfter: nil,
             now: now,
+            changedSince: changedSince,
             token: token
         )
-        guard try await fetchFlowPages(currentCycleRequest, state: &state) else {
+        guard case .completed(let maxFetchedAt) = try await fetchFlowPages(currentCycleRequest, state: &state) else {
             return .complete
+        }
+        // Only `[cycleStartDay, …)` is known synced through the new watermark: an incremental read
+        // skips any days before it, so a cycle start that later moves back must read in full.
+        let watermark = maxFetchedAt.map { $0.addingTimeInterval(-300) }
+        let syncedThrough = [state.flowsSyncedThrough, watermark].compactMap(\.self).max()
+        if state.flowsSyncedFrom != cycleStartDay || state.flowsSyncedThrough != syncedThrough {
+            state.flowsSyncedFrom = cycleStartDay
+            state.flowsSyncedThrough = syncedThrough
+            try save(state, scope: scope)
         }
 
         guard let oldestMissing = try oldestDayMissingFlows(scope: scope) else {
@@ -106,9 +124,10 @@ extension SolarHistoryStore {
             startingFrom: oldestMissing,
             stopAtOrAfter: cycleStartDay,
             now: nil,
+            changedSince: nil,
             token: token
         )
-        guard try await fetchFlowPages(backfillRequest, state: &state) else {
+        guard case .completed = try await fetchFlowPages(backfillRequest, state: &state) else {
             return .complete
         }
 
@@ -118,17 +137,26 @@ extension SolarHistoryStore {
         return .complete
     }
 
+    /// The watermark a current-cycle read may resume from: only when an earlier full read began at
+    /// or before this cycle's start, so a billing day moved earlier still reads the whole cycle.
+    /// `fetchedAt` is when the Tesla read started, so the watermark already trails it by five minutes.
+    private static func flowChangedSince(_ state: SolarHistoryPersisted, cycleStartDay: String) -> Date? {
+        guard let syncedFrom = state.flowsSyncedFrom, syncedFrom <= cycleStartDay else { return nil }
+        return state.flowsSyncedThrough
+    }
+
     private func fetchFlowPages(
         _ request: FlowPageRequest,
         state: inout SolarHistoryPersisted
-    ) async throws -> Bool {
+    ) async throws -> FlowPagesOutcome {
         var pageFrom = request.startingFrom
+        var maxFetchedAt: Date?
         while true {
             try Task.checkCancellation()
             let response = try await request.api.fetchSolarHistory(
                 siteID: request.scope.siteID,
                 from: pageFrom,
-                changedSince: nil
+                changedSince: request.changedSince
             )
             try validateGeneration(
                 request.token.generation,
@@ -136,19 +164,22 @@ extension SolarHistoryStore {
                 scopeGeneration: request.token.scopeGeneration
             )
             guard case .enabled(let siteZone, let days, let nextFrom) = response else {
-                return false
+                return .disabled
             }
             state.isEnabled = true
             state.timeZone = siteZone.identifier
-            _ = store(days: days, in: &state, maximumFetchedAt: nil)
+            maxFetchedAt = store(days: days, in: &state, maximumFetchedAt: maxFetchedAt)
             applyLateDays(scope: request.scope, to: &state)
             try save(state, scope: request.scope)
+            // `save` clears the flags only on its cached copy: clear ours so the next page writes
+            // just the years it changes.
+            state.dirtyYears.removeAll()
             guard let nextFrom else { break }
             if let stopAtOrAfter = request.stopAtOrAfter, nextFrom >= stopAtOrAfter { break }
             if let now = request.now, nextFrom > Self.dayString(now, timeZone: siteZone) { break }
             pageFrom = nextFrom
         }
-        return true
+        return .completed(maxFetchedAt: maxFetchedAt)
     }
 
     static func makeStoredDay(from day: MobileSolarHistoryDay) -> SolarHistoryStoredDay {
@@ -174,7 +205,22 @@ extension SolarHistoryStore {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .gmt
         let today = calendar.startOfDay(for: now)
-        return calendar.date(byAdding: .day, value: -364, to: today) ?? today
+        return calendar.date(byAdding: .day, value: -366, to: today) ?? today
+    }
+
+    /// Page-one days in `[from, exactStart)` in site-local dates: the up to two days the UTC bootstrap
+    /// reads before the site's 365-day boundary.
+    static func droppingBoundaryDays(
+        _ days: [MobileSolarHistoryDay],
+        from: String,
+        before exactStart: String,
+        timeZone: TimeZone
+    ) -> [MobileSolarHistoryDay] {
+        guard from < exactStart else { return days }
+        return days.filter {
+            let day = dayString($0.dayStart, timeZone: timeZone)
+            return day < from || day >= exactStart
+        }
     }
 
     static func dayString(_ date: Date, timeZone: TimeZone) -> String {
@@ -182,6 +228,104 @@ extension SolarHistoryStore {
         calendar.timeZone = timeZone
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", components.year ?? 1970, components.month ?? 1, components.day ?? 1)
+    }
+
+    /// Serializes `sync` and `syncFlows` per scope so overlapping callers (bill refresh, solar
+    /// actuals, history onboarding) wait their turn instead of cancelling each other's fetches.
+    /// `remove(scope:)` and `removeAll()` still invalidate waiting and active syncs via generation.
+    func acquireSync(scope: SolarForecastSiteScope) async throws -> SolarHistorySyncToken {
+        let initialGeneration = generation
+        let initialScopeGeneration = scopeGenerations[scope, default: 0]
+        do {
+            while activeSyncs[scope, default: 0] > 0 {
+                try Task.checkCancellation()
+                try await waitForSyncTurn(scope: scope)
+                try validateGeneration(initialGeneration, scope: scope, scopeGeneration: initialScopeGeneration)
+            }
+            try Task.checkCancellation()
+            try validateGeneration(initialGeneration, scope: scope, scopeGeneration: initialScopeGeneration)
+        } catch {
+            wakeNextSyncWaiterIfIdle(scope: scope)
+            throw error
+        }
+        activeSyncs[scope, default: 0] += 1
+        return SolarHistorySyncToken(generation: initialGeneration, scopeGeneration: initialScopeGeneration)
+    }
+
+    private func waitForSyncTurn(scope: SolarForecastSiteScope) async throws {
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                self.enqueueSyncWaiter(scope: scope, id: waiterID, continuation: continuation)
+            }
+        } onCancel: {
+            Task { await self.cancelSyncWaiter(scope: scope, id: waiterID) }
+        }
+    }
+
+    private func enqueueSyncWaiter(
+        scope: SolarForecastSiteScope,
+        id: UUID,
+        continuation: CheckedContinuation<Void, any Error>
+    ) {
+        if Task.isCancelled {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        if activeSyncs[scope, default: 0] == 0 {
+            continuation.resume()
+            return
+        }
+        syncWaiters[scope, default: []].append(SyncWaiter(id: id, continuation: continuation))
+    }
+
+    func endSync(scope: SolarForecastSiteScope) {
+        activeSyncs[scope, default: 1] -= 1
+        guard activeSyncs[scope] == 0 else { return }
+        activeSyncs.removeValue(forKey: scope)
+        lateDays.removeValue(forKey: scope)
+        wakeNextSyncWaiterIfIdle(scope: scope)
+    }
+
+    private func wakeNextSyncWaiterIfIdle(scope: SolarForecastSiteScope) {
+        guard activeSyncs[scope, default: 0] == 0,
+              var waiters = syncWaiters[scope], !waiters.isEmpty else { return }
+        let next = waiters.removeFirst()
+        if waiters.isEmpty {
+            syncWaiters.removeValue(forKey: scope)
+        } else {
+            syncWaiters[scope] = waiters
+        }
+        next.continuation.resume()
+    }
+
+    func cancelAllSyncWaiters(scope: SolarForecastSiteScope) {
+        guard let waiters = syncWaiters.removeValue(forKey: scope) else { return }
+        for waiter in waiters {
+            waiter.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    func cancelAllSyncWaiters() {
+        let allWaiters = syncWaiters
+        syncWaiters.removeAll()
+        for waiters in allWaiters.values {
+            for waiter in waiters {
+                waiter.continuation.resume(throwing: CancellationError())
+            }
+        }
+    }
+
+    private func cancelSyncWaiter(scope: SolarForecastSiteScope, id: UUID) {
+        guard var waiters = syncWaiters[scope],
+              let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        if waiters.isEmpty {
+            syncWaiters.removeValue(forKey: scope)
+        } else {
+            syncWaiters[scope] = waiters
+        }
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     private static func date(daysBefore days: Int, now: Date, timeZone: TimeZone) -> Date {

@@ -32,11 +32,16 @@ struct SolarHistoryPersisted: Codable {
     var syncedThrough: Date?
     var syncedAt: Date?
     var isEnabled: Bool?
+    /// The cycle start of the last complete full flow read, and the watermark flow reads resume from.
+    var flowsSyncedFrom: String?
+    var flowsSyncedThrough: Date?
     var days: [SolarHistoryStoredDay] = []
     /// Years whose file must be rewritten at the next save. Never encoded.
     var dirtyYears: Set<Int> = []
 
-    private enum CodingKeys: String, CodingKey { case timeZone, syncedThrough, syncedAt, isEnabled, days }
+    private enum CodingKeys: String, CodingKey {
+        case timeZone, syncedThrough, syncedAt, isEnabled, flowsSyncedFrom, flowsSyncedThrough, days
+    }
 
     init() {}
 
@@ -46,6 +51,8 @@ struct SolarHistoryPersisted: Codable {
         syncedThrough = try values.decodeIfPresent(Date.self, forKey: .syncedThrough)
         syncedAt = try values.decodeIfPresent(Date.self, forKey: .syncedAt)
         isEnabled = try values.decodeIfPresent(Bool.self, forKey: .isEnabled)
+        flowsSyncedFrom = try values.decodeIfPresent(String.self, forKey: .flowsSyncedFrom)
+        flowsSyncedThrough = try values.decodeIfPresent(Date.self, forKey: .flowsSyncedThrough)
         days = try values.decodeIfPresent([SolarHistoryStoredDay].self, forKey: .days) ?? []
     }
 
@@ -56,6 +63,8 @@ struct SolarHistoryPersisted: Codable {
         try values.encodeIfPresent(syncedThrough, forKey: .syncedThrough)
         try values.encodeIfPresent(syncedAt, forKey: .syncedAt)
         try values.encodeIfPresent(isEnabled, forKey: .isEnabled)
+        try values.encodeIfPresent(flowsSyncedFrom, forKey: .flowsSyncedFrom)
+        try values.encodeIfPresent(flowsSyncedThrough, forKey: .flowsSyncedThrough)
     }
 }
 

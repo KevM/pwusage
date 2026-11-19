@@ -14,6 +14,61 @@ interface UseVisiblePollingOptions {
     immediate?: boolean;
 }
 
+/** The parts of `document` the poller needs; injectable for tests. */
+export interface VisibilitySource {
+    readonly visibilityState: DocumentVisibilityState;
+    addEventListener(type: 'visibilitychange', listener: () => void): void;
+    removeEventListener(type: 'visibilitychange', listener: () => void): void;
+}
+
+/**
+ * Calls `fire` every `intervalMs` while `source` is visible, stops while it is
+ * hidden, and fires immediately when it becomes visible again. Returns a stop
+ * function. `source` undefined (server render) counts as visible.
+ */
+export function startVisiblePolling(
+    source: VisibilitySource | undefined,
+    fire: () => void,
+    intervalMs: number,
+    immediate: boolean
+): () => void {
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+        if (interval !== null) return;
+        interval = setInterval(fire, intervalMs);
+    };
+
+    const stop = () => {
+        if (interval !== null) {
+            clearInterval(interval);
+            interval = null;
+        }
+    };
+
+    const isVisible = () => !source || source.visibilityState === 'visible';
+
+    const onVisibilityChange = () => {
+        if (isVisible()) {
+            fire();
+            start();
+        } else {
+            stop();
+        }
+    };
+
+    if (isVisible()) {
+        if (immediate) fire();
+        start();
+    }
+    source?.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+        stop();
+        source?.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+}
+
 /**
  * Runs `callback` on an interval, pausing while the tab is hidden and firing
  * an immediate invocation when the tab becomes visible again. Avoids running
@@ -34,49 +89,10 @@ export function useVisiblePolling(
         callbackRef.current = callback;
     }, [callback]);
 
-    useEffect(() => {
-        let interval: ReturnType<typeof setInterval> | null = null;
-
-        const fire = () => { void callbackRef.current(); };
-
-        const start = () => {
-            if (interval !== null) return;
-            interval = setInterval(fire, intervalMs);
-        };
-
-        const stop = () => {
-            if (interval !== null) {
-                clearInterval(interval);
-                interval = null;
-            }
-        };
-
-        const isVisible = () =>
-            typeof document === 'undefined' || document.visibilityState === 'visible';
-
-        const onVisibilityChange = () => {
-            if (isVisible()) {
-                fire();
-                start();
-            } else {
-                stop();
-            }
-        };
-
-        if (isVisible()) {
-            if (immediate) fire();
-            start();
-        }
-
-        if (typeof document !== 'undefined') {
-            document.addEventListener('visibilitychange', onVisibilityChange);
-        }
-
-        return () => {
-            stop();
-            if (typeof document !== 'undefined') {
-                document.removeEventListener('visibilitychange', onVisibilityChange);
-            }
-        };
-    }, [intervalMs, immediate]);
+    useEffect(() => startVisiblePolling(
+        typeof document === 'undefined' ? undefined : document,
+        () => { void callbackRef.current(); },
+        intervalMs,
+        immediate
+    ), [intervalMs, immediate]);
 }

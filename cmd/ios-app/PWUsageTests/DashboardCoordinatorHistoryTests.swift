@@ -141,6 +141,31 @@ extension DashboardCoordinatorTests {
         #expect(api.base.billSiteIDs.count == 1)
         #expect(api.base.liveRefreshes == [true])
     }
+
+    @Test("Fresh sign-in recalculates an early stale bill when live reports newer current history")
+    func freshSignInRecalculatesStaleBillFromCurrentLive() async throws {
+        let staleThrough = Date(timeIntervalSince1970: 1_700_000_000)
+        let freshThrough = staleThrough.addingTimeInterval(15 * 3_600)
+        let api = HistoryDashboardAPISpy(status: .current)
+        api.liveEnergyDataThrough = freshThrough
+        api.billEnergyDataThrough = staleThrough
+        api.base.holdLive = true
+        let coordinator = DashboardCoordinator(siteID: "site-1", api: api, timerInterval: nil)
+        coordinator.scenePhaseChanged(isActive: true)
+        await api.base.waitUntilLiveRequestStarts()
+
+        // Smart Shift appears before live finishes and loads a stale bill snapshot.
+        await coordinator.refreshBill(trigger: .screenAppearance)
+        #expect(api.base.billSiteIDs.count == 1)
+        #expect(coordinator.bill.response?.sources.energyDataThrough == staleThrough)
+
+        api.billEnergyDataThrough = freshThrough
+        api.base.resumeLiveRequests()
+        try await eventually { coordinator.refreshSettled }
+
+        #expect(api.base.billSiteIDs.count == 2)
+        #expect(coordinator.bill.response?.sources.energyDataThrough == freshThrough)
+    }
 }
 
 @MainActor
@@ -150,6 +175,8 @@ private final class HistoryDashboardAPISpy: MobileDashboardDataAPI,
     var status: MobileLiveResponse.HistoryRefreshStatus
     var followUpError: PWUsageAPIError?
     var followUpStatuses: [MobileLiveResponse.HistoryRefreshStatus] = []
+    var liveEnergyDataThrough: Date?
+    var billEnergyDataThrough: Date?
     private(set) var historyChecks: [Bool] = []
     private let power = FastDashboardAPISpy(now: Date.init)
     var powerRequests: Int { power.powerSiteIDs.count }
@@ -170,6 +197,20 @@ private final class HistoryDashboardAPISpy: MobileDashboardDataAPI,
         var response = try await base.fetchLive(siteID: siteID, refresh: refresh)
         let followUpStatus = historyCheck && !followUpStatuses.isEmpty ? followUpStatuses.removeFirst() : nil
         response.historyRefresh = .init(status: followUpStatus ?? status)
+        if let liveEnergyDataThrough {
+            let through = ISO8601DateFormatter().string(from: liveEnergyDataThrough)
+            let json = #"""
+            {"version":1,
+             "site":{"id":"\#(siteID)","name":"Home","timezone":"UTC","localDate":"2026-09-23"},
+             "live":{"solarPower":1,"loadPower":2,"batteryPower":3,"gridPower":4},
+             "stateOfCharge":50,"activeTariff":"Peak",
+             "today":{"homeKwh":1,"solarKwh":2,"gridNetKwh":3,"batteryNetKwh":4},
+             "todayComplete":true,"currentBill":null,
+             "sources":{"liveStatusAt":"\#(through)","energyDataThrough":"\#(through)","stateOfChargeAt":"\#(through)"},
+             "historyRefresh":{"status":"\#((followUpStatus ?? status).rawValue)"}}
+            """#
+            return try MobileContractDecoder.make().decode(MobileLiveResponse.self, from: Data(json.utf8))
+        }
         return response
     }
 
@@ -178,7 +219,14 @@ private final class HistoryDashboardAPISpy: MobileDashboardDataAPI,
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
-        try await base.fetchBill(siteID: siteID)
+        let response = try await base.fetchBill(siteID: siteID)
+        guard let billEnergyDataThrough else { return response }
+        return MobileBillResponse(
+            version: response.version, site: response.site, currentBill: response.currentBill,
+            loadTiming: response.loadTiming, tariffReattribution: response.tariffReattribution,
+            sources: .init(calculatedAt: response.sources.calculatedAt, energyDataThrough: billEnergyDataThrough),
+            outlook: response.outlook, revision: response.revision
+        )
     }
 
     func fetchBill(siteID: String, reusing cached: MobileBillResponse?) async throws -> MobileBillResponse {

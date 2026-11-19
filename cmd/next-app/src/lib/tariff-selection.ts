@@ -75,6 +75,8 @@ export interface TariffSelectionReviewInput {
   eligibility?: string | null;
   /** Optional public-plan conversion inputs folded into `reviewHash`. */
   conversionInputs?: ConversionInputsRecord;
+  /** Allow non-half-hour boundaries (used by AI handoff for existing Tesla schedules). */
+  allowMinuteResolution?: boolean;
 }
 
 export interface TariffSeasonScheduleComparisonSummary {
@@ -180,7 +182,8 @@ export function validateSelectionDates(
 
 export function validateTariffSelectionRequest(
   raw: unknown,
-  todaySiteLocal: string
+  todaySiteLocal: string,
+  options?: { allowMinuteResolution?: boolean }
 ): TariffSelectionRequest {
   if (!isPlainObject(raw)) {
     throw new TariffValidationError('Rate plan selection request must be an object');
@@ -237,7 +240,8 @@ export function validateTariffSelectionRequest(
           effectiveTo,
           seasons: rawCandidate.seasons as TariffSeasonInput[],
         },
-        todaySiteLocal
+        todaySiteLocal,
+        options
       );
       candidate = {
         kind: 'manual',
@@ -844,7 +848,9 @@ export function buildTariffSelectionPreview(
   if (!input.siteId || input.siteId.trim().length === 0) {
     throw new TariffValidationError('siteId is required');
   }
-  const validatedRequest = validateTariffSelectionRequest(input.request, input.todaySiteLocal);
+  const validatedRequest = validateTariffSelectionRequest(input.request, input.todaySiteLocal, {
+    allowMinuteResolution: input.allowMinuteResolution,
+  });
   const { scope, candidate, effectiveFrom, effectiveTo } = validatedRequest;
   const holidaysUseWeekendSchedule = input.holidaysUseWeekendSchedule ?? true;
 

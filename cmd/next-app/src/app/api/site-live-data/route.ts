@@ -19,7 +19,7 @@ import { activePeriodSurplusKwh, missingTodayInterval, todayNetExportByPeriod } 
 import { activeLoadTimingForMobile } from '@/lib/mobile-load-timing';
 import { glyphForHeadroom, profileForHeadroom } from '@/lib/load-affordance';
 import { buildMobileDashboardContract, maxBucketSampleTimestamp, MOBILE_SOC_MAX_AGE_MS, MOBILE_SOC_STALE_AFTER_MS, sumBucketedTodayRows } from '@/lib/mobile-dashboard-contract';
-import type { SiteLiveDataHeadroom } from '@/lib/site-live-data-client';
+import type { SiteLiveCardData, SiteLiveDataHeadroom } from '@/lib/site-live-data-client';
 import {
     parseScaleWindowHours,
     SPARKLINE_DISPLAY_WINDOW_HOURS,
@@ -77,6 +77,46 @@ function summaryRevision(
     ])).digest('hex');
 }
 
+/** True when a live reading's charge is recent enough to show as current. */
+function socIsCurrent(liveStatus: { timestamp: string }, checkedAt: Date): boolean {
+    const sourceMs = new Date(liveStatus.timestamp).getTime();
+    return Number.isFinite(sourceMs)
+        && checkedAt.getTime() - sourceMs >= 0
+        && checkedAt.getTime() - sourceMs <= MOBILE_SOC_STALE_AFTER_MS;
+}
+
+/**
+ * `view=card`: what a Products card polls once a minute (power, charge and
+ * the current rate period). No history, sparklines or headroom are read or
+ * computed; `HeaderLiveStats` and the mobile app keep the full responses.
+ */
+async function cardResponse(siteRepo: SiteRepo, siteId: string) {
+    const [liveResult, site] = await Promise.all([
+        refreshLiveStatus(siteId, { cacheTtlMs: 60 * 1000, liveOnly: true }),
+        siteRepo.getSite(siteId),
+    ]);
+    if (liveResult.status === 'connection-required' || liveResult.status === 'no-tokens') {
+        return NextResponse.json({ error: 'Reconnect Tesla to update your data.', code: 'TESLA_CONNECTION_REQUIRED' }, { status: 409, headers: { 'Cache-Control': 'private, no-store' } });
+    }
+    if (liveResult.status === 'site-not-found' || !site) {
+        return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+    }
+    if (!liveResult.liveStatus) {
+        return NextResponse.json({ error: liveResult.errorMessage || 'Failed to fetch live status' }, { status: 500 });
+    }
+    const liveStatus = liveResult.liveStatus;
+    const card: SiteLiveCardData = {
+        solarPower: liveStatus.solar_power,
+        loadPower: liveStatus.load_power,
+        batteryPower: liveStatus.battery_power,
+        gridPower: liveStatus.grid_power,
+        percentageCharged: liveStatus.percentage_charged,
+        stateOfCharge: socIsCurrent(liveStatus, new Date()) ? liveStatus.percentage_charged : null,
+        currentTariff: getCurrentTariffLabel(site, new Date()),
+    };
+    return NextResponse.json(card, { headers: { 'Cache-Control': 'private, no-store' } });
+}
+
 async function handleGET(request: Request) {
     return withRequestContext(async () => {
         try {
@@ -96,6 +136,7 @@ async function handleGET(request: Request) {
 
             const now = new Date();
             const mobileView = searchParams.get('view') === 'mobile';
+            if (searchParams.get('view') === 'card') return await cardResponse(siteRepo, siteId);
             const historyCheck = mobileView && searchParams.get('historyCheck') === '1';
             const forceRefresh = mobileView && !historyCheck && searchParams.get('refresh') === '1';
             const { site, config: validConfig } = mobileView
