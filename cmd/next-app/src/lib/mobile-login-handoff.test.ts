@@ -21,7 +21,7 @@ describe('mobile login handoff', () => {
   });
 
   it('stores only the handoff code hash and requests bounded cleanup', async () => {
-    mocks.query.mockResolvedValue({ rows: [] });
+    mocks.query.mockResolvedValue({ rows: [], rowCount: 1 });
     const result = await createMobileLoginHandoff({
       attemptId: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
       codeChallenge: 'c'.repeat(43),
@@ -39,10 +39,24 @@ describe('mobile login handoff', () => {
     expect(mocks.query.mock.calls[1][1][1]).toMatch(/^[a-f0-9]{64}$/);
     expect(mocks.query.mock.calls[1][1][7]).toBe(5);
     expect(mocks.query.mock.calls[1][1]).toContain(result.attemptId);
+    // The session version is read from the account in the same statement.
+    expect(mocks.query.mock.calls[1][0]).toContain('u.session_version');
+  });
+
+  it('refuses to create a handoff for an account that no longer exists', async () => {
+    mocks.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    await expect(createMobileLoginHandoff({
+      attemptId: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
+      codeChallenge: 'c'.repeat(43),
+      appState: 'd'.repeat(32),
+      userId: 'gone',
+      siteIds: ['site-1'],
+      roles: ['user'],
+    })).rejects.toThrow('Mobile login account not found');
   });
 
   it('consumes a matching unexpired attempt in one atomic update', async () => {
-    mocks.query.mockResolvedValue({ rows: [{ user_id: 'user-1', site_ids: ['site-1'], roles: ['user'] }] });
+    mocks.query.mockResolvedValue({ rows: [{ user_id: 'user-1', site_ids: ['site-1'], roles: ['user'], session_version: 3 }] });
     const result = await consumeMobileLoginHandoff({
       attemptId: '9b47b05a-3f0b-498e-b604-9e43fa7df015',
       code: 'e'.repeat(43),
@@ -50,8 +64,9 @@ describe('mobile login handoff', () => {
       appState: 'd'.repeat(32),
     });
 
-    expect(result).toEqual({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'] });
+    expect(result).toEqual({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'], sessionVersion: 3 });
     expect(mocks.query).toHaveBeenCalledTimes(1);
+    expect(mocks.query.mock.calls[0][0]).toContain('h.session_version = u.session_version');
     expect(mocks.query.mock.calls[0][0]).toContain('UPDATE "MobileLoginHandoff"');
     expect(mocks.query.mock.calls[0][0]).toContain('consumed_at IS NULL');
     expect(mocks.query.mock.calls[0][0]).toContain('expires_at > now()');
