@@ -3,9 +3,11 @@
  * then the rest of the billing period, and reports stored-history changes.
  *
  * The page is refreshed only from `onHistoryChanged`, which fires at most once
- * per sync request and only when the importer rewrote at least one day record
- * (`changedDays` in the stream). An already-covered period, an unchanged
- * re-fetch or a failed request with nothing written causes no refresh.
+ * per sync request and only when the shown data is outdated: the importer
+ * rewrote at least one day record (`changedDays`), or the rendered billing
+ * period's stored-history revision moved (another tab or request imported it).
+ * An already-covered period, an unchanged re-fetch or a failed request with
+ * nothing written causes no refresh.
  */
 
 export type SyncStatus = 'checking' | 'active';
@@ -18,6 +20,8 @@ export interface SyncStepResult {
     totalWindows?: number;
     /** ISO day starts the importer rewrote during this request. */
     changedDays: string[];
+    /** Current stored-history revision of `DataSyncDeps.period`, when requested and available. */
+    historyRevision?: string;
 }
 
 export interface DataSyncDeps {
@@ -31,6 +35,14 @@ export interface DataSyncDeps {
     onHistoryChanged: (changedDays: string[]) => void;
     sleep?: (ms: number) => Promise<void>;
     now?: () => Date;
+    /** The billing period the page rendered; its revision is checked on every request. */
+    period?: { start: Date; end: Date };
+    /**
+     * Revision the shown period was rendered from (null: unknown, so only this
+     * request's writes count). Advanced after each comparison, so one outside
+     * change refreshes once.
+     */
+    knownRevision?: { current: string | null };
 }
 
 /** Retry limits shared by both stages. */
@@ -48,6 +60,10 @@ export async function runSyncStep(deps: DataSyncDeps, start: Date, end: Date): P
     onStatus('checking');
     try {
         const params = new URLSearchParams({ siteId, start: start.toISOString(), end: end.toISOString() });
+        if (deps.period) {
+            params.set('periodStart', deps.period.start.toISOString());
+            params.set('periodEnd', deps.period.end.toISOString());
+        }
         const res = await deps.fetch(`/api/sync?${params.toString()}`, { signal });
         const reader = res.ok ? res.body?.getReader() : undefined;
         if (!reader) return { ...result, error: true };
@@ -56,12 +72,13 @@ export async function runSyncStep(deps: DataSyncDeps, start: Date, end: Date): P
         let buffer = '';
         const handleLine = (line: string) => {
             if (!line.startsWith('data: ')) return;
-            let data: { status?: string; message?: string; processedWindows?: unknown; totalWindows?: unknown; changedDays?: unknown };
+            let data: { status?: string; message?: string; processedWindows?: unknown; totalWindows?: unknown; changedDays?: unknown; historyRevision?: unknown };
             try {
                 data = JSON.parse(line.slice(6));
             } catch {
                 return;
             }
+            if (typeof data.historyRevision === 'string') result.historyRevision = data.historyRevision;
             if (data.status === 'checking') {
                 onStatus('checking');
             } else if (data.status === 'progress') {
@@ -98,12 +115,21 @@ export async function runSyncStep(deps: DataSyncDeps, start: Date, end: Date): P
     return result;
 }
 
+/** Whether the shown data is outdated after this request; advances the known revision. */
+function shownDataOutdated(deps: DataSyncDeps, result: SyncStepResult): boolean {
+    const known = deps.knownRevision;
+    const movedElsewhere = known?.current != null && result.historyRevision !== undefined
+        && result.historyRevision !== known.current;
+    if (known && result.historyRevision !== undefined) known.current = result.historyRevision;
+    return result.changedDays.length > 0 || movedElsewhere;
+}
+
 /** Run a request, then hide the indicator and report a change at most once. */
 export async function syncAndNotify(deps: DataSyncDeps, start: Date, end: Date): Promise<SyncStepResult> {
     const result = await runSyncStep(deps, start, end);
     if (!deps.signal.aborted) {
         deps.onIdle();
-        if (result.changedDays.length > 0) deps.onHistoryChanged(result.changedDays);
+        if (shownDataOutdated(deps, result)) deps.onHistoryChanged(result.changedDays);
     }
     return result;
 }

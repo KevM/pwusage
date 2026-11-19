@@ -39,7 +39,7 @@ function readyResult(view: string) {
         installations: view === 'settings' ? [] : null,
         billingDay: 1, prevDateStr: '2026-10-01', nextDateStr: '2026-12-01', isCurrentPeriod: true,
         dateRangeLabel: 'Nov 1 - Dec 1, 2026', currentMonthVal: '2026-11', fullBillDateStr: '2026-11-01',
-        usage: view === 'bill' ? [] : null, activeTariffId: undefined, activeTouName: undefined,
+        usage: view === 'bill' ? [] : null, historyRevision: view === 'bill' ? 'rev-1' : null, activeTariffId: undefined, activeTouName: undefined,
         currencySymbol: '$', dateStr: '2026-11-19',
         start: new Date('2026-11-01T00:00:00Z'), end: new Date('2026-12-01T00:00:00Z'), refDate: new Date('2026-11-19T00:00:00Z'),
     };

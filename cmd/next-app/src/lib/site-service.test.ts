@@ -533,10 +533,13 @@ describe('SiteService Security', () => {
                 teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
                 trmnlService: mockTrmnlService as unknown as TrmnlService,
                 teslaClientCreator: vi.fn().mockReturnValue({}),
-                importerCreator: vi.fn().mockReturnValue(mockImporter)
+                importerCreator: vi.fn().mockReturnValue(mockImporter),
+                readHistoryRevision
             });
+            const readHistoryRevision = vi.fn();
 
             beforeEach(() => {
+                readHistoryRevision.mockResolvedValue('rev-1');
                 mockEnergyRepo.hasData.mockResolvedValue(true);
                 mockEnergyRepo.getUsageByTOU.mockResolvedValue([{ some: 'usage' }]);
             });
@@ -549,6 +552,9 @@ describe('SiteService Security', () => {
                 expect(mockTrmnlService.getInstallationsBySiteId).not.toHaveBeenCalled();
                 expect(result.usage).toEqual([{ some: 'usage' }]);
                 expect(result.installations).toBeNull();
+                // The revision the bill was rendered from, so sync can tell when it is outdated.
+                expect(result.historyRevision).toBe('rev-1');
+                expect(readHistoryRevision).toHaveBeenCalledWith('12345', result.start, result.end);
                 // The sync window and date navigation are the same on every tab.
                 expect(result.start).toBeInstanceOf(Date);
                 expect(result.prevDateStr).toBeDefined();
@@ -562,6 +568,16 @@ describe('SiteService Security', () => {
                 expect(mockTrmnlService.getInstallationsBySiteId).toHaveBeenCalledTimes(1);
                 expect(result.usage).toBeNull();
                 expect(result.installations).toEqual([{ id: 'inst-123' }, { id: 'inst-456' }]);
+                expect(result.historyRevision).toBeNull();
+                expect(readHistoryRevision).not.toHaveBeenCalled();
+            });
+
+            it('a failed revision read keeps the bill and falls back to write-only detection', async () => {
+                readHistoryRevision.mockRejectedValue(new Error('db busy'));
+                vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345');
+                expect(result.status).toBe('ready');
+                if (result.status === 'ready') expect(result.historyRevision).toBeNull();
             });
 
             it('history reads neither usage nor installations', async () => {

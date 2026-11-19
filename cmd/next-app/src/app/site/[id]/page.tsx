@@ -120,6 +120,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         currentMonthVal,
         fullBillDateStr,
         usage,
+        historyRevision,
         activeTariffId,
         activeTouName,
         currencySymbol,
@@ -188,7 +189,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                 <AlertTitle>Reconnect Tesla to update your data.</AlertTitle>
                 <AlertDescription>Stored history is still available. Check each reading’s timestamp.</AlertDescription>
                 <Link href={`/login?callback=${encodeURIComponent(`/site/${id}`)}`} prefetch={false}>Reconnect Tesla</Link>
-            </Alert> : <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />}
+            </Alert> : <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} historyRevision={historyRevision} />}
 
             <SiteTabs activeTab={activeTab}>
                 {tabContent}

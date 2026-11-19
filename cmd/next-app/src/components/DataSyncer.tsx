@@ -1,6 +1,6 @@
 'use client';
 
-import { startTransition, useEffect, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     HISTORY_CHANGED_EVENT,
@@ -16,15 +16,25 @@ interface DataSyncerProps {
     start: Date;
     end: Date;
     viewDate?: Date; // The date the user is currently looking at
+    /** Stored-history revision the rendered bill came from (Bill tab only). */
+    historyRevision?: string | null;
 }
 
-export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
+export function DataSyncer({ siteId, start, end, viewDate, historyRevision = null }: DataSyncerProps) {
     const router = useRouter();
     const [status, setStatus] = useState<'idle' | 'checking' | 'active'>('idle');
     const [message, setMessage] = useState<string>('');
 
     // Track unique sync requests to prevent duplicates
     const [lastSyncKey, setLastSyncKey] = useState<string | null>(null);
+
+    // Each server render brings the revision it shows; sync compares against it
+    // without restarting when it changes.
+    const knownRevision = useRef<{ current: string | null }>({ current: historyRevision });
+    useEffect(() => {
+        knownRevision.current.current = historyRevision;
+    }, [historyRevision]);
+    const tracksRevision = historyRevision !== null;
 
     // Stabilize dependencies
     const startIso = start.toISOString();
@@ -49,9 +59,12 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
                 if (text !== undefined) setMessage(text);
             },
             onIdle: () => setStatus('idle'),
-            // Only a request that rewrote stored days refreshes. The Bill is
-            // server-rendered (router.refresh); History fetches its chart on the
-            // client, so it listens for the event instead.
+            period: tracksRevision ? { start: startDate, end: endDate } : undefined,
+            knownRevision: knownRevision.current,
+            // Only when the shown data is outdated: this request rewrote stored
+            // days, or the rendered bill's revision moved (another tab imported).
+            // The Bill is server-rendered (router.refresh); History fetches its
+            // chart on the client, so it listens for the event instead.
             onHistoryChanged: (changedDays) => {
                 startTransition(() => router.refresh());
                 window.dispatchEvent(new CustomEvent<HistoryChangedDetail>(HISTORY_CHANGED_EVENT, {
@@ -86,7 +99,7 @@ export function DataSyncer({ siteId, start, end, viewDate }: DataSyncerProps) {
             if (intervalId) clearInterval(intervalId);
         };
         // Dependencies are now primitives
-    }, [siteId, startIso, endIso, viewDateIso, lastSyncKey, router]);
+    }, [siteId, startIso, endIso, viewDateIso, lastSyncKey, router, tracksRevision]);
 
     if (status === 'idle') return null;
 

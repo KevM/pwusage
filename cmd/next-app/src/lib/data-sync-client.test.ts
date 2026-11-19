@@ -136,6 +136,56 @@ describe('runDataSync refreshes only on changed history', () => {
     });
 });
 
+describe('runDataSync detects outside changes through the history revision', () => {
+    const period = { start: pastPeriod.start, end: pastPeriod.end };
+
+    it('refreshes once when another request imported the rendered period', async () => {
+        // This tab writes nothing, but the stored revision moved past what the page rendered.
+        const { d, fetchMock, onHistoryChanged } = deps([
+            () => sseResponse([{ status: 'complete', changedDays: [], historyRevision: 'rev-2' }]),
+        ]);
+        d.period = period;
+        d.knownRevision = { current: 'rev-1' };
+        await runDataSync(d, pastPeriod);
+        expect(onHistoryChanged).toHaveBeenCalledTimes(1);
+        expect(d.knownRevision.current).toBe('rev-2');
+        const url = new URL(String((fetchMock.mock.calls[0] as unknown[])[0]), 'http://x');
+        expect(url.searchParams.get('periodStart')).toBe(period.start.toISOString());
+        expect(url.searchParams.get('periodEnd')).toBe(period.end.toISOString());
+    });
+
+    it('a matching revision causes no refresh', async () => {
+        const { d, onHistoryChanged } = deps([
+            () => sseResponse([{ status: 'complete', changedDays: [], historyRevision: 'rev-1' }]),
+        ]);
+        d.period = period;
+        d.knownRevision = { current: 'rev-1' };
+        await runDataSync(d, pastPeriod);
+        expect(onHistoryChanged).not.toHaveBeenCalled();
+    });
+
+    it('one outside change refreshes once across several requests', async () => {
+        const { d, onHistoryChanged } = deps([
+            () => sseResponse([{ status: 'complete', changedDays: [], historyRevision: 'rev-2' }]),
+            () => sseResponse([{ status: 'complete', changedDays: [], historyRevision: 'rev-2' }]),
+        ]);
+        d.period = { start: currentPeriod.start, end: currentPeriod.end };
+        d.knownRevision = { current: 'rev-1' };
+        await runDataSync(d, currentPeriod); // hot zone, then full period
+        expect(onHistoryChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('without a rendered revision, only this request\'s writes count', async () => {
+        const { d, onHistoryChanged } = deps([
+            () => sseResponse([{ status: 'complete', changedDays: [], historyRevision: 'rev-2' }]),
+        ]);
+        d.period = period;
+        d.knownRevision = { current: null };
+        await runDataSync(d, pastPeriod);
+        expect(onHistoryChanged).not.toHaveBeenCalled();
+    });
+});
+
 describe('runSyncStep', () => {
     it('parses an event split across stream chunks', async () => {
         const { d } = deps([

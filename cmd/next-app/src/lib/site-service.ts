@@ -13,6 +13,7 @@ import { logSessionRejection } from './observability';
 import { Schedule } from './schedule';
 import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
 import { DEFAULT_SITE_TAB, type SiteTabId } from './site-tabs';
+import { readMobileHistoryRevision } from './mobile-history-revision';
 import {
     getSiteTodayMidnight,
     safeParseSiteLocalDateToMidnight,
@@ -33,6 +34,8 @@ export interface SiteServiceDeps {
     trmnlService?: Pick<TrmnlService, 'getInstallationsBySiteId'>;
     teslaClientCreator?: (config: TeslaClientConfig) => TeslaClient;
     importerCreator?: (client: TeslaClient) => Pick<Importer, 'ensureSite'>;
+    /** Stored-history revision of a range; defaults to `readMobileHistoryRevision`. */
+    readHistoryRevision?: (siteId: string, start: Date, end: Date) => Promise<string>;
 }
 
 export type SitePageDataResult =
@@ -55,6 +58,12 @@ export type SitePageDataResult =
         fullBillDateStr: string;
         /** Read only for the Estimated Bill tab; null otherwise. */
         usage: UsageData[] | null;
+        /**
+         * Stored-history revision of the billing period, read before `usage`
+         * (bill only). Sync compares it with the current one to know whether
+         * the rendered bill is outdated, including by another tab's import.
+         */
+        historyRevision: string | null;
         activeTariffId: number | undefined;
         activeTouName: string | undefined;
         currencySymbol: string;
@@ -258,6 +267,8 @@ export class SiteService {
         const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
         const end = getNextCycleStart(billingDay, start, finalSite.timezone);
 
+        // Revision first: a write between the two reads then only costs one extra refresh.
+        const historyRevision = view === 'bill' ? await this.readHistoryRevision(siteId, start, end) : null;
         const usage = view === 'bill'
             ? await (this.deps.energyRepo || createEnergyRepo(finalSite.timezone)).getUsageByTOU(siteId, start, end)
             : null;
@@ -309,6 +320,7 @@ export class SiteService {
             currentMonthVal,
             fullBillDateStr,
             usage,
+            historyRevision,
             activeTariffId,
             activeTouName,
             currencySymbol,
@@ -370,6 +382,18 @@ export class SiteService {
 
         if (!this.deps.siteAuthToken) logSessionRejection('missing-cookie');
         return false;
+    }
+
+    private async readHistoryRevision(siteId: string, start: Date, end: Date): Promise<string | null> {
+        try {
+            return this.deps.readHistoryRevision
+                ? await this.deps.readHistoryRevision(siteId, start, end)
+                : (await readMobileHistoryRevision(siteId, start, end)).revision;
+        } catch (error) {
+            // Sync still refreshes on its own writes without it.
+            console.warn(`[SiteService] history revision unavailable for ${siteId}:`, error);
+            return null;
+        }
     }
 
     private async getAuthState(userId: string): Promise<UserAuthState | null> {

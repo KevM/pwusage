@@ -14,6 +14,9 @@ vi.mock('@/lib/tesla-client-factory', () => ({
     createTeslaClientForSite: mocks.createTeslaClientForSite
 }));
 
+const revisionMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/mobile-history-revision', () => ({ readMobileHistoryRevision: revisionMock }));
+
 vi.mock('@/lib/importer', () => ({
     Importer: class {
         ensureDataForRange = mocks.ensureDataForRange;
@@ -144,5 +147,29 @@ describe('GET /api/sync', () => {
 
         expect(streamText).toContain('"status":"error"');
         expect(streamText).toContain('Tesla API rate limited');
+    });
+
+    it('reports the rendered period\'s current history revision when asked', async () => {
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.createTeslaClientForSite.mockResolvedValue({ siteId: 'site-1' });
+        mocks.ensureDataForRange.mockResolvedValue({ complete: true, processedWindows: 0, totalWindows: 0, changedDays: [] });
+        revisionMock.mockResolvedValue({ revision: 'rev-2' });
+        const res = await GET(new Request('http://localhost/api/sync?siteId=site-1&start=2026-05-01&end=2026-05-06&periodStart=2026-05-01T05:00:00.000Z&periodEnd=2026-06-01T05:00:00.000Z'));
+        const frames = (await readStream(res.body!)).split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+        expect(frames.at(-1)).toEqual({ status: 'complete', changedDays: [], historyRevision: 'rev-2' });
+        expect(revisionMock).toHaveBeenCalledWith('site-1', new Date('2026-05-01T05:00:00.000Z'), new Date('2026-06-01T05:00:00.000Z'));
+    });
+
+    it('omits the revision when no period is given or the read fails', async () => {
+        mocks.getAuthorizedSiteIds.mockResolvedValue(['site-1']);
+        mocks.createTeslaClientForSite.mockResolvedValue({ siteId: 'site-1' });
+        mocks.ensureDataForRange.mockResolvedValue({ complete: true, processedWindows: 0, totalWindows: 0, changedDays: [] });
+        revisionMock.mockRejectedValue(new Error('db busy'));
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        for (const url of ['http://localhost/api/sync?siteId=site-1&start=2026-05-01&end=2026-05-06',
+            'http://localhost/api/sync?siteId=site-1&start=2026-05-01&end=2026-05-06&periodStart=2026-05-01&periodEnd=2026-06-01']) {
+            const frames = (await readStream((await GET(new Request(url))).body!)).split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+            expect(frames.at(-1)).toEqual({ status: 'complete', changedDays: [] });
+        }
     });
 });
