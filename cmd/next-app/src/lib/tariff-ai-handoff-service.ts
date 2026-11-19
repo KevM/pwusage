@@ -217,6 +217,7 @@ function prepareScopePreviews(params: {
       existingSpans: currentSpans,
       candidatePlan,
       eligibility: params.eligibility,
+      allowMinuteResolution: true,
     });
 
     prepared.push({ scope: params.scope, period, contentHash, preview });

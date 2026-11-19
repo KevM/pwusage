@@ -1116,6 +1116,7 @@ export interface ApplyTariffSelectionInput {
   verifiedAgainstBill: boolean;
   candidate: ApplyTariffSelectionCandidate;
   candidateKindOverride?: TariffSelectionCandidateKind;
+  allowMinuteResolution?: boolean;
   reviewHash?: string | null;
 }
 
@@ -1715,7 +1716,7 @@ export async function applyTariffSelectionOnClient(
       effectiveFrom,
       effectiveTo,
       seasons: candidate.seasons,
-    }, today);
+    }, today, { allowMinuteResolution: input.allowMinuteResolution });
     const parsed = compileSeasonsToParsedTariff(validated.name, validated.seasons);
     const newHash = tariffContentHash(parsed);
     const targetSource: TariffSource = candidate.kind === 'public' ? 'estimated' : 'manual';
@@ -4262,6 +4263,7 @@ export class TariffTimelineRepo {
             holidaysUseWeekendSchedule: true,
           },
           candidateKindOverride: 'ai_handoff',
+          allowMinuteResolution: true,
           reviewHash: item.preview.reviewHash,
         });
         selectionIds.push(...res.selectionIds);
