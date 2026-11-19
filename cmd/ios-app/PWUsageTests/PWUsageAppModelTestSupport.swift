@@ -136,9 +136,11 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
     }
 
     var exchangeError: Error?
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {
+    func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
         if let exchangeError { throw exchangeError }
+        return MobileSessionCredential(cookies: [])
     }
+    func store(_ credential: MobileSessionCredential) {}
     func logout() async throws {
         logoutStarted = true
         if holdLogout {
@@ -150,7 +152,7 @@ final class ApplicationAPISpy: PWUsageApplicationAPI, MobileBatteryHoldDataAPI {
         logoutContinuation?.resume()
         logoutContinuation = nil
     }
-    func clearSiteAuthCookie() async { cookieClearCount += 1 }
+    func clearSiteAuthCookie() { cookieClearCount += 1 }
 
     private static func liveResponse(siteID: String) throws -> MobileLiveResponse {
         // A charge reading older than two hours decodes as unknown, so date it now rather than

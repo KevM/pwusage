@@ -150,6 +150,14 @@ async function handleGET(request: NextRequest) {
         clearAttempt();
         return mobileFailure('login_unavailable') ?? NextResponse.json({ error: 'Could not finish Tesla sign-in' }, { status: 500 });
     }
+    if (result.status === 'identity-conflict') {
+        // Another Tesla account already owns this email here. Nothing was
+        // stored; never issue a session or a handoff for either account.
+        clearAttempt();
+        cookieStore.delete('site_auth');
+        return mobileFailure('account_conflict')
+            ?? NextResponse.json({ error: 'This Tesla account cannot sign in to the existing PWUsage account for its email' }, { status: 409 });
+    }
     if (result.status === 'no-energy-products') {
         // Nothing was stored for this account, so there is no session to issue.
         clearAttempt();

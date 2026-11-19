@@ -30,9 +30,18 @@ afterEach(() => { vi.unstubAllEnvs(); });
 describe('POST /api/mobile/session', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'] });
+    mocks.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'], sessionVersion: 0 });
     mocks.getById.mockResolvedValue({ id: 'user-1', is_active: true, roles: ['user'] });
     mocks.getSitesForUser.mockResolvedValue([{ id: 'site-1' }]);
+  });
+
+  it('rejects a handoff whose session version was revoked after it was consumed', async () => {
+    mocks.getById.mockResolvedValue({ id: 'user-1', is_active: true, roles: ['user'], session_version: 1 });
+    const response = await POST(new NextRequest('https://pwusage.test/api/mobile/session', {
+      method: 'POST', body: JSON.stringify(payload), headers: { 'content-type': 'application/json' },
+    }));
+    expect(response.status).toBe(401);
+    expect(response.headers.get('set-cookie')).toBeNull();
   });
 
   it('sets the existing site_auth cookie for URLSession with production protections', async () => {

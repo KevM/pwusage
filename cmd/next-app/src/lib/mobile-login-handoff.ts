@@ -27,6 +27,8 @@ export interface MobileLoginHandoffClaims {
   userId: string;
   siteIds: string[];
   roles: string[];
+  /** The account's session_version when the handoff was created. */
+  sessionVersion: number;
 }
 
 export function createCodeChallenge(verifier: string): string {
@@ -59,10 +61,15 @@ export async function createMobileLoginHandoff(
     )
   `, [CLEANUP_BATCH_SIZE]);
 
-  await pool.query(`
+  // Bind the handoff to the account's session_version in the statement that
+  // writes it: a sign out everywhere before this point is captured here, and
+  // one after it makes the exchange refuse the handoff.
+  const inserted = await pool.query(`
     INSERT INTO "MobileLoginHandoff"
-      (attempt_id, code_hash, code_challenge, app_state, user_id, site_ids, roles, expires_at)
-    VALUES ($1, $2, $3, $4, $5, $6::text[], $7::text[], now() + ($8 * interval '1 minute'))
+      (attempt_id, code_hash, code_challenge, app_state, user_id, site_ids, roles, expires_at, session_version)
+    SELECT $1, $2, $3, $4, u.id, $6::text[], $7::text[], now() + ($8 * interval '1 minute'), u.session_version
+    FROM "User" u
+    WHERE u.id = $5
   `, [
     input.attemptId,
     codeHash,
@@ -73,6 +80,7 @@ export async function createMobileLoginHandoff(
     input.roles,
     CODE_TTL_MINUTES,
   ]);
+  if (inserted.rowCount !== 1) throw new Error('Mobile login account not found');
 
   return { code, attemptId: input.attemptId };
 }
@@ -84,19 +92,26 @@ export async function consumeMobileLoginHandoff(
   const codeChallenge = createCodeChallenge(input.verifier);
 
   const codeHash = crypto.createHash('sha256').update(input.code).digest('hex');
+  // A handoff whose session_version no longer matches the account was revoked
+  // by sign out everywhere; one without a version predates the binding.
+  // Neither is consumable.
   const { rows } = await pool.query(`
-    UPDATE "MobileLoginHandoff"
+    UPDATE "MobileLoginHandoff" h
     SET consumed_at = now()
-    WHERE attempt_id = $1
-      AND code_hash = $2
-      AND code_challenge = $3
-      AND app_state = $4
-      AND expires_at > now()
-      AND consumed_at IS NULL
-    RETURNING user_id, site_ids, roles
+    FROM "User" u
+    WHERE h.attempt_id = $1
+      AND h.code_hash = $2
+      AND h.code_challenge = $3
+      AND h.app_state = $4
+      AND h.expires_at > now()
+      AND h.consumed_at IS NULL
+      AND u.id = h.user_id
+      AND h.session_version IS NOT NULL
+      AND h.session_version = u.session_version
+    RETURNING h.user_id, h.site_ids, h.roles, h.session_version
   `, [input.attemptId, codeHash, codeChallenge, input.appState]);
 
   if (rows.length !== 1) return null;
-  const row = rows[0] as { user_id: string; site_ids: string[]; roles: string[] };
-  return { userId: row.user_id, siteIds: row.site_ids, roles: row.roles };
+  const row = rows[0] as { user_id: string; site_ids: string[]; roles: string[]; session_version: number };
+  return { userId: row.user_id, siteIds: row.site_ids, roles: row.roles, sessionVersion: row.session_version };
 }

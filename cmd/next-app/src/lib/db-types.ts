@@ -20,6 +20,7 @@ export interface User {
   auth_lost_at?: Date | null;
   auth_restored_at?: Date | null;
   session_version?: number; // Bumped on sign-out-everywhere; embedded in site_auth JWT as `sv`
+  tesla_subject?: string | null; // Tesla ID-token `sub` this account is bound to (see Authentication.md "Email uniqueness")
 }
 
 export type RateCountrySource = 'solar_location' | 'owner';

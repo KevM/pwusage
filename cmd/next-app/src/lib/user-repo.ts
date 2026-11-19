@@ -111,6 +111,14 @@ export class UserRepo {
         return decryptUserTokens(user, user.id);
     }
 
+    /** The account bound to a Tesla subject (`User.tesla_subject`), if any. */
+    async getByTeslaSubject(subject: string): Promise<User | null> {
+        const res = await pool.query('SELECT * FROM "User" WHERE tesla_subject = $1', [subject]);
+        if (res.rows.length === 0) return null;
+        const user = res.rows[0] as User;
+        return decryptUserTokens(user, user.id);
+    }
+
     async getAllUsers(options: { includeTokens?: boolean } = {}): Promise<UserWithSites[]> {
         const tokenCols = options.includeTokens ? ', u.access_token, u.refresh_token' : '';
         const access = siteMembershipEnabled()
@@ -224,34 +232,48 @@ export class UserRepo {
         tokenExpiresAt: number;
         /** The account's regional Fleet host; unknown keeps the stored one. */
         fleetApiBaseUrl?: string | null;
-    }): Promise<void> {
+        /**
+         * The login's trusted Tesla subject (verified signature, or confirmed by
+         * Fleet user info), or null when it has none.
+         */
+        teslaSubject?: string | null;
+    }): Promise<'saved' | 'subject-conflict'> {
+        // The subject binding is checked and written in this one statement: an
+        // unbound row takes the login's subject, a bound row accepts only that
+        // subject, and a login without a trusted subject can only insert a new
+        // row, never update an existing one (bound or not). A refused update
+        // returns no row and changes nothing.
         const saved = await pool.query<{ tesla_credential_generation: number; is_active: boolean }>(`
-            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url, refresh_token_fp)
-            VALUES ($1, $2, $3, $4, $5, 'active', true, $6, $7)
+            INSERT INTO "User" (id, email, access_token, refresh_token, token_expires_at, auth_status, is_active, fleet_api_base_url, refresh_token_fp, tesla_subject)
+            VALUES ($1, $2, $3, $4, $5, 'active', true, $6, $7, $8)
             ON CONFLICT (id) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = EXCLUDED.refresh_token,
                 refresh_token_fp = EXCLUDED.refresh_token_fp,
                 email = COALESCE(EXCLUDED.email, "User".email),
                 fleet_api_base_url = COALESCE(EXCLUDED.fleet_api_base_url, "User".fleet_api_base_url),
+                tesla_subject = COALESCE("User".tesla_subject, EXCLUDED.tesla_subject),
                 auth_status = 'active',
                 tesla_credential_generation = "User".tesla_credential_generation + 1,
                 tesla_refresh_state = 'ready', tesla_refresh_attempt_id = NULL,
                 tesla_refresh_retry_after = 0, is_refreshing = 0, refresh_lock_expires = 0
+            WHERE EXCLUDED.tesla_subject IS NOT NULL
+              AND ("User".tesla_subject IS NULL OR "User".tesla_subject = EXCLUDED.tesla_subject)
             RETURNING tesla_credential_generation, is_active
         `, [params.userId, params.email,
             encryptToken(params.accessToken, 'access_token', params.userId),
             encryptToken(params.refreshToken, 'refresh_token', params.userId),
             params.tokenExpiresAt, normalizeFleetBaseUrl(params.fleetApiBaseUrl),
-            tokenFingerprint(params.refreshToken)]);
-        if (saved?.rows[0]) {
-            logEvent('info', 'tesla.connection.credentials-restored', {
-                accountId: createHash('sha256').update(params.userId).digest('hex').slice(0, 16),
-                generationId: createHash('sha256').update(`${params.userId}:${saved.rows[0].tesla_credential_generation}`).digest('hex').slice(0, 16),
-                toState: 'ready', persisted: true, source: 'oauth-login', accountEligible: saved.rows[0].is_active,
-            });
-            flushLogEvents();
-        }
+            tokenFingerprint(params.refreshToken), params.teslaSubject ?? null]);
+        const row = saved?.rows[0];
+        if (!row) return 'subject-conflict';
+        logEvent('info', 'tesla.connection.credentials-restored', {
+            accountId: createHash('sha256').update(params.userId).digest('hex').slice(0, 16),
+            generationId: createHash('sha256').update(`${params.userId}:${row.tesla_credential_generation}`).digest('hex').slice(0, 16),
+            toState: 'ready', persisted: true, source: 'oauth-login', accountEligible: row.is_active,
+        });
+        flushLogEvents();
+        return 'saved';
     }
 
     /** Record the account's regional Fleet host. Only allowlisted Tesla hosts are stored. */

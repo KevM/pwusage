@@ -66,7 +66,7 @@ describe('mobile session lifecycle', () => {
     state.active = true;
     state.sessionVersion = 0;
     state.siteIds = ['site-1'];
-    state.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'] });
+    state.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'], sessionVersion: 0 });
     state.getById.mockImplementation(async () => ({
       id: 'user-1',
       is_active: true,
@@ -111,8 +111,13 @@ describe('mobile session lifecycle', () => {
     state.active = false;
     expect(await verifySiteAccess('site-new')).toBe(false);
 
-    await logout();
-    expect(state.deleteCookie).toHaveBeenCalledWith({ name: 'site_auth', path: '/' });
+    // The app's URLSession logout: a POST without Origin.
+    const logoutResponse = await logout(new NextRequest('https://pwusage.test/logout', {
+      method: 'POST',
+      headers: { cookie: `site_auth=${state.cookie}` },
+    }));
+    expect(logoutResponse.status).toBe(303);
+    expect(logoutResponse.cookies.get('site_auth')?.value).toBe('');
   });
 
   // Sign-out-everywhere end-to-end: after the DB session_version bumps, the
@@ -144,7 +149,9 @@ describe('mobile session lifecycle', () => {
     }));
     expect(renewedResponse.cookies.get('site_auth')).toBeUndefined();
 
-    // Re-authenticating issues a token stamped with the new DB version.
+    // Re-authenticating creates a handoff under the new DB version, and the
+    // exchange stamps that version on the token.
+    state.consume.mockResolvedValue({ userId: 'user-1', siteIds: ['site-1'], roles: ['user'], sessionVersion: 1 });
     const freshResponse = await exchangeSession(new NextRequest('https://pwusage.test/api/mobile/session', {
       method: 'POST',
       body: JSON.stringify(exchangePayload),

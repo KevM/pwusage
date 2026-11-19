@@ -43,35 +43,6 @@ extension MobileAuthServiceTests {
         #expect(!service.isAuthenticated)
     }
 
-    @Test("A newer sign-in waits for a superseded failed exchange before succeeding")
-    func newerSignInWaitsForSupersededFailedExchange() async throws {
-        let api = FakeMobileAuthAPI()
-        api.holdExchange = true
-        api.rejectedExchangeCodes = ["first"]
-        let service = try makeService(api: api)
-        let first = Task { try await service.signIn() }
-        defer { first.cancel(); api.resumeExchange() }
-        try await eventually { self.fakeSession.startCount == 1 }
-        let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: try Self.callbackURL(code: "first", state: firstState))
-        try await eventually { api.exchangeStartedCount == 1 }
-        first.cancel()
-        try await eventually { !service.pendingContinuationForTesting }
-        _ = try? await Self.boundedValue(of: first)
-
-        api.holdExchange = false
-        let second = Task { try await service.signIn() }
-        defer { second.cancel() }
-        try await eventually { self.fakeSession.startCount == 2 }
-        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
-        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
-        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
-        api.resumeExchange()
-        try await eventually { api.exchangeCompletedCount == 2 && service.isAuthenticated }
-        try await Self.boundedValue(of: second)
-        #expect(api.siteAuthCookieCode == "second")
-    }
-
     @Test("A late failed exchange cannot disturb a newer pending sign-in")
     func lateFailedExchangeCannotDisturbNewerPendingSignIn() async throws {
         let api = FakeMobileAuthAPI()
@@ -131,53 +102,5 @@ extension MobileAuthServiceTests {
             try await task.value
         }
         #expect(!service.isAuthenticated)
-    }
-
-    @Test("A new exchange waits for the old session response and its cookie cleanup",
-          arguments: [false, true], [false, true])
-    func newerExchangeWaitsForStaleCookieCleanup(invalidate: Bool, exchangeFails: Bool) async throws {
-        let api = FakeMobileAuthAPI()
-        api.holdExchange = true
-        if exchangeFails { api.rejectedExchangeCodes = ["first"] }
-        let service = try makeService(api: api)
-        var firstCancelled = false
-        let first = Task {
-            do {
-                try await service.signIn()
-            } catch {
-                firstCancelled = (error as? MobileAuthService.AuthError) == .cancelled
-            }
-        }
-        defer { first.cancel(); api.resumeExchange(); api.resumeCookieClear() }
-        try await eventually { self.fakeSession.startCount == 1 }
-        let firstState = try #require(Self.pendingState(in: fakeSession.configuredURLs.first))
-        fakeSession.complete(url: try Self.callbackURL(code: "first", state: firstState))
-        try await eventually { api.exchangeStartedCount == 1 }
-        if invalidate {
-            try await service.invalidateAuthenticatedSession()
-        } else {
-            try await service.logout()
-        }
-        try await eventually { firstCancelled }
-
-        api.holdExchange = false
-        api.holdCookieClear = true
-        let second = Task { try await service.signIn() }
-        defer { second.cancel() }
-        try await eventually { self.fakeSession.startCount == 2 }
-        let secondState = try #require(Self.pendingState(in: fakeSession.configuredURLs.last))
-        fakeSession.complete(url: try Self.callbackURL(code: "second", state: secondState))
-        // Even a cancellation-ignoring response must finish before the next exchange.
-        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
-        api.resumeExchange()
-        try await eventually { api.cookieClearStartedCount == 2 }
-        #expect(api.siteAuthCookieCode == "first")
-        // Waiting just for the response is insufficient: cleanup can also suspend.
-        try await staysTrue { api.exchanges.count == 1 && !service.isAuthenticated }
-        api.resumeCookieClear()
-        try await eventually { service.isAuthenticated && api.exchangeCompletedCount == 2 }
-        try await Self.boundedValue(of: second)
-        #expect(api.siteAuthCookieCode == "second")
-        #expect(api.cookieEvents == ["clear", "set", "clear", "set"])
     }
 }

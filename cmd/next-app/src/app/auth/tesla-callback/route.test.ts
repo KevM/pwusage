@@ -187,6 +187,7 @@ describe('GET /auth/tesla-callback', () => {
     it.each([
         ['db-error', { status: 'db-error' }, 500, 'Could not finish Tesla sign-in'],
         ['fleet-api-failed', { status: 'fleet-api-failed', reason: 'region' }, 502, 'Failed to load Tesla products'],
+        ['identity-conflict', { status: 'identity-conflict' }, 409, 'This Tesla account cannot sign in to the existing PWUsage account for its email'],
     ])('returns %s as an explicit error instead of a success redirect', async (_label, result, expectedHttp, expectedError) => {
         mocks.handleTeslaCallback.mockResolvedValue(result);
         mocks.getCookie.mockReturnValue(undefined);
@@ -410,6 +411,7 @@ describe('GET /auth/tesla-callback', () => {
         ['nonce-mismatch', 'nonce_mismatch'],
         ['db-error', 'login_unavailable'],
         ['fleet-api-failed', 'product_import_failed'],
+        ['identity-conflict', 'account_conflict'],
     ])('returns mobile login to the app after %s', async (status, expectedError) => {
         mocks.handleTeslaCallback.mockResolvedValue({ status, statusCode: 502 });
         const mobileCookies: Record<string, string> = {

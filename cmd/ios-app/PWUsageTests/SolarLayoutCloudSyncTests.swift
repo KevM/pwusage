@@ -380,7 +380,6 @@ private actor CleanupForecastService: SolarForecastServing {
 private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     let historyAPI: AutomaticForecastAPISpy
     init(historyAPI: AutomaticForecastAPISpy) { self.historyAPI = historyAPI }
-
     func fetchSites() async throws -> [MobileSite] { [MobileSite(id: "site-a", name: "Home", utility: "Test")] }
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
         throw PWUsageAPIError.invalidResponse
@@ -394,7 +393,8 @@ private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {
     ) async throws -> MobileSolarHistoryResponse {
         try await historyAPI.fetchSolarHistory(siteID: siteID, from: from, changedSince: changedSince)
     }
-    func exchangeSession(_ exchange: MobileSessionExchange) async throws {}
+    func exchangeSession(_: MobileSessionExchange) async throws -> MobileSessionCredential { .init(cookies: []) }
+    func store(_ credential: MobileSessionCredential) {}
     func logout() async throws {}
-    func clearSiteAuthCookie() async {}
+    func clearSiteAuthCookie() {}
 }
