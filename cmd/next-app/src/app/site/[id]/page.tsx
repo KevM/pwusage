@@ -8,6 +8,7 @@ import { SiteRepo } from '@/lib/site-repo';
 import { SiteService } from '@/lib/site-service';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
 import { BillSummary } from '@/components/BillSummary';
 import { DataSyncer } from '@/components/DataSyncer';
@@ -15,10 +16,9 @@ import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
 
 import { SiteTabs } from '@/components/site/SiteTabs';
-import { HistoryView } from '@/components/site/HistoryView';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
-import { SettingsView } from '@/components/site/SettingsView';
-import LoadAnalysisClientPage from '@/components/LoadAnalysisClientPage';
+import { LazyHistoryTab, LazySettingsView } from '@/components/site/SiteTabPanels';
+import { parseSiteTab, type SiteTabId } from '@/lib/site-tabs';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
@@ -27,13 +27,25 @@ import { SectionCard } from '@/components/ui/SectionCard';
 
 export const dynamic = 'force-dynamic';
 
+/** Settings-only reads: member emails and the rate plan timeline (several sequential queries). */
+async function loadSettingsTabData(siteId: string) {
+    const [memberEmails, currentUser] = await Promise.all([
+        new UserRepo().getSiteMemberEmails(siteId),
+        getCurrentUser(),
+    ]);
+    const tariffTimeline = await new TariffTimelineRepo().getTimeline(siteId, currentUser?.id ?? null);
+    return { memberEmails, tariffTimeline };
+}
+
 export default observePage('/site/[id]', async function SitePage({ params, searchParams }: {
     params: Promise<{ id: string }>;
     searchParams: Promise<{ date?: string; view?: string }>;
 }) {
     const { id } = await params;
     setLogContext({ siteId: id });
-    const { date: queryDate } = await searchParams;
+    const { date: queryDate, view } = await searchParams;
+    // The selected tab decides which reads run and which client code loads.
+    const activeTab: SiteTabId = parseSiteTab(view);
 
     const cookieStore = await cookies();
     const siteAuthToken = cookieStore.get('site_auth')?.value;
@@ -43,7 +55,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         siteAuthToken
     });
 
-    const result = await siteService.loadSitePageData(id, queryDate);
+    const result = await siteService.loadSitePageData(id, queryDate, { view: activeTab });
 
     if (result.status === 'unauthorized') {
         return (
@@ -117,13 +129,53 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         refDate
     } = result;
 
-    const connection = await getSiteConnectionTokens(id);
-    const reconnectRequired = !connection || requiresTeslaReconnect(connection);
-    const [memberEmails, currentUser] = await Promise.all([
-        new UserRepo().getSiteMemberEmails(id),
-        getCurrentUser(),
+    const [connection, settingsData] = await Promise.all([
+        getSiteConnectionTokens(id),
+        activeTab === 'settings' ? loadSettingsTabData(id) : Promise.resolve(null),
     ]);
-    const tariffTimeline = await new TariffTimelineRepo().getTimeline(id, currentUser?.id ?? null);
+    const reconnectRequired = !connection || requiresTeslaReconnect(connection);
+
+    let tabContent: ReactNode;
+    if (activeTab === 'history') {
+        tabContent = (
+            <LazyHistoryTab
+                siteId={id}
+                siteName={site.name}
+                defaultDate={dateStr}
+                siteTimezone={site.timezone}
+                displayMode={site.timezone_display_mode || 'SITE'}
+            />
+        );
+    } else if (activeTab === 'settings') {
+        tabContent = (
+            <LazySettingsView
+                site={site}
+                installations={installations ?? []}
+                memberEmails={settingsData?.memberEmails ?? []}
+                tariffTimeline={settingsData?.tariffTimeline ?? null}
+            />
+        );
+    } else {
+        tabContent = (
+            <EstimatedBillView
+                billNavSlot={
+                    <BillDateNav
+                        siteId={id}
+                        billingDay={billingDay}
+                        prevDateStr={prevDateStr}
+                        nextDateStr={nextDateStr}
+                        isCurrentPeriod={isCurrentPeriod}
+                        dateRangeLabel={dateRangeLabel}
+                        currentMonthVal={currentMonthVal}
+                        fullBillDateStr={fullBillDateStr}
+                    />
+                }
+                billSummarySlot={
+                    <BillSummary usage={usage ?? []} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />
+                }
+            />
+        );
+    }
 
     return (
         <PageShell maxWidth="7xl" padding="compact">
@@ -138,50 +190,8 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                 <Link href={`/login?callback=${encodeURIComponent(`/site/${id}`)}`} prefetch={false}>Reconnect Tesla</Link>
             </Alert> : <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} />}
 
-            <SiteTabs
-                historySlot={
-                    <HistoryView
-                        chartNavSlot={null}
-                        analysisSlot={
-                            <LoadAnalysisClientPage
-                                siteId={id}
-                                siteName={site.name}
-                                defaultDate={dateStr}
-                                siteTimezone={site.timezone}
-                                displayMode={site.timezone_display_mode || 'SITE'}
-                            />
-                        }
-                    />
-                }
-                billSlot={
-                    <EstimatedBillView
-                        billNavSlot={
-                            <BillDateNav
-                                siteId={id}
-                                billingDay={billingDay}
-                                prevDateStr={prevDateStr}
-                                nextDateStr={nextDateStr}
-                                isCurrentPeriod={isCurrentPeriod}
-                                dateRangeLabel={dateRangeLabel}
-                                currentMonthVal={currentMonthVal}
-                                fullBillDateStr={fullBillDateStr}
-                            />
-                        }
-                        billSummarySlot={
-                            <BillSummary usage={usage} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />
-                        }
-                    />
-                }
-                settingsSlot={
-                    <SettingsView
-                        site={site}
-                        installations={installations}
-                        memberEmails={memberEmails}
-                        tariffTimeline={tariffTimeline}
-                    />
-                }
-            >
-                {/* Fallback or shared content could go here if needed */}
+            <SiteTabs activeTab={activeTab}>
+                {tabContent}
             </SiteTabs>
         </PageShell>
     );

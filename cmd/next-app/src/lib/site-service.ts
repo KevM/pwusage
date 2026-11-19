@@ -12,6 +12,7 @@ import { Importer } from './importer';
 import { logSessionRejection } from './observability';
 import { Schedule } from './schedule';
 import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
+import { DEFAULT_SITE_TAB, type SiteTabId } from './site-tabs';
 import {
     getSiteTodayMidnight,
     safeParseSiteLocalDateToMidnight,
@@ -43,7 +44,8 @@ export type SitePageDataResult =
         status: 'ready';
         site: SiteWithTariffs;
         installation: TrmnlInstallation | undefined;
-        installations: TrmnlInstallation[];
+        /** Read only for the Settings tab; null otherwise. */
+        installations: TrmnlInstallation[] | null;
         billingDay: number;
         prevDateStr: string;
         nextDateStr: string;
@@ -51,7 +53,8 @@ export type SitePageDataResult =
         dateRangeLabel: string;
         currentMonthVal: string;
         fullBillDateStr: string;
-        usage: UsageData[];
+        /** Read only for the Estimated Bill tab; null otherwise. */
+        usage: UsageData[] | null;
         activeTariffId: number | undefined;
         activeTouName: string | undefined;
         currencySymbol: string;
@@ -60,6 +63,11 @@ export type SitePageDataResult =
         end: Date;
         refDate: Date;
       };
+
+export interface SitePageDataOptions {
+    /** The selected tab. Each tab reads only what it shows; defaults to the bill. */
+    view?: SiteTabId;
+}
 
 interface AuthorizedSitesOptions {
     includeJson?: boolean;
@@ -127,7 +135,8 @@ export class SiteService {
         return allSites.filter(s => authorizedSiteIds.has(s.id));
     }
 
-    async loadSitePageData(siteId: string, queryDate?: string): Promise<SitePageDataResult> {
+    async loadSitePageData(siteId: string, queryDate?: string, options: SitePageDataOptions = {}): Promise<SitePageDataResult> {
+        const view = options.view ?? DEFAULT_SITE_TAB;
         const hasAccess = await this.validateSiteAccess(siteId);
         if (!hasAccess) {
             return { status: 'unauthorized' };
@@ -249,7 +258,9 @@ export class SiteService {
         const start = getCurrentCycleStart(billingDay, refDate, finalSite.timezone);
         const end = getNextCycleStart(billingDay, start, finalSite.timezone);
 
-        const usage = await (this.deps.energyRepo || createEnergyRepo(finalSite.timezone)).getUsageByTOU(siteId, start, end);
+        const usage = view === 'bill'
+            ? await (this.deps.energyRepo || createEnergyRepo(finalSite.timezone)).getUsageByTOU(siteId, start, end)
+            : null;
 
         let activeTariffId: number | undefined;
         let activeTouName: string | undefined;
@@ -280,8 +291,10 @@ export class SiteService {
 
         const isCurrentPeriod = siteNow >= start && siteNow < end;
 
-        const installations = await trmnlService.getInstallationsBySiteId(finalSite.id, { includeTokens: false });
-        const installation = installations[0];
+        const installations = view === 'settings'
+            ? await trmnlService.getInstallationsBySiteId(finalSite.id, { includeTokens: false })
+            : null;
+        const installation = installations?.[0];
 
         return {
             status: 'ready',
