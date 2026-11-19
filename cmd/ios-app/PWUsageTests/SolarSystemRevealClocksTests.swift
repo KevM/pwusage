@@ -171,4 +171,21 @@ struct SolarSystemRevealClocksTests {
         #expect(allLanded.landedClear == 2)
         #expect(oneLanded.wedgeWidth >= allLanded.wedgeWidth)
     }
+
+    @Test func aSettledSceneSkipsTheClearedHistoryScanWhilePreservingCameraAndHeight() {
+        var clocks = SolarSystemSceneClocks()
+        clocks.observe(days: days, columns: 5, hasLayout: true, revealOwed: false, now: now)
+        let swayed = SolarSystemCamera(yaw: -140, elevation: 26)
+        var input = SolarSystemSceneInput(status: nil, layout: nil, isWaiting: false)
+        input.days = days
+        input.fittedRange = [195, 210]
+        input.groups = [SolarSystemHouse.Group(azimuth: 202, tilt: 22, kilowatts: 8.8)]
+
+        let settled = SceneFrame(input: input, clocks: clocks, camera: swayed, now: now)
+        #expect(settled.wedgeOpacity == 0)
+        #expect(settled.stripPresence == 0)
+        #expect(settled.landedClear == 0)
+        #expect(settled.camera == swayed)
+        #expect(settled.sceneHeight == SolarSystemVisual.foundSceneHeight)
+    }
 }

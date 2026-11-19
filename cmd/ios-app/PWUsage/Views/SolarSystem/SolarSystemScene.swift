@@ -229,6 +229,17 @@ struct SceneFrame {
         let ease = SolarSystemSceneClocks.ease
         build = input.isFound ? clocks.build(at: now) : 0
         camera = input.isFound ? .tilting(to: target, progress: ease(build)) : .overhead
+        wedgeOpacity = 1 - min(max((build - 0.35) / 0.3, 0), 1)
+        stripPresence = input.isFound ? 1 - ease((build - 0.3) / 0.7) : 1
+        sceneHeight = SolarSystemVisual.foundSceneHeight
+            + (SolarSystemVisual.sceneHeight - SolarSystemVisual.foundSceneHeight) * stripPresence
+        // Once both the wedge and strip have faded out, nothing reads landedClear or wedge geometry.
+        guard wedgeOpacity > 0 || stripPresence > 0 else {
+            landedClear = 0
+            wedgeCenter = 0
+            wedgeWidth = 1
+            return
+        }
         landedClear = input.days.count { $0.type == .clear && clocks.hasLanded($0.day, at: now) }
         if input.isFound, let main = input.groups.max(by: { $0.kilowatts < $1.kilowatts }) {
             wedgeCenter = main.azimuth
@@ -244,10 +255,6 @@ struct SceneFrame {
             width = width * (1 - closing) + 1
         }
         wedgeWidth = width
-        wedgeOpacity = 1 - min(max((build - 0.35) / 0.3, 0), 1)
-        stripPresence = input.isFound ? 1 - ease((build - 0.3) / 0.7) : 1
-        sceneHeight = SolarSystemVisual.foundSceneHeight
-            + (SolarSystemVisual.sceneHeight - SolarSystemVisual.foundSceneHeight) * stripPresence
     }
 
     /// The canvas point for a world point, with the compass centered in the scene. Steep drag angles
