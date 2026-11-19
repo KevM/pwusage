@@ -917,7 +917,7 @@ describe('TeslaAuthService', () => {
         }
     });
 
-    it('(a3) unknown-kid -> unconfirmed sub -> reconciles to existing user account ID by email (prevents account split)', async () => {
+    it('(a3) unknown-kid -> unconfirmed sub matching the account found by email -> reconciles to that account (prevents account split)', async () => {
         const { KidNotFoundError } = await import('./tesla-auth-service');
         const tokenExchange = vi.fn().mockResolvedValue({
             id_token: 'id_token_unconfirmed_sub',
@@ -952,7 +952,7 @@ describe('TeslaAuthService', () => {
             aud: process.env.PUBLIC_TESLA_OAUTH_CLIENT_ID || 'client-id-123',
             exp: Math.floor(Date.now() / 1000) + 3600,
             nonce: 'good-nonce',
-            sub: 'unconfirmed-sub',
+            sub: 'original-sub-uuid-123',
             email: 'user@example.com'
         } as unknown as JwtPayload);
 
@@ -1369,7 +1369,7 @@ describe('TeslaAuthService', () => {
         expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'user@example.com');
     });
 
-    it('retries the user upsert with the existing account id when the email unique index rejects the insert', async () => {
+    it('retries the user upsert with a legacy email-keyed account id when the email unique index rejects the insert', async () => {
         const tokenExchange = vi.fn().mockResolvedValue({
             id_token: 'valid_id_token',
             access_token: 'access_123',
@@ -1390,11 +1390,11 @@ describe('TeslaAuthService', () => {
         mockUserRepo.getByEmail
             .mockResolvedValueOnce(null)
             // ...but by the time the insert fails, the winner's row exists.
-            .mockResolvedValueOnce({ id: 'winner-sub' });
+            .mockResolvedValueOnce({ id: 'race@example.com' });
         mockUserRepo.upsertOnTeslaAuth
             .mockRejectedValueOnce(Object.assign(new Error('duplicate key value violates unique constraint "idx_user_email_lower"'), { code: '23505' }))
             .mockResolvedValueOnce(undefined);
-        mockUserRepo.getById.mockResolvedValue({ id: 'winner-sub', roles: [] });
+        mockUserRepo.getById.mockResolvedValue({ id: 'race@example.com', roles: [] });
 
         const service = new TeslaAuthService({
             userRepo: mockUserRepo as unknown as UserRepo,
@@ -1416,13 +1416,140 @@ describe('TeslaAuthService', () => {
 
         expect(result.status).toBe('success');
         if (result.status === 'success') {
-            expect(result.userId).toBe('winner-sub');
+            expect(result.userId).toBe('race@example.com');
         }
         expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(2);
         expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenLastCalledWith(
-            expect.objectContaining({ userId: 'winner-sub' })
+            expect.objectContaining({ userId: 'race@example.com' })
         );
-        expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'winner-sub');
+        expect(mockSiteRepo.assignSiteToUser).toHaveBeenCalledWith('98765', 'race@example.com');
+    });
+
+    describe('a different Tesla subject sharing an existing account email', () => {
+        // An admin account keyed by its own verified Tesla subject.
+        const adminRow = { id: 'admin-sub', email: 'shared@example.com', roles: ['admin'] };
+        const conflictParams: TeslaCallbackParams = {
+            code: 'auth_code_xyz', state: 'valid_state', savedState: 'valid_state',
+            savedNonce: 'good-nonce', callbackUrl: 'http://localhost/callback',
+        };
+        const makeService = (verifyIdToken: (token: string) => Promise<JwtPayload>) => new TeslaAuthService({
+            userRepo: mockUserRepo as unknown as UserRepo,
+            siteRepo: mockSiteRepo as unknown as SiteRepo,
+            teslaTokenRepo: mockTeslaTokenRepo as unknown as TeslaTokenRepo,
+            teslaClientCreator: vi.fn().mockReturnValue(mockTeslaClient),
+            importerCreator: vi.fn().mockReturnValue(mockImporter),
+            tokenExchange: vi.fn().mockResolvedValue({
+                id_token: 'other_subject_token', access_token: 'attacker_access',
+                refresh_token: 'attacker_refresh', expires_in: 3600,
+            }),
+            verifyIdToken,
+        });
+        const expectNothingWritten = () => {
+            // Credentials, roles and memberships of the admin row are untouched:
+            // the only write paths are the upsert, the Fleet-host store and the
+            // site/membership import, and none of them ran.
+            expect(mockUserRepo.setFleetApiBaseUrl).not.toHaveBeenCalled();
+            expect(mockSiteRepo.assignSiteToUser).not.toHaveBeenCalled();
+            expect(mockSiteRepo.removeSitesMissingFromTesla).not.toHaveBeenCalled();
+            expect(mockImporter.ensureSite).not.toHaveBeenCalled();
+            expect(mockSharedSyncLogin).not.toHaveBeenCalled();
+        };
+
+        beforeEach(() => {
+            mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'Shared@example.com' });
+            mockTeslaClient.getProducts.mockResolvedValue([
+                { energy_site_id: 98765, resource_type: 'battery', site_name: 'Home Powerwall' },
+            ]);
+            mockUserRepo.getById.mockImplementation(async (id: string) => (id === adminRow.id ? adminRow : null));
+        });
+
+        it('fails closed on the ordinary email lookup of a verified login', async () => {
+            mockUserRepo.getByEmail.mockResolvedValue(adminRow);
+            const result = await makeService(vi.fn().mockResolvedValue({
+                nonce: 'good-nonce', sub: 'other-sub', email: 'shared@example.com',
+            })).handleTeslaCallback(conflictParams);
+
+            expect(result).toEqual({ status: 'identity-conflict' });
+            expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+            expectNothingWritten();
+        });
+
+        it('fails closed when the email unique index rejects the upsert and the winner is another subject', async () => {
+            mockUserRepo.getByEmail.mockResolvedValueOnce(null).mockResolvedValueOnce(adminRow);
+            mockUserRepo.upsertOnTeslaAuth.mockRejectedValueOnce(Object.assign(
+                new Error('duplicate key value violates unique constraint "idx_user_email_lower"'), { code: '23505' }));
+            const result = await makeService(vi.fn().mockResolvedValue({
+                nonce: 'good-nonce', sub: 'other-sub', email: 'shared@example.com',
+            })).handleTeslaCallback(conflictParams);
+
+            expect(result).toEqual({ status: 'identity-conflict' });
+            // The rejected insert wrote nothing; there is no second attempt.
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledWith(expect.objectContaining({ userId: 'other-sub' }));
+            expectNothingWritten();
+        });
+
+        it('fails closed on the unknown-signing-key path when the token subject differs', async () => {
+            const { KidNotFoundError } = await import('./tesla-auth-service');
+            mockUserRepo.getByEmail.mockResolvedValue(adminRow);
+            vi.spyOn(jwt, 'decode').mockReturnValue({
+                iss: 'https://auth.tesla.com/oauth2/v3', aud: 'client-id-123',
+                exp: Math.floor(Date.now() / 1000) + 3600, nonce: 'good-nonce',
+                sub: 'other-sub', email: 'shared@example.com',
+            } as unknown as JwtPayload);
+
+            const result = await makeService(vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6')))
+                .handleTeslaCallback(conflictParams);
+
+            expect(result).toEqual({ status: 'identity-conflict' });
+            expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+            expectNothingWritten();
+        });
+
+        it('fails closed on the unknown-signing-key path when the token carries no subject at all', async () => {
+            const { KidNotFoundError } = await import('./tesla-auth-service');
+            mockUserRepo.getByEmail.mockResolvedValue(adminRow);
+            vi.spyOn(jwt, 'decode').mockReturnValue({
+                iss: 'https://auth.tesla.com/oauth2/v3', aud: 'client-id-123',
+                exp: Math.floor(Date.now() / 1000) + 3600, nonce: 'good-nonce', email: 'shared@example.com',
+            } as unknown as JwtPayload);
+
+            const result = await makeService(vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6')))
+                .handleTeslaCallback(conflictParams);
+
+            expect(result).toEqual({ status: 'identity-conflict' });
+            expect(mockUserRepo.upsertOnTeslaAuth).not.toHaveBeenCalled();
+            expectNothingWritten();
+        });
+
+        it('fails closed on the confirmed-subject unknown-key path when the upsert races another subject', async () => {
+            const { KidNotFoundError } = await import('./tesla-auth-service');
+            mockTeslaClient.getUserInfo.mockResolvedValue({ email: 'shared@example.com', sub: 'other-sub' });
+            mockUserRepo.getByEmail.mockResolvedValue(adminRow);
+            mockUserRepo.upsertOnTeslaAuth.mockRejectedValueOnce(Object.assign(
+                new Error('duplicate key value violates unique constraint "idx_user_email_lower"'), { code: '23505' }));
+            vi.spyOn(jwt, 'decode').mockReturnValue({
+                iss: 'https://auth.tesla.com/oauth2/v3', aud: 'client-id-123',
+                exp: Math.floor(Date.now() / 1000) + 3600, nonce: 'good-nonce',
+                sub: 'other-sub', email: 'shared@example.com',
+            } as unknown as JwtPayload);
+
+            const result = await makeService(vi.fn().mockRejectedValue(new KidNotFoundError('HgAhP6')))
+                .handleTeslaCallback(conflictParams);
+
+            expect(result).toEqual({ status: 'identity-conflict' });
+            expect(mockUserRepo.upsertOnTeslaAuth).toHaveBeenCalledTimes(1);
+            expectNothingWritten();
+        });
+
+        it('still lets the account owner sign in with the same subject', async () => {
+            mockUserRepo.getByEmail.mockResolvedValue(adminRow);
+            const result = await makeService(vi.fn().mockResolvedValue({
+                nonce: 'good-nonce', sub: 'admin-sub', email: 'shared@example.com',
+            })).handleTeslaCallback(conflictParams);
+
+            expect(result).toMatchObject({ status: 'success', userId: 'admin-sub', roles: ['admin'] });
+        });
     });
 
 // A test that injects a slow `verifyIdToken` dep cannot cover the removed race:

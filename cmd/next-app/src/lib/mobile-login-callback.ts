@@ -19,7 +19,9 @@ export type MobileLoginErrorCode =
   | 'invalid_id_token'
   | 'nonce_mismatch'
   | 'no_sites'
-  | 'product_import_failed';
+  | 'product_import_failed'
+  // The Tesla account's email belongs to a PWUsage account of another Tesla subject.
+  | 'account_conflict';
 
 /**
  * Either a failure (which the app surfaces as `AuthError.serverRejectedLogin`)
