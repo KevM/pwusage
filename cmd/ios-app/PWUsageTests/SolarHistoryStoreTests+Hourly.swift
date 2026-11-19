@@ -85,8 +85,7 @@ extension SolarHistoryStoreTests {
         _ = try await store.sync(
             scope: scope,
             api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("America/Los_Angeles"), days: [day], nextFrom: nil),
-                timeZone: "America/Los_Angeles")), now: now)
+                .enabled(timeZone: zone("America/Los_Angeles"), days: [day], nextFrom: nil))), now: now)
         let hours = try await store.hourlyActuals(scope: scope, now: now)
         let firstOne = try #require(hours.first { $0.hourStart == date("2026-11-01T08:00:00Z") })
         let secondOne = try #require(hours.first { $0.hourStart == date("2026-11-01T09:00:00Z") })
@@ -106,8 +105,7 @@ extension SolarHistoryStoreTests {
         _ = try await store.sync(
             scope: scope,
             api: HistoryAPI(responses: initialResponses(
-                .enabled(timeZone: zone("America/Los_Angeles"), days: [day], nextFrom: nil),
-                timeZone: "America/Los_Angeles")), now: now)
+                .enabled(timeZone: zone("America/Los_Angeles"), days: [day], nextFrom: nil))), now: now)
         let samples = try await store.samples(scope: scope)
         #expect(samples.count == 276)
         #expect(samples[12].timestamp == date("2026-03-08T09:00:00Z"))

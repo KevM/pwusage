@@ -266,7 +266,8 @@ struct SolarLayoutDetectionRunnerTests {
         let (res1, res2) = await (sync1, sync2)
         #expect(res1 != nil)
         #expect(res1 == res2)
-        #expect(await api.requests.count == 2)
+        // One first sync is one request; a second, unjoined sync would make it two.
+        #expect(await api.requests.count == 1)
     }
 
     @Test("Detector failure saves failed status with twenty-four hour cadence")

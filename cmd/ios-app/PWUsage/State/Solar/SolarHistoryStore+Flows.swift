@@ -12,7 +12,13 @@ private struct FlowPageRequest {
     let startingFrom: String
     let stopAtOrAfter: String?
     let now: Date?
+    let changedSince: Date?
     let token: SolarHistorySyncToken
+}
+
+private enum FlowPagesOutcome {
+    case disabled
+    case completed(maxFetchedAt: Date?)
 }
 
 struct EnergyFlowDay: Equatable, Sendable {
@@ -70,7 +76,8 @@ extension SolarHistoryStore {
     }
 
     /// Backfills energy flow series via `GET /api/mobile/solar-history`: current billing cycle
-    /// first, then forward from the oldest stored day still missing flows.
+    /// first, then forward from the oldest stored day still missing flows. Once a full read has
+    /// covered the cycle, later reads ask only for days changed since the flow watermark.
     func syncFlows(
         scope: SolarForecastSiteScope,
         api: any MobileSolarHistoryDataAPI,
@@ -81,17 +88,25 @@ extension SolarHistoryStore {
         defer { endSync(scope: scope) }
 
         var state = try load(scope)
+        let changedSince = Self.flowChangedSince(state, cycleStartDay: cycleStartDay)
         let currentCycleRequest = FlowPageRequest(
             scope: scope,
             api: api,
             startingFrom: cycleStartDay,
             stopAtOrAfter: nil,
             now: now,
+            changedSince: changedSince,
             token: token
         )
-        guard try await fetchFlowPages(currentCycleRequest, state: &state) else {
+        guard case .completed(let maxFetchedAt) = try await fetchFlowPages(currentCycleRequest, state: &state) else {
             return .complete
         }
+        if changedSince == nil { state.flowsSyncedFrom = cycleStartDay }
+        if let maxFetchedAt {
+            let watermark = maxFetchedAt.addingTimeInterval(-300)
+            state.flowsSyncedThrough = max(state.flowsSyncedThrough ?? watermark, watermark)
+        }
+        try save(state, scope: scope)
 
         guard let oldestMissing = try oldestDayMissingFlows(scope: scope) else {
             return .complete
@@ -106,9 +121,10 @@ extension SolarHistoryStore {
             startingFrom: oldestMissing,
             stopAtOrAfter: cycleStartDay,
             now: nil,
+            changedSince: nil,
             token: token
         )
-        guard try await fetchFlowPages(backfillRequest, state: &state) else {
+        guard case .completed = try await fetchFlowPages(backfillRequest, state: &state) else {
             return .complete
         }
 
@@ -118,17 +134,26 @@ extension SolarHistoryStore {
         return .complete
     }
 
+    /// The watermark a current-cycle read may resume from: only when an earlier full read began at
+    /// or before this cycle's start, so a billing day moved earlier still reads the whole cycle.
+    /// `fetchedAt` is when the Tesla read started, so the watermark already trails it by five minutes.
+    private static func flowChangedSince(_ state: SolarHistoryPersisted, cycleStartDay: String) -> Date? {
+        guard let syncedFrom = state.flowsSyncedFrom, syncedFrom <= cycleStartDay else { return nil }
+        return state.flowsSyncedThrough
+    }
+
     private func fetchFlowPages(
         _ request: FlowPageRequest,
         state: inout SolarHistoryPersisted
-    ) async throws -> Bool {
+    ) async throws -> FlowPagesOutcome {
         var pageFrom = request.startingFrom
+        var maxFetchedAt: Date?
         while true {
             try Task.checkCancellation()
             let response = try await request.api.fetchSolarHistory(
                 siteID: request.scope.siteID,
                 from: pageFrom,
-                changedSince: nil
+                changedSince: request.changedSince
             )
             try validateGeneration(
                 request.token.generation,
@@ -136,19 +161,22 @@ extension SolarHistoryStore {
                 scopeGeneration: request.token.scopeGeneration
             )
             guard case .enabled(let siteZone, let days, let nextFrom) = response else {
-                return false
+                return .disabled
             }
             state.isEnabled = true
             state.timeZone = siteZone.identifier
-            _ = store(days: days, in: &state, maximumFetchedAt: nil)
+            maxFetchedAt = store(days: days, in: &state, maximumFetchedAt: maxFetchedAt)
             applyLateDays(scope: request.scope, to: &state)
             try save(state, scope: request.scope)
+            // `save` clears the flags only on its cached copy: clear ours so the next page writes
+            // just the years it changes.
+            state.dirtyYears.removeAll()
             guard let nextFrom else { break }
             if let stopAtOrAfter = request.stopAtOrAfter, nextFrom >= stopAtOrAfter { break }
             if let now = request.now, nextFrom > Self.dayString(now, timeZone: siteZone) { break }
             pageFrom = nextFrom
         }
-        return true
+        return .completed(maxFetchedAt: maxFetchedAt)
     }
 
     static func makeStoredDay(from day: MobileSolarHistoryDay) -> SolarHistoryStoredDay {
@@ -174,7 +202,22 @@ extension SolarHistoryStore {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .gmt
         let today = calendar.startOfDay(for: now)
-        return calendar.date(byAdding: .day, value: -364, to: today) ?? today
+        return calendar.date(byAdding: .day, value: -366, to: today) ?? today
+    }
+
+    /// Page-one days in `[from, exactStart)` in site-local dates: the up to two days the UTC bootstrap
+    /// reads before the site's 365-day boundary.
+    static func droppingBoundaryDays(
+        _ days: [MobileSolarHistoryDay],
+        from: String,
+        before exactStart: String,
+        timeZone: TimeZone
+    ) -> [MobileSolarHistoryDay] {
+        guard from < exactStart else { return days }
+        return days.filter {
+            let day = dayString($0.dayStart, timeZone: timeZone)
+            return day < from || day >= exactStart
+        }
     }
 
     static func dayString(_ date: Date, timeZone: TimeZone) -> String {

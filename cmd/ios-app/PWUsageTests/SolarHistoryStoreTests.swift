@@ -10,35 +10,39 @@ struct SolarHistoryStoreTests {
         let first = response(day: fetchedAt, nextFrom: "2026-01-02")
         let second = response(day: fetchedAt.addingTimeInterval(60), nextFrom: nil)
         let empty = MobileSolarHistoryResponse.enabled(timeZone: zone("UTC"), days: [], nextFrom: nil)
-        let api = HistoryAPI(responses: [empty, first, second, empty])
+        let api = HistoryAPI(responses: [first, second, empty])
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = SolarHistoryStore(directory: folder)
         let scope = SolarForecastSiteScope(accountScopeID: "account", siteID: "site")
         _ = try await store.sync(scope: scope, api: api, now: fetchedAt)
         let initialRequests = await api.requests
         let storedSamples = try await store.samples(scope: scope)
-        #expect(initialRequests.map(\.changedSince) == [nil, nil, nil])
+        #expect(initialRequests.map(\.changedSince) == [nil, nil])
         #expect(storedSamples.count == 288)
         _ = try await store.sync(scope: scope, api: api, now: fetchedAt)
         let requests = await api.requests
-        #expect(requests.map(\.changedSince) == [nil, nil, nil, fetchedAt.addingTimeInterval(-240)])
+        #expect(requests.map(\.changedSince) == [nil, nil, fetchedAt.addingTimeInterval(-240)])
         try await store.removeAll()
     }
 
-    @Test("First request begins 365 days before now")
-    func firstRequestStarts365DaysBack() async throws {
-        let now = ISO8601DateFormatter().date(from: "2026-10-31T12:00:00Z") ?? .now
-        let api = HistoryAPI(responses: [.enabled(timeZone: zone("UTC"), days: [], nextFrom: nil), .disabled])
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let store = SolarHistoryStore(directory: folder)
+    @Test("First sync reads once from 366 UTC days back and keeps days from the 365-day boundary")
+    func firstSyncTrimsBootstrapDaysInUTC() async throws {
+        let now = date("2026-10-31T12:00:00Z")
+        let early = historyDay(day: "2025-10-30", start: date("2025-10-30T00:00:00Z"), fetchedAt: now, slots: [1])
+        let boundary = historyDay(day: "2025-10-31", start: date("2025-10-31T00:00:00Z"), fetchedAt: now, slots: [1])
+        let api = HistoryAPI(responses: [
+            .enabled(timeZone: zone("UTC"), days: [early, boundary], nextFrom: nil), .disabled
+        ])
+        let store = SolarHistoryStore(directory: temporaryFolder())
         let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "s")
         _ = try await store.sync(scope: scope, api: api, now: now)
         let requests = await api.requests
-        #expect(requests.map(\.from) == ["2025-11-01", "2025-10-31"])
+        #expect(requests.map(\.from) == ["2025-10-30"])
+        #expect(try await store.allStoredDays(scope: scope) == ["2025-10-31"])
     }
 
-    @Test("First sync restarts at the exact site-local 365-day boundary")
-    func firstSyncCorrectsBootstrapUsingSiteTimeZone() async throws {
+    @Test("First sync for a site west of UTC needs no second request")
+    func firstSyncWestOfUTCReadsOnce() async throws {
         let now = date("2026-10-31T05:00:00Z")
         let empty = MobileSolarHistoryResponse.enabled(timeZone: zone("America/Los_Angeles"), days: [], nextFrom: nil)
         let api = HistoryAPI(responses: [empty, empty])
@@ -46,8 +50,23 @@ struct SolarHistoryStoreTests {
         _ = try await store.sync(
             scope: SolarForecastSiteScope(accountScopeID: "a", siteID: "zone"), api: api, now: now)
         let requests = await api.requests
-        #expect(requests.map(\.from) == ["2025-11-01", "2025-10-30"])
+        #expect(requests.map(\.from) == ["2025-10-30"])
         #expect(requests.allSatisfy { $0.changedSince == nil })
+    }
+
+    @Test("First sync for a site a day ahead of UTC drops the two over-read days")
+    func firstSyncEastOfUTCTrimsTwoDays() async throws {
+        let now = date("2026-10-31T12:00:00Z")
+        let auckland = zone("Pacific/Auckland")
+        let days = [("2025-10-30", "2025-10-29T11:00:00Z"), ("2025-10-31", "2025-10-30T11:00:00Z"),
+                    ("2025-11-01", "2025-10-31T11:00:00Z")]
+            .map { historyDay(day: $0.0, start: date($0.1), fetchedAt: now, slots: [1]) }
+        let api = HistoryAPI(responses: [.enabled(timeZone: auckland, days: days, nextFrom: nil)])
+        let store = SolarHistoryStore(directory: temporaryFolder())
+        let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "east")
+        _ = try await store.sync(scope: scope, api: api, now: now)
+        #expect(await api.requests.map(\.from) == ["2025-10-30"])
+        #expect(try await store.allStoredDays(scope: scope) == ["2025-11-01"])
     }
 
     @Test("Empty first sync keeps the learned site zone for a local-boundary retry")
@@ -71,15 +90,15 @@ struct SolarHistoryStoreTests {
         let scope = SolarForecastSiteScope(accountScopeID: "a", siteID: "retry")
         let store = SolarHistoryStore(directory: temporaryFolder())
         let empty = MobileSolarHistoryResponse.enabled(timeZone: zone("UTC"), days: [], nextFrom: nil)
-        let interrupted = HistoryAPI(responses: [empty, response(day: now, nextFrom: "2026-01-02")], failAt: 3)
+        let interrupted = HistoryAPI(responses: [response(day: now, nextFrom: "2026-01-02")], failAt: 2)
         await #expect(throws: HistoryFailure.self) {
             try await store.sync(scope: scope, api: interrupted, now: now)
         }
-        let retry = HistoryAPI(responses: [empty, empty])
+        let retry = HistoryAPI(responses: [empty])
         _ = try await store.sync(scope: scope, api: retry, now: now)
         let requests = await retry.requests
-        #expect(requests.map(\.changedSince) == [nil, nil])
-        #expect(requests.map(\.from) == ["2025-11-01", "2025-10-31"])
+        #expect(requests.map(\.changedSince) == [nil])
+        #expect(requests.map(\.from) == ["2025-10-30"])
     }
 
     @Test("Incremental rewrites replace a day by dayStart")
@@ -219,11 +238,9 @@ struct SolarHistoryStoreTests {
     func date(_ value: String) -> Date {
         ISO8601DateFormatter().date(from: value) ?? .distantPast
     }
-    func initialResponses(
-        _ response: MobileSolarHistoryResponse,
-        timeZone: String = "UTC"
-    ) -> [MobileSolarHistoryResponse] {
-        [.enabled(timeZone: zone(timeZone), days: [], nextFrom: nil), response]
+    /// A first sync reads once from the UTC bootstrap, so it consumes exactly one response.
+    func initialResponses(_ response: MobileSolarHistoryResponse) -> [MobileSolarHistoryResponse] {
+        [response]
     }
     func temporaryFolder() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
