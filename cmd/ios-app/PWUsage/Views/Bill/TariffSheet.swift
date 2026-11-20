@@ -7,17 +7,19 @@ struct TariffSheet: View {
     var startsAddingPlan = false
 
     @Environment(\.scenePhase) private var scenePhase
-    @State private var timeline: SiteTariffsTimelineResponse?
+    @State var timeline: SiteTariffsTimelineResponse?
     @State private var loadError: String?
     @State private var actionError: String?
     @State private var isLoading = false
     @State private var isSyncing = false
     @State private var syncNotice: String?
+    @State var offersTeslaSyncAfterApply = false
     @State private var isRetryingReattribution = false
-    @State private var activeModal: TariffSheetModal?
+    @State var activeModal: TariffSheetModal?
     @State private var pendingDeletion: TariffPeriodDTO?
     @State private var minuteTick = Date()
     @State private var didOpenStartingAddForm = false
+    @State var didPullForUnconfirmedSync = false
     private let historyOfferDismissals = RateEstimatesAccessoryDismissals.sharedHistoryOffer
 
     var body: some View {
@@ -128,7 +130,10 @@ struct TariffSheet: View {
                 .padding(.horizontal, 4)
         }
         if data.teslaSync.differsFromActiveManual {
-            teslaDivergenceBanner(data.teslaSync, isSyncing: isSyncing, onSync: syncFromTesla)
+            teslaDivergenceBanner(data.teslaSync, isSyncing: isSyncing, onCheck: syncFromTesla, onSend: openTeslaSync)
+        }
+        if offersTeslaSyncAfterApply, data.teslaSync.syncAvailable {
+            teslaSyncPromptCard(onSend: openTeslaSync, onNotNow: { offersTeslaSyncAfterApply = false })
         }
         ActiveRatePlanCardView(timeline: data, now: minuteTick, onChangePlan: data.supportsRatePlanSelection
             ? { activeModal = .changePlan(for: data) } : nil)
@@ -187,10 +192,12 @@ struct TariffSheet: View {
         case .changePlan, .restore:
             RatePlanChangeFlow.make(
                 kind: modal.changeKind, timeline: timeline, actions: actions,
-                onEnterManually: { activeModal = .editor(.add) }, onApplied: { timeline = $0.timeline }
+                onEnterManually: { activeModal = .editor(.add) }, onApplied: selectionApplied
             )
         case .aiHandoff:
             RatePlanAiHandoffSheet(actions: actions.aiHandoff) { timeline = $0 }
+        case .teslaSync:
+            TeslaSyncSheet(actions: actions.teslaSync, currency: timeline?.currency ?? "USD") { timeline = $0 }
         case .editor(let mode):
             RatePlanEditorFlow(
                 mode: mode,
@@ -204,7 +211,7 @@ struct TariffSheet: View {
                     timeline = try await actions.updatePeriod(periodID, patch)
                 },
                 selection: timeline?.supportsRatePlanSelection == true ? actions.selection : nil,
-                onApplied: { timeline = $0.timeline }
+                onApplied: selectionApplied
             )
         }
     }
@@ -281,6 +288,7 @@ struct TariffSheet: View {
 
     private func initialLoad() async {
         await performLoad(showSpinner: timeline == nil)
+        await pullOnceForUnconfirmedSync()
     }
 
     private func performLoad(showSpinner: Bool) async {
@@ -371,29 +379,5 @@ struct TariffSheet: View {
                 actionError = error.localizedDescription
             }
         }
-    }
-}
-
-private struct TariffSheetFooterButtons: View {
-    let onAddPlan: () -> Void
-    let onAiHandoff: () -> Void
-
-    var body: some View {
-        Button(action: onAddPlan) {
-            Label("Add Rate Plan", systemImage: "plus.circle.fill")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-        }
-        .emphasisProminentButton()
-        .controlSize(.large)
-        .padding(.top, 4)
-
-        Button(action: onAiHandoff) {
-            Label("Check with Your AI Assistant", systemImage: "sparkles")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
     }
 }

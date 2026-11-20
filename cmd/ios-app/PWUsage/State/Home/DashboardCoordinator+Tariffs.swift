@@ -28,6 +28,25 @@ extension DashboardCoordinator {
         try await runTariffRequest { api, siteID in try await api.refreshTariffsFromTesla(siteID: siteID) }
     }
 
+    /// What Sync to Tesla would send now. Read-only.
+    func previewTeslaSync() async throws -> TeslaSyncPreviewDTO {
+        try await runTariffQuery { api, siteID in
+            try await Self.teslaSyncAPI(api).previewTeslaSync(siteID: siteID)
+        }
+    }
+
+    /// Sends the reviewed plan. The fingerprint must be the one the owner reviewed.
+    func commitTeslaSync(fingerprint: String) async throws -> TeslaSyncResultDTO {
+        try await runTariffQuery { api, siteID in
+            try await Self.teslaSyncAPI(api).commitTeslaSync(siteID: siteID, fingerprint: fingerprint)
+        }
+    }
+
+    private static func teslaSyncAPI(_ api: any MobileTariffDataAPI) throws -> any MobileTeslaSyncAPI {
+        guard let syncAPI = api as? any MobileTeslaSyncAPI else { throw PWUsageAPIError.invalidResponse }
+        return syncAPI
+    }
+
     func createTariffPeriod(_ body: TariffPlanWriteRequest) async throws -> SiteTariffsTimelineResponse {
         try await runTariffRequest { api, siteID in try await api.createTariffPeriod(siteID: siteID, body: body) }
     }

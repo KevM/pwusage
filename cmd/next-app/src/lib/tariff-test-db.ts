@@ -79,6 +79,9 @@ export async function createTariffTestDatabase(dbName: string): Promise<Pool> {
   const rateCountryMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_rate_country.sql'));
   if (!rateCountryMigration) throw new Error('Site rate country migration missing');
   await database.query(await readFile(`db-migrations/${rateCountryMigration}`, 'utf8'));
+  const syncAttemptMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tesla_tariff_sync_attempt.sql'));
+  if (!syncAttemptMigration) throw new Error('Tesla tariff sync attempt migration missing');
+  await database.query(await readFile(`db-migrations/${syncAttemptMigration}`, 'utf8'));
 
   return database;
 }

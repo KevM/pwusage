@@ -40,7 +40,10 @@
       "latestTariffName": null,
       "latestUpdatedAt": null,
       "activeManualUpdatedAt": null,
-      "differsFromActiveManual": false
+      "differsFromActiveManual": false,
+      "syncAvailable": false,
+      "syncUnavailableReason": "no_active_plan",
+      "lastSync": null
     }
   },
   "days": [

@@ -9,6 +9,7 @@ import type {
   TariffSource,
   TariffStartSource,
 } from './db-types';
+import type { TeslaSyncStatus } from './tesla-tariff-sync-repo';
 
 export type {
   ExportRateProvenance,
@@ -18,6 +19,9 @@ export type {
   TariffSelectionChoiceKind,
   TariffSelectionScope,
 };
+
+/** Reasons Sync to Tesla can be unavailable that the timeline can derive from stored state. */
+export type TeslaSyncUnavailableDbReason = 'no_difference' | 'not_tou_capable' | 'no_tesla_plan' | 'no_active_plan';
 
 export type TariffPeriodName = 'ON_PEAK' | 'PARTIAL_PEAK' | 'OFF_PEAK' | 'SUPER_OFF_PEAK';
 
@@ -179,6 +183,12 @@ export interface SiteTariffsTimelineResponse {
     activeManualUpdatedAt?: string | null;
     /** True when today's plan chosen in PWUsage (manual, a public plan or a restored Tesla plan an owner selected) differs from the latest Tesla plan. */
     differsFromActiveManual: boolean;
+    /** True when Sync to Tesla can send today's plan now. Computed from stored state only. */
+    syncAvailable: boolean;
+    /** Why Sync to Tesla is unavailable, or null when it is available. The first applicable reason wins. */
+    syncUnavailableReason: TeslaSyncUnavailableDbReason | null;
+    /** The most recent Sync to Tesla attempt for the site, or null when none was made. */
+    lastSync: { status: TeslaSyncStatus; at: string } | null;
   };
 }
 

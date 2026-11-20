@@ -112,7 +112,7 @@ const baseTimeline: SiteTariffsTimelineResponse = {
     latestTariffId: 10,
     latestTariffName: 'We Energies Prior',
     latestUpdatedAt: '2025-01-01T00:00:00Z',
-    differsFromActiveManual: false,
+    differsFromActiveManual: false, syncAvailable: false, syncUnavailableReason: null, lastSync: null,
   },
 };
 
@@ -168,7 +168,7 @@ describe('TariffList v2 timeline', () => {
       },
       teslaSync: {
         ...baseTimeline.teslaSync,
-        differsFromActiveManual: true,
+        differsFromActiveManual: true, syncAvailable: false, syncUnavailableReason: null, lastSync: null,
       },
     });
     expect(runningHtml).toContain('Updating historical rates · 45 of 120 days');
@@ -322,7 +322,7 @@ describe('TariffList v2 timeline', () => {
 });
 
 describe('teslaDivergenceCopy', () => {
-  const base = { latestTariffId: 1, latestTariffName: 'We Energies Prior', differsFromActiveManual: true };
+  const base = { latestTariffId: 1, latestTariffName: 'We Energies Prior', differsFromActiveManual: true, syncAvailable: false, syncUnavailableReason: null, lastSync: null };
 
   it('says the custom plan is newer when it was saved after Tesla last changed', () => {
     const copy = teslaDivergenceCopy({ ...base, latestUpdatedAt: '2026-10-01T00:00:00Z', activeManualUpdatedAt: '2026-11-01T00:00:00Z' });

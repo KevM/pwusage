@@ -70,7 +70,7 @@ struct RatePeriodResolverTests {
                 latestTariffName: nil,
                 latestUpdatedAt: nil,
                 activeManualUpdatedAt: nil,
-                differsFromActiveManual: false
+                differsFromActiveManual: false, syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
             )
         )
     }

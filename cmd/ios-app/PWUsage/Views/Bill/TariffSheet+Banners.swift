@@ -32,7 +32,13 @@ extension TariffSheet {
         .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    func teslaDivergenceBanner(_ sync: TeslaSyncDTO, isSyncing: Bool, onSync: @escaping () -> Void) -> some View {
+    /// Pulls Tesla's plan (Check Tesla) and, when Sync to Tesla can send today's plan, sends it.
+    func teslaDivergenceBanner(
+        _ sync: TeslaSyncDTO,
+        isSyncing: Bool,
+        onCheck: @escaping () -> Void,
+        onSend: @escaping () -> Void
+    ) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "bolt.badge.clock")
                 .foregroundStyle(.blue)
@@ -45,12 +51,59 @@ extension TariffSheet {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Button("Sync", action: onSync)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isSyncing)
+            VStack(alignment: .trailing, spacing: 6) {
+                if sync.syncAvailable {
+                    Button(TeslaSyncCopy.sendButton, action: onSend)
+                        .emphasisProminentButton()
+                        .controlSize(.small)
+                }
+                Button("Check Tesla", action: onCheck)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isSyncing)
+            }
         }
         .padding(14)
         .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Opens Sync to Tesla from either entry point; the prompt goes away once the owner acts on it.
+    func openTeslaSync() {
+        offersTeslaSyncAfterApply = false
+        activeModal = .teslaSync
+    }
+
+    /// A sync Tesla hadn't confirmed when sent: check Tesla once, quietly, so the answer shows without a manual check.
+    func pullOnceForUnconfirmedSync() async {
+        guard !didPullForUnconfirmedSync, let current = timeline, TeslaSyncPrompt.shouldPullOnOpen(current) else {
+            return
+        }
+        didPullForUnconfirmedSync = true
+        if let refreshed = try? await actions.refreshFromTesla() { timeline = refreshed }
+    }
+
+    /// An applied change returns the new timeline and offers Sync to Tesla when it covers today.
+    func selectionApplied(_ response: TariffSelectionCommitResponse, _ request: TariffSelectionRequest) {
+        timeline = response.timeline
+        offersTeslaSyncAfterApply = TeslaSyncPrompt.offers(afterApplying: request, timeline: response.timeline)
+    }
+
+    /// Offered right after the owner applies a change that covers today, while Tesla can take it.
+    func teslaSyncPromptCard(onSend: @escaping () -> Void, onNotNow: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(TeslaSyncCopy.postApplyPrompt, systemImage: "bolt.badge.clock")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 10) {
+                Button(TeslaSyncCopy.sendButton, action: onSend)
+                    .emphasisProminentButton()
+                    .controlSize(.small)
+                Button(TeslaSyncCopy.notNowButton, action: onNotNow)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.emphasis.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }

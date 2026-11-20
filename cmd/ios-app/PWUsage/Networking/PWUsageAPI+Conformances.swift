@@ -7,6 +7,7 @@ extension PWUsageAPI: MobileBillingDayAPI {}
 extension PWUsageAPI: PWUsageApplicationAPI {}
 
 extension PWUsageAPI: MobileTariffDataAPI {}
+extension PWUsageAPI: MobileTeslaSyncAPI {}
 extension PWUsageAPI: MobileBatteryHoldDataAPI {}
 extension PWUsageAPI: BatteryHoldActivityAPI {}
 extension PWUsageAPI: MobileTrmnlAPI {}

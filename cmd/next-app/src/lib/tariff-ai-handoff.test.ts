@@ -132,7 +132,7 @@ function sampleTimeline(): SiteTariffsTimelineResponse {
       latestTariffName: 'Austin Energy TOU (Old)',
       latestUpdatedAt: '2025-05-10T12:00:00.000Z',
       activeManualUpdatedAt: '2026-10-01T15:30:00.000Z',
-      differsFromActiveManual: true,
+      differsFromActiveManual: true, syncAvailable: false, syncUnavailableReason: null, lastSync: null,
     },
   };
 }

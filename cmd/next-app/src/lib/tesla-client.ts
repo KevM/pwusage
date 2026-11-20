@@ -622,6 +622,25 @@ export class TeslaClient {
         );
         return result.response;
     }
+
+    /**
+     * Replace the site's time-of-use tariff.
+     *
+     * POST /api/1/energy_sites/{site_id}/time_of_use_settings with
+     * `{ tou_settings: { tariff_content_v2 } }`. This is a *write* command against a live
+     * Powerwall: it changes the rates and schedule Tesla itself uses. Nothing in the app
+     * calls it yet; scripts/probe-tesla-tou-write.ts exercises it for research.
+     */
+    async setTimeOfUseSettings(siteId: string, tariff: TariffV2): Promise<EnergyCommandResponse> {
+        const result = await this.fetch<{ response: EnergyCommandResponse }>(
+            this.sitePath(siteId, 'time_of_use_settings'),
+            {
+                method: "POST",
+                body: JSON.stringify({ tou_settings: { tariff_content_v2: tariff } }),
+            }
+        );
+        return result.response;
+    }
 }
 
 /**

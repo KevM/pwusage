@@ -107,6 +107,18 @@ struct TariffPeriodDTO: Codable, Equatable, Sendable, Identifiable {
     var id: Int { periodId }
 }
 
+struct TeslaSyncAttemptDTO: Codable, Equatable, Sendable {
+    /// `sending`, `confirmed`, `unconfirmed`, `rejected`, `failed` or `not_allowed`.
+    let status: String
+    /// When the attempt finished, or when it started while it is still sending. Wire key `at`.
+    let timestamp: String
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case timestamp = "at"
+    }
+}
+
 struct TeslaSyncDTO: Codable, Equatable, Sendable {
     let latestTariffId: Int?
     let latestTariffName: String?
@@ -114,6 +126,13 @@ struct TeslaSyncDTO: Codable, Equatable, Sendable {
     /// When the active custom plan was saved; nil from servers that predate the field.
     let activeManualUpdatedAt: String?
     let differsFromActiveManual: Bool
+    /// True when Sync to Tesla can send today's plan now.
+    let syncAvailable: Bool
+    /// Why Sync to Tesla is unavailable (`no_difference`, `not_tou_capable`, `no_tesla_plan` or
+    /// `no_active_plan`); nil when available.
+    let syncUnavailableReason: String?
+    /// The site's latest Sync to Tesla attempt, or nil when none was made.
+    let lastSync: TeslaSyncAttemptDTO?
 }
 
 struct ActiveTariffPeriodMatch: Equatable, Sendable {

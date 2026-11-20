@@ -1,6 +1,6 @@
 import { SiteWithTariffs, TariffSeason, TariffSchedule } from '../db';
 import { Schedule } from '../schedule';
-import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, isTeslaAuthError, TeslaRateLimitError } from '../tesla-client';
+import { TeslaClient, EnergyHistoryEntry, EnergySiteInfo, SoeHistoryEntry, TariffV2, isTeslaAuthError, TeslaRateLimitError } from '../tesla-client';
 import { EnergyRepo, type DailyCoverageStat } from '../energy-repo';
 import { createEnergyRepo } from '../energy-repo-factory';
 import { SiteRepo } from '../site-repo';
@@ -16,6 +16,16 @@ import { CompactHistoryStore } from '../prototypes/compact-history-store';
 import { fetchDayForWrite } from '../prototypes/compact-day-fetch';
 import { isDayFetchFinal } from '../tesla-sample-timing';
 import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
+import { TeslaTariffSyncRepo } from '../tesla-tariff-sync-repo';
+import { seasonsFromTeslaContent, teslaContentHasDaySpecificSchedules, teslaPlansMatch } from '../tesla-tou-sync';
+
+/** A stored Sync to Tesla payload that has the shape of a TariffV2 with at least a seasons map and energy charges. */
+function isUsableSentTariff(content: unknown): content is TariffV2 {
+    if (typeof content !== 'object' || content === null) return false;
+    const { seasons, energy_charges } = content as Partial<TariffV2>;
+    return typeof seasons === 'object' && seasons !== null && Object.keys(seasons).length > 0
+        && typeof energy_charges === 'object' && energy_charges !== null;
+}
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -461,6 +471,10 @@ export class Importer {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }
 
+            // Runs on every import: a plan imported while its attempt was still sending, or after a failed
+            // settle, arrives as unchanged content and must still settle.
+            await this.settleTeslaSyncAttempts(siteId, info);
+
             // Invalidate cache to ensure subsequent fetches get the new/confirmed schema/json
             this.siteRepo.invalidateCache(siteId);
 
@@ -468,6 +482,40 @@ export class Importer {
         } catch (e: unknown) {
             console.error(`Error ensuring site ${siteId}`, e);
             throw e;
+        }
+    }
+
+    /**
+     * Confirms each `unconfirmed` Sync to Tesla attempt whose sent plan (`sent_content`) Tesla now stores.
+     * Each attempt is compared with what was sent, never with PWUsage's plan today. An attempt whose
+     * `sent_content` is not a usable TariffV2 is skipped. A failure here never fails the import.
+     */
+    private async settleTeslaSyncAttempts(siteId: string, info: EnergySiteInfo): Promise<void> {
+        try {
+            if (!info.tariff_content_v2) return;
+            const syncRepo = new TeslaTariffSyncRepo();
+            const unconfirmed = await syncRepo.listUnconfirmed(siteId);
+            if (unconfirmed.length === 0) return;
+
+            const tesla = info.tariff_content_v2;
+            const teslaSeasons = seasonsFromTeslaContent(tesla);
+            const teslaDaySpecific = teslaContentHasDaySpecificSchedules(tesla);
+            for (const attempt of unconfirmed) {
+                try {
+                    if (!isUsableSentTariff(attempt.sentContent)) continue;
+                    const sent = attempt.sentContent;
+                    const sentSeasons = seasonsFromTeslaContent(sent);
+                    if (sentSeasons.length === 0) continue;
+                    const matches = teslaPlansMatch(sentSeasons, teslaSeasons, {
+                        eitherDaySpecific: teslaContentHasDaySpecificSchedules(sent) || teslaDaySpecific,
+                    });
+                    if (matches) await syncRepo.confirmUnconfirmed(attempt.id);
+                } catch (e: unknown) {
+                    console.warn(`[Import] Could not settle Sync to Tesla attempt ${attempt.id} for site ${siteId}`, e);
+                }
+            }
+        } catch (e: unknown) {
+            console.warn(`[Import] Could not settle the Sync to Tesla attempts for site ${siteId}`, e);
         }
     }
 

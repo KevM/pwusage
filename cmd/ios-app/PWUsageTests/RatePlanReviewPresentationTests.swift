@@ -14,7 +14,8 @@ struct RatePlanReviewPresentationTests {
             reattribution: nil,
             teslaSync: TeslaSyncDTO(
                 latestTariffId: nil, latestTariffName: nil, latestUpdatedAt: nil,
-                activeManualUpdatedAt: nil, differsFromActiveManual: false
+                activeManualUpdatedAt: nil, differsFromActiveManual: false,
+                syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
             ),
             estimates: SiteRateEstimatesDTO(
                 status: .ready, utilityName: utility, teslaPlanOutOfDate: false, newerPlanName: nil,

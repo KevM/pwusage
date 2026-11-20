@@ -543,7 +543,7 @@ export function compareTariffSchedules(
   };
 }
 
-function canonicalizeValue(value: unknown): unknown {
+export function canonicalizeValue(value: unknown): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }

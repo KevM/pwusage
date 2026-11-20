@@ -153,3 +153,11 @@ extension MobileTariffDataAPI {
         throw PWUsageAPIError.invalidResponse
     }
 }
+
+/// Sync to Tesla's endpoints. Separate from `MobileTariffDataAPI` so existing test fakes of that
+/// protocol need no change; the coordinator casts to it before sending.
+@MainActor
+protocol MobileTeslaSyncAPI: MobileTariffDataAPI {
+    func previewTeslaSync(siteID: String) async throws -> TeslaSyncPreviewDTO
+    func commitTeslaSync(siteID: String, fingerprint: String) async throws -> TeslaSyncResultDTO
+}

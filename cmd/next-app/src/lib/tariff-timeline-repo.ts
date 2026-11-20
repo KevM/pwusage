@@ -51,7 +51,10 @@ import type {
   TariffSelectionPreviewResponse,
   TariffSelectionRequest,
   TariffVerificationSummary,
+  TeslaSyncUnavailableDbReason,
 } from './tariff-contract';
+import type { TeslaSyncAttempt } from './tesla-tariff-sync-repo';
+import { TeslaTariffSyncRepo } from './tesla-tariff-sync-repo';
 import {
   assertUsRatePlanEligibility,
   deriveRatePlanEligibility,
@@ -78,6 +81,7 @@ import {
   type SpanMutationPlan,
   type TariffPlanWriteInput,
 } from './tariff-timeline';
+import { teslaPlansMatch } from './tesla-tou-sync';
 
 export { PublicPlansIneligibleError, UtilityChangedError };
 
@@ -157,6 +161,12 @@ export interface BuildSiteTariffsTimelineInput {
   systemCostRows?: SystemCostRow[];
   reattribution?: SiteTariffReattributionRow;
   latestTesla?: LatestTeslaTariffSummary;
+  /** Site.json components.tou_capable, read from the Site row. */
+  touCapable?: boolean;
+  /** True when Site.json holds Tesla's tariff_content_v2. */
+  hasTeslaContent?: boolean;
+  /** The site's most recent Sync to Tesla attempt. */
+  lastSync?: TeslaSyncAttempt | null;
   rateCountry?: string | null;
   rateCountrySource?: RateCountrySource | null;
   rateCountryUpdatedAt?: Date | string | null;
@@ -331,6 +341,9 @@ export function buildSiteTariffsTimelineResponse(
     systemCostRows = [],
     reattribution,
     latestTesla,
+    touCapable = false,
+    hasTeslaContent = false,
+    lastSync = null,
     rateCountry,
     rateCountrySource = null,
     rateCountryUpdatedAt = null,
@@ -359,9 +372,31 @@ export function buildSiteTariffsTimelineResponse(
     });
     return chosenInPwusage && from <= today && (to === null || to >= today);
   });
+  // Compare plan content, not hashes: a Tesla import and the same rates stored by PWUsage can carry
+  // different hashes. Fall back to the hash only when either tariff is not loaded.
+  const activeManualTariff = activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id)) : undefined;
+  const latestTeslaTariff = latestTesla ? tariffMap.get(Number(latestTesla.id)) : undefined;
   const differsFromActiveManual = Boolean(
-    activeManualRow && latestTesla && latestTesla.content_hash !== activeManualRow.content_hash
+    activeManualRow && latestTesla && (
+      activeManualTariff && latestTeslaTariff
+        ? !teslaPlansMatch(decompileTariffToSeasons(activeManualTariff), decompileTariffToSeasons(latestTeslaTariff), {
+          eitherDaySpecific: tariffHasDaySpecificSchedules(activeManualTariff) || tariffHasDaySpecificSchedules(latestTeslaTariff),
+        })
+        : latestTesla.content_hash !== activeManualRow.content_hash
+    )
   );
+
+  // Sync to Tesla availability uses stored state only (no Tesla call). The first applicable reason wins.
+  const syncAvailable = differsFromActiveManual && touCapable && hasTeslaContent;
+  const syncUnavailableReason: TeslaSyncUnavailableDbReason | null = !activeToday
+    ? 'no_active_plan'
+    : latestTesla && !differsFromActiveManual
+      ? 'no_difference'
+      : !touCapable
+        ? 'not_tou_capable'
+        : !latestTesla || !hasTeslaContent
+          ? 'no_tesla_plan'
+          : null;
 
   const currentYear = Number(today.slice(0, 4));
   const startYear = Math.min(
@@ -410,6 +445,11 @@ export function buildSiteTariffsTimelineResponse(
       latestUpdatedAt: toIsoOrNull(latestTesla?.updated),
       activeManualUpdatedAt: toIsoOrNull(activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id))?.updated : null),
       differsFromActiveManual,
+      syncAvailable,
+      syncUnavailableReason,
+      lastSync: lastSync
+        ? { status: lastSync.status, at: lastSync.finishedAt ?? lastSync.createdAt }
+        : null,
     },
   };
 }
@@ -1410,9 +1450,14 @@ export async function loadScopeSelectionSpans(
       .filter(r => r.selection_id !== undefined && r.selection_id !== null)
       .map(r => Number(r.selection_id))
   )];
-  const [tariffMap, utilityRes, originalsRes] = await Promise.all([
-    hydrateTariffs(queryable, tariffIds),
-    queryable.query<{ urdb_utility: string | null }>('SELECT urdb_utility FROM "SiteUtility" WHERE site_id = $1', [siteId]),
+  // Sequential, not Promise.all: `queryable` may be one transaction client, and pg deprecates
+  // overlapping queries on a single client (removed in pg@9).
+  const tariffMap = await hydrateTariffs(queryable, tariffIds);
+  const utilityRes = await queryable.query<{ urdb_utility: string | null }>(
+    'SELECT urdb_utility FROM "SiteUtility" WHERE site_id = $1',
+    [siteId]
+  );
+  const originalsRes = await (
     selectionIds.length > 0
       ? queryable.query<{
           selection_id: number;
@@ -1433,8 +1478,8 @@ export async function loadScopeSelectionSpans(
            ORDER BY o.effective_from ASC, o.id ASC`,
           [selectionIds]
         )
-      : Promise.resolve({ rows: [] }),
-  ]);
+      : Promise.resolve({ rows: [] })
+  );
   const defaultUtilityName = utilityRes.rows[0]?.urdb_utility ?? null;
 
   const originalsBySelection = new Map<number, ScopeSelectionOriginalEntry[]>();
@@ -2567,7 +2612,54 @@ async function hasUnprotectedPublicStateOnClient(
   return (res.rowCount ?? 0) > 0;
 }
 
+/** The actual plan that covers a date, with the fields the Sync to Tesla service needs. */
+export interface ActiveActualPlan {
+  tariffId: number;
+  selectionId: number | null;
+  source: TariffSource;
+  name: string;
+  seasons: TariffSeasonInput[];
+  /** True when the plan has rules for specific weekdays that `seasons` (Monday and Saturday) cannot show. */
+  daySpecific: boolean;
+}
+
+/**
+ * The actual plan covering `today`, or null when none covers it (no fallback to a neighbouring plan).
+ * Read through `client` when the caller holds the Site lock.
+ */
+export async function loadActiveActualPlanOnClient(
+  client: Pick<PoolClient, 'query'>,
+  siteId: string,
+  today: string
+): Promise<ActiveActualPlan | null> {
+  const rows = await loadScopePeriodRows(client, siteId, 'actual');
+  const row = rows.find(r =>
+    r.effective_from.slice(0, 10) <= today && (r.effective_to === null || r.effective_to.slice(0, 10) >= today)
+  );
+  if (!row) return null;
+  const tariffId = Number(row.tariff_id);
+  const tariff = (await hydrateTariffs(client, [tariffId])).get(tariffId);
+  if (!tariff) return null;
+  return {
+    tariffId,
+    selectionId: row.selection_id === null || row.selection_id === undefined ? null : Number(row.selection_id),
+    source: row.source,
+    name: row.name || 'Rate Plan',
+    seasons: decompileTariffToSeasons(tariff),
+    daySpecific: tariffHasDaySpecificSchedules(tariff),
+  };
+}
+
 export class TariffTimelineRepo {
+  /** See loadActiveActualPlanOnClient. Reads from the pool unless a client is given. */
+  async loadActiveActualPlan(
+    siteId: string,
+    today: string,
+    client?: Pick<PoolClient, 'query'>
+  ): Promise<ActiveActualPlan | null> {
+    return loadActiveActualPlanOnClient(client ?? pool, siteId, today);
+  }
+
   async getSiteUtilityContext(siteId: string): Promise<SiteUtilityContextResult | null> {
     const result = await pool.query<{
       name: string | null;
@@ -3044,6 +3136,8 @@ export class TariffTimelineRepo {
       nameplate_energy: string | number | null;
       nameplate_power: string | number | null;
       backup_reserve_percent: string | number | null;
+      tou_capable: boolean | null;
+      has_tesla_content: boolean;
     }>(
       `SELECT id, timezone, installed,
               COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
@@ -3052,7 +3146,9 @@ export class TariffTimelineRepo {
               rate_country_updated_at,
               json ->> 'nameplate_energy' AS nameplate_energy,
               json ->> 'nameplate_power' AS nameplate_power,
-              json ->> 'backup_reserve_percent' AS backup_reserve_percent
+              json ->> 'backup_reserve_percent' AS backup_reserve_percent,
+              (json -> 'components' ->> 'tou_capable') = 'true' AS tou_capable,
+              json ->> 'tariff_content_v2' IS NOT NULL AS has_tesla_content
        FROM "Site" WHERE id = $1`,
       [siteId]
     );
@@ -3067,18 +3163,6 @@ export class TariffTimelineRepo {
     const periodsRes = { rows: await loadScopePeriodRows(pool, siteId, 'actual') };
     const referencePeriodsRes = { rows: await loadScopePeriodRows(pool, siteId, 'reference') };
 
-    const tariffIds = [...new Set([
-      ...periodsRes.rows.map(r => Number(r.tariff_id)),
-      ...referencePeriodsRes.rows.map(r => Number(r.tariff_id)),
-    ])];
-    const tariffMap = await hydrateTariffs(pool, tariffIds);
-
-    const systemCostRes = await pool.query<SystemCostRow>(
-      `SELECT component, install_date::text, price::text, tax_credit_percent::text, incentives::text
-       FROM "SiteSystemCost" WHERE site_id = $1`,
-      [siteId]
-    );
-
     const latestTeslaRes = await pool.query<LatestTeslaTariffSummary>(
       `SELECT id, name, updated, content_hash
        FROM "Tariff"
@@ -3086,6 +3170,20 @@ export class TariffTimelineRepo {
        ORDER BY id DESC LIMIT 1`,
       [siteId]
     );
+    const tariffIds = [...new Set([
+      ...periodsRes.rows.map(r => Number(r.tariff_id)),
+      ...referencePeriodsRes.rows.map(r => Number(r.tariff_id)),
+      ...(latestTeslaRes.rows[0] ? [Number(latestTeslaRes.rows[0].id)] : []),
+    ])];
+    const tariffMap = await hydrateTariffs(pool, tariffIds);
+    const lastSync = await new TeslaTariffSyncRepo(pool).latestForSite(siteId);
+
+    const systemCostRes = await pool.query<SystemCostRow>(
+      `SELECT component, install_date::text, price::text, tax_credit_percent::text, incentives::text
+       FROM "SiteSystemCost" WHERE site_id = $1`,
+      [siteId]
+    );
+
     const reattrRes = await pool.query<SiteTariffReattributionRow>(
       'SELECT * FROM "SiteTariffReattribution" WHERE site_id = $1',
       [siteId]
@@ -3113,6 +3211,9 @@ export class TariffTimelineRepo {
       systemCostRows: systemCostRes.rows,
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
+      touCapable: siteRow.tou_capable === true,
+      hasTeslaContent: siteRow.has_tesla_content === true,
+      lastSync,
       rateCountry: siteRow.rate_country ?? null,
       rateCountrySource: siteRow.rate_country_source ?? null,
       rateCountryUpdatedAt: siteRow.rate_country_updated_at ?? null,

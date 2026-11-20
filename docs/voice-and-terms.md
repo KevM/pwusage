@@ -44,6 +44,8 @@ and simplify the sentence.
 | rate plan | tariff, tariff data, active tariff | The utility pricing plan for a site, with its seasons and rate periods |
 | From Tesla, From public utility rates, Entered by you | Tesla, Estimated, Custom (as a source) | Where a rate plan came from. Separate from who chose it ("Chosen automatically", "Chosen by you") and from **Verified by you**; public rates keep their estimated label even when verified |
 | Restore Original Tesla Rate Plan | Revert, Undo override | Puts back the saved Tesla plan an override replaced, for chosen dates. It never changes the Powerwall |
+| Sync to Tesla | Send to Tesla, Upload, Push | Sends PWUsage's rate plan to the Powerwall, after a confirmation |
+| Check Tesla | Sync, Pull from Tesla | Pulls Tesla's current rate plan into PWUsage. It never changes the Powerwall |
 | fixed comparison plan | reference plan, baseline tariff | The flat plan savings are compared against; changing it never changes the plan for your energy |
 | export cushion | surplus, observed tariff surplus, billing-cycle balance, balance | kWh exported this billing cycle in a rate period that can cover new use in that same period |
 | import gap | deficit, shortfall | kWh imported beyond exports this billing cycle in a rate period; new use there is priced at the grid rate |
