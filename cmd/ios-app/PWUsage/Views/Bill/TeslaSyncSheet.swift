@@ -176,10 +176,6 @@ private struct TeslaSyncSendingView: View {
                     .font(.headline)
                     .multilineTextAlignment(.center)
                     .contentTransition(.opacity)
-                Text("Keep this open to see what Tesla says.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             }
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
