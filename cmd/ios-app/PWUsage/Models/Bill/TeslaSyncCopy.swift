@@ -68,4 +68,9 @@ enum TeslaSyncPrompt {
         guard let end = request.effectiveTo else { return true }
         return today <= end
     }
+
+    /// A sync Tesla hadn't confirmed when sent: pull once on open so the answer shows without a manual check.
+    static func shouldPullOnOpen(_ timeline: SiteTariffsTimelineResponse) -> Bool {
+        timeline.teslaSync.lastSync?.status == "unconfirmed"
+    }
 }

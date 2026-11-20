@@ -19,6 +19,7 @@ struct TariffSheet: View {
     @State private var pendingDeletion: TariffPeriodDTO?
     @State private var minuteTick = Date()
     @State private var didOpenStartingAddForm = false
+    @State var didPullForUnconfirmedSync = false
     private let historyOfferDismissals = RateEstimatesAccessoryDismissals.sharedHistoryOffer
 
     var body: some View {
@@ -287,6 +288,7 @@ struct TariffSheet: View {
 
     private func initialLoad() async {
         await performLoad(showSpinner: timeline == nil)
+        await pullOnceForUnconfirmedSync()
     }
 
     private func performLoad(showSpinner: Bool) async {

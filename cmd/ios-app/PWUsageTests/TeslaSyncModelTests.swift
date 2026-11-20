@@ -59,10 +59,14 @@ struct TeslaSyncModelTests {
         var previews = 0
         var commits: [String] = []
         var refreshes = 0
+        var pulls = 0
+        var commitError: (any Error)?
+        var pullError: (any Error)?
         var previewQueue: [TeslaSyncPreviewDTO] = []
         var previewError: (any Error)?
         var commitResult: TeslaSyncResultDTO?
         var refreshedTimeline = TeslaSyncModelTests.timeline(syncAvailable: false)
+        var pulledTimeline = TeslaSyncModelTests.timeline(syncAvailable: false)
 
         var actions: TeslaSyncActions {
             TeslaSyncActions(
@@ -75,11 +79,17 @@ struct TeslaSyncModelTests {
                 commit: { fingerprint in
                     self.commits.append(fingerprint)
                     await Task.yield()
+                    if let error = self.commitError { throw error }
                     return try self.commitResult ?? TeslaSyncModelTests.result("confirmed")
                 },
                 refreshTimeline: {
                     self.refreshes += 1
                     return self.refreshedTimeline
+                },
+                pullFromTesla: {
+                    self.pulls += 1
+                    if let error = self.pullError { throw error }
+                    return self.pulledTimeline
                 }
             )
         }
@@ -146,8 +156,8 @@ struct TeslaSyncModelTests {
         #expect(spy.commits == ["fp-1"])
     }
 
-    @Test("An unconfirmed write says Tesla hasn't confirmed yet, and refetches the timeline")
-    func unconfirmedRefetches() async throws {
+    @Test("An unconfirmed write says Tesla hasn't confirmed yet, and pulls the timeline")
+    func unconfirmedPullsTimeline() async throws {
         let spy = Spy()
         spy.commitResult = try Self.result(
             "unconfirmed", message: "Sent to Tesla. It hasn't confirmed yet; PWUsage will check again."
@@ -164,7 +174,7 @@ struct TeslaSyncModelTests {
             TeslaSyncCopy.resultMessage(finished.outcome, message: finished.message)
                 == "Sent to Tesla. It hasn't confirmed yet; PWUsage will check again."
         )
-        #expect(spy.refreshes == 1)
+        #expect(spy.pulls == 1)
         #expect(handedBack != nil)
     }
 

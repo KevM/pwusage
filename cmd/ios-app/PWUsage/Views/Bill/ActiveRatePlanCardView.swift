@@ -45,9 +45,12 @@ struct TariffTimelineActions: Sendable {
             throw PWUsageAPIError.invalidResponse
         }
 
-    /// Sync to Tesla: a preview, then a commit of the reviewed fingerprint; a missing timeline is refetched.
+    /// Sync to Tesla: a preview, then a commit of the reviewed fingerprint. The read-only pull refreshes
+    /// PWUsage's copy of Tesla's plan; a missing timeline is refetched.
     var teslaSync: TeslaSyncActions {
-        TeslaSyncActions(preview: previewTeslaSync, commit: commitTeslaSync, refreshTimeline: load)
+        TeslaSyncActions(
+            preview: previewTeslaSync, commit: commitTeslaSync, refreshTimeline: load, pullFromTesla: refreshFromTesla
+        )
     }
 
     var selection: RatePlanSelectionActions {

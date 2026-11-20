@@ -26,12 +26,19 @@ struct TeslaSyncSheet: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button(TeslaSyncCopy.cancelButton) { dismiss() }
+                            .disabled(isSending)
                     }
                 }
+                .interactiveDismissDisabled(isSending)
                 .task {
                     if case .loading = model.phase { await model.load() }
                 }
         }
+    }
+
+    private var isSending: Bool {
+        if case .sending = model.phase { return true }
+        return false
     }
 
     @ViewBuilder
@@ -62,6 +69,9 @@ struct TeslaSyncSheet: View {
 
     private func reviewForm(_ preview: TeslaSyncPreviewDTO, isSending: Bool) -> some View {
         Form {
+            if let notice = model.notice {
+                Section { Text(notice) }
+            }
             Section("Tesla now") {
                 TeslaSyncPlanRows(name: preview.current.name, seasons: preview.current.seasons, currency: currency)
             }
@@ -121,7 +131,7 @@ struct TeslaSyncSheet: View {
             Section {
                 Text(unavailable.message)
             }
-            if unavailable.reason == "needs_reauth" {
+            if unavailable.reason == "needs_reauth" || unavailable.reason == "not_allowed" {
                 reconnectSection
             }
         }
@@ -136,7 +146,7 @@ struct TeslaSyncSheet: View {
                     systemImage: isSent ? "checkmark.circle.fill" : "exclamationmark.circle"
                 )
             }
-            if result.outcome == "needs_reauth" {
+            if result.outcome == "needs_reauth" || result.outcome == "not_allowed" {
                 reconnectSection
             }
             Section {

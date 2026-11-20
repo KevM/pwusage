@@ -73,6 +73,15 @@ extension TariffSheet {
         activeModal = .teslaSync
     }
 
+    /// A sync Tesla hadn't confirmed when sent: check Tesla once, quietly, so the answer shows without a manual check.
+    func pullOnceForUnconfirmedSync() async {
+        guard !didPullForUnconfirmedSync, let current = timeline, TeslaSyncPrompt.shouldPullOnOpen(current) else {
+            return
+        }
+        didPullForUnconfirmedSync = true
+        if let refreshed = try? await actions.refreshFromTesla() { timeline = refreshed }
+    }
+
     /// An applied change returns the new timeline and offers Sync to Tesla when it covers today.
     func selectionApplied(_ response: TariffSelectionCommitResponse, _ request: TariffSelectionRequest) {
         timeline = response.timeline
