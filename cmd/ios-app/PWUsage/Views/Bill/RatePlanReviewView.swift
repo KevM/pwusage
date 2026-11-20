@@ -4,7 +4,8 @@ import SwiftUI
 /// acknowledges it and taps Apply; verifying against a bill is a separate, optional check.
 struct RatePlanReviewView: View {
     @Bindable var model: RatePlanReviewModel
-    let onApplied: (TariffSelectionCommitResponse) -> Void
+    /// The applied response and the request it answered, so the owner can tell what the change covered.
+    let onApplied: (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void
 
     var body: some View {
         content
@@ -16,7 +17,7 @@ struct RatePlanReviewView: View {
                 if case .loading = model.phase { await model.load() }
             }
             .onChange(of: model.phase) { _, phase in
-                if case .applied(let response) = phase { onApplied(response) }
+                if case .applied(let response) = phase { onApplied(response, model.request) }
             }
     }
 

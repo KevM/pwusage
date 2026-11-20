@@ -15,6 +15,12 @@ struct TariffTimelineActions: Sendable {
     var loadRateHistory: @MainActor () async throws -> RatePlanHistoryDTO
     var saveRateHistory: @MainActor ([RatePlanHistoryPeriod]) async throws -> SiteTariffsTimelineResponse
     var siteCountryInference: @MainActor () async -> SiteCountryInference = { .noLocation }
+    var previewTeslaSync: @MainActor () async throws -> TeslaSyncPreviewDTO = {
+        throw PWUsageAPIError.invalidResponse
+    }
+    var commitTeslaSync: @MainActor (String) async throws -> TeslaSyncResultDTO = { _ in
+        throw PWUsageAPIError.invalidResponse
+    }
     /// The owner's explicit country choice, which always wins over inference.
     var setSiteCountry: @MainActor (String) async throws -> SiteTariffsTimelineResponse = { _ in
         throw PWUsageAPIError.invalidResponse
@@ -38,6 +44,11 @@ struct TariffTimelineActions: Sendable {
         -> TariffAiHandoffCommitResponse = { _ in
             throw PWUsageAPIError.invalidResponse
         }
+
+    /// Sync to Tesla: a preview, then a commit of the reviewed fingerprint; a missing timeline is refetched.
+    var teslaSync: TeslaSyncActions {
+        TeslaSyncActions(preview: previewTeslaSync, commit: commitTeslaSync, refreshTimeline: load)
+    }
 
     var selection: RatePlanSelectionActions {
         RatePlanSelectionActions(preview: previewSelection, commit: commitSelection)
@@ -67,6 +78,8 @@ struct TariffTimelineActions: Sendable {
             loadRateHistory: { try await coordinator.loadRateHistory() },
             saveRateHistory: { try await coordinator.saveRateHistory($0) },
             siteCountryInference: { await coordinator.siteCountryInference() },
+            previewTeslaSync: { try await coordinator.previewTeslaSync() },
+            commitTeslaSync: { try await coordinator.commitTeslaSync(fingerprint: $0) },
             setSiteCountry: { try await coordinator.setSiteRateCountry($0, source: .owner) },
             previewSelection: { try await coordinator.previewTariffSelection($0) },
             commitSelection: { try await coordinator.commitTariffSelection($0) },

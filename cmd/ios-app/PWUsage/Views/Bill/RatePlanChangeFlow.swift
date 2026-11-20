@@ -12,14 +12,14 @@ struct RatePlanChangeFlow: View {
     let utilityName: String?
     /// Nil hides the manual option (restoration has none).
     let onEnterManually: (() -> Void)?
-    let onApplied: (TariffSelectionCommitResponse) -> Void
+    let onApplied: (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void
     @Environment(\.dismiss) private var dismiss
 
     init(
         model: RatePlanChangeModel,
         utilityName: String?,
         onEnterManually: (() -> Void)? = nil,
-        onApplied: @escaping (TariffSelectionCommitResponse) -> Void
+        onApplied: @escaping (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void
     ) {
         _model = State(initialValue: model)
         self.utilityName = utilityName
@@ -33,7 +33,7 @@ struct RatePlanChangeFlow: View {
         timeline: SiteTariffsTimelineResponse?,
         actions: TariffTimelineActions,
         onEnterManually: @escaping () -> Void,
-        onApplied: @escaping (TariffSelectionCommitResponse) -> Void
+        onApplied: @escaping (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void
     ) -> Self {
         let model = RatePlanChangeModel(
             kind: kind,
@@ -78,8 +78,8 @@ struct RatePlanChangeFlow: View {
                 }
                 .navigationDestination(for: RatePlanChangeRoute.self) { _ in
                     if let review = model.review {
-                        RatePlanReviewView(model: review) { response in
-                            onApplied(response)
+                        RatePlanReviewView(model: review) { response, request in
+                            onApplied(response, request)
                             dismiss()
                         }
                     }
