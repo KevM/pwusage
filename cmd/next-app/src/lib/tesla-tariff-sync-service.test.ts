@@ -91,6 +91,8 @@ function harness(options: {
   touCapable?: boolean;
   storeOnWrite?: (payload: TariffV2) => TariffV2;
   writeError?: unknown;
+  /** Tesla stores the plan, then the call fails: the write reached Tesla but the answer was lost. */
+  storeBeforeError?: boolean;
   readAfterWriteError?: unknown;
   clientNull?: boolean;
   inFlight?: boolean;
@@ -107,9 +109,10 @@ function harness(options: {
     }),
     setTimeOfUseSettings: vi.fn(async (_siteId: string, payload: TariffV2) => {
       events.push('write');
-      if (options.writeError) throw options.writeError;
+      if (options.writeError && !options.storeBeforeError) throw options.writeError;
       written = true;
       state.content = options.storeOnWrite ? options.storeOnWrite(payload) : payload;
+      if (options.writeError) throw options.writeError;
       return { result: true, message: null } as never;
     }),
   };
@@ -380,13 +383,61 @@ describe('commitTeslaSync', () => {
     expect(result.message).not.toMatch(/[{}]/);
   });
 
-  it('maps any other failure to failed', async () => {
+  it('reads back after an ambiguous write failure and confirms when Tesla stored the plan', async () => {
+    const h = harness({ writeError: new Error('socket hang up'), storeBeforeError: true });
+    const fingerprint = await previewFingerprint(h);
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result).toEqual({ outcome: 'confirmed', message: 'Tesla now has this plan.', timeline: TIMELINE });
+    expect(h.syncRepo.finishAttempt).toHaveBeenCalledWith(42, 'confirmed', undefined);
+    expect(h.importSite).toHaveBeenCalledWith(expect.anything(), 's1');
+  });
+
+  it('reads back after an ambiguous write failure and records unconfirmed when Tesla kept the old plan', async () => {
     const h = harness({ writeError: new Error('socket hang up') });
     const fingerprint = await previewFingerprint(h);
 
     const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
 
-    expect(result.outcome).toBe('failed');
-    expect(h.syncRepo.finishAttempt).toHaveBeenCalledWith(42, 'failed', expect.anything());
+    expect(result.outcome).toBe('unconfirmed');
+    expect(h.sleep).toHaveBeenCalledTimes(5);
+    expect(h.syncRepo.finishAttempt).toHaveBeenCalledWith(42, 'unconfirmed', undefined);
+    expect(h.syncRepo.finishAttempt).not.toHaveBeenCalledWith(42, 'failed', expect.anything());
+  });
+
+  it('rethrows an unclassified error raised before the write, so the route answers 500', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    h.repo.loadActiveActualPlan.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(commitTeslaSync('s1', 'u1', fingerprint, h.deps)).rejects.toThrow('db down');
+    expect(h.client.setTimeOfUseSettings).not.toHaveBeenCalled();
+  });
+
+  it('still returns confirmed when recording the outcome fails after a real write', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    h.syncRepo.finishAttempt.mockRejectedValueOnce(new Error('db down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('confirmed');
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('still returns the outcome when the timeline fetch fails after a write', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    h.repo.getTimeline.mockRejectedValueOnce(new Error('timeline down'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('confirmed');
+    expect(result.timeline).toBeUndefined();
+    error.mockRestore();
   });
 });

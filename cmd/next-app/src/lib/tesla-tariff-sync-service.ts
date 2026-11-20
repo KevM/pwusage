@@ -15,7 +15,14 @@ import {
 import { TeslaTariffSyncRepo, type TeslaSyncFinalStatus } from './tesla-tariff-sync-repo';
 import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { createTeslaClientForSiteMember } from './tesla-client-factory';
-import { isTeslaAuthError, TeslaAuthError, type EnergySiteInfo, type TariffV2, type TeslaClient } from './tesla-client';
+import {
+  isTeslaAuthError,
+  TeslaAuthError,
+  TeslaRateLimitError,
+  type EnergySiteInfo,
+  type TariffV2,
+  type TeslaClient,
+} from './tesla-client';
 import {
   applyTeslaAdjustments,
   buildTeslaTariff,
@@ -263,6 +270,39 @@ function classifyTeslaError(error: unknown): { outcome: TeslaFailureOutcome; mes
   return { outcome: 'failed', message: FAILED_COPY };
 }
 
+/** True for errors that come from Tesla's answer: auth, a 4xx rejection, or rate limiting. Anything else is unclassified. */
+function isTeslaError(error: unknown): boolean {
+  return error instanceof TeslaAuthError
+    || error instanceof TeslaRateLimitError
+    || isTeslaAuthError(error)
+    || isTeslaConnectionRequired(error)
+    || teslaRejectionMessage(error) !== null;
+}
+
+/** Records the attempt's outcome. A failure here is logged, never thrown, so the outcome still reaches the caller. */
+async function recordAttempt(
+  d: ResolvedDeps,
+  attemptId: number,
+  status: TeslaSyncFinalStatus,
+  teslaResponse?: unknown
+): Promise<void> {
+  try {
+    await d.syncRepo.finishAttempt(attemptId, status, teslaResponse);
+  } catch (error) {
+    console.error(`[TeslaSync] Could not record attempt ${attemptId} as ${status}`, error);
+  }
+}
+
+/** The timeline is optional in the result: a failed fetch after a write is logged and dropped. */
+async function timelineAfterSync(d: ResolvedDeps, siteId: string, userId: string): Promise<SiteTariffsTimelineResponse | undefined> {
+  try {
+    return await d.repo.getTimeline(siteId, userId);
+  } catch (error) {
+    console.error(`[TeslaSync] Could not load the timeline for site ${siteId} after syncing`, error);
+    return undefined;
+  }
+}
+
 /** The stored attempt status for a failure. A lost Tesla session is recorded as failed. */
 function storedStatus(outcome: TeslaFailureOutcome): TeslaSyncFinalStatus {
   return outcome === 'needs_reauth' ? 'failed' : outcome;
@@ -355,10 +395,11 @@ export async function commitTeslaSync(
   try {
     prep = await prepare(siteId, client, d);
   } catch (error) {
-    if (error instanceof TariffNotFoundError) throw error;
     if (error instanceof TeslaSyncUnavailableError) {
       return { outcome: error.reason === 'needs_reauth' ? 'needs_reauth' : 'unavailable', message: error.message };
     }
+    // Only Tesla's own errors become outcomes; anything else (database, programming) is a 500.
+    if (!isTeslaError(error)) throw error;
     const failure = classifyTeslaError(error);
     return { outcome: failure.outcome, message: failure.message };
   }
@@ -374,26 +415,31 @@ export async function commitTeslaSync(
   if ('stop' in locked) return locked.stop;
   const { attemptId } = locked;
 
-  let written: Awaited<ReturnType<TeslaClient['setTimeOfUseSettings']>>;
+  let written: Awaited<ReturnType<TeslaClient['setTimeOfUseSettings']>> | undefined;
   try {
     written = await client.setTimeOfUseSettings(siteId, prep.payload);
   } catch (error) {
-    const failure = classifyTeslaError(error);
-    await d.syncRepo.finishAttempt(attemptId, storedStatus(failure.outcome), { error: failure.message });
-    return { outcome: failure.outcome, message: failure.message };
+    if (isTeslaError(error)) {
+      // Tesla answered with a definite refusal: nothing was stored.
+      const failure = classifyTeslaError(error);
+      await recordAttempt(d, attemptId, storedStatus(failure.outcome), { error: failure.message });
+      return { outcome: failure.outcome, message: failure.message };
+    }
+    // Ambiguous: a timeout or dropped connection can come after Tesla stored the plan. Read back to find out.
+    console.error(`[TeslaSync] Write for site ${siteId} failed without a Tesla answer; checking Tesla`, error);
   }
 
   const matches = await readBackMatches(client, siteId, prep, d);
   if (matches) {
-    await d.syncRepo.finishAttempt(attemptId, 'confirmed', written);
+    await recordAttempt(d, attemptId, 'confirmed', written);
     try {
       await d.importSite(client, siteId);
     } catch (error) {
       console.warn(`[TeslaSync] Import after confirming site ${siteId} failed`, error);
     }
-    return { outcome: 'confirmed', message: CONFIRMED_COPY, timeline: await d.repo.getTimeline(siteId, userId) };
+    return { outcome: 'confirmed', message: CONFIRMED_COPY, timeline: await timelineAfterSync(d, siteId, userId) };
   }
 
-  await d.syncRepo.finishAttempt(attemptId, 'unconfirmed', written);
-  return { outcome: 'unconfirmed', message: UNCONFIRMED_COPY, timeline: await d.repo.getTimeline(siteId, userId) };
+  await recordAttempt(d, attemptId, 'unconfirmed', written);
+  return { outcome: 'unconfirmed', message: UNCONFIRMED_COPY, timeline: await timelineAfterSync(d, siteId, userId) };
 }
