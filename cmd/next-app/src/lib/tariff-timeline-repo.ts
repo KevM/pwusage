@@ -1450,9 +1450,14 @@ export async function loadScopeSelectionSpans(
       .filter(r => r.selection_id !== undefined && r.selection_id !== null)
       .map(r => Number(r.selection_id))
   )];
-  const [tariffMap, utilityRes, originalsRes] = await Promise.all([
-    hydrateTariffs(queryable, tariffIds),
-    queryable.query<{ urdb_utility: string | null }>('SELECT urdb_utility FROM "SiteUtility" WHERE site_id = $1', [siteId]),
+  // Sequential, not Promise.all: `queryable` may be one transaction client, and pg deprecates
+  // overlapping queries on a single client (removed in pg@9).
+  const tariffMap = await hydrateTariffs(queryable, tariffIds);
+  const utilityRes = await queryable.query<{ urdb_utility: string | null }>(
+    'SELECT urdb_utility FROM "SiteUtility" WHERE site_id = $1',
+    [siteId]
+  );
+  const originalsRes = await (
     selectionIds.length > 0
       ? queryable.query<{
           selection_id: number;
@@ -1473,8 +1478,8 @@ export async function loadScopeSelectionSpans(
            ORDER BY o.effective_from ASC, o.id ASC`,
           [selectionIds]
         )
-      : Promise.resolve({ rows: [] }),
-  ]);
+      : Promise.resolve({ rows: [] })
+  );
   const defaultUtilityName = utilityRes.rows[0]?.urdb_utility ?? null;
 
   const originalsBySelection = new Map<number, ScopeSelectionOriginalEntry[]>();

@@ -1711,3 +1711,31 @@ describe('teslaSync Sync to Tesla fields', () => {
     expect(sending.teslaSync.lastSync).toEqual({ status: 'sending', at: '2026-11-18T11:00:00.000Z' });
   });
 });
+
+describe('loadScopeSelectionSpans on a single transaction client', () => {
+  it('never runs two queries at once on the client', async () => {
+    let inFlight = 0;
+    let overlaps = 0;
+    const query = vi.fn(async (sql: string) => {
+      if (inFlight > 0) overlaps += 1;
+      inFlight += 1;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      inFlight -= 1;
+      if (/FROM "TariffEffectivePeriod"/.test(sql)) {
+        return {
+          rows: [{
+            period_id: 1, tariff_id: 7, selection_id: 5, effective_from: '2026-01-01', effective_to: null,
+            source: 'manual', updated_by_user_id: 'u1', choice_kind: null,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const client = { query } as unknown as Pick<PoolClient, 'query'>;
+
+    await loadScopeSelectionSpans(client, 'site-1', 'actual', 'u1').catch(() => undefined);
+
+    expect(query.mock.calls.length).toBeGreaterThan(2);
+    expect(overlaps).toBe(0);
+  });
+});
