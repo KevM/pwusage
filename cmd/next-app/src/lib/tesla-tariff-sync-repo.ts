@@ -109,14 +109,20 @@ export class TeslaTariffSyncRepo {
     return { inFlight: raced };
   }
 
-  /** Records the outcome. Only a `sending` row can finish, so a settled attempt is never rewritten. */
-  async finishAttempt(id: number, status: TeslaSyncFinalStatus, teslaResponse?: unknown): Promise<void> {
-    await this.db.query(
+  /**
+   * Records the outcome. Only a `sending` row can finish, so a settled attempt is never rewritten.
+   * Returns false, and logs, when the row was no longer `sending` (for example the stale reaper got there first).
+   */
+  async finishAttempt(id: number, status: TeslaSyncFinalStatus, teslaResponse?: unknown): Promise<boolean> {
+    const result = await this.db.query(
       `UPDATE "TeslaTariffSyncAttempt"
           SET status = $2, tesla_response = $3, finished_at = clock_timestamp()
         WHERE id = $1 AND status = 'sending'`,
       [id, status, teslaResponse === undefined ? null : JSON.stringify(teslaResponse)],
     );
+    if (result.rowCount === 1) return true;
+    console.warn(`[TeslaSync] Attempt ${id} was no longer sending; its ${status} result was not recorded`);
+    return false;
   }
 
   async latestForSite(siteId: string): Promise<TeslaSyncAttempt | null> {

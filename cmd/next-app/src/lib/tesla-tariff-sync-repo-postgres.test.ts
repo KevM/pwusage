@@ -143,6 +143,19 @@ describe.skipIf(!safeActivityTestSocket)('Tesla tariff sync attempts (postgres)'
     expect(next).toEqual({ id: expect.any(Number) });
   });
 
+  it('finishAttempt reports whether it wrote, and does not rewrite a settled attempt', async () => {
+    const begun = await inTransaction(database, client => repo.beginAttempt(client, attempt()));
+    const id = (begun as { id: number }).id;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await repo.finishAttempt(id, 'confirmed', { ok: true })).toBe(true);
+    expect(await repo.finishAttempt(id, 'failed', { late: true })).toBe(false);
+
+    expect(await repo.latestForSite('s1')).toMatchObject({ id, status: 'confirmed', teslaResponse: { ok: true } });
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
   it('latestForSite returns the newest attempt, or null when there are none', async () => {
     expect(await repo.latestForSite('s1')).toBeNull();
     await database.query(

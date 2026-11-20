@@ -1,6 +1,8 @@
 import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
+import type { Tariff } from './db-types';
+import { parseTariffContent } from './importer/tariff-parser';
 import type { EnergyChargeRates, Season, SeasonPeriods, TariffV2 } from './tesla-client';
-import { compileSeasonsToParsedTariff } from './tariff-timeline';
+import { compileSeasonsToParsedTariff, decompileTariffToSeasons } from './tariff-timeline';
 
 export type TeslaRateAdjustment = {
   season: string;
@@ -404,4 +406,22 @@ export function buildTeslaTariff(base: TariffV2, plan: TeslaPlanPayloadInput): T
     },
   };
   return copy;
+}
+
+/** PWUsage's season shape for Tesla's stored `tariff_content_v2`: the importer's parse, then the same decompile a saved plan uses. */
+export function seasonsFromTeslaContent(content: TariffV2): TariffSeasonInput[] {
+  const parsed = parseTariffContent(content, 'Site');
+  const tariff: Tariff = {
+    id: 0,
+    site_id: '',
+    updated: new Date(0),
+    name: parsed.name,
+    seasons: parsed.seasons.map((season, seasonIndex) => ({
+      id: seasonIndex,
+      tariff_id: 0,
+      ...season,
+      schedules: season.schedules.map((schedule, i) => ({ id: i, season_id: seasonIndex, ...schedule })),
+    })),
+  };
+  return decompileTariffToSeasons(tariff);
 }

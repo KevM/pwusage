@@ -16,6 +16,10 @@ import { CompactHistoryStore } from '../prototypes/compact-history-store';
 import { fetchDayForWrite } from '../prototypes/compact-day-fetch';
 import { isDayFetchFinal } from '../tesla-sample-timing';
 import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
+import { siteLocalDateString } from '../tariff-timeline';
+import { TariffTimelineRepo } from '../tariff-timeline-repo';
+import { TeslaTariffSyncRepo } from '../tesla-tariff-sync-repo';
+import { seasonsFromTeslaContent, teslaPlansMatch } from '../tesla-tou-sync';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -457,6 +461,7 @@ export class Importer {
                     ? parseTariffContent(info.tariff_content_v2, info.site_name ?? 'Utility Tariff')
                     : buildDefaultTariff('Default Rate');
                 await this.tariffRepo.addTariffVersion(siteId, parsed, info.tariff_content_v2 ? { name: info.tariff_content_v2.name ?? null, code: info.tariff_content_v2.code ?? null } : undefined);
+                await this.settleTeslaSyncAttempt(siteId, info);
             } else {
                 console.log(`Tariff content unchanged for site ${siteId}, skipping tariff update.`);
             }
@@ -468,6 +473,28 @@ export class Importer {
         } catch (e: unknown) {
             console.error(`Error ensuring site ${siteId}`, e);
             throw e;
+        }
+    }
+
+    /**
+     * Confirms an `unconfirmed` Sync to Tesla attempt once Tesla's stored plan matches the plan PWUsage
+     * holds today. Only looks when such an attempt exists. A failure here never fails the import.
+     */
+    private async settleTeslaSyncAttempt(siteId: string, info: EnergySiteInfo): Promise<void> {
+        try {
+            const syncRepo = new TeslaTariffSyncRepo();
+            const latest = await syncRepo.latestForSite(siteId);
+            if (latest?.status !== 'unconfirmed' || !info.tariff_content_v2) return;
+
+            const site = await this.siteRepo.getSite(siteId);
+            const today = siteLocalDateString(new Date(), site?.timezone || 'UTC');
+            const active = await new TariffTimelineRepo().loadActiveActualPlan(siteId, today);
+            if (!active) return;
+
+            const matches = teslaPlansMatch(active.seasons, seasonsFromTeslaContent(info.tariff_content_v2));
+            await syncRepo.settleUnconfirmed(siteId, matches);
+        } catch (e: unknown) {
+            console.warn(`[Import] Could not settle the Sync to Tesla attempt for site ${siteId}`, e);
         }
     }
 

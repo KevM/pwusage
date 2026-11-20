@@ -2576,7 +2576,51 @@ async function hasUnprotectedPublicStateOnClient(
   return (res.rowCount ?? 0) > 0;
 }
 
+/** The actual plan that covers a date, with the fields the Sync to Tesla service needs. */
+export interface ActiveActualPlan {
+  tariffId: number;
+  selectionId: number | null;
+  source: TariffSource;
+  name: string;
+  seasons: TariffSeasonInput[];
+}
+
+/**
+ * The actual plan covering `today`, or null when none covers it (no fallback to a neighbouring plan).
+ * Read through `client` when the caller holds the Site lock.
+ */
+export async function loadActiveActualPlanOnClient(
+  client: Pick<PoolClient, 'query'>,
+  siteId: string,
+  today: string
+): Promise<ActiveActualPlan | null> {
+  const rows = await loadScopePeriodRows(client, siteId, 'actual');
+  const row = rows.find(r =>
+    r.effective_from.slice(0, 10) <= today && (r.effective_to === null || r.effective_to.slice(0, 10) >= today)
+  );
+  if (!row) return null;
+  const tariffId = Number(row.tariff_id);
+  const tariff = (await hydrateTariffs(client, [tariffId])).get(tariffId);
+  if (!tariff) return null;
+  return {
+    tariffId,
+    selectionId: row.selection_id === null || row.selection_id === undefined ? null : Number(row.selection_id),
+    source: row.source,
+    name: row.name || 'Rate Plan',
+    seasons: decompileTariffToSeasons(tariff),
+  };
+}
+
 export class TariffTimelineRepo {
+  /** See loadActiveActualPlanOnClient. Reads from the pool unless a client is given. */
+  async loadActiveActualPlan(
+    siteId: string,
+    today: string,
+    client?: Pick<PoolClient, 'query'>
+  ): Promise<ActiveActualPlan | null> {
+    return loadActiveActualPlanOnClient(client ?? pool, siteId, today);
+  }
+
   async getSiteUtilityContext(siteId: string): Promise<SiteUtilityContextResult | null> {
     const result = await pool.query<{
       name: string | null;
