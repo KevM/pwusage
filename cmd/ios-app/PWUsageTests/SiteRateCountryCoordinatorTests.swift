@@ -31,7 +31,8 @@ private final class RateCountryAPISpy: MobileDashboardDataAPI, MobileTariffDataA
             reattribution: nil,
             teslaSync: TeslaSyncDTO(
                 latestTariffId: nil, latestTariffName: nil, latestUpdatedAt: nil,
-                activeManualUpdatedAt: nil, differsFromActiveManual: false
+                activeManualUpdatedAt: nil, differsFromActiveManual: false,
+                syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
             ),
             rateCountry: country
         )

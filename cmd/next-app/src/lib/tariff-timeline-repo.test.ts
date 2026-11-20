@@ -1583,3 +1583,106 @@ describe('pickTariffIdForDate', () => {
     expect(pickTariffIdForDate([], '2026-01-01')).toBeUndefined();
   });
 });
+
+describe('teslaSync Sync to Tesla fields', () => {
+  const today = '2026-11-17';
+  const tariffMap = new Map([[10, { id: 10, updated: new Date('2026-10-01T00:00:00Z') } as never]]);
+  const base = {
+    siteId: 's1',
+    timezone: 'America/Chicago',
+    siteInstalled: '2023-11-14',
+    currency: 'USD',
+    today,
+    viewerUserId: 'u1',
+    tariffMap,
+    latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-09-01T00:00:00Z') } as never,
+    touCapable: true,
+    hasTeslaContent: true,
+  };
+  // An owner-chosen plan covering today differs from Tesla's plan (protected span).
+  const ownerRow = {
+    period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+    updated_by_user_id: 'u1', name: 'Public', version: 1, content_hash: 'public-hash',
+    selection_id: 5, choice_kind: 'owner',
+  } as never;
+  // An automatic (Tesla-synced) plan covering today matches Tesla.
+  const automaticRow = {
+    period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'tesla',
+    updated_by_user_id: null, name: 'Tesla Plan', version: 1, content_hash: 'tesla-hash',
+    selection_id: 6, choice_kind: 'automatic', candidate_kind: 'tesla_sync',
+  } as never;
+
+  it('is available when the active owner plan differs from a touCapable Tesla plan with content', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(true);
+    expect(res.teslaSync.syncUnavailableReason).toBeNull();
+  });
+
+  it('reports no_difference when the active plan already matches Tesla', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, periodRows: [automaticRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_difference');
+  });
+
+  it('reports no_active_plan when no plan covers today', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, periodRows: [] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_active_plan');
+  });
+
+  it('reports not_tou_capable when the Powerwall cannot use time-of-use rates', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('not_tou_capable');
+  });
+
+  it('reports no_tesla_plan when Tesla stores no tariff content', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, hasTeslaContent: false, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_tesla_plan');
+  });
+
+  it('reports no_tesla_plan when no Tesla plan was imported yet', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, latestTesla: undefined, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_tesla_plan');
+  });
+
+  it('applies precedence: no_active_plan, then no_difference, then not_tou_capable, then no_tesla_plan', () => {
+    const noPlanNotCapable = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, hasTeslaContent: false, periodRows: [] });
+    expect(noPlanNotCapable.teslaSync.syncUnavailableReason).toBe('no_active_plan');
+
+    const sameNotCapable = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, hasTeslaContent: false, periodRows: [automaticRow] });
+    expect(sameNotCapable.teslaSync.syncUnavailableReason).toBe('no_difference');
+
+    const differNoContent = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, hasTeslaContent: false, periodRows: [ownerRow] });
+    expect(differNoContent.teslaSync.syncUnavailableReason).toBe('not_tou_capable');
+  });
+
+  it('exposes the latest Sync to Tesla attempt as lastSync, using finishedAt or createdAt', () => {
+    const none = buildSiteTariffsTimelineResponse({ ...base, periodRows: [ownerRow], lastSync: null });
+    expect(none.teslaSync.lastSync).toBeNull();
+
+    const confirmed = buildSiteTariffsTimelineResponse({
+      ...base,
+      periodRows: [ownerRow],
+      lastSync: {
+        id: 3, siteId: 's1', userId: 'u1', fingerprint: 'fp', selectionId: 5, replacedTeslaTariffId: 9,
+        sentContent: {}, status: 'confirmed', teslaResponse: null,
+        createdAt: '2026-11-18T09:59:00.000Z', finishedAt: '2026-11-18T10:00:00.000Z',
+      },
+    });
+    expect(confirmed.teslaSync.lastSync).toEqual({ status: 'confirmed', at: '2026-11-18T10:00:00.000Z' });
+
+    const sending = buildSiteTariffsTimelineResponse({
+      ...base,
+      periodRows: [ownerRow],
+      lastSync: {
+        id: 4, siteId: 's1', userId: 'u1', fingerprint: 'fp', selectionId: 5, replacedTeslaTariffId: 9,
+        sentContent: {}, status: 'sending', teslaResponse: null,
+        createdAt: '2026-11-18T11:00:00.000Z', finishedAt: null,
+      },
+    });
+    expect(sending.teslaSync.lastSync).toEqual({ status: 'sending', at: '2026-11-18T11:00:00.000Z' });
+  });
+});

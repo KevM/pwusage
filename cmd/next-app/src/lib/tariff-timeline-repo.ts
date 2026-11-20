@@ -51,7 +51,10 @@ import type {
   TariffSelectionPreviewResponse,
   TariffSelectionRequest,
   TariffVerificationSummary,
+  TeslaSyncUnavailableDbReason,
 } from './tariff-contract';
+import type { TeslaSyncAttempt } from './tesla-tariff-sync-repo';
+import { TeslaTariffSyncRepo } from './tesla-tariff-sync-repo';
 import {
   assertUsRatePlanEligibility,
   deriveRatePlanEligibility,
@@ -158,6 +161,12 @@ export interface BuildSiteTariffsTimelineInput {
   systemCostRows?: SystemCostRow[];
   reattribution?: SiteTariffReattributionRow;
   latestTesla?: LatestTeslaTariffSummary;
+  /** Site.json components.tou_capable, read from the Site row. */
+  touCapable?: boolean;
+  /** True when Site.json holds Tesla's tariff_content_v2. */
+  hasTeslaContent?: boolean;
+  /** The site's most recent Sync to Tesla attempt. */
+  lastSync?: TeslaSyncAttempt | null;
   rateCountry?: string | null;
   rateCountrySource?: RateCountrySource | null;
   rateCountryUpdatedAt?: Date | string | null;
@@ -332,6 +341,9 @@ export function buildSiteTariffsTimelineResponse(
     systemCostRows = [],
     reattribution,
     latestTesla,
+    touCapable = false,
+    hasTeslaContent = false,
+    lastSync = null,
     rateCountry,
     rateCountrySource = null,
     rateCountryUpdatedAt = null,
@@ -371,6 +383,18 @@ export function buildSiteTariffsTimelineResponse(
         : latestTesla.content_hash !== activeManualRow.content_hash
     )
   );
+
+  // Sync to Tesla availability uses stored state only (no Tesla call). The first applicable reason wins.
+  const syncAvailable = differsFromActiveManual && touCapable && hasTeslaContent;
+  const syncUnavailableReason: TeslaSyncUnavailableDbReason | null = !activeToday
+    ? 'no_active_plan'
+    : latestTesla && !differsFromActiveManual
+      ? 'no_difference'
+      : !touCapable
+        ? 'not_tou_capable'
+        : !latestTesla || !hasTeslaContent
+          ? 'no_tesla_plan'
+          : null;
 
   const currentYear = Number(today.slice(0, 4));
   const startYear = Math.min(
@@ -419,6 +443,11 @@ export function buildSiteTariffsTimelineResponse(
       latestUpdatedAt: toIsoOrNull(latestTesla?.updated),
       activeManualUpdatedAt: toIsoOrNull(activeManualRow ? tariffMap.get(Number(activeManualRow.tariff_id))?.updated : null),
       differsFromActiveManual,
+      syncAvailable,
+      syncUnavailableReason,
+      lastSync: lastSync
+        ? { status: lastSync.status, at: lastSync.finishedAt ?? lastSync.createdAt }
+        : null,
     },
   };
 }
@@ -3097,6 +3126,8 @@ export class TariffTimelineRepo {
       nameplate_energy: string | number | null;
       nameplate_power: string | number | null;
       backup_reserve_percent: string | number | null;
+      tou_capable: boolean | null;
+      has_tesla_content: boolean;
     }>(
       `SELECT id, timezone, installed,
               COALESCE(json -> 'tariff_content_v2' ->> 'currency', json ->> 'currency', 'USD') AS currency,
@@ -3105,7 +3136,9 @@ export class TariffTimelineRepo {
               rate_country_updated_at,
               json ->> 'nameplate_energy' AS nameplate_energy,
               json ->> 'nameplate_power' AS nameplate_power,
-              json ->> 'backup_reserve_percent' AS backup_reserve_percent
+              json ->> 'backup_reserve_percent' AS backup_reserve_percent,
+              (json -> 'components' ->> 'tou_capable') = 'true' AS tou_capable,
+              json ->> 'tariff_content_v2' IS NOT NULL AS has_tesla_content
        FROM "Site" WHERE id = $1`,
       [siteId]
     );
@@ -3133,6 +3166,7 @@ export class TariffTimelineRepo {
       ...(latestTeslaRes.rows[0] ? [Number(latestTeslaRes.rows[0].id)] : []),
     ])];
     const tariffMap = await hydrateTariffs(pool, tariffIds);
+    const lastSync = await new TeslaTariffSyncRepo(pool).latestForSite(siteId);
 
     const systemCostRes = await pool.query<SystemCostRow>(
       `SELECT component, install_date::text, price::text, tax_credit_percent::text, incentives::text
@@ -3167,6 +3201,9 @@ export class TariffTimelineRepo {
       systemCostRows: systemCostRes.rows,
       reattribution: reattrRes.rows[0],
       latestTesla: latestTeslaRes.rows[0],
+      touCapable: siteRow.tou_capable === true,
+      hasTeslaContent: siteRow.has_tesla_content === true,
+      lastSync,
       rateCountry: siteRow.rate_country ?? null,
       rateCountrySource: siteRow.rate_country_source ?? null,
       rateCountryUpdatedAt: siteRow.rate_country_updated_at ?? null,

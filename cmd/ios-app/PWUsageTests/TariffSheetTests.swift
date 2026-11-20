@@ -90,7 +90,8 @@ struct TariffSheetTests {
         + #""totalDays":100,"processedDays":40,"updatedDays":25,"lastError":null,"#
         + #""updatedAt":"2026-10-01T13:00:00Z"},"#
         + #""teslaSync":{"latestTariffId":10,"latestTariffName":"Tesla Plan","#
-        + #""latestUpdatedAt":"2026-10-01T12:00:00Z","differsFromActiveManual":true}}"#
+        + #""latestUpdatedAt":"2026-10-01T12:00:00Z","differsFromActiveManual": true,"#
+        + #""syncAvailable": false, "syncUnavailableReason": null, "lastSync": null}}"#
 }
 
 @MainActor
@@ -186,7 +187,7 @@ private final class TariffTestAPI: MobileDashboardDataAPI, MobileTariffDataAPI {
                     latestTariffName: "We energies",
                     latestUpdatedAt: theirs,
                     activeManualUpdatedAt: ours,
-                    differsFromActiveManual: true
+                    differsFromActiveManual: true, syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
                 )
             )
         }
