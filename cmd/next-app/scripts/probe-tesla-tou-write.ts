@@ -113,33 +113,43 @@ async function run(): Promise<void> {
     console.log(`\nOriginal tariff saved to ${backupFile}`);
 
     console.log(`Writing buy ${target.group}/${target.period}: ${target.before} -> ${target.after} ...`);
-    const result = await client.setTimeOfUseSettings(siteId, probe.candidate);
-    console.log(`- command response: ${JSON.stringify(result)}`);
+    // The write counts as attempted even if it throws: a dropped connection can follow a stored write.
+    let writeAttempted = false;
+    try {
+        writeAttempted = true;
+        const result = await client.setTimeOfUseSettings(siteId, probe.candidate);
+        console.log(`- command response: ${JSON.stringify(result)}`);
 
-    // site_info lags writes, so poll until the rate changes at all.
-    const startedAt = Date.now();
-    let observed = target.before;
-    while (Date.now() - startedAt < VERIFY_TIMEOUT_MS) {
-        await sleep(VERIFY_POLL_INTERVAL_MS);
-        const info = await client.getEnergySiteInfo(siteId);
-        observed = info.tariff_content_v2?.energy_charges?.[target.group]?.rates?.[target.period] ?? NaN;
-        if (observed !== target.before) break;
-        console.log(`  ...still ${observed} after ${Math.round((Date.now() - startedAt) / 1000)}s`);
-    }
-    if (observed === target.after) {
-        console.log(`  ✓ Tesla kept the 5-decimal rate: ${observed}`);
-    } else if (observed === target.before) {
-        console.log(`  ⚠ Still ${observed} after ${Math.round((Date.now() - startedAt) / 1000)}s (caching lag, or the write was ignored).`);
-    } else {
-        console.log(`  ✗ Tesla stored ${observed} instead of ${target.after}: precision was changed (rounded/truncated).`);
-    }
-
-    if (args.restore) {
-        console.log('\nRestoring the original tariff ...');
-        const restored = await client.setTimeOfUseSettings(siteId, original);
-        console.log(`- restore response: ${JSON.stringify(restored)}`);
-    } else {
-        console.log(`\nLeft the probe rate in place. To put it back, rewrite ${backupFile} via setTimeOfUseSettings.`);
+        // site_info lags writes, so poll until the rate changes at all.
+        const startedAt = Date.now();
+        let observed = target.before;
+        while (Date.now() - startedAt < VERIFY_TIMEOUT_MS) {
+            await sleep(VERIFY_POLL_INTERVAL_MS);
+            const info = await client.getEnergySiteInfo(siteId);
+            observed = info.tariff_content_v2?.energy_charges?.[target.group]?.rates?.[target.period] ?? NaN;
+            if (observed !== target.before) break;
+            console.log(`  ...still ${observed} after ${Math.round((Date.now() - startedAt) / 1000)}s`);
+        }
+        if (observed === target.after) {
+            console.log(`  ✓ Tesla kept the 5-decimal rate: ${observed}`);
+        } else if (observed === target.before) {
+            console.log(`  ⚠ Still ${observed} after ${Math.round((Date.now() - startedAt) / 1000)}s (caching lag, or the write was ignored).`);
+        } else {
+            console.log(`  ✗ Tesla stored ${observed} instead of ${target.after}: precision was changed (rounded/truncated).`);
+        }
+    } finally {
+        // Restore even when the write or a verification read threw, so --restore always puts the tariff back.
+        if (args.restore && writeAttempted) {
+            console.log('\nRestoring the original tariff ...');
+            try {
+                const restored = await client.setTimeOfUseSettings(siteId, original);
+                console.log(`- restore response: ${JSON.stringify(restored)}`);
+            } catch (restoreError) {
+                console.error(`Restore failed. Rewrite ${backupFile} via setTimeOfUseSettings by hand.`, restoreError);
+            }
+        } else if (!args.restore) {
+            console.log(`\nLeft the probe rate in place. To put it back, rewrite ${backupFile} via setTimeOfUseSettings.`);
+        }
     }
 }
 
