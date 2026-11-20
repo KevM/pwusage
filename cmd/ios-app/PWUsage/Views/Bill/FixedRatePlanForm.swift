@@ -18,9 +18,11 @@ struct FixedRatePlanForm: View {
     @State private var buyRateText: String
     @State private var sellRateText: String
     @State private var startsOn: Date
-    @State private var isSaving = false
-    @State private var isDeleting = false
+    @State private var operation: Operation?
     @State private var errorMessage: String?
+
+    /// The write in flight; Save and Delete never run together.
+    private enum Operation { case saving, deleting }
 
     init(
         existing: TariffPeriodDTO? = nil,
@@ -73,12 +75,12 @@ struct FixedRatePlanForm: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .disabled(isSaving)
+                        .disabled(operation != nil)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     ToolbarBusyButton(
                         title: "Save", busyTitle: "Saving",
-                        isBusy: isSaving && !isDeleting, isEnabled: canSave && !isSaving
+                        isBusy: operation == .saving, isEnabled: canSave && operation == nil
                     ) {
                         Task { await submit() }
                     }
@@ -141,9 +143,9 @@ struct FixedRatePlanForm: View {
             Button(role: .destructive) {
                 Task { await deletePlan(periodID: periodID) }
             } label: {
-                BusyRowLabel(isBusy: isDeleting) { Text("Delete Fixed Rate Plan") }
+                BusyRowLabel(isBusy: operation == .deleting) { Text("Delete Fixed Rate Plan") }
             }
-            .disabled(isSaving)
+            .disabled(operation != nil)
         }
     }
 
@@ -163,7 +165,7 @@ struct FixedRatePlanForm: View {
 
     private func submit() async {
         guard let buyRate = parsedBuyRate, let sellRate = parsedSellRate else { return }
-        isSaving = true
+        operation = .saving
         errorMessage = nil
         let request = FixedRatePlanDraft.makeWriteRequest(
             name: name,
@@ -173,7 +175,7 @@ struct FixedRatePlanForm: View {
             timeZone: timeZone
         )
         let error = await onSave(request, existing)
-        isSaving = false
+        operation = nil
         if let error {
             errorMessage = error
         } else {
@@ -183,12 +185,10 @@ struct FixedRatePlanForm: View {
 
     private func deletePlan(periodID: Int) async {
         guard let onDelete else { return }
-        isSaving = true
-        isDeleting = true
+        operation = .deleting
         errorMessage = nil
         let error = await onDelete(periodID)
-        isSaving = false
-        isDeleting = false
+        operation = nil
         if let error {
             errorMessage = error
         } else {
