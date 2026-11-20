@@ -2,7 +2,7 @@ import type { TariffPeriodName, TariffSeasonInput, TimePeriodWindowInput } from 
 import type { Tariff } from './db-types';
 import { parseTariffContent } from './importer/tariff-parser';
 import type { EnergyChargeRates, Season, SeasonPeriods, TariffV2 } from './tesla-client';
-import { compileSeasonsToParsedTariff, decompileTariffToSeasons } from './tariff-timeline';
+import { compileSeasonsToParsedTariff, decompileTariffToSeasons, tariffHasDaySpecificSchedules } from './tariff-timeline';
 
 export type TeslaRateAdjustment = {
   season: string;
@@ -16,6 +16,11 @@ export type TeslaRateAdjustment = {
 export interface TeslaPlanMatchOptions {
   pwusageCurrency?: string;
   teslaCurrency?: string;
+  /**
+   * True when either plan has rules for specific weekdays. The weekday/weekend shape compared here
+   * hides those rules, so such a plan never counts as matching.
+   */
+  eitherDaySpecific?: boolean;
 }
 
 /** Rates are compared after rounding to 5 decimals. `+ 0` turns -0 into 0. */
@@ -122,13 +127,21 @@ export function teslaPlansMatch(
   tesla: TariffSeasonInput[],
   opts?: TeslaPlanMatchOptions,
 ): boolean {
-  if (currenciesDiffer(opts)) return false;
+  if (currenciesDiffer(opts) || opts?.eitherDaySpecific) return false;
 
   const pwusageSignatures = applyTeslaAdjustments(pwusage).seasons.map(seasonSignature).sort();
   const teslaSignatures = tesla.map(seasonSignature).sort();
   if (pwusageSignatures.length !== teslaSignatures.length) return false;
   return pwusageSignatures.every((sig, i) => sig === teslaSignatures[i]);
 }
+
+/** The period names owners see, as the apps print them. */
+const PERIOD_DISPLAY_NAMES: Record<TariffPeriodName, string> = {
+  ON_PEAK: 'Peak',
+  PARTIAL_PEAK: 'Mid-Peak',
+  OFF_PEAK: 'Off-Peak',
+  SUPER_OFF_PEAK: 'Super Off-Peak',
+};
 
 const TESLA_CURRENCIES = ['USD', 'EUR', 'GBP'];
 const TESLA_ALL_GROUP = 'ALL';
@@ -140,7 +153,7 @@ const MONTH_NAMES = [
 ];
 
 export interface TeslaSyncProblem {
-  code: 'season_gap' | 'season_overlap' | 'season_name_conflict' | 'hour_gap' | 'hour_overlap' | 'label_rate_conflict' | 'currency';
+  code: 'season_gap' | 'season_overlap' | 'season_name_conflict' | 'hour_gap' | 'hour_overlap' | 'label_rate_conflict' | 'currency' | 'day_specific_schedule';
   season?: string;
   period?: TariffPeriodName;
   message: string;
@@ -165,17 +178,20 @@ function labelRateConflicts(season: TariffSeasonInput): TeslaSyncProblem[] {
         code: 'label_rate_conflict',
         season: season.name,
         period: window.touName,
-        message: `${season.name} has more than one ${window.touName} rate. Tesla keeps one rate per period, so give every ${window.touName} window in ${season.name} the same buy and export rate.`,
+        message: `${season.name} has more than one ${PERIOD_DISPLAY_NAMES[window.touName]} rate. Tesla keeps one rate per period, so give every ${PERIOD_DISPLAY_NAMES[window.touName]} window in ${season.name} the same buy and export rate.`,
       });
     }
   }
   return [...conflicts.values()];
 }
 
+/** A minute of the day as the apps print times: 7 AM, 4:30 PM. The end of the day (1440) reads 12 AM. */
 function formatMinute(minute: number): string {
-  const hour = Math.floor(minute / 60);
+  const hour24 = Math.floor(minute / 60) % 24;
   const min = minute % 60;
-  return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  const suffix = hour24 < 12 ? 'AM' : 'PM';
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return min === 0 ? `${hour12} ${suffix}` : `${hour12}:${String(min).padStart(2, '0')} ${suffix}`;
 }
 
 /** Start and end (exclusive, minutes from midnight) of each run where `predicate` holds. */
@@ -408,10 +424,10 @@ export function buildTeslaTariff(base: TariffV2, plan: TeslaPlanPayloadInput): T
   return copy;
 }
 
-/** PWUsage's season shape for Tesla's stored `tariff_content_v2`: the importer's parse, then the same decompile a saved plan uses. */
-export function seasonsFromTeslaContent(content: TariffV2): TariffSeasonInput[] {
+/** The importer's parse of Tesla's stored `tariff_content_v2`, in the shape a saved plan has. */
+function tariffFromTeslaContent(content: TariffV2): Tariff {
   const parsed = parseTariffContent(content, 'Site');
-  const tariff: Tariff = {
+  return {
     id: 0,
     site_id: '',
     updated: new Date(0),
@@ -423,5 +439,14 @@ export function seasonsFromTeslaContent(content: TariffV2): TariffSeasonInput[] 
       schedules: season.schedules.map((schedule, i) => ({ id: i, season_id: seasonIndex, ...schedule })),
     })),
   };
-  return decompileTariffToSeasons(tariff);
+}
+
+/** PWUsage's season shape for Tesla's stored `tariff_content_v2`: the importer's parse, then the same decompile a saved plan uses. */
+export function seasonsFromTeslaContent(content: TariffV2): TariffSeasonInput[] {
+  return decompileTariffToSeasons(tariffFromTeslaContent(content));
+}
+
+/** True when Tesla's stored plan has rules for specific weekdays that the weekday/weekend shape hides. */
+export function teslaContentHasDaySpecificSchedules(content: TariffV2): boolean {
+  return tariffHasDaySpecificSchedules(tariffFromTeslaContent(content));
 }

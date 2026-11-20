@@ -92,6 +92,7 @@ describe('POST /api/site/[id]/tariffs/tesla-sync/preview', () => {
       'no_tesla_plan',
       'needs_reauth',
       'tesla_unavailable',
+      'not_allowed',
     ] as const;
     for (const reason of reasons) {
       const error = new TeslaSyncUnavailableError(reason);

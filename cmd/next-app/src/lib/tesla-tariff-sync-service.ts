@@ -15,6 +15,7 @@ import {
 import { TeslaTariffSyncRepo, type TeslaSyncFinalStatus } from './tesla-tariff-sync-repo';
 import { isTeslaConnectionRequired } from './tesla-refresh-outcome';
 import { createTeslaClientForSiteMember } from './tesla-client-factory';
+import { ioDelay, withIoDeadline } from './io-deadline';
 import {
   isTeslaAuthError,
   TeslaAuthError,
@@ -27,15 +28,22 @@ import {
   applyTeslaAdjustments,
   buildTeslaTariff,
   seasonsFromTeslaContent,
+  teslaContentHasDaySpecificSchedules,
   teslaPlansMatch,
   validateForTesla,
   type TeslaRateAdjustment,
   type TeslaSyncProblem,
 } from './tesla-tou-sync';
 
-/** Read-back: five reads, four seconds apart, so the whole write and check stays inside 20 s. */
+/** Read-back: up to five reads, four seconds apart, and never past 20 s after the write started. */
 const READ_BACK_ATTEMPTS = 5;
 const READ_BACK_INTERVAL_MS = 4000;
+const READ_BACK_BUDGET_MS = 20_000;
+/** The commit route allows 50 s. The follow-up import only runs when this much of the budget is left. */
+const COMMIT_BUDGET_MS = 45_000;
+const IMPORT_MIN_REMAINING_MS = 10_000;
+/** Recording an attempt's outcome gets its own short deadline, so it still runs after the request's deadline aborts. */
+const RECORD_ATTEMPT_DEADLINE_MS = 5_000;
 
 export type TeslaSyncUnavailableReason =
   | 'no_active_plan'
@@ -43,14 +51,16 @@ export type TeslaSyncUnavailableReason =
   | 'not_tou_capable'
   | 'no_tesla_plan'
   | 'needs_reauth'
+  | 'not_allowed'
   | 'tesla_unavailable';
 
 const UNAVAILABLE_COPY: Record<TeslaSyncUnavailableReason, string> = {
   no_active_plan: 'No rate plan covers today, so there is nothing to send.',
   no_difference: 'Tesla already has this plan.',
-  not_tou_capable: "This Powerwall can't use time-of-use rates, so there is nothing to sync.",
+  not_tou_capable: "This Powerwall can't use rate plan schedules, so there is nothing to sync.",
   no_tesla_plan: 'Tesla has no rate plan to update yet.',
   needs_reauth: 'Reconnect Tesla to sync this plan.',
+  not_allowed: "Tesla didn't let your account change this Powerwall. Nothing changed.",
   tesla_unavailable: 'Tesla is unavailable right now. Nothing changed on the Powerwall.',
 };
 
@@ -58,7 +68,6 @@ const CONFIRMED_COPY = 'Tesla now has this plan.';
 const UNCONFIRMED_COPY = "Sent to Tesla. It hasn't confirmed yet; PWUsage will check again.";
 const CONFLICT_COPY = 'Tesla or your rate plan changed since you reviewed it. Review the plan again before syncing.';
 const IN_FLIGHT_COPY = 'A sync to Tesla is already in progress for this site.';
-const NOT_ALLOWED_COPY = "Tesla didn't let your account change this Powerwall.";
 const REJECTED_FALLBACK_COPY = 'Tesla did not accept this plan.';
 const FAILED_COPY = "Sync to Tesla didn't finish. Try again in a moment.";
 
@@ -123,7 +132,8 @@ interface ResolvedDeps {
 
 function resolveDeps(deps: TeslaTariffSyncDeps = {}): ResolvedDeps {
   return {
-    clientFor: deps.clientFor ?? createTeslaClientForSiteMember,
+    // A rate limit surfaces as an error (a failed sync before the write) instead of waiting out Tesla's retry-after.
+    clientFor: deps.clientFor ?? ((siteId, userId) => createTeslaClientForSiteMember(siteId, userId, { rateLimit: 'surface' })),
     repo: deps.repo ?? new TariffTimelineRepo(),
     syncRepo: deps.syncRepo ?? new TeslaTariffSyncRepo(),
     connect: deps.connect ?? (() => defaultPool.connect()),
@@ -131,7 +141,7 @@ function resolveDeps(deps: TeslaTariffSyncDeps = {}): ResolvedDeps {
       await new Importer(client).ensureSite(siteId);
     }),
     now: deps.now ?? (() => new Date()),
-    sleep: deps.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms))),
+    sleep: deps.sleep ?? ioDelay,
   };
 }
 
@@ -171,12 +181,30 @@ async function readTeslaSite(client: TeslaClient, siteId: string): Promise<Energ
   try {
     return await client.getEnergySiteInfo(siteId);
   } catch (error) {
-    if (error instanceof TeslaAuthError || isTeslaAuthError(error) || isTeslaConnectionRequired(error) || teslaRejectionMessage(error) !== null) {
+    if (error instanceof TeslaAuthError || isTeslaAuthError(error) || isTeslaConnectionRequired(error) || teslaRejection(error) !== null) {
       throw error;
     }
     console.error(`[TeslaSync] Tesla read for site ${siteId} failed`, error);
     throw new TeslaSyncUnavailableError('tesla_unavailable');
   }
+}
+
+/** True when Tesla's `content` is the plan PWUsage holds. A day-specific plan on either side never matches. */
+function planMatchesTesla(plan: ActiveActualPlan, content: TariffV2, currency: string): boolean {
+  return teslaPlansMatch(plan.seasons, seasonsFromTeslaContent(content), {
+    pwusageCurrency: currency,
+    teslaCurrency: content.currency,
+    eitherDaySpecific: plan.daySpecific || teslaContentHasDaySpecificSchedules(content),
+  });
+}
+
+const DAY_SPECIFIC_MESSAGE = "This plan has rules for specific weekdays. Tesla's plan can only hold one schedule for weekdays and one for weekends, so it can't be sent as is.";
+
+/** Everything that stops this plan being sent: Tesla's limits, plus day-specific rules it cannot hold. */
+function syncProblems(plan: ActiveActualPlan, currency: string): TeslaSyncProblem[] {
+  const problems = validateForTesla(plan.seasons, currency);
+  if (plan.daySpecific) problems.push({ code: 'day_specific_schedule', message: DAY_SPECIFIC_MESSAGE });
+  return problems;
 }
 
 /** Reads the site's active plan and Tesla's current content (no lock, no write). */
@@ -204,6 +232,22 @@ async function prepare(siteId: string, client: TeslaClient, d: ResolvedDeps): Pr
   };
 }
 
+/** Prepares a preview, turning Tesla's own failures into the unavailable reason the owner can act on. */
+async function prepareForPreview(siteId: string, client: TeslaClient, d: ResolvedDeps): Promise<PreparedSync> {
+  try {
+    return await prepare(siteId, client, d);
+  } catch (error) {
+    if (error instanceof TeslaSyncUnavailableError) throw error;
+    if (error instanceof TeslaAuthError && error.status === 403) throw new TeslaSyncUnavailableError('not_allowed');
+    if (isTeslaAuthError(error) || isTeslaConnectionRequired(error)) throw new TeslaSyncUnavailableError('needs_reauth');
+    if (teslaRejection(error) !== null) {
+      console.error(`[TeslaSync] Tesla refused the read for site ${siteId}`, error);
+      throw new TeslaSyncUnavailableError('tesla_unavailable');
+    }
+    throw error;
+  }
+}
+
 /** What the owner sees before pressing Sync to Tesla. Read-only. */
 export async function previewTeslaSync(
   siteId: string,
@@ -214,11 +258,8 @@ export async function previewTeslaSync(
   const client = await d.clientFor(siteId, userId);
   if (!client) throw new TeslaSyncUnavailableError('needs_reauth');
 
-  const prep = await prepare(siteId, client, d);
-  if (teslaPlansMatch(prep.plan.seasons, prep.currentSeasons, {
-    pwusageCurrency: prep.currency,
-    teslaCurrency: prep.content.currency,
-  })) {
+  const prep = await prepareForPreview(siteId, client, d);
+  if (planMatchesTesla(prep.plan, prep.content, prep.currency)) {
     throw new TeslaSyncUnavailableError('no_difference');
   }
 
@@ -232,7 +273,7 @@ export async function previewTeslaSync(
       selectionId: prep.plan.selectionId,
     },
     adjustments: applyTeslaAdjustments(prep.plan.seasons).adjustments,
-    problems: validateForTesla(prep.plan.seasons, prep.currency),
+    problems: syncProblems(prep.plan, prep.currency),
     estimated: prep.plan.source === 'estimated',
   };
 }
@@ -242,18 +283,18 @@ type TeslaFailureOutcome = 'not_allowed' | 'needs_reauth' | 'rejected' | 'failed
 const TESLA_API_ERROR = /^Tesla API Error: (\d{3}) ([\s\S]*)$/;
 
 /** The text of Tesla's error body as plain words. Raw JSON and truncated bodies are never shown. */
-function plainTeslaText(body: string): string {
+function plainTeslaText(body: string): string | null {
   const trimmed = body.trim();
-  if (trimmed === '') return REJECTED_FALLBACK_COPY;
+  if (trimmed === '') return null;
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       const parsed: unknown = JSON.parse(trimmed);
-      return messageFromBody(parsed) ?? REJECTED_FALLBACK_COPY;
+      return messageFromBody(parsed);
     } catch {
-      return REJECTED_FALLBACK_COPY;
+      return null;
     }
   }
-  return trimmed.endsWith('...') ? REJECTED_FALLBACK_COPY : trimmed;
+  return trimmed.endsWith('...') ? null : trimmed;
 }
 
 function messageFromBody(parsed: unknown): string | null {
@@ -266,25 +307,28 @@ function messageFromBody(parsed: unknown): string | null {
   return null;
 }
 
-/** Tesla's 4xx answer, other than auth, as a message. The TeslaClient error carries the status and body. */
-function teslaRejectionMessage(error: unknown): string | null {
+/**
+ * Tesla's 4xx answer, other than auth. `text` is Tesla's reason in plain words, or null when the body had
+ * none worth showing (the apps then use their own rejection copy). The TeslaClient error carries the status and body.
+ */
+function teslaRejection(error: unknown): { text: string | null } | null {
   if (!(error instanceof Error)) return null;
   const match = TESLA_API_ERROR.exec(error.message);
   if (!match) return null;
   const status = Number(match[1]);
   if (status < 400 || status >= 500 || status === 401 || status === 403 || status === 429) return null;
-  return plainTeslaText(match[2]);
+  return { text: plainTeslaText(match[2]) };
 }
 
-function classifyTeslaError(error: unknown): { outcome: TeslaFailureOutcome; message: string } {
+function classifyTeslaError(error: unknown): { outcome: TeslaFailureOutcome; message?: string } {
   if (error instanceof TeslaAuthError && error.status === 403) {
-    return { outcome: 'not_allowed', message: NOT_ALLOWED_COPY };
+    return { outcome: 'not_allowed', message: UNAVAILABLE_COPY.not_allowed };
   }
   if (isTeslaAuthError(error) || isTeslaConnectionRequired(error)) {
     return { outcome: 'needs_reauth', message: UNAVAILABLE_COPY.needs_reauth };
   }
-  const rejection = teslaRejectionMessage(error);
-  if (rejection !== null) return { outcome: 'rejected', message: rejection };
+  const rejection = teslaRejection(error);
+  if (rejection !== null) return rejection.text === null ? { outcome: 'rejected' } : { outcome: 'rejected', message: rejection.text };
   return { outcome: 'failed', message: FAILED_COPY };
 }
 
@@ -294,7 +338,7 @@ function isTeslaError(error: unknown): boolean {
     || error instanceof TeslaRateLimitError
     || isTeslaAuthError(error)
     || isTeslaConnectionRequired(error)
-    || teslaRejectionMessage(error) !== null;
+    || teslaRejection(error) !== null;
 }
 
 /** Records the attempt's outcome. A failure here is logged, never thrown, so the outcome still reaches the caller. */
@@ -305,7 +349,8 @@ async function recordAttempt(
   teslaResponse?: unknown
 ): Promise<void> {
   try {
-    await d.syncRepo.finishAttempt(attemptId, status, teslaResponse);
+    // parent = null: detach from the request's abort signal, which may already have fired.
+    await withIoDeadline(RECORD_ATTEMPT_DEADLINE_MS, () => d.syncRepo.finishAttempt(attemptId, status, teslaResponse), null);
   } catch (error) {
     console.error(`[TeslaSync] Could not record attempt ${attemptId} as ${status}`, error);
   }
@@ -375,17 +420,25 @@ async function beginAttemptUnderLock(
   }
 }
 
-/** Reads Tesla up to five times after the write. A failed read counts as not matching. */
-async function readBackMatches(client: TeslaClient, siteId: string, prep: PreparedSync, d: ResolvedDeps): Promise<boolean> {
+/**
+ * Reads Tesla up to five times after the write, stopping once `deadlineMs` (epoch ms) has passed.
+ * A failed read counts as not matching.
+ */
+async function readBackMatches(
+  client: TeslaClient,
+  siteId: string,
+  prep: PreparedSync,
+  d: ResolvedDeps,
+  deadlineMs: number
+): Promise<boolean> {
   for (let read = 0; read < READ_BACK_ATTEMPTS; read++) {
-    await d.sleep(READ_BACK_INTERVAL_MS);
+    const remaining = deadlineMs - d.now().getTime();
+    if (remaining <= 0) break;
+    await d.sleep(Math.min(READ_BACK_INTERVAL_MS, remaining));
     try {
       const info: EnergySiteInfo = await client.getEnergySiteInfo(siteId);
       const content = info.tariff_content_v2;
-      if (content && teslaPlansMatch(prep.plan.seasons, seasonsFromTeslaContent(content), {
-        pwusageCurrency: prep.currency,
-        teslaCurrency: content.currency,
-      })) {
+      if (content && planMatchesTesla(prep.plan, content, prep.currency)) {
         return true;
       }
     } catch {
@@ -406,6 +459,7 @@ export async function commitTeslaSync(
   deps?: TeslaTariffSyncDeps
 ): Promise<TeslaSyncResult> {
   const d = resolveDeps(deps);
+  const startedAtMs = d.now().getTime();
   const client = await d.clientFor(siteId, userId);
   if (!client) return { outcome: 'needs_reauth', message: UNAVAILABLE_COPY.needs_reauth };
 
@@ -421,12 +475,12 @@ export async function commitTeslaSync(
     // Only Tesla's own errors become outcomes; anything else (database, programming) is a 500.
     if (!isTeslaError(error)) throw error;
     const failure = classifyTeslaError(error);
-    return { outcome: failure.outcome, message: failure.message };
+    return failure.message === undefined ? { outcome: failure.outcome } : { outcome: failure.outcome, message: failure.message };
   }
 
   if (prep.fingerprint !== fingerprint) return { outcome: 'conflict', message: CONFLICT_COPY };
 
-  const problems = validateForTesla(prep.plan.seasons, prep.currency);
+  const problems = syncProblems(prep.plan, prep.currency);
   if (problems.length > 0) {
     return { outcome: 'unavailable', message: problems.map(problem => problem.message).join(' ') };
   }
@@ -435,6 +489,7 @@ export async function commitTeslaSync(
   if ('stop' in locked) return locked.stop;
   const { attemptId } = locked;
 
+  const writeStartedAtMs = d.now().getTime();
   let written: Awaited<ReturnType<TeslaClient['setTimeOfUseSettings']>> | undefined;
   try {
     written = await client.setTimeOfUseSettings(siteId, prep.payload);
@@ -442,24 +497,37 @@ export async function commitTeslaSync(
     if (isTeslaError(error)) {
       // Tesla answered with a definite refusal: nothing was stored.
       const failure = classifyTeslaError(error);
-      await recordAttempt(d, attemptId, storedStatus(failure.outcome), { error: failure.message });
-      return { outcome: failure.outcome, message: failure.message };
+      await recordAttempt(d, attemptId, storedStatus(failure.outcome), { error: failure.message ?? REJECTED_FALLBACK_COPY });
+      return failure.message === undefined ? { outcome: failure.outcome } : { outcome: failure.outcome, message: failure.message };
     }
     // Ambiguous: a timeout or dropped connection can come after Tesla stored the plan. Read back to find out.
     console.error(`[TeslaSync] Write for site ${siteId} failed without a Tesla answer; checking Tesla`, error);
   }
 
-  const matches = await readBackMatches(client, siteId, prep, d);
-  if (matches) {
-    await recordAttempt(d, attemptId, 'confirmed', written);
-    try {
-      await d.importSite(client, siteId);
-    } catch (error) {
-      console.warn(`[TeslaSync] Import after confirming site ${siteId} failed`, error);
+  // The write may have landed. If the request is aborted from here on, record unconfirmed before rethrowing
+  // so the attempt does not stay 'sending' until the reaper marks it failed.
+  let recorded = false;
+  try {
+    const matches = await readBackMatches(client, siteId, prep, d, writeStartedAtMs + READ_BACK_BUDGET_MS);
+    if (matches) {
+      recorded = true;
+      await recordAttempt(d, attemptId, 'confirmed', written);
+      // The import is best effort: with the budget nearly spent, the plan is still confirmed and the next import catches up.
+      if (COMMIT_BUDGET_MS - (d.now().getTime() - startedAtMs) >= IMPORT_MIN_REMAINING_MS) {
+        try {
+          await d.importSite(client, siteId);
+        } catch (error) {
+          console.warn(`[TeslaSync] Import after confirming site ${siteId} failed`, error);
+        }
+      }
+      return { outcome: 'confirmed', message: CONFIRMED_COPY, timeline: await timelineAfterSync(d, siteId, userId) };
     }
-    return { outcome: 'confirmed', message: CONFIRMED_COPY, timeline: await timelineAfterSync(d, siteId, userId) };
-  }
 
-  await recordAttempt(d, attemptId, 'unconfirmed', written);
-  return { outcome: 'unconfirmed', message: UNCONFIRMED_COPY, timeline: await timelineAfterSync(d, siteId, userId) };
+    recorded = true;
+    await recordAttempt(d, attemptId, 'unconfirmed', written);
+    return { outcome: 'unconfirmed', message: UNCONFIRMED_COPY, timeline: await timelineAfterSync(d, siteId, userId) };
+  } catch (error) {
+    if (!recorded) await recordAttempt(d, attemptId, 'unconfirmed', written);
+    throw error;
+  }
 }

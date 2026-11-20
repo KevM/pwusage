@@ -19,7 +19,7 @@ import { DAY_GAP_HEAL_DAYS } from '../prototypes/day-attribution';
 import { siteLocalDateString } from '../tariff-timeline';
 import { TariffTimelineRepo } from '../tariff-timeline-repo';
 import { TeslaTariffSyncRepo } from '../tesla-tariff-sync-repo';
-import { seasonsFromTeslaContent, teslaPlansMatch } from '../tesla-tou-sync';
+import { seasonsFromTeslaContent, teslaContentHasDaySpecificSchedules, teslaPlansMatch } from '../tesla-tou-sync';
 
 function logSync(msg: string) {
     const ts = new Date().toISOString();
@@ -491,7 +491,9 @@ export class Importer {
             const active = await new TariffTimelineRepo().loadActiveActualPlan(siteId, today);
             if (!active) return;
 
-            const matches = teslaPlansMatch(active.seasons, seasonsFromTeslaContent(info.tariff_content_v2));
+            const matches = teslaPlansMatch(active.seasons, seasonsFromTeslaContent(info.tariff_content_v2), {
+                eitherDaySpecific: active.daySpecific || teslaContentHasDaySpecificSchedules(info.tariff_content_v2),
+            });
             await syncRepo.settleUnconfirmed(siteId, matches);
         } catch (e: unknown) {
             console.warn(`[Import] Could not settle the Sync to Tesla attempt for site ${siteId}`, e);

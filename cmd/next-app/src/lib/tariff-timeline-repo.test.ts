@@ -587,6 +587,31 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(diverged.teslaSync.differsFromActiveManual).toBe(true);
   });
 
+  it('differsFromActiveManual is true when Tesla holds a Friday-only window the Monday and Saturday shape hides', () => {
+    const flat = { buy_rate: 0.1, sell_rate: 0.05 };
+    const season = (id: number, tariffId: number, schedules: unknown[]) => ({
+      id, tariff_id: tariffId, name: 'Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, ...flat, schedules,
+    });
+    const fridayOnly = {
+      id: 1, season_id: 2, name: 'ON_PEAK', buy_rate: 0.3, sell_rate: 0.05,
+      from_day_of_week: 4, to_day_of_week: 4, from_hour: 6, from_minute: 0, to_hour: 8, to_minute: 0,
+    };
+    const tariffMap = new Map([
+      [10, { id: 10, updated: new Date('2026-10-01T00:00:00Z'), content_hash: 'public-hash', seasons: [season(1, 10, [])] } as never],
+      [9, { id: 9, updated: new Date('2026-11-01T00:00:00Z'), content_hash: 'tesla-hash', seasons: [season(2, 9, [fridayOnly])] } as never],
+    ]);
+    const res = buildSiteTariffsTimelineResponse({
+      siteId: 's1', timezone: 'America/Chicago', siteInstalled: '2023-11-14', currency: 'USD', today: '2026-11-17', viewerUserId: 'u1',
+      latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-11-01T00:00:00Z') } as never,
+      tariffMap,
+      periodRows: [{
+        period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+        updated_by_user_id: 'u1', name: 'Public', version: 1, content_hash: 'public-hash', selection_id: 5, choice_kind: 'owner',
+      }] as never,
+    });
+    expect(res.teslaSync.differsFromActiveManual).toBe(true);
+  });
+
   it('buildSiteTariffsTimelineResponse retains choiceKind and displays verification only when exact hash and range match', () => {
     const res = buildSiteTariffsTimelineResponse({
       siteId: 's1',

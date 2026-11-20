@@ -4,6 +4,8 @@ import fixtureJson from './__fixtures__/tesla-tariff-two-season.json';
 import type { SiteTariffsTimelineResponse, TariffSeasonInput, TimePeriodWindowInput } from './tariff-contract';
 import type { EnergySiteInfo, TariffV2, TeslaClient } from './tesla-client';
 import { TeslaAuthError } from './tesla-client';
+import { TeslaConnectionRequiredError } from './tesla-refresh-outcome';
+import { ioSignal, withIoDeadline } from './io-deadline';
 import { buildTeslaTariff, applyTeslaAdjustments } from './tesla-tou-sync';
 import {
   commitTeslaSync,
@@ -77,6 +79,7 @@ function activePlan(overrides: Partial<ActiveActualPlan> = {}): ActiveActualPlan
     source: 'manual',
     name: 'My Plan',
     seasons: plan(),
+    daySpecific: false,
     ...overrides,
   };
 }
@@ -204,6 +207,23 @@ describe('previewTeslaSync', () => {
     expect(preview.problems.map(p => p.code)).toContain('season_gap');
   });
 
+  it('lists day_specific_schedule when the plan has rules for specific weekdays', async () => {
+    const h = harness({ active: activePlan({ daySpecific: true }), teslaContent: teslaContent(plan()) });
+    const preview = await previewTeslaSync('s1', 'u1', h.deps);
+    expect(preview.problems.map(p => p.code)).toContain('day_specific_schedule');
+    expect(preview.problems.find(p => p.code === 'day_specific_schedule')?.message).toMatch(/specific weekdays/);
+  });
+
+  it('does not report no_difference when Tesla holds a Friday-only window on the same Monday and Saturday shape', async () => {
+    const content = teslaContent(plan());
+    content.seasons.Summer.tou_periods.ON_PEAK.periods.push({
+      fromDayOfWeek: 4, toDayOfWeek: 4, fromHour: 6, fromMinute: 0, toHour: 8, toMinute: 0,
+    });
+    const h = harness({ teslaContent: content });
+    const preview = await previewTeslaSync('s1', 'u1', h.deps);
+    expect(preview.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it('throws no_difference when Tesla already stores the plan', async () => {
     const h = harness({ teslaContent: teslaContent(plan()) });
     expect(await reasonOf(previewTeslaSync('s1', 'u1', h.deps))).toBe('no_difference');
@@ -229,6 +249,24 @@ describe('previewTeslaSync', () => {
     expect(await reasonOf(previewTeslaSync('s1', 'u1', h.deps))).toBe('needs_reauth');
   });
 
+  it('throws needs_reauth when Tesla rejects the member\'s credentials on the read', async () => {
+    const h = harness();
+    h.client.getEnergySiteInfo.mockRejectedValue(new TeslaAuthError('Tesla API Error: 401 expired', 401));
+    expect(await reasonOf(previewTeslaSync('s1', 'u1', h.deps))).toBe('needs_reauth');
+  });
+
+  it('throws needs_reauth when the Tesla connection must be re-made', async () => {
+    const h = harness();
+    h.client.getEnergySiteInfo.mockRejectedValue(new TeslaConnectionRequiredError());
+    expect(await reasonOf(previewTeslaSync('s1', 'u1', h.deps))).toBe('needs_reauth');
+  });
+
+  it('throws not_allowed when Tesla answers 403 on the read', async () => {
+    const h = harness();
+    h.client.getEnergySiteInfo.mockRejectedValue(new TeslaAuthError('Tesla API Error: 403 forbidden', 403));
+    expect(await reasonOf(previewTeslaSync('s1', 'u1', h.deps))).toBe('not_allowed');
+  });
+
   it('reads Tesla with the pressing member\'s client', async () => {
     const h = harness();
     await previewTeslaSync('s1', 'member-user', h.deps);
@@ -246,6 +284,18 @@ describe('commitTeslaSync', () => {
     const result = await commitTeslaSync('s1', 'u1', 'fp', h.deps);
     expect(result.outcome).toBe('needs_reauth');
     expect(h.client.setTimeOfUseSettings).not.toHaveBeenCalled();
+  });
+
+  it('returns unavailable and never writes when the plan is day-specific', async () => {
+    const h = harness({ active: activePlan({ daySpecific: true }), teslaContent: teslaContent(plan()) });
+    const fingerprint = await previewFingerprint(h);
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('unavailable');
+    expect(result.message).toMatch(/specific weekdays/);
+    expect(h.client.setTimeOfUseSettings).not.toHaveBeenCalled();
+    expect(h.syncRepo.beginAttempt).not.toHaveBeenCalled();
   });
 
   it('returns conflict and never writes when Tesla changed after the preview', async () => {
@@ -333,6 +383,77 @@ describe('commitTeslaSync', () => {
     expect(h.importSite).not.toHaveBeenCalled();
   });
 
+  it('stops read-back by the clock when every read takes 8 s', async () => {
+    const h = harness({ storeOnWrite: () => teslaContent(plan(0.3, 0.05), 'Old') });
+    const fingerprint = await previewFingerprint(h);
+    let clock = Date.parse('2026-11-19T18:00:00Z');
+    const start = clock;
+    h.deps.now = () => new Date(clock);
+    h.deps.sleep = async ms => { clock += ms; };
+    h.client.getEnergySiteInfo.mockImplementation(async () => {
+      clock += 8000;
+      return infoFor(h.state.content);
+    });
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('unconfirmed');
+    const elapsed = clock - start;
+    // Two pre-write reads (16 s) plus a read-back that stops 20-25 s after the write.
+    expect(elapsed).toBeLessThanOrEqual(16000 + 25000);
+    expect(h.client.getEnergySiteInfo.mock.calls.length).toBeLessThan(2 + 5);
+    expect(h.syncRepo.finishAttempt).toHaveBeenCalledWith(42, 'unconfirmed', expect.anything());
+  });
+
+  it('skips the import when little of the time budget is left after a confirmed write', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    let clock = Date.parse('2026-11-19T18:00:00Z');
+    h.deps.now = () => new Date(clock);
+    h.deps.sleep = async ms => { clock += ms; };
+    h.client.getEnergySiteInfo.mockImplementation(async () => {
+      clock += 20000;
+      return infoFor(h.state.content);
+    });
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('confirmed');
+    expect(h.importSite).not.toHaveBeenCalled();
+    expect(h.syncRepo.finishAttempt).toHaveBeenCalledWith(42, 'confirmed', expect.anything());
+  });
+
+  it('records unconfirmed outside the request deadline when it aborts after the write', async () => {
+    const h = harness({ storeOnWrite: () => teslaContent(plan(0.3, 0.05), 'Old') });
+    const fingerprint = await previewFingerprint(h);
+    let abortedWhenRecording: boolean | undefined;
+    h.syncRepo.finishAttempt.mockImplementation(async () => {
+      abortedWhenRecording = ioSignal()?.aborted;
+      return true;
+    });
+    // The first wait outlasts the 20 ms request deadline, as a slow Tesla would.
+    h.deps.sleep = async () => {
+      const signal = ioSignal();
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+
+    await expect(withIoDeadline(20, () => commitTeslaSync('s1', 'u1', fingerprint, h.deps))).rejects.toThrow();
+
+    expect(h.client.setTimeOfUseSettings).toHaveBeenCalledTimes(1);
+    expect(h.syncRepo.finishAttempt).toHaveBeenCalledWith(42, 'unconfirmed', expect.anything());
+    expect(abortedWhenRecording).toBe(false);
+  });
+
+  it('leaves no message for a rejection whose body says nothing', async () => {
+    const h = harness({ writeError: new Error('Tesla API Error: 400 ') });
+    const fingerprint = await previewFingerprint(h);
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+    expect(result.outcome).toBe('rejected');
+    expect(result.message).toBeUndefined();
+  });
+
   it('counts a failed read during polling as not matching', async () => {
     const h = harness({ readAfterWriteError: new Error('Tesla API Error: 503 busy') });
     const fingerprint = await previewFingerprint(h);
@@ -380,7 +501,7 @@ describe('commitTeslaSync', () => {
     const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
 
     expect(result.outcome).toBe('rejected');
-    expect(result.message).not.toMatch(/[{}]/);
+    expect(result.message ?? '').not.toMatch(/[{}]/);
   });
 
   it('reads back after an ambiguous write failure and confirms when Tesla stored the plan', async () => {

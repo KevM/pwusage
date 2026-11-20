@@ -87,14 +87,21 @@ describe('Importer.ensureSite Sync to Tesla settlement', () => {
 
     it('confirms an unconfirmed attempt when the imported plan matches today\'s plan', async () => {
         latestForSite.mockResolvedValue({ status: 'unconfirmed' });
-        loadActive.mockResolvedValue({ tariffId: 1, selectionId: null, source: 'manual', name: 'Mine', seasons: seasonsFromTeslaContent(fixture) });
+        loadActive.mockResolvedValue({ tariffId: 1, selectionId: null, source: 'manual', name: 'Mine', seasons: seasonsFromTeslaContent(fixture), daySpecific: false });
         await ensure();
         expect(settle).toHaveBeenCalledWith('s1', true);
     });
 
     it('leaves an unconfirmed attempt alone when the plans differ', async () => {
         latestForSite.mockResolvedValue({ status: 'unconfirmed' });
-        loadActive.mockResolvedValue({ tariffId: 1, selectionId: null, source: 'manual', name: 'Mine', seasons: [] });
+        loadActive.mockResolvedValue({ tariffId: 1, selectionId: null, source: 'manual', name: 'Mine', seasons: [], daySpecific: false });
+        await ensure();
+        expect(settle).toHaveBeenCalledWith('s1', false);
+    });
+
+    it('does not confirm an unconfirmed attempt for a day-specific plan', async () => {
+        latestForSite.mockResolvedValue({ status: 'unconfirmed' });
+        loadActive.mockResolvedValue({ tariffId: 1, selectionId: null, source: 'manual', name: 'Mine', seasons: seasonsFromTeslaContent(fixture), daySpecific: true });
         await ensure();
         expect(settle).toHaveBeenCalledWith('s1', false);
     });

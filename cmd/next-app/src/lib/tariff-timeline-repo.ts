@@ -379,7 +379,9 @@ export function buildSiteTariffsTimelineResponse(
   const differsFromActiveManual = Boolean(
     activeManualRow && latestTesla && (
       activeManualTariff && latestTeslaTariff
-        ? !teslaPlansMatch(decompileTariffToSeasons(activeManualTariff), decompileTariffToSeasons(latestTeslaTariff))
+        ? !teslaPlansMatch(decompileTariffToSeasons(activeManualTariff), decompileTariffToSeasons(latestTeslaTariff), {
+          eitherDaySpecific: tariffHasDaySpecificSchedules(activeManualTariff) || tariffHasDaySpecificSchedules(latestTeslaTariff),
+        })
         : latestTesla.content_hash !== activeManualRow.content_hash
     )
   );
@@ -2612,6 +2614,8 @@ export interface ActiveActualPlan {
   source: TariffSource;
   name: string;
   seasons: TariffSeasonInput[];
+  /** True when the plan has rules for specific weekdays that `seasons` (Monday and Saturday) cannot show. */
+  daySpecific: boolean;
 }
 
 /**
@@ -2637,6 +2641,7 @@ export async function loadActiveActualPlanOnClient(
     source: row.source,
     name: row.name || 'Rate Plan',
     seasons: decompileTariffToSeasons(tariff),
+    daySpecific: tariffHasDaySpecificSchedules(tariff),
   };
 }
 
