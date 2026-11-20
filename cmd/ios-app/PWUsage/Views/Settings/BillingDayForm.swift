@@ -40,15 +40,9 @@ struct BillingDayForm: View {
                 Text(BillingDayPresentation.footer)
             }
             Section {
-                Button(action: submit) {
-                    HStack {
-                        Text(buttonTitle)
-                        if isSaving { ProgressView() }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .emphasisProminentButton()
-                .disabled(isSaving)
+                ProminentActionButton(
+                    title: buttonTitle, busyTitle: BillingDayPresentation.savingTitle, isBusy: isSaving, action: submit
+                )
                 .accessibilityIdentifier("billing-day.save")
                 if saveFailed {
                     Label(BillingDayPresentation.saveFailure, systemImage: "exclamationmark.triangle")

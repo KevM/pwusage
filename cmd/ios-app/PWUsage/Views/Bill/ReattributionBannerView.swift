@@ -48,10 +48,10 @@ struct ReattributionBannerView: View {
                 }
             }
             Spacer(minLength: 8)
-            Button("Retry", action: onRetry)
-                .emphasisProminentButton()
-                .controlSize(.small)
-                .disabled(isRetrying)
+            ProminentActionButton(
+                title: "Retry", busyTitle: "Retrying…", isBusy: isRetrying, fillsWidth: false, action: onRetry
+            )
+            .controlSize(.small)
         }
         .padding(14)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))

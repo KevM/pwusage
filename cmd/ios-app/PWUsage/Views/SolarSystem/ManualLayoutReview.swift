@@ -40,14 +40,10 @@ struct ManualLayoutReview: View {
 
     /// Save is a full-width button pinned to the bottom, so it is always in reach and easy to hit.
     private var saveBar: some View {
-        Button {
+        ProminentActionButton(title: "Save", busyTitle: "Saving…", isBusy: isSaving) {
             Task { await onSave() }
-        } label: {
-            Text("Save").frame(maxWidth: .infinity, minHeight: 44)
         }
-        .emphasisProminentButton()
         .controlSize(.large)
-        .disabled(isSaving)
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.bar)

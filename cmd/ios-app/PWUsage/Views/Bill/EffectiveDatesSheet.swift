@@ -58,8 +58,10 @@ struct EffectiveDatesSheet: View {
                             .disabled(isSaving)
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(isSaving ? "Saving..." : "Save") { save() }
-                            .disabled(isSaving || validationError != nil)
+                        ToolbarBusyButton(
+                            title: "Save", busyTitle: "Saving", isBusy: isSaving, isEnabled: validationError == nil,
+                            action: save
+                        )
                     }
                 }
         }

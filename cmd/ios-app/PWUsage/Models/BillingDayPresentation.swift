@@ -12,6 +12,7 @@ enum BillingDayPresentation {
     static let promptMessage = "Your estimated bill and savings follow your billing cycle. "
         + "You can find the start day under billing period on your utility bill."
 
+    static let savingTitle = "Saving…"
     static let saveFailure = "The day was not saved. Check your connection and try again."
 
     static func rowValue(day: Int) -> String {

@@ -30,25 +30,15 @@ struct RatePlanHistoryReviewView: View {
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Button {
+            ProminentActionButton(
+                title: RatePlanHistoryPresentation.saveTitle,
+                busyTitle: RatePlanHistoryPresentation.savingTitle,
+                isBusy: model.isSaving
+            ) {
                 Task { await model.save() }
-            } label: {
-                HStack(spacing: 10) {
-                    if model.isSaving {
-                        ProgressView()
-                            .tint(Color.onEmphasis)
-                        Text(RatePlanHistoryPresentation.savingTitle)
-                    } else {
-                        Text(RatePlanHistoryPresentation.saveTitle)
-                    }
-                }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
             }
-            .emphasisProminentButton()
+            .font(.headline)
             .controlSize(.large)
-            // Not `.disabled`: that greys the button and hides the spinner. `save()` ignores repeat taps.
-            .allowsHitTesting(!model.isSaving)
         }
     }
 

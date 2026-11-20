@@ -13,6 +13,7 @@ struct BillingDayPresentationTests {
     @Test("Every day a bill can start on is offered, and no other")
     func offeredDays() {
         #expect(BillingDayPresentation.days == Array(1 ... 31))
+        #expect(BillingDayPresentation.savingTitle == "Saving…")
         #expect(MobileBillingDay.validDays == 1 ... 31)
     }
 

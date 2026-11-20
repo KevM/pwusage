@@ -19,6 +19,7 @@ struct FixedRatePlanForm: View {
     @State private var sellRateText: String
     @State private var startsOn: Date
     @State private var isSaving = false
+    @State private var isDeleting = false
     @State private var errorMessage: String?
 
     init(
@@ -75,8 +76,12 @@ struct FixedRatePlanForm: View {
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { await submit() } }
-                        .disabled(!canSave || isSaving)
+                    ToolbarBusyButton(
+                        title: "Save", busyTitle: "Saving",
+                        isBusy: isSaving && !isDeleting, isEnabled: canSave && !isSaving
+                    ) {
+                        Task { await submit() }
+                    }
                 }
             }
         }
@@ -133,8 +138,10 @@ struct FixedRatePlanForm: View {
 
     private func deleteSection(periodID: Int) -> some View {
         Section {
-            Button("Delete Fixed Rate Plan", role: .destructive) {
+            Button(role: .destructive) {
                 Task { await deletePlan(periodID: periodID) }
+            } label: {
+                BusyRowLabel(isBusy: isDeleting) { Text("Delete Fixed Rate Plan") }
             }
             .disabled(isSaving)
         }
@@ -177,9 +184,11 @@ struct FixedRatePlanForm: View {
     private func deletePlan(periodID: Int) async {
         guard let onDelete else { return }
         isSaving = true
+        isDeleting = true
         errorMessage = nil
         let error = await onDelete(periodID)
         isSaving = false
+        isDeleting = false
         if let error {
             errorMessage = error
         } else {
