@@ -20,6 +20,14 @@ enum TeslaSyncCopy {
     static let conflict = "Tesla or your rate plan changed since you reviewed it. Review the plan again before syncing."
 
     /// The one line to show for a commit's outcome. `conflict` never shows (the model reloads the review).
+    /// What the sending screen says while the request is open. The server writes first, then reads Tesla
+    /// back for up to 20 seconds, so after the first few seconds the wait is Tesla confirming.
+    static func sendingStatus(afterSeconds elapsed: Double) -> String {
+        elapsed < 4
+            ? "Sending your plan to Tesla…"
+            : "Waiting for Tesla to confirm. This can take up to 20 seconds."
+    }
+
     static func resultMessage(_ outcome: String, message: String?) -> String {
         switch outcome {
         case "confirmed": confirmed

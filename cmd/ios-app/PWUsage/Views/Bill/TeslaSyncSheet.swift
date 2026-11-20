@@ -48,9 +48,9 @@ struct TeslaSyncSheet: View {
             ProgressView("Checking Tesla…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .review(let preview):
-            reviewForm(preview, isSending: false)
-        case .sending(let preview):
-            reviewForm(preview, isSending: true)
+            reviewForm(preview)
+        case .sending:
+            TeslaSyncSendingView()
         case .unavailable(let unavailable):
             unavailableForm(unavailable)
         case .finished(let result):
@@ -67,7 +67,7 @@ struct TeslaSyncSheet: View {
         }
     }
 
-    private func reviewForm(_ preview: TeslaSyncPreviewDTO, isSending: Bool) -> some View {
+    private func reviewForm(_ preview: TeslaSyncPreviewDTO) -> some View {
         Form {
             if let notice = model.notice {
                 Section { Text(notice) }
@@ -90,7 +90,7 @@ struct TeslaSyncSheet: View {
                 Section { Text(TeslaSyncCopy.publicPlans) }
             }
             if preview.problems.isEmpty {
-                sendSection(isSending: isSending)
+                sendSection
             } else {
                 Section {
                     ForEach(Array(preview.problems.enumerated()), id: \.offset) { _, problem in
@@ -101,26 +101,19 @@ struct TeslaSyncSheet: View {
                 }
             }
         }
-        .disabled(isSending)
     }
 
-    private func sendSection(isSending: Bool) -> some View {
+    private var sendSection: some View {
         Section {
             Button {
                 Task { await model.confirm() }
             } label: {
-                HStack {
-                    Text(TeslaSyncCopy.sendButton)
-                        .fontWeight(.semibold)
-                    if isSending {
-                        Spacer()
-                        ProgressView()
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                Text(TeslaSyncCopy.sendButton)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
             }
             .emphasisProminentButton()
-            .disabled(isSending || !model.canConfirm)
+            .disabled(!model.canConfirm)
         } footer: {
             Text(TeslaSyncCopy.effect)
         }
@@ -166,6 +159,31 @@ struct TeslaSyncSheet: View {
                     Task { await reconnectTesla.perform() }
                 }
             }
+        }
+    }
+}
+
+/// Shown while the send is open: the write, then up to 20 seconds of Tesla confirming.
+private struct TeslaSyncSendingView: View {
+    @State private var startedAt = Date()
+
+    var body: some View {
+        TimelineView(.periodic(from: startedAt, by: 1)) { context in
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text(TeslaSyncCopy.sendingStatus(afterSeconds: context.date.timeIntervalSince(startedAt)))
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .contentTransition(.opacity)
+                Text("Keep this open to see what Tesla says.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .combine)
         }
     }
 }
