@@ -46,7 +46,8 @@ struct RatePlanReviewModelTests {
                         reattribution: nil,
                         teslaSync: TeslaSyncDTO(
                             latestTariffId: nil, latestTariffName: nil, latestUpdatedAt: nil,
-                            activeManualUpdatedAt: nil, differsFromActiveManual: false
+                            activeManualUpdatedAt: nil, differsFromActiveManual: false,
+                            syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
                         )
                     )
                     return TariffSelectionCommitResponse(

@@ -1,0 +1,292 @@
+{
+  "code": "SAMPLE-TOU-2",
+  "name": "Sample Two-Season Plan",
+  "utility": "Sample Electric",
+  "currency": "USD",
+  "daily_charges": {
+    "ALL": {
+      "amount": 0.45
+    }
+  },
+  "demand_charges": {
+    "ALL": {
+      "rates": {
+        "ALL": 0
+      }
+    }
+  },
+  "energy_charges": {
+    "ALL": {
+      "rates": {
+        "ALL": 0
+      }
+    },
+    "Summer": {
+      "rates": {
+        "ON_PEAK": 0.42,
+        "OFF_PEAK": 0.11
+      }
+    },
+    "Winter": {
+      "rates": {
+        "SUPER_OFF_PEAK": 0.09,
+        "PARTIAL_PEAK": 0.14,
+        "ON_PEAK": 0.2,
+        "OFF_PEAK": 0.1
+      }
+    }
+  },
+  "seasons": {
+    "Summer": {
+      "fromMonth": 6,
+      "fromDay": 1,
+      "toMonth": 9,
+      "toDay": 30,
+      "tou_periods": {
+        "OFF_PEAK": {
+          "periods": [
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 0,
+              "fromMinute": 0,
+              "toHour": 16,
+              "toMinute": 0
+            },
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 21,
+              "fromMinute": 0,
+              "toHour": 24,
+              "toMinute": 0
+            },
+            {
+              "fromDayOfWeek": 5,
+              "toDayOfWeek": 6,
+              "fromHour": 0,
+              "fromMinute": 0,
+              "toHour": 24,
+              "toMinute": 0
+            }
+          ]
+        },
+        "ON_PEAK": {
+          "periods": [
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 16,
+              "fromMinute": 0,
+              "toHour": 21,
+              "toMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    "Winter": {
+      "fromMonth": 10,
+      "fromDay": 1,
+      "toMonth": 5,
+      "toDay": 31,
+      "tou_periods": {
+        "SUPER_OFF_PEAK": {
+          "periods": [
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 0,
+              "fromMinute": 0,
+              "toHour": 6,
+              "toMinute": 0
+            }
+          ]
+        },
+        "PARTIAL_PEAK": {
+          "periods": [
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 6,
+              "fromMinute": 0,
+              "toHour": 17,
+              "toMinute": 0
+            },
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 21,
+              "fromMinute": 0,
+              "toHour": 24,
+              "toMinute": 0
+            }
+          ]
+        },
+        "ON_PEAK": {
+          "periods": [
+            {
+              "fromDayOfWeek": 0,
+              "toDayOfWeek": 4,
+              "fromHour": 17,
+              "fromMinute": 0,
+              "toHour": 21,
+              "toMinute": 0
+            }
+          ]
+        },
+        "OFF_PEAK": {
+          "periods": [
+            {
+              "fromDayOfWeek": 5,
+              "toDayOfWeek": 6,
+              "fromHour": 0,
+              "fromMinute": 0,
+              "toHour": 24,
+              "toMinute": 0
+            }
+          ]
+        }
+      }
+    }
+  },
+  "sell_tariff": {
+    "name": "Sample Export",
+    "utility": "Sample Electric",
+    "energy_charges": {
+      "ALL": {
+        "rates": {
+          "ALL": 0
+        }
+      },
+      "Summer": {
+        "rates": {
+          "ON_PEAK": 0.05,
+          "OFF_PEAK": 0.03
+        }
+      },
+      "Winter": {
+        "rates": {
+          "SUPER_OFF_PEAK": 0.02,
+          "PARTIAL_PEAK": 0.03,
+          "ON_PEAK": 0.06,
+          "OFF_PEAK": 0.02
+        }
+      }
+    },
+    "seasons": {
+      "Summer": {
+        "fromMonth": 6,
+        "fromDay": 1,
+        "toMonth": 9,
+        "toDay": 30,
+        "tou_periods": {
+          "OFF_PEAK": {
+            "periods": [
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 0,
+                "fromMinute": 0,
+                "toHour": 16,
+                "toMinute": 0
+              },
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 21,
+                "fromMinute": 0,
+                "toHour": 24,
+                "toMinute": 0
+              },
+              {
+                "fromDayOfWeek": 5,
+                "toDayOfWeek": 6,
+                "fromHour": 0,
+                "fromMinute": 0,
+                "toHour": 24,
+                "toMinute": 0
+              }
+            ]
+          },
+          "ON_PEAK": {
+            "periods": [
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 16,
+                "fromMinute": 0,
+                "toHour": 21,
+                "toMinute": 0
+              }
+            ]
+          }
+        }
+      },
+      "Winter": {
+        "fromMonth": 10,
+        "fromDay": 1,
+        "toMonth": 5,
+        "toDay": 31,
+        "tou_periods": {
+          "SUPER_OFF_PEAK": {
+            "periods": [
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 0,
+                "fromMinute": 0,
+                "toHour": 6,
+                "toMinute": 0
+              }
+            ]
+          },
+          "PARTIAL_PEAK": {
+            "periods": [
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 6,
+                "fromMinute": 0,
+                "toHour": 17,
+                "toMinute": 0
+              },
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 21,
+                "fromMinute": 0,
+                "toHour": 24,
+                "toMinute": 0
+              }
+            ]
+          },
+          "ON_PEAK": {
+            "periods": [
+              {
+                "fromDayOfWeek": 0,
+                "toDayOfWeek": 4,
+                "fromHour": 17,
+                "fromMinute": 0,
+                "toHour": 21,
+                "toMinute": 0
+              }
+            ]
+          },
+          "OFF_PEAK": {
+            "periods": [
+              {
+                "fromDayOfWeek": 5,
+                "toDayOfWeek": 6,
+                "fromHour": 0,
+                "fromMinute": 0,
+                "toHour": 24,
+                "toMinute": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

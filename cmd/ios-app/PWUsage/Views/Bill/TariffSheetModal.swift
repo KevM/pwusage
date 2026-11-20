@@ -9,6 +9,7 @@ enum TariffSheetModal: Identifiable, Equatable {
     case changePlan
     case restore(TariffPeriodDTO)
     case aiHandoff
+    case teslaSync
 
     var id: String {
         switch self {
@@ -19,6 +20,7 @@ enum TariffSheetModal: Identifiable, Equatable {
         case .changePlan: "change-plan"
         case .restore(let period): "restore-\(period.periodId)"
         case .aiHandoff: "ai-handoff"
+        case .teslaSync: "tesla-sync"
         }
     }
 

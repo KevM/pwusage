@@ -18,7 +18,8 @@ extension MobileTariffsDecodingTests {
           }],
           "battery": null, "reattribution": null,
           "teslaSync": { "latestTariffId": null, "latestTariffName": null, "latestUpdatedAt": null,
-                         "differsFromActiveManual": false },
+                         "differsFromActiveManual": false,
+                         "syncAvailable": false, "syncUnavailableReason": null, "lastSync": null },
           "estimates": { "status": "ready", "utilityName": "We Energies", "teslaPlanOutOfDate": false,
                          "newerPlanName": null, "newerPlanStart": null, "newestRevisionStart": null,
                          "mayBeOutdated": false\(extraEstimates) }\(extraTimeline)

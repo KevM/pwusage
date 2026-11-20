@@ -274,7 +274,7 @@ enum DemoFixtures {
                 latestTariffName: tariffName,
                 latestUpdatedAt: "2025-01-01T00:00:00Z",
                 activeManualUpdatedAt: nil,
-                differsFromActiveManual: false
+                differsFromActiveManual: false, syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
             ),
             estimates: SiteRateEstimatesDTO(
                 status: .ready,

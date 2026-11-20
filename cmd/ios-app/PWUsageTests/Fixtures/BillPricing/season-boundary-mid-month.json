@@ -149,7 +149,10 @@
       "latestTariffName": null,
       "latestUpdatedAt": null,
       "activeManualUpdatedAt": null,
-      "differsFromActiveManual": false
+      "differsFromActiveManual": false,
+      "syncAvailable": false,
+      "syncUnavailableReason": "not_tou_capable",
+      "lastSync": null
     }
   },
   "days": [

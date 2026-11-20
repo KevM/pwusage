@@ -194,5 +194,50 @@ extension PWUsageAPI {
         }
     }
 
+    /// What would be sent to Tesla now. A 409 means nothing can be sent (see `TeslaSyncUnavailability`).
+    func previewTeslaSync(siteID: String) async throws -> TeslaSyncPreviewDTO {
+        var req = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "tariffs/tesla-sync/preview"))
+        req.httpMethod = "POST"
+        let data = try await sendTeslaSync(req)
+        return try decodeTeslaSyncPayload(TeslaSyncPreviewDTO.self, from: data)
+    }
+
+    /// Sends the reviewed plan. A refused or unconfirmed write is still a result, not an error.
+    func commitTeslaSync(siteID: String, fingerprint: String) async throws -> TeslaSyncResultDTO {
+        var req = URLRequest(url: try makeSiteURL(siteID: siteID, suffix: "tariffs/tesla-sync"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(TeslaSyncCommitBody(fingerprint: fingerprint))
+        let data = try await sendTeslaSync(req)
+        let result = try decodeTeslaSyncPayload(TeslaSyncResultDTO.self, from: data)
+        if let timeline = result.timeline {
+            _ = try timeline.validating(siteID: siteID)
+        }
+        return result
+    }
+
+    private func sendTeslaSync(_ req: URLRequest) async throws -> Data {
+        let (data, http) = try await send(req)
+        if http.statusCode == 409,
+           let body = try? MobileContractDecoder.make().decode(TeslaSyncConflictBody.self, from: data) {
+            throw TeslaSyncUnavailability(reason: body.reason, message: body.message)
+        }
+        return try check(http, data: data)
+    }
+
+    private func decodeTeslaSyncPayload<Value: Decodable>(_: Value.Type, from data: Data) throws -> Value {
+        do {
+            return try MobileContractDecoder.make().decode(Value.self, from: data)
+        } catch {
+            throw PWUsageAPIError.invalidResponse
+        }
+    }
+
+    private struct TeslaSyncCommitBody: Encodable { let fingerprint: String }
+    private struct TeslaSyncConflictBody: Decodable {
+        let reason: String
+        let message: String
+    }
+
     private struct EmptyTariffMutationBody: Encodable {}
 }

@@ -555,6 +555,63 @@ describe('TariffTimelineRepo & recomputeIsCurrentTariff (unit)', () => {
     expect(synced.teslaSync.differsFromActiveManual).toBe(false);
   });
 
+  it('differsFromActiveManual is false when the active plan matches Tesla content under a different hash', () => {
+    // Tesla raises the PWUsage buy rate (0.10) to the 0.12 sell rate, so the stored plans match.
+    const season = (id: number, tariffId: number, buy: number, sell: number) => ({
+      id, tariff_id: tariffId, name: 'Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+      buy_rate: buy, sell_rate: sell, schedules: [],
+    });
+    const base = {
+      siteId: 's1',
+      timezone: 'America/Chicago',
+      siteInstalled: '2023-11-14',
+      currency: 'USD',
+      today: '2026-11-17',
+      viewerUserId: 'u1',
+      latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-11-01T00:00:00Z') } as never,
+    };
+    const tariffsWith = (teslaBuy: number) => new Map([
+      [10, { id: 10, updated: new Date('2026-10-01T00:00:00Z'), content_hash: 'public-hash', seasons: [season(1, 10, 0.1, 0.12)] } as never],
+      [9, { id: 9, updated: new Date('2026-11-01T00:00:00Z'), content_hash: 'tesla-hash', seasons: [season(2, 9, teslaBuy, 0.12)] } as never],
+    ]);
+    const periodRows = [{
+      period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+      updated_by_user_id: 'u1', name: 'Public', version: 1, content_hash: 'public-hash',
+      selection_id: 5, choice_kind: 'owner',
+    }] as never;
+
+    const matching = buildSiteTariffsTimelineResponse({ ...base, tariffMap: tariffsWith(0.12), periodRows });
+    expect(matching.teslaSync.differsFromActiveManual).toBe(false);
+
+    const diverged = buildSiteTariffsTimelineResponse({ ...base, tariffMap: tariffsWith(0.2), periodRows });
+    expect(diverged.teslaSync.differsFromActiveManual).toBe(true);
+  });
+
+  it('differsFromActiveManual is true when Tesla holds a Friday-only window the Monday and Saturday shape hides', () => {
+    const flat = { buy_rate: 0.1, sell_rate: 0.05 };
+    const season = (id: number, tariffId: number, schedules: unknown[]) => ({
+      id, tariff_id: tariffId, name: 'Year', from_month: 1, from_day: 1, to_month: 12, to_day: 31, ...flat, schedules,
+    });
+    const fridayOnly = {
+      id: 1, season_id: 2, name: 'ON_PEAK', buy_rate: 0.3, sell_rate: 0.05,
+      from_day_of_week: 4, to_day_of_week: 4, from_hour: 6, from_minute: 0, to_hour: 8, to_minute: 0,
+    };
+    const tariffMap = new Map([
+      [10, { id: 10, updated: new Date('2026-10-01T00:00:00Z'), content_hash: 'public-hash', seasons: [season(1, 10, [])] } as never],
+      [9, { id: 9, updated: new Date('2026-11-01T00:00:00Z'), content_hash: 'tesla-hash', seasons: [season(2, 9, [fridayOnly])] } as never],
+    ]);
+    const res = buildSiteTariffsTimelineResponse({
+      siteId: 's1', timezone: 'America/Chicago', siteInstalled: '2023-11-14', currency: 'USD', today: '2026-11-17', viewerUserId: 'u1',
+      latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-11-01T00:00:00Z') } as never,
+      tariffMap,
+      periodRows: [{
+        period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+        updated_by_user_id: 'u1', name: 'Public', version: 1, content_hash: 'public-hash', selection_id: 5, choice_kind: 'owner',
+      }] as never,
+    });
+    expect(res.teslaSync.differsFromActiveManual).toBe(true);
+  });
+
   it('buildSiteTariffsTimelineResponse retains choiceKind and displays verification only when exact hash and range match', () => {
     const res = buildSiteTariffsTimelineResponse({
       siteId: 's1',
@@ -1549,5 +1606,136 @@ describe('pickTariffIdForDate', () => {
 
   it('returns undefined with no periods', () => {
     expect(pickTariffIdForDate([], '2026-01-01')).toBeUndefined();
+  });
+});
+
+describe('teslaSync Sync to Tesla fields', () => {
+  const today = '2026-11-17';
+  const tariffMap = new Map([[10, { id: 10, updated: new Date('2026-10-01T00:00:00Z') } as never]]);
+  const base = {
+    siteId: 's1',
+    timezone: 'America/Chicago',
+    siteInstalled: '2023-11-14',
+    currency: 'USD',
+    today,
+    viewerUserId: 'u1',
+    tariffMap,
+    latestTesla: { id: 9, name: 'Tesla Plan', content_hash: 'tesla-hash', updated: new Date('2026-09-01T00:00:00Z') } as never,
+    touCapable: true,
+    hasTeslaContent: true,
+  };
+  // An owner-chosen plan covering today differs from Tesla's plan (protected span).
+  const ownerRow = {
+    period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'estimated',
+    updated_by_user_id: 'u1', name: 'Public', version: 1, content_hash: 'public-hash',
+    selection_id: 5, choice_kind: 'owner',
+  } as never;
+  // An automatic (Tesla-synced) plan covering today matches Tesla.
+  const automaticRow = {
+    period_id: 1, tariff_id: 10, effective_from: '2026-01-01', effective_to: null, source: 'tesla',
+    updated_by_user_id: null, name: 'Tesla Plan', version: 1, content_hash: 'tesla-hash',
+    selection_id: 6, choice_kind: 'automatic', candidate_kind: 'tesla_sync',
+  } as never;
+
+  it('is available when the active owner plan differs from a touCapable Tesla plan with content', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(true);
+    expect(res.teslaSync.syncUnavailableReason).toBeNull();
+  });
+
+  it('reports no_difference when the active plan already matches Tesla', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, periodRows: [automaticRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_difference');
+  });
+
+  it('reports no_active_plan when no plan covers today', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, periodRows: [] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_active_plan');
+  });
+
+  it('reports not_tou_capable when the Powerwall cannot use time-of-use rates', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('not_tou_capable');
+  });
+
+  it('reports no_tesla_plan when Tesla stores no tariff content', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, hasTeslaContent: false, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_tesla_plan');
+  });
+
+  it('reports no_tesla_plan when no Tesla plan was imported yet', () => {
+    const res = buildSiteTariffsTimelineResponse({ ...base, latestTesla: undefined, periodRows: [ownerRow] });
+    expect(res.teslaSync.syncAvailable).toBe(false);
+    expect(res.teslaSync.syncUnavailableReason).toBe('no_tesla_plan');
+  });
+
+  it('applies precedence: no_active_plan, then no_difference, then not_tou_capable, then no_tesla_plan', () => {
+    const noPlanNotCapable = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, hasTeslaContent: false, periodRows: [] });
+    expect(noPlanNotCapable.teslaSync.syncUnavailableReason).toBe('no_active_plan');
+
+    const sameNotCapable = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, hasTeslaContent: false, periodRows: [automaticRow] });
+    expect(sameNotCapable.teslaSync.syncUnavailableReason).toBe('no_difference');
+
+    const differNoContent = buildSiteTariffsTimelineResponse({ ...base, touCapable: false, hasTeslaContent: false, periodRows: [ownerRow] });
+    expect(differNoContent.teslaSync.syncUnavailableReason).toBe('not_tou_capable');
+  });
+
+  it('exposes the latest Sync to Tesla attempt as lastSync, using finishedAt or createdAt', () => {
+    const none = buildSiteTariffsTimelineResponse({ ...base, periodRows: [ownerRow], lastSync: null });
+    expect(none.teslaSync.lastSync).toBeNull();
+
+    const confirmed = buildSiteTariffsTimelineResponse({
+      ...base,
+      periodRows: [ownerRow],
+      lastSync: {
+        id: 3, siteId: 's1', userId: 'u1', fingerprint: 'fp', selectionId: 5, replacedTeslaTariffId: 9,
+        sentContent: {}, status: 'confirmed', teslaResponse: null,
+        createdAt: '2026-11-18T09:59:00.000Z', finishedAt: '2026-11-18T10:00:00.000Z',
+      },
+    });
+    expect(confirmed.teslaSync.lastSync).toEqual({ status: 'confirmed', at: '2026-11-18T10:00:00.000Z' });
+
+    const sending = buildSiteTariffsTimelineResponse({
+      ...base,
+      periodRows: [ownerRow],
+      lastSync: {
+        id: 4, siteId: 's1', userId: 'u1', fingerprint: 'fp', selectionId: 5, replacedTeslaTariffId: 9,
+        sentContent: {}, status: 'sending', teslaResponse: null,
+        createdAt: '2026-11-18T11:00:00.000Z', finishedAt: null,
+      },
+    });
+    expect(sending.teslaSync.lastSync).toEqual({ status: 'sending', at: '2026-11-18T11:00:00.000Z' });
+  });
+});
+
+describe('loadScopeSelectionSpans on a single transaction client', () => {
+  it('never runs two queries at once on the client', async () => {
+    let inFlight = 0;
+    let overlaps = 0;
+    const query = vi.fn(async (sql: string) => {
+      if (inFlight > 0) overlaps += 1;
+      inFlight += 1;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      inFlight -= 1;
+      if (/FROM "TariffEffectivePeriod"/.test(sql)) {
+        return {
+          rows: [{
+            period_id: 1, tariff_id: 7, selection_id: 5, effective_from: '2026-01-01', effective_to: null,
+            source: 'manual', updated_by_user_id: 'u1', choice_kind: null,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const client = { query } as unknown as Pick<PoolClient, 'query'>;
+
+    await loadScopeSelectionSpans(client, 'site-1', 'actual', 'u1').catch(() => undefined);
+
+    expect(query.mock.calls.length).toBeGreaterThan(2);
+    expect(overlaps).toBe(0);
   });
 });

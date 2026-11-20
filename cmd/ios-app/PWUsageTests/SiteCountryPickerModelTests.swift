@@ -15,7 +15,8 @@ struct SiteCountryPickerModelTests {
             reattribution: nil,
             teslaSync: TeslaSyncDTO(
                 latestTariffId: nil, latestTariffName: nil, latestUpdatedAt: nil,
-                activeManualUpdatedAt: nil, differsFromActiveManual: false
+                activeManualUpdatedAt: nil, differsFromActiveManual: false,
+                syncAvailable: false, syncUnavailableReason: nil, lastSync: nil
             ),
             estimates: SiteRateEstimatesDTO(
                 status: status, utilityName: utilityName, teslaPlanOutOfDate: false, newerPlanName: nil,

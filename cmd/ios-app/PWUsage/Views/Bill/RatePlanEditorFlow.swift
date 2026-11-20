@@ -14,7 +14,7 @@ struct RatePlanEditorFlow: View {
         onCreate: @escaping @MainActor (TariffPlanWriteRequest) async throws -> Void,
         onUpdate: @escaping @MainActor (Int, TariffPlanPatchRequest) async throws -> Void,
         selection: RatePlanSelectionActions? = nil,
-        onApplied: @escaping @MainActor (TariffSelectionCommitResponse) -> Void = { _ in }
+        onApplied: @escaping @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void = { _, _ in }
     ) {
         self.onApplied = onApplied
         _state = State(
@@ -30,7 +30,7 @@ struct RatePlanEditorFlow: View {
         )
     }
 
-    private let onApplied: @MainActor (TariffSelectionCommitResponse) -> Void
+    private let onApplied: @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void
 
     var body: some View {
         NavigationStack(path: $state.path) {
@@ -89,8 +89,8 @@ struct RatePlanEditorFlow: View {
             )
         case .review:
             if let review = state.review {
-                RatePlanReviewView(model: review) { response in
-                    onApplied(response)
+                RatePlanReviewView(model: review) { response, request in
+                    onApplied(response, request)
                     dismiss()
                 }
             }

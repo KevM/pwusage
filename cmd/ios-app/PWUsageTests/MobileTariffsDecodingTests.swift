@@ -42,7 +42,7 @@ struct MobileTariffsDecodingTests {
         "latestTariffId": null,
         "latestTariffName": null,
         "latestUpdatedAt": null,
-        "differsFromActiveManual": false
+        "differsFromActiveManual": false, "syncAvailable": false, "syncUnavailableReason": null, "lastSync": null
       },
       "estimates": {
         "status": "ready",
@@ -90,7 +90,7 @@ struct MobileTariffsDecodingTests {
             "latestTariffId": null,
             "latestTariffName": null,
             "latestUpdatedAt": null,
-            "differsFromActiveManual": false
+            "differsFromActiveManual": false, "syncAvailable": false, "syncUnavailableReason": null, "lastSync": null
           }
         }
         """
@@ -298,5 +298,51 @@ struct MobileTariffsDecodingTests {
         #expect(text.contains("\"powerwall\":null"))
         #expect(text.contains("\"taxCreditPercent\":null"))
         #expect(text.contains("\"installDate\":\"2024-03-04\""))
+    }
+
+    @Test("Decodes Sync to Tesla availability, unavailable reason and last attempt")
+    func decodesTeslaSyncFields() throws {
+        let json = """
+        {
+          "version": 2,
+          "siteId": "site-1",
+          "timezone": "America/Chicago",
+          "currency": "USD",
+          "periods": [],
+          "referencePeriods": [],
+          "battery": null,
+          "reattribution": null,
+          "holidayDates": [],
+          "teslaSync": {
+            "latestTariffId": 9,
+            "latestTariffName": "Tesla Plan",
+            "latestUpdatedAt": "2026-09-01T00:00:00.000Z",
+            "activeManualUpdatedAt": null,
+            "differsFromActiveManual": false,
+            "syncAvailable": false,
+            "syncUnavailableReason": "no_difference",
+            "lastSync": { "status": "unconfirmed", "at": "2026-11-18T10:00:00.000Z" }
+          }
+        }
+        """
+
+        let decoded = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(json.utf8)
+        )
+        #expect(decoded.teslaSync.syncAvailable == false)
+        #expect(decoded.teslaSync.syncUnavailableReason == "no_difference")
+        #expect(decoded.teslaSync.lastSync == TeslaSyncAttemptDTO(
+            status: "unconfirmed",
+            timestamp: "2026-11-18T10:00:00.000Z"
+        ))
+
+        let lastSyncLine = "\"lastSync\": { \"status\": \"unconfirmed\", \"at\": \"2026-11-18T10:00:00.000Z\" }"
+        let none = json.replacingOccurrences(of: lastSyncLine, with: "\"lastSync\": null")
+        let noneDecoded = try MobileContractDecoder.make().decode(
+            SiteTariffsTimelineResponse.self,
+            from: Data(none.utf8)
+        )
+        #expect(noneDecoded.teslaSync.lastSync == nil)
     }
 }
