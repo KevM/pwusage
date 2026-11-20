@@ -171,8 +171,11 @@ struct SystemCostsForm: View {
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { await submit() } }
-                        .disabled(draft.request == nil || isSaving)
+                    ToolbarBusyButton(
+                        title: "Save", busyTitle: "Saving", isBusy: isSaving, isEnabled: draft.request != nil
+                    ) {
+                        Task { await submit() }
+                    }
                 }
             }
         }

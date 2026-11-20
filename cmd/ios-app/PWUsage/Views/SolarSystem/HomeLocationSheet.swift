@@ -11,7 +11,7 @@ struct HomeLocationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var search = HomeLocationSearchModel()
     @State private var outcome: SolarLocationShareResult?
-    @State private var isWorking = false
+    @State private var work: Work?
     @State private var mapStart: MapStart?
 
     /// Where the map step opens: a searched place, or the device's region.
@@ -20,6 +20,15 @@ struct HomeLocationSheet: View {
         let longitude: Double?
     }
 
+    /// What is running, so only that row shows a spinner; every choice waits while any runs.
+    private enum Work: Equatable {
+        case currentLocation
+        case suggestion(HomeLocationSuggestion.ID)
+        case saving
+    }
+
+    private var isWorking: Bool { work != nil }
+
     var body: some View {
         NavigationStack {
             List {
@@ -27,7 +36,9 @@ struct HomeLocationSheet: View {
                     Button {
                         Task { await useCurrentLocation() }
                     } label: {
-                        Label("Use My Current Location", systemImage: "location.fill")
+                        BusyRowLabel(isBusy: work == .currentLocation) {
+                            Label("Use My Current Location", systemImage: "location.fill")
+                        }
                     }
                     .disabled(isWorking)
                     if let outcome { SolarLocationOutcomeView(outcome: outcome) }
@@ -45,10 +56,12 @@ struct HomeLocationSheet: View {
                         Button {
                             Task { await choose(suggestion) }
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion.title).foregroundStyle(.primary)
-                                if !suggestion.subtitle.isEmpty {
-                                    Text(suggestion.subtitle).font(.footnote).foregroundStyle(.secondary)
+                            BusyRowLabel(isBusy: work == .suggestion(suggestion.id)) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(suggestion.title).foregroundStyle(.primary)
+                                    if !suggestion.subtitle.isEmpty {
+                                        Text(suggestion.subtitle).font(.footnote).foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
@@ -76,7 +89,7 @@ struct HomeLocationSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
             .navigationDestination(item: $mapStart) { start in
-                HomeLocationMapStep(start: start) { location in
+                HomeLocationMapStep(start: start, isSaving: work == .saving) { location in
                     Task { await save(location) }
                 }
             }
@@ -84,16 +97,16 @@ struct HomeLocationSheet: View {
     }
 
     private func useCurrentLocation() async {
-        isWorking = true
-        defer { isWorking = false }
+        work = .currentLocation
+        defer { work = nil }
         let result = await coordinator.shareHomeLocation(
             confirmedSiteID: coordinator.selectedSiteID, provider: DeviceHomeLocationProvider())
         finish(result)
     }
 
     private func choose(_ suggestion: HomeLocationSuggestion) async {
-        isWorking = true
-        defer { isWorking = false }
+        work = .suggestion(suggestion.id)
+        defer { work = nil }
         guard let location = try? await search.location(for: suggestion) else {
             outcome = .unavailable
             return
@@ -102,8 +115,9 @@ struct HomeLocationSheet: View {
     }
 
     private func save(_ location: SolarHomeLocation) async {
-        isWorking = true
-        defer { isWorking = false }
+        guard !isWorking else { return }
+        work = .saving
+        defer { work = nil }
         finish(await coordinator.saveHomeLocation(location, confirmedSiteID: coordinator.selectedSiteID))
     }
 
@@ -121,13 +135,19 @@ struct HomeLocationSheet: View {
 /// A fixed center pin over a map the user drags, then confirms.
 struct HomeLocationMapStep: View {
     let start: HomeLocationSheet.MapStart
+    let isSaving: Bool
     let onConfirm: (SolarHomeLocation) -> Void
 
     @State private var position: MapCameraPosition
     @State private var center: CLLocationCoordinate2D?
 
-    init(start: HomeLocationSheet.MapStart, onConfirm: @escaping (SolarHomeLocation) -> Void) {
+    init(
+        start: HomeLocationSheet.MapStart,
+        isSaving: Bool,
+        onConfirm: @escaping (SolarHomeLocation) -> Void
+    ) {
         self.start = start
+        self.isSaving = isSaving
         self.onConfirm = onConfirm
         if let latitude = start.latitude, let longitude = start.longitude {
             let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -155,14 +175,12 @@ struct HomeLocationMapStep: View {
                     .accessibilityHidden(true)
             }
             .safeAreaInset(edge: .bottom) {
-                Button {
+                ProminentActionButton(
+                    title: "Use This Location", busyTitle: "Saving…", isBusy: isSaving, isEnabled: center != nil
+                ) {
                     if let center { onConfirm(HomeLocationSearchModel.pinned(center, searched: searched)) }
-                } label: {
-                    Text("Use This Location").frame(maxWidth: .infinity)
                 }
-                .emphasisProminentButton()
                 .controlSize(.large)
-                .disabled(center == nil)
                 .padding()
             }
             .navigationTitle("Move the Map to Your Home")

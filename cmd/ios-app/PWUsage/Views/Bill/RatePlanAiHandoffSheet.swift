@@ -166,21 +166,13 @@ struct RatePlanAiHandoffSheet: View {
     private var importBottomBar: some View {
         VStack(spacing: 0) {
             Divider()
-            Button {
+            ProminentActionButton(
+                title: "Preview Changes", busyTitle: "Loading Preview…",
+                isBusy: model.isPreviewing, isEnabled: model.canPreview
+            ) {
                 Task { await model.loadPreview() }
-            } label: {
-                Group {
-                    if model.isPreviewing {
-                        ProgressView()
-                    } else {
-                        Text("Preview Changes")
-                    }
-                }
-                .frame(maxWidth: .infinity)
             }
-            .emphasisProminentButton()
             .controlSize(.large)
-            .disabled(!model.canPreview)
             .padding()
         }
         .background(.bar)
@@ -316,25 +308,17 @@ private struct RatePlanAiHandoffReviewSheet: View {
     private var applyBottomBar: some View {
         VStack(spacing: 0) {
             Divider()
-            Button {
+            ProminentActionButton(
+                title: "Apply Changes", busyTitle: "Applying Changes…",
+                isBusy: model.isApplying, isEnabled: model.canApply
+            ) {
                 Task {
                     if await model.apply(), let timeline = model.committedResponse?.timeline {
                         onApplied(timeline)
                     }
                 }
-            } label: {
-                Group {
-                    if model.isApplying {
-                        ProgressView()
-                    } else {
-                        Text("Apply Changes")
-                    }
-                }
-                .frame(maxWidth: .infinity)
             }
-            .emphasisProminentButton()
             .controlSize(.large)
-            .disabled(!model.canApply)
             .padding()
         }
         .background(.bar)

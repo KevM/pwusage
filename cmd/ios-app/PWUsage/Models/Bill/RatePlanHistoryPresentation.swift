@@ -66,6 +66,7 @@ enum RatePlanHistoryPresentation {
     static let noTitle = "No"
     static let changeTitle = "Change"
     static let saveTitle = "Save Rate Plans"
+    static let savingTitle = "Saving Rate Plans…"
     static let retryTitle = "Try Again"
     static let kindMatchesTeslaPill = "Matches your Tesla rate plan"
     static let hoursMatchTeslaPill = "Matches your Tesla plan"

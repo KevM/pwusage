@@ -30,22 +30,15 @@ struct RatePlanHistoryReviewView: View {
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Button {
+            ProminentActionButton(
+                title: RatePlanHistoryPresentation.saveTitle,
+                busyTitle: RatePlanHistoryPresentation.savingTitle,
+                isBusy: model.isSaving
+            ) {
                 Task { await model.save() }
-            } label: {
-                Group {
-                    if model.isSaving {
-                        ProgressView()
-                    } else {
-                        Text(RatePlanHistoryPresentation.saveTitle)
-                    }
-                }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
             }
-            .emphasisProminentButton()
+            .font(.headline)
             .controlSize(.large)
-            .disabled(model.isSaving)
         }
     }
 
