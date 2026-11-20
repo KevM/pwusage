@@ -1,8 +1,9 @@
 # Uploading a rate plan to Tesla: probe findings
 
-Research, not a feature. We wanted to know whether PWUsage could write its own,
-more precise rate plan (5 decimal places) to a Powerwall. Today the sync is
-one way: Tesla → app (`refresh-tariffs`). Nothing writes a plan back.
+Research behind Sync to Tesla, now built (see [Built: Sync to Tesla](#built-sync-to-tesla)).
+We wanted to know whether PWUsage could write its own, more precise rate plan (5 decimal
+places) to a Powerwall. At the time the sync was one way: Tesla → app (`refresh-tariffs`).
+Nothing wrote a plan back.
 
 ## What we found (2026-11-12, one real Powerwall)
 
@@ -50,20 +51,27 @@ From Tesla's docs for this endpoint:
 
 It saves the original tariff to a JSON file in the temp directory before writing. It nudges
 one in-use buy rate (never the unpriced `ALL` placeholder or a zero rate) by 0.00001.
+With `--restore`, the original goes back in a `finally` block, so it is restored even when
+the write or a verification read throws. A failed restore prints the backup file's path.
 
 Run it against a site whose tokens the local environment can decrypt:
 `TOKEN_ENCRYPTION_KEYS` and `TOKEN_FINGERPRINT_KEY` must match the deployment that stored
 the tokens, and `DATABASE_URL` must be the Dev database (Prod tokens are single use; do
 not run the probe against Prod).
 
-## If we build it
+## Built: Sync to Tesla
 
-`TeslaClient.setTimeOfUseSettings` already exists and nothing calls it. A "Send to Tesla"
-feature would need, at least:
+Built as [Sync to Tesla](superpowers/specs/2026-11-19-sync-rate-plan-to-tesla-design.md)
+([plan](superpowers/plans/2026-11-19-sync-rate-plan-to-tesla.md)). How each need from the
+probe was met:
 
-- Explicit confirmation showing what changes on the user's real device.
-- A way to undo it (keep the pre-upload tariff).
-- A decision on how Tesla's own sync should treat our upload (it would otherwise see our
-  plan as "Tesla's plan"; see `DesignDecisions.md` on append-only tariff versioning).
-- The `energy_cmds` scope for every user, with a re-consent path when it is missing.
-- Tesla's validation rules above applied before sending (coverage, no negative rates).
+- **Explicit confirmation:** the press shows Tesla's current plan beside the plan to send,
+  with its source and Tesla's own adjustments, behind one confirm button.
+- **Undo:** the saved Tesla original stays put. Our upload is imported as the latest Tesla
+  plan only, so Restore Original Tesla Rate Plan still finds the pre-upload plan.
+- **Tesla's sync and our upload:** the import records our upload as the latest Tesla plan
+  only; it never replaces the saved original.
+- **Permission:** each press uses the pressing member's own Tesla token and site ID. A
+  missing command right or scope shows **Reconnect Tesla**.
+- **Validation before sending:** Tesla's coverage and rate rules are checked first. A buy
+  rate below its sell rate and a negative rate are shown as Tesla's adjustments, not refused.

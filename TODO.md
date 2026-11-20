@@ -6,13 +6,16 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
-## Send a custom rate plan to Tesla (2026-11-12)
+## Sync to Tesla follow-ups (2026-11-20, branch `claude/tesla-tou-write-probe`)
 
-- [ ] **Plan a "Send to Tesla" feature:** the probe showed Tesla accepts and keeps 5-decimal rates through `time_of_use_settings` (findings and open questions in [docs/tesla-tou-write-probe.md](docs/tesla-tou-write-probe.md)). Nothing in the app writes a plan to Tesla yet; `TeslaClient.setTimeOfUseSettings` is unused. Needs a confirmation step, an undo, a decision on how Tesla sync treats our upload, and the `energy_cmds` scope for every user. Still unknown: whether the Tesla app shows more than two decimals and whether the Powerwall uses the extra digits.
+Spec: [docs/superpowers/specs/2026-11-19-sync-rate-plan-to-tesla-design.md](docs/superpowers/specs/2026-11-19-sync-rate-plan-to-tesla-design.md). Probe notes: [docs/tesla-tou-write-probe.md](docs/tesla-tou-write-probe.md).
+
+- [ ] **Web UI for Sync to Tesla:** add it alongside the web rate-plan editor, under [Web: rate plan backfill and overrides](#web-rate-plan-backfill-and-overrides-2026-11-17). The spec leaves web out of this phase.
+- [ ] **Live check on a Dev-linked site (Harrison), before release:** not yet done. The local Dev environment could not be confirmed as the Dev database (no dev marker), so no write was made. Send a one-rate change, expect "confirmed" and the banner cleared, then Restore Original Tesla Rate Plan, sync again, and confirm with the probe's read-only run that Tesla holds the original.
+- [ ] **Settle unconfirmed sends without a person:** PWUsage has no scheduled tariff import, so an unconfirmed send settles only when the app pulls Tesla's plan (opening the rate plan screen, or Check Tesla). Consider a light scheduled check if unconfirmed sends linger.
 
 ## Rate plan selection follow-ups (2026-11-17, branch `feat/rate-plan-selection`)
 
-- [ ] **Publish a verified plan to the Powerwall:** out of scope for selection. Needs Tesla API research and its own design: fresh authorization, an explicit confirmation of how Powerwall behavior changes, exact verified-content checks, readback, uncertain results and recovery. A verified plan is never authorization to send a Tesla command. See the [design](docs/plans/2026-11-17-rate-plan-selection-design.md#follow-up-update-the-powerwall).
 - [ ] **Review fixed comparison plan changes on iOS:** `FixedRatePlanForm` still saves reference plans directly. Route it through the reviewed selection flow (`scope: reference`, `RatePlanChangeModel`/`RatePlanReviewModel`), as the actual plan does.
 - [ ] **Review date-only edits and deletes on iOS:** "Edit Dates" and "Delete" on plan cards still call the legacy PATCH/DELETE routes without a review. The reviewed editor can't shorten a plan (a selection keeps coverage outside its range), so it sends owners to Edit Dates; a reviewed shortening needs the server to accept the edited period as the replacement target.
 - [ ] **Record when Tesla was last read:** the mismatch banner can only say when the Tesla plan was last *saved* (`Tariff.updated`); an unchanged sync records nothing. A last-checked time would let it say how fresh the comparison is.
