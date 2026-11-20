@@ -16,7 +16,7 @@ jobs:
   testflight:
     name: Test, archive and upload
     runs-on: xcode-27
-    timeout-minutes: 60
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: cmd/ios-app
@@ -45,7 +45,8 @@ jobs:
         run: ./run-tests.sh --full
         env:
           TMPDIR: /tmp
-          PWUSAGE_TEST_TIMEOUT_SECONDS: 1800
+          # Xcode 27 roughly doubles the -O test build (~27 min vs ~14 on 26.6) and the cap includes it.
+          PWUSAGE_TEST_TIMEOUT_SECONDS: 2700
       - name: Trust GitHub signing repository host
         run: |
           mkdir -p ~/.ssh
