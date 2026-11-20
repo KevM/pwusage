@@ -42,7 +42,8 @@ export type TeslaSyncUnavailableReason =
   | 'no_difference'
   | 'not_tou_capable'
   | 'no_tesla_plan'
-  | 'needs_reauth';
+  | 'needs_reauth'
+  | 'tesla_unavailable';
 
 const UNAVAILABLE_COPY: Record<TeslaSyncUnavailableReason, string> = {
   no_active_plan: 'No rate plan covers today, so there is nothing to send.',
@@ -50,6 +51,7 @@ const UNAVAILABLE_COPY: Record<TeslaSyncUnavailableReason, string> = {
   not_tou_capable: "This Powerwall can't use time-of-use rates, so there is nothing to sync.",
   no_tesla_plan: 'Tesla has no rate plan to update yet.',
   needs_reauth: 'Reconnect Tesla to sync this plan.',
+  tesla_unavailable: 'Tesla is unavailable right now. Nothing changed on the Powerwall.',
 };
 
 const CONFIRMED_COPY = 'Tesla now has this plan.';
@@ -161,6 +163,22 @@ interface PreparedSync {
   currency: string;
 }
 
+/**
+ * A Tesla read that failed for a reason other than auth or a 4xx rejection (server error, network,
+ * rate limit) means Tesla is unavailable. Nothing was written, so that is reported as such, not thrown.
+ */
+async function readTeslaSite(client: TeslaClient, siteId: string): Promise<EnergySiteInfo> {
+  try {
+    return await client.getEnergySiteInfo(siteId);
+  } catch (error) {
+    if (error instanceof TeslaAuthError || isTeslaAuthError(error) || isTeslaConnectionRequired(error) || teslaRejectionMessage(error) !== null) {
+      throw error;
+    }
+    console.error(`[TeslaSync] Tesla read for site ${siteId} failed`, error);
+    throw new TeslaSyncUnavailableError('tesla_unavailable');
+  }
+}
+
 /** Reads the site's active plan and Tesla's current content (no lock, no write). */
 async function prepare(siteId: string, client: TeslaClient, d: ResolvedDeps): Promise<PreparedSync> {
   const site = await d.repo.getSiteUtilityContext(siteId);
@@ -169,7 +187,7 @@ async function prepare(siteId: string, client: TeslaClient, d: ResolvedDeps): Pr
   const plan = await d.repo.loadActiveActualPlan(siteId, today);
   if (!plan) throw new TeslaSyncUnavailableError('no_active_plan');
 
-  const info = await client.getEnergySiteInfo(siteId);
+  const info = await readTeslaSite(client, siteId);
   if (!info.components?.tou_capable) throw new TeslaSyncUnavailableError('not_tou_capable');
   if (!info.tariff_content_v2) throw new TeslaSyncUnavailableError('no_tesla_plan');
 
@@ -396,7 +414,9 @@ export async function commitTeslaSync(
     prep = await prepare(siteId, client, d);
   } catch (error) {
     if (error instanceof TeslaSyncUnavailableError) {
-      return { outcome: error.reason === 'needs_reauth' ? 'needs_reauth' : 'unavailable', message: error.message };
+      if (error.reason === 'needs_reauth') return { outcome: 'needs_reauth', message: error.message };
+      if (error.reason === 'tesla_unavailable') return { outcome: 'failed', message: error.message };
+      return { outcome: 'unavailable', message: error.message };
     }
     // Only Tesla's own errors become outcomes; anything else (database, programming) is a 500.
     if (!isTeslaError(error)) throw error;

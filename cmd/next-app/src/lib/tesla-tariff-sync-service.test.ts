@@ -415,6 +415,55 @@ describe('commitTeslaSync', () => {
     expect(h.client.setTimeOfUseSettings).not.toHaveBeenCalled();
   });
 
+  it('reports Tesla unavailable, with nothing changed, when the read before the write fails', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    h.client.getEnergySiteInfo.mockRejectedValueOnce(new Error('socket hang up'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('failed');
+    expect(result.message).toBe('Tesla is unavailable right now. Nothing changed on the Powerwall.');
+    expect(h.client.setTimeOfUseSettings).not.toHaveBeenCalled();
+    expect(h.syncRepo.beginAttempt).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('reports Tesla unavailable for a 5xx from the read before the write', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    h.client.getEnergySiteInfo.mockRejectedValueOnce(new Error('Tesla API Error: 503 busy'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('failed');
+    expect(h.client.setTimeOfUseSettings).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('still maps an auth failure from the read before the write to needs_reauth', async () => {
+    const h = harness();
+    const fingerprint = await previewFingerprint(h);
+    h.client.getEnergySiteInfo.mockRejectedValueOnce(new TeslaAuthError('Tesla API Error: 401 expired', 401));
+
+    const result = await commitTeslaSync('s1', 'u1', fingerprint, h.deps);
+
+    expect(result.outcome).toBe('needs_reauth');
+  });
+
+  it('throws tesla_unavailable from preview when the Tesla read fails with a server error', async () => {
+    const h = harness();
+    h.client.getEnergySiteInfo.mockRejectedValueOnce(new Error('Tesla API Error: 500 oops'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await reasonOf(previewTeslaSync('s1', 'u1', h.deps))).toBe('tesla_unavailable');
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it('still returns confirmed when recording the outcome fails after a real write', async () => {
     const h = harness();
     const fingerprint = await previewFingerprint(h);
