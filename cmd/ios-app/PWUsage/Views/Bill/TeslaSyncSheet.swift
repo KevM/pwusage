@@ -51,7 +51,7 @@ struct TeslaSyncSheet: View {
         case .failed(let message):
             EmptyStateScreen(
                 symbol: "exclamationmark.triangle",
-                title: "Couldn’t sync to Tesla",
+                title: "Couldn't sync to Tesla",
                 message: message,
                 actionTitle: "Try Again"
             ) {

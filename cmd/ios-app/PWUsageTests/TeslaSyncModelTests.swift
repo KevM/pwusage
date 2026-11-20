@@ -244,3 +244,66 @@ struct TeslaSyncModelTests {
        "syncUnavailableReason": null, "lastSync": null}}
     """
 }
+
+@Suite("Sync to Tesla fixed copy")
+struct TeslaSyncCopyTests {
+    @Test("Each commit outcome shows its fixed copy, or the server's message where the copy allows one")
+    func resultMessages() {
+        let couldNotReach = "Couldn't reach Tesla. Nothing changed on your Powerwall."
+        #expect(TeslaSyncCopy.resultMessage("confirmed", message: nil) == "Tesla now has this plan.")
+        #expect(TeslaSyncCopy.resultMessage("unconfirmed", message: "ignored")
+            == "Sent to Tesla. It hasn't confirmed yet; PWUsage will check again.")
+        #expect(TeslaSyncCopy.resultMessage("rejected", message: "Battery mode is locked")
+            == "Tesla didn't accept this plan: Battery mode is locked. Nothing changed on your Powerwall.")
+        #expect(TeslaSyncCopy.resultMessage("rejected", message: "Battery mode is locked.")
+            == "Tesla didn't accept this plan: Battery mode is locked. Nothing changed on your Powerwall.")
+        #expect(TeslaSyncCopy.resultMessage("rejected", message: nil)
+            == "Tesla didn't accept this plan. Nothing changed on your Powerwall.")
+        #expect(TeslaSyncCopy.resultMessage("not_allowed", message: nil)
+            == "Tesla didn't allow this account to change the Powerwall's rate plan. Nothing changed.")
+        #expect(TeslaSyncCopy.resultMessage("in_flight", message: nil) == "Already sending this plan to Tesla.")
+        #expect(TeslaSyncCopy.resultMessage("failed", message: nil) == couldNotReach)
+        #expect(TeslaSyncCopy.resultMessage("failed", message: "Sync to Tesla didn't finish. Try again in a moment.")
+            == "Sync to Tesla didn't finish. Try again in a moment.")
+        #expect(TeslaSyncCopy.resultMessage("unavailable", message: nil) == couldNotReach)
+        #expect(TeslaSyncCopy.resultMessage("unavailable", message: "Tesla is unavailable right now.")
+            == "Tesla is unavailable right now.")
+        #expect(TeslaSyncCopy.resultMessage("needs_reauth", message: nil) == "Reconnect Tesla to sync this plan.")
+        #expect(TeslaSyncCopy.resultMessage("needs_reauth", message: "Reconnect Tesla to sync this plan.")
+            == "Reconnect Tesla to sync this plan.")
+        #expect(TeslaSyncCopy.resultMessage("conflict", message: nil)
+            == "Tesla or your rate plan changed since you reviewed it. Review the plan again before syncing.")
+    }
+
+    @Test("A raised buy rate reads as raised to the export rate, with the period name and currency")
+    func raisedToSellLine() {
+        let adjustment = TeslaSyncAdjustmentDTO(
+            season: "All year", period: .onPeak, side: "buy", from: 0.2, stored: 0.25, reason: "raised_to_sell"
+        )
+        #expect(TeslaSyncCopy.adjustmentLine(adjustment, currency: "USD")
+            == "Tesla will store Peak buy as $0.25 (raised to match the $0.25 export rate).")
+    }
+
+    @Test("A negative buy rate reads as zero, named by its buy side")
+    func negativeBuyLine() {
+        let adjustment = TeslaSyncAdjustmentDTO(
+            season: "Winter", period: .offPeak, side: "buy", from: -0.02, stored: 0, reason: "negative_to_zero"
+        )
+        #expect(TeslaSyncCopy.adjustmentLine(adjustment, currency: "USD")
+            == "Tesla will store Off-Peak buy as $0.00 (negative prices become zero).")
+    }
+
+    @Test("A negative export rate reads as zero, named export, with a five-decimal rate kept")
+    func negativeSellLine() {
+        let adjustment = TeslaSyncAdjustmentDTO(
+            season: "Winter", period: .superOffPeak, side: "sell", from: -0.00001, stored: 0, reason: "negative_to_zero"
+        )
+        #expect(TeslaSyncCopy.adjustmentLine(adjustment, currency: "USD")
+            == "Tesla will store Super Off-Peak export as $0.00 (negative prices become zero).")
+        let precise = TeslaSyncAdjustmentDTO(
+            season: "Winter", period: .partialPeak, side: "buy", from: 0.1, stored: 0.12345, reason: "raised_to_sell"
+        )
+        #expect(TeslaSyncCopy.adjustmentLine(precise, currency: "USD")
+            == "Tesla will store Mid-Peak buy as $0.12345 (raised to match the $0.12345 export rate).")
+    }
+}
