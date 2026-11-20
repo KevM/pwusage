@@ -181,27 +181,41 @@ describe.skipIf(!safeActivityTestSocket)('Tesla tariff sync attempts (postgres)'
     expect(latest?.finishedAt).toMatch(/Z$/);
   });
 
-  it('settleUnconfirmed marks unconfirmed attempts confirmed when the read-back matches', async () => {
+  it('listUnconfirmed returns only this site\'s unconfirmed attempts, oldest first, with what was sent', async () => {
+    await database.query(`INSERT INTO "Site" (id, user_id, timezone) VALUES ('s3', 'u1', 'America/Chicago'), ('s4', 'u1', 'America/Chicago')`);
     await database.query(
       `INSERT INTO "TeslaTariffSyncAttempt" (site_id, user_id, fingerprint, sent_content, status, created_at)
-       VALUES ('s1', 'u1', 'fp-u', '{}', 'unconfirmed', now() - interval '1 minute')`,
+       VALUES ('s3', 'u1', 'fp-late', '{"name":"B"}', 'unconfirmed', now() - interval '1 minute'),
+              ('s3', 'u1', 'fp-early', '{"name":"A"}', 'unconfirmed', now() - interval '3 minutes'),
+              ('s3', 'u1', 'fp-done', '{"name":"C"}', 'confirmed', now() - interval '2 minutes'),
+              ('s4', 'u1', 'fp-other', '{"name":"D"}', 'unconfirmed', now() - interval '2 minutes')`,
     );
 
-    await repo.settleUnconfirmed('s1', true);
+    const listed = await repo.listUnconfirmed('s3');
 
-    const latest = await repo.latestForSite('s1');
-    expect(latest).toMatchObject({ status: 'confirmed' });
-    expect(latest?.finishedAt).not.toBeNull();
+    expect(listed.map(attempt => attempt.sentContent)).toEqual([{ name: 'A' }, { name: 'B' }]);
+    expect(listed.every(attempt => attempt.siteId === 's3' && attempt.status === 'unconfirmed')).toBe(true);
   });
 
-  it('settleUnconfirmed leaves unconfirmed attempts unchanged when the read-back does not match', async () => {
-    await database.query(
+  it('confirmUnconfirmed confirms one unconfirmed attempt by id and leaves every other row alone', async () => {
+    await database.query(`INSERT INTO "Site" (id, user_id, timezone) VALUES ('s5', 'u1', 'America/Chicago') ON CONFLICT (id) DO NOTHING`);
+    const inserted = await database.query<{ id: string; fingerprint: string }>(
       `INSERT INTO "TeslaTariffSyncAttempt" (site_id, user_id, fingerprint, sent_content, status, created_at)
-       VALUES ('s1', 'u1', 'fp-u', '{}', 'unconfirmed', now() - interval '1 minute')`,
+       VALUES ('s5', 'u1', 'fp-match', '{}', 'unconfirmed', now() - interval '2 minutes'),
+              ('s5', 'u1', 'fp-other', '{}', 'unconfirmed', now() - interval '1 minute'),
+              ('s5', 'u1', 'fp-sending', '{}', 'sending', now())
+       RETURNING id, fingerprint`,
     );
+    const idFor = (fingerprint: string): number => Number(inserted.rows.find(r => r.fingerprint === fingerprint)?.id);
+    const sendingId = idFor('fp-sending');
 
-    await repo.settleUnconfirmed('s1', false);
+    expect(await repo.confirmUnconfirmed(idFor('fp-match'))).toBe(true);
+    expect(await repo.confirmUnconfirmed(sendingId)).toBe(false);
+    expect(await repo.confirmUnconfirmed(999999)).toBe(false);
 
-    expect(await repo.latestForSite('s1')).toMatchObject({ status: 'unconfirmed', finishedAt: null });
+    const remaining = await repo.listUnconfirmed('s5');
+    expect(remaining.map(attempt => attempt.fingerprint)).toEqual(['fp-other']);
+    const statuses = await database.query<{ status: string }>(`SELECT status FROM "TeslaTariffSyncAttempt" WHERE site_id = 's5' ORDER BY id`);
+    expect(statuses.rows.map(r => r.status)).toEqual(['confirmed', 'unconfirmed', 'sending']);
   });
 });

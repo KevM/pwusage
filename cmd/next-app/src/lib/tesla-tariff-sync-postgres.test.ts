@@ -142,7 +142,7 @@ describe.skipIf(!safeActivityTestSocket)('Sync to Tesla keeps the active plan an
     expect(await repo.loadActiveActualPlan(SITE, TODAY)).toEqual(activeBefore);
   });
 
-  it('settleUnconfirmed confirms an unconfirmed attempt once the stored plans match', async () => {
+  it('listUnconfirmed and confirmUnconfirmed settle one unconfirmed attempt by id', async () => {
     const syncRepo = new TeslaTariffSyncRepo(local.database);
     const client = await local.database.connect();
     let attemptId: number;
@@ -165,10 +165,11 @@ describe.skipIf(!safeActivityTestSocket)('Sync to Tesla keeps the active plan an
     await syncRepo.finishAttempt(attemptId, 'unconfirmed', { read: 'old plan' });
     expect((await syncRepo.latestForSite(SITE))?.status).toBe('unconfirmed');
 
-    await syncRepo.settleUnconfirmed(SITE, false);
-    expect((await syncRepo.latestForSite(SITE))?.status).toBe('unconfirmed');
+    expect((await syncRepo.listUnconfirmed(SITE)).map(attempt => attempt.id)).toEqual([attemptId]);
 
-    await syncRepo.settleUnconfirmed(SITE, true);
+    expect(await syncRepo.confirmUnconfirmed(attemptId)).toBe(true);
     expect((await syncRepo.latestForSite(SITE))?.status).toBe('confirmed');
+    expect(await syncRepo.listUnconfirmed(SITE)).toEqual([]);
+    expect(await syncRepo.confirmUnconfirmed(attemptId)).toBe(false);
   });
 });

@@ -136,15 +136,26 @@ export class TeslaTariffSyncRepo {
     return rows[0] ? toAttempt(rows[0]) : null;
   }
 
-  /** After a read-back: unconfirmed attempts become confirmed when Tesla now stores the plan. */
-  async settleUnconfirmed(siteId: string, matches: boolean): Promise<void> {
-    if (!matches) return;
-    await this.db.query(
-      `UPDATE "TeslaTariffSyncAttempt"
-          SET status = 'confirmed', finished_at = COALESCE(finished_at, clock_timestamp())
-        WHERE site_id = $1 AND status = 'unconfirmed'`,
+  /** The site's attempts still awaiting a read-back, oldest first. */
+  async listUnconfirmed(siteId: string): Promise<TeslaSyncAttempt[]> {
+    const { rows } = await this.db.query<AttemptRow>(
+      `SELECT ${ATTEMPT_COLUMNS} FROM "TeslaTariffSyncAttempt"
+        WHERE site_id = $1 AND status = 'unconfirmed'
+        ORDER BY created_at ASC, id ASC`,
       [siteId],
     );
+    return rows.map(toAttempt);
+  }
+
+  /** Confirms one unconfirmed attempt once its sent plan is read back from Tesla. Returns false when it was not unconfirmed. */
+  async confirmUnconfirmed(id: number): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE "TeslaTariffSyncAttempt"
+          SET status = 'confirmed', finished_at = COALESCE(finished_at, clock_timestamp())
+        WHERE id = $1 AND status = 'unconfirmed'`,
+      [id],
+    );
+    return result.rowCount === 1;
   }
 
   private async findInFlight(client: Pick<PoolClient, 'query'>, siteId: string): Promise<TeslaSyncAttempt | null> {
