@@ -160,6 +160,7 @@ struct RatePlanHistoryPresentationTests {
         #expect(RatePlanHistoryPresentation.reviewFooter
             == "Priced from public utility rates. You can edit them in Rate Plans.")
         #expect(RatePlanHistoryPresentation.saveTitle == "Save Rate Plans")
+        #expect(RatePlanHistoryPresentation.savingTitle == "Saving Rate Plans…")
     }
 
     @Test func errorMessages() {

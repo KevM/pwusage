@@ -33,9 +33,11 @@ struct RatePlanHistoryReviewView: View {
             Button {
                 Task { await model.save() }
             } label: {
-                Group {
+                HStack(spacing: 10) {
                     if model.isSaving {
                         ProgressView()
+                            .tint(Color.onEmphasis)
+                        Text(RatePlanHistoryPresentation.savingTitle)
                     } else {
                         Text(RatePlanHistoryPresentation.saveTitle)
                     }
@@ -45,7 +47,8 @@ struct RatePlanHistoryReviewView: View {
             }
             .emphasisProminentButton()
             .controlSize(.large)
-            .disabled(model.isSaving)
+            // Not `.disabled`: that greys the button and hides the spinner. `save()` ignores repeat taps.
+            .allowsHitTesting(!model.isSaving)
         }
     }
 
