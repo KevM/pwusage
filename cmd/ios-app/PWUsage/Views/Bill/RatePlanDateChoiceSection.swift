@@ -8,18 +8,18 @@ struct RatePlanDateChoiceSection: View {
     let timeZone: TimeZone
     var footer: String = "Use the dates on your utility bill. You can choose a date in the past."
 
-    private enum EndKind: Hashable { case ongoing, date }
+    private enum EndChoice: Hashable { case unset, ongoing, date }
     @State private var wantsEndDate = false
 
     var body: some View {
         Section {
             OptionalRatePlanDateField(title: "Starts", date: $start, boundary: .first, timeZone: timeZone)
-            Picker("Ends", selection: endKind) {
-                Text("Choose").tag(EndKind?.none)
-                Text("Ongoing").tag(EndKind?.some(.ongoing))
-                Text("On a Date").tag(EndKind?.some(.date))
+            Picker("Ends", selection: endChoice) {
+                Text("Choose").tag(EndChoice.unset)
+                Text("Ongoing").tag(EndChoice.ongoing)
+                Text("On a Date").tag(EndChoice.date)
             }
-            if endKind.wrappedValue == .date {
+            if endChoice.wrappedValue == .date {
                 OptionalRatePlanDateField(title: "End Date", date: endDate, boundary: .last, timeZone: timeZone)
             }
         } header: {
@@ -29,21 +29,21 @@ struct RatePlanDateChoiceSection: View {
         }
     }
 
-    private var endKind: Binding<EndKind?> {
+    private var endChoice: Binding<EndChoice> {
         Binding(
             get: {
                 switch end {
                 case .ongoing: .ongoing
                 case .endsOn: .date
-                case nil: wantsEndDate ? .date : nil
+                case nil: wantsEndDate ? .date : .unset
                 }
             },
-            set: { kind in
-                wantsEndDate = kind == .date
-                switch kind {
+            set: { choice in
+                wantsEndDate = choice == .date
+                switch choice {
                 case .ongoing: end = .ongoing
                 case .date: if case .endsOn = end {} else { end = nil }
-                case nil: end = nil
+                case .unset: end = nil
                 }
             }
         )
@@ -75,14 +75,23 @@ struct OptionalRatePlanDateField: View {
                 timeZone: timeZone
             )
         } else if isChoosing {
+            LabeledContent(title) {
+                Text("Tap Use to confirm")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             DatePicker(title, selection: $candidate, displayedComponents: .date)
                 .datePickerStyle(.graphical)
                 .environment(\.timeZone, timeZone)
-            Button("Use \(RatePlanTimelineFormatting.displayDate(candidateDay))") {
+            Button {
                 date = candidate
                 isChoosing = false
+            } label: {
+                Text("Use \(RatePlanTimelineFormatting.displayDate(candidateDay))")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
             }
-            .fontWeight(.semibold)
+            .emphasisProminentButton()
         } else {
             LabeledContent(title) {
                 Button("Choose Date") { isChoosing = true }

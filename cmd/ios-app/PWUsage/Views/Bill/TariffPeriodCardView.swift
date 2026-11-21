@@ -59,8 +59,17 @@ struct TariffPeriodCardView: View {
     /// At accessibility text sizes, rows stack so labels and badges wrap at word boundaries.
     private var isStacked: Bool { dynamicTypeSize.isAccessibilitySize }
 
+    /// Stack the card header earlier so long plan names don't clip beside badges at large Dynamic Type.
+    private var stacksHeader: Bool { dynamicTypeSize >= .xxLarge }
+
     private func rowLayout(spacing: CGFloat) -> AnyLayout {
         isStacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing / 2))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: spacing))
+    }
+
+    private func headerLayout(spacing: CGFloat) -> AnyLayout {
+        stacksHeader
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing / 2))
             : AnyLayout(HStackLayout(alignment: .center, spacing: spacing))
     }
@@ -80,16 +89,17 @@ struct TariffPeriodCardView: View {
     }
 
     private var headerRow: some View {
-        rowLayout(spacing: 8).callAsFunction {
+        headerLayout(spacing: 8).callAsFunction {
             Text(period.name)
                 .font(.headline)
-                .lineLimit(isStacked ? nil : 2)
-            if !isStacked {
+                .lineLimit(stacksHeader ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            if !stacksHeader {
                 Spacer(minLength: 8)
             }
             HStack(alignment: .top, spacing: 8) {
                 badgeLayout.callAsFunction { badges }
-                if isStacked {
+                if stacksHeader {
                     Spacer(minLength: 8)
                 }
                 actionsMenu
@@ -187,6 +197,9 @@ struct TariffPeriodCardView: View {
 
     private var metadataLine: String {
         let range = RatePlanTimelineFormatting.displayRange(from: period.effectiveFrom, to: period.effectiveTo)
+        if period.choiceKind != nil || period.verification != nil {
+            return range
+        }
         if period.candidateKind == .aiHandoff {
             return "\(range) · Imported with AI assistant"
         }

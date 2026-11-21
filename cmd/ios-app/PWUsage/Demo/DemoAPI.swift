@@ -14,7 +14,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
     /// `sourceLifetime` old. Two minutes back: minute timelines render with the
     /// minute's start, so a source inside it would read as in the future.
     private(set) var launchedAt: Date
-    private let now: () -> Date
+    let now: () -> Date
     private var hold: BatteryHold?
     private var nextHoldID = 1
     private var demoTimeline: SiteTariffsTimelineResponse?
