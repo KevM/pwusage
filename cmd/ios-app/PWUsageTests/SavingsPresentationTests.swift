@@ -109,6 +109,44 @@ struct SavingsPresentationTests {
         #expect(FixedRatePlanDraft.makePatchRequest(request).effectiveTo == .unchanged)
     }
 
+    @Test("FixedRatePlanDraft builds a reference-scope selection request and preserves end date")
+    func fixedRatePlanSelectionRequest() throws {
+        let zone = try #require(TimeZone(identifier: "America/Chicago"))
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = zone
+        let startsOn = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: 1)))
+
+        let ongoing = FixedRatePlanDraft.makeSelectionRequest(
+            name: "  ",
+            buyRate: 0.25,
+            sellRate: 0.05,
+            startsOn: startsOn,
+            timeZone: zone
+        )
+        #expect(ongoing.scope == .reference)
+        #expect(ongoing.effectiveFrom == "2026-03-01")
+        #expect(ongoing.effectiveTo == nil)
+        guard case .manual(let name, let seasons) = ongoing.candidate else {
+            Issue.record("Expected manual candidate")
+            return
+        }
+        #expect(name == "Fixed Rate Plan")
+        #expect(seasons.count == 1)
+        #expect(seasons.first?.weekdayPeriods.first?.buyRate == 0.25)
+        #expect(seasons.first?.weekdayPeriods.first?.sellRate == 0.05)
+
+        let bounded = FixedRatePlanDraft.makeSelectionRequest(
+            name: "Summer Fixed",
+            buyRate: 0.30,
+            sellRate: 0.02,
+            startsOn: startsOn,
+            effectiveTo: "2026-06-30",
+            timeZone: zone
+        )
+        #expect(bounded.scope == .reference)
+        #expect(bounded.effectiveTo == "2026-06-30")
+    }
+
     @Test("FixedRatePlanDraft formats and parses rates using the given locale")
     func fixedRatePlanDraftLocaleRates() {
         let german = Locale(identifier: "de_DE")
