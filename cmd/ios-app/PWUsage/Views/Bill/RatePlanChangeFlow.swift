@@ -51,11 +51,16 @@ struct RatePlanChangeFlow: View {
     }
 
     var body: some View {
+        @Bindable var bindableModel = model
         NavigationStack(path: $path) {
             Form {
                 introSection
-                RatePlanDateChoiceSection(start: $model.start, end: $model.end, timeZone: model.timeZone)
-                if let problem = model.datesProblem, model.start != nil {
+                RatePlanDateChoiceSection(
+                    start: $bindableModel.start,
+                    end: $bindableModel.end,
+                    timeZone: model.timeZone
+                )
+                if let problem = model.datesProblem, model.start != nil || model.end != nil {
                     Section { Text(problem).foregroundStyle(.red) }
                 }
                 choiceSection
@@ -124,6 +129,10 @@ struct RatePlanChangeFlow: View {
                     if model.startReview() != nil { path = [.review] }
                 }
                 .disabled(model.dates == nil)
+            } footer: {
+                if let problem = model.datesProblem {
+                    Text(problem)
+                }
             }
         }
     }

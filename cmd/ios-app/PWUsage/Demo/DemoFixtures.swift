@@ -27,7 +27,7 @@ enum DemoFixtures {
         }
     }
 
-    private struct Rate {
+    struct Rate {
         let name: String
         let buy: Double
         let sell: Double
@@ -51,8 +51,8 @@ enum DemoFixtures {
         var cost: Double { onPeak * DemoFixtures.onPeak.buy + offPeak * DemoFixtures.offPeak.buy }
     }
 
-    private static let onPeak = Rate(name: "On-peak", buy: 0.31, sell: 0.04)
-    private static let offPeak = Rate(name: "Off-peak", buy: 0.10, sell: 0.03)
+    static let onPeak = Rate(name: "On-peak", buy: 0.31, sell: 0.04)
+    static let offPeak = Rate(name: "Off-peak", buy: 0.10, sell: 0.03)
     /// Net grid import per whole day of the cycle. Both periods are net buyers,
     /// as a winter home is, so each period's marginal cost is its buy rate.
     /// The banks stay small (about 60 and 175 kWh owed) so a day's solar and

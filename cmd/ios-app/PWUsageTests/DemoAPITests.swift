@@ -95,4 +95,28 @@ struct DemoAPITests {
         #expect(hold.mode == .auto)
         #expect(hold.safetyExpiresAt == clock.now.addingTimeInterval(8 * 3600))
     }
+
+    @Test("AI handoff exports a valid demo sample prompt and rejects imports cleanly")
+    func aiHandoffExportsDemoPromptAndRejectsImport() async throws {
+        let api = api
+        let exported = try await api.exportRatePlanAiHandoff(siteID: DemoFixtures.site.id)
+        #expect(exported.markdown.contains("Demo Mode Sample"))
+        #expect(exported.markdown.contains(DemoFixtures.demoUtilityName))
+        #expect(exported.filename.hasPrefix("pwusage-demo-rate-plans-"))
+
+        let extracted = RatePlanAiHandoffModel.extractValidatedJSON(from: exported.markdown)
+        guard case .success(let json) = extracted else {
+            Issue.record("Expected valid handoff JSON in demo export")
+            return
+        }
+        #expect(json.contains(RatePlanAiHandoffModel.expectedSchema))
+
+        do {
+            _ = try await api.previewRatePlanAiHandoff(siteID: DemoFixtures.site.id, rawInput: json)
+            Issue.record("Expected demo AI import preview to reject")
+        } catch PWUsageAPIError.requestRejected(let statusCode, let message) {
+            #expect(statusCode == 403)
+            #expect(message?.contains("demo") == true)
+        }
+    }
 }
