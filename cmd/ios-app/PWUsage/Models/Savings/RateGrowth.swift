@@ -16,15 +16,20 @@ struct RateGrowth: Equatable, Sendable {
     private static let windowDays = 365
     private static let sampleMinute = 30
 
-    /// Compares the mean hourly buy rate of the last 365 days with the 365 days starting at `firstDay`.
-    /// Hours the actual timeline does not cover are skipped. Returns `.typical` when the windows are less
-    /// than two years apart or either window has no known hours.
+    /// Compares the mean hourly buy rate of the last 365 days with the 365 days starting at the first
+    /// strictly covered day on or after `firstDay`. Hours the actual timeline does not cover are skipped.
+    /// Returns `.typical` when the windows are less than two years apart or either window has no known hours.
     static func measure(actual: RatePeriodResolver, firstDay: Date, now: Date) -> RateGrowth {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = actual.siteTimeZone
-        let firstStart = calendar.startOfDay(for: firstDay)
         let nowDay = calendar.startOfDay(for: now)
         guard let lastStart = calendar.date(byAdding: .day, value: 1 - windowDays, to: nowDay),
+              let firstStart = firstCoveredDay(
+                  actual: actual,
+                  from: calendar.startOfDay(for: firstDay),
+                  before: lastStart,
+                  calendar: calendar
+              ),
               let days = calendar.dateComponents([.day], from: firstStart, to: lastStart).day else {
             return .typical
         }
@@ -39,8 +44,41 @@ struct RateGrowth: Equatable, Sendable {
         return RateGrowth(
             annualRate: min(max(compound, 0), maximumAnnualRate),
             isMeasured: true,
-            measuredSince: RatePlanTimelineFormatting.formatYMD(firstDay, in: actual.siteTimeZone)
+            measuredSince: RatePlanTimelineFormatting.formatYMD(firstStart, in: actual.siteTimeZone)
         )
+    }
+
+    private static func firstCoveredDay(
+        actual: RatePeriodResolver,
+        from startDay: Date,
+        before endDay: Date,
+        calendar: Calendar
+    ) -> Date? {
+        var day = startDay
+        if let earliest = actual.earliestEffectiveFrom,
+           let parsed = RatePlanTimelineFormatting.parseYMD(earliest, in: calendar.timeZone) {
+            day = max(day, calendar.startOfDay(for: parsed))
+        }
+        while day < endDay {
+            if dayHasCoverage(actual: actual, day: day, calendar: calendar) {
+                return day
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = calendar.startOfDay(for: next)
+        }
+        return nil
+    }
+
+    private static func dayHasCoverage(actual: RatePeriodResolver, day: Date, calendar: Calendar) -> Bool {
+        for hour in 0 ..< 24 {
+            guard let instant = calendar.date(
+                bySettingHour: hour, minute: sampleMinute, second: 0, of: day
+            ) else { continue }
+            if actual.matchedPeriod(at: instant, strict: true) != .unknown {
+                return true
+            }
+        }
+        return false
     }
 
     /// Mean buy rate over one sample per hour (at hh:30 site-local) across `windowDays` days, strict.
