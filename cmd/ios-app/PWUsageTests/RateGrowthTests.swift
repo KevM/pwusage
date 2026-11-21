@@ -114,6 +114,28 @@ struct RateGrowthTests {
         #expect(abs(growth.annualRate - 0.00146) < 0.0001)
     }
 
+    @Test("Starts the first window at the first strictly covered day, not the first stored day")
+    func startsAtFirstStrictlyCoveredDay() throws {
+        let resolver = try Self.resolver([
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 1, name: "Old", buyRate: 0.20, sellRate: 0.05,
+                effectiveFrom: "2021-01-01", effectiveTo: "2023-12-31"
+            ),
+            SavingsTestFixtures.makeFlatPeriod(
+                id: 2, name: "New", buyRate: 0.231525, sellRate: 0.05, effectiveFrom: "2024-01-01"
+            )
+        ])
+        let growth = RateGrowth.measure(
+            actual: resolver,
+            firstDay: try SavingsTestFixtures.makeUTCDate(year: 2020, month: 1, day: 1, hour: 0),
+            now: try SavingsTestFixtures.makeUTCDate(year: 2025, month: 1, day: 1, hour: 12)
+        )
+        // 3 years between 2021-01-01 and 2024-01-02: (0.231525 / 0.20)^(1/3) - 1 ≈ 5% a year.
+        #expect(growth.isMeasured)
+        #expect(growth.measuredSince == "2021-01-01")
+        #expect(abs(growth.annualRate - 0.05) < 0.001)
+    }
+
     private static let touWindows: [TimePeriodWindowInput] = [
         TimePeriodWindowInput(
             touName: .offPeak, fromHour: 0, fromMinute: 0, toHour: 17, toMinute: 0, buyRate: 0.20, sellRate: 0.05

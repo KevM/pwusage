@@ -334,13 +334,35 @@ struct PaybackCalculatorTests {
         }
     }
 
+    @Test("Records unrecordedBeforeDay when solar install predates the first stored day")
+    func recordsUnrecordedBeforeDayWhenInstallPredatesHistory() throws {
+        let cycles = try makeMonthlyCycles { _ in Self.savings(100) }
+        let firstStored = try SavingsTestFixtures.makeUTCDate(year: 2025, month: 12, day: 1, hour: 0)
+        let earlier = try #require(try compute(
+            cycles: cycles,
+            solar: Self.cost(price: 3_000),
+            solarSince: "2023-06-15",
+            firstStoredDay: firstStored
+        ))
+        #expect(earlier.unrecordedBeforeDay == "2025-12-01")
+
+        let covered = try #require(try compute(
+            cycles: cycles,
+            solar: Self.cost(price: 3_000),
+            solarSince: "2026-01-01",
+            firstStoredDay: firstStored
+        ))
+        #expect(covered.unrecordedBeforeDay == nil)
+    }
+
     private func compute(
         cycles: [CycleSavings],
         solar: SystemCostDTO? = nil,
         powerwall: SystemCostDTO? = nil,
         solarSince: String,
         yearDays: Int = 365,
-        growth: RateGrowth = Self.flatGrowth
+        growth: RateGrowth = Self.flatGrowth,
+        firstStoredDay: Date? = nil
     ) throws -> PaybackResult? {
         let figures = SavingsFigures(costs: .zero, daysWithData: yearDays, daysInPeriod: 365)
         let report = SavingsReport(
@@ -353,7 +375,8 @@ struct PaybackCalculatorTests {
             cycles: cycles,
             recentCycles: Array(cycles.suffix(12)),
             batteryStartDay: nil,
-            rateGrowth: growth
+            rateGrowth: growth,
+            firstStoredDay: firstStoredDay
         )
         let costs = SystemCostsDTO(siteInstalled: solarSince, solar: solar, powerwall: powerwall)
         return PaybackCalculator.compute(

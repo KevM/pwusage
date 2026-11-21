@@ -47,6 +47,8 @@ struct PaybackResult: Equatable, Sendable {
     let combined: ComponentPayback?
     let assumptions: PaybackAssumptions
     let coverage: SavingsFigures
+    /// YYYY-MM-DD of the first stored energy day when a component was installed earlier than stored history.
+    var unrecordedBeforeDay: String?
 }
 
 /// What the break-even calculation reads: the report, the assumptions and the site's calendar.
@@ -118,12 +120,27 @@ enum PaybackCalculator {
             payback(for: [stream], since: stream.since, context: context)
         }
         let combined = streams.count == 2 ? payback(for: streams, since: earliestSince(streams), context: context) : nil
+        let unrecordedBeforeDay = unrecordedStart(
+            streams: streams, firstStoredDay: report.firstStoredDay, calendar: calendar
+        )
         return PaybackResult(
             components: components,
             combined: combined,
             assumptions: assumptions,
-            coverage: report.solarSinceInstall
+            coverage: report.solarSinceInstall,
+            unrecordedBeforeDay: unrecordedBeforeDay
         )
+    }
+
+    private static func unrecordedStart(
+        streams: [PaybackStream], firstStoredDay: Date?, calendar: Calendar
+    ) -> String? {
+        guard let firstStoredDay,
+              let earliest = streams.min(by: { $0.start < $1.start }),
+              earliest.start < calendar.startOfDay(for: firstStoredDay) else {
+            return nil
+        }
+        return RatePlanTimelineFormatting.formatYMD(firstStoredDay, in: calendar.timeZone)
     }
 
     static func calendar(in timeZone: TimeZone) -> Calendar {

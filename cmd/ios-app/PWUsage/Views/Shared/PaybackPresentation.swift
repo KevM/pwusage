@@ -124,6 +124,12 @@ enum PaybackPresentation {
             + "Under full net metering a battery adds little to savings."
     }
 
+    /// Explains when a system was installed before the earliest stored energy day.
+    static func preHistoryNote(firstStoredDay: String?) -> String? {
+        guard let firstStoredDay else { return nil }
+        return "Savings before \(RatePlanTimelineFormatting.displayDate(firstStoredDay)) aren’t in your history yet."
+    }
+
     // MARK: Helpers
 
     private static func componentWhen(_ breakEven: BreakEven, timeZone: TimeZone) -> String? {
@@ -142,13 +148,24 @@ enum PaybackPresentation {
     private static func rateLine(_ growth: RateGrowth) -> String {
         let rate = percent(growth.annualRate)
         guard growth.isMeasured, let since = growth.measuredSince else {
-            return "Rates rise about \(rate) a year, a typical pace"
+            return rate == "0%"
+                ? "Rates stay flat"
+                : "Rates rise about \(rate) a year, a typical pace"
         }
-        return "Rates rise about \(rate) a year, the pace of your rate plans since \(String(since.prefix(4)))"
+        let year = String(since.prefix(4))
+        if rate == "0%" {
+            return "Rates stay flat, in line with your rate plans since \(year)"
+        }
+        return "Rates rise about \(rate) a year, the pace of your rate plans since \(year)"
     }
 
     private static func solarLine(_ decline: Double, measured: Bool) -> String {
         let rate = percent(decline)
+        if rate == "0%" {
+            return measured
+                ? "Solar output stays steady, as Panel Health measured"
+                : "Solar output stays steady"
+        }
         guard measured else { return "Solar output falls about \(rate) a year, a typical rate" }
         return "Solar output falls about \(rate) a year, as Panel Health measured"
     }
