@@ -16,7 +16,6 @@ Spec: [docs/superpowers/specs/2026-11-19-sync-rate-plan-to-tesla-design.md](docs
 
 ## Rate plan selection follow-ups (2026-11-17, branch `feat/rate-plan-selection`)
 
-- [ ] **Review fixed comparison plan changes on iOS:** `FixedRatePlanForm` still saves reference plans directly. Route it through the reviewed selection flow (`scope: reference`, `RatePlanChangeModel`/`RatePlanReviewModel`), as the actual plan does.
 - [ ] **Review date-only edits and deletes on iOS:** "Edit Dates" and "Delete" on plan cards still call the legacy PATCH/DELETE routes without a review. The reviewed editor can't shorten a plan (a selection keeps coverage outside its range), so it sends owners to Edit Dates; a reviewed shortening needs the server to accept the edited period as the replacement target.
 - [ ] **Record when Tesla was last read:** the mismatch banner can only say when the Tesla plan was last *saved* (`Tariff.updated`); an unchanged sync records nothing. A last-checked time would let it say how fresh the comparison is.
 

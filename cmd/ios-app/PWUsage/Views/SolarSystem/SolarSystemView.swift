@@ -89,12 +89,7 @@ struct SolarSystemView: View {
                     estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
                     timeZone: siteTimeZone,
                     currency: coordinator.bill.response?.currentBill.currency ?? "USD",
-                    onSave: { request, editing in
-                        await coordinator.saveFixedRatePlan(request, editing: editing)
-                    },
-                    onDelete: { periodID in
-                        await coordinator.removeFixedRatePlan(periodID: periodID)
-                    }
+                    actions: .live(coordinator)
                 )
             case .systemCosts:
                 SystemCostsForm(

@@ -214,6 +214,29 @@ enum FixedRatePlanDraft {
         )
     }
 
+    static func makeSelectionRequest(
+        name: String,
+        buyRate: Double,
+        sellRate: Double,
+        startsOn: Date,
+        effectiveTo: String? = nil,
+        timeZone: TimeZone
+    ) -> TariffSelectionRequest {
+        let write = makeWriteRequest(
+            name: name,
+            buyRate: buyRate,
+            sellRate: sellRate,
+            startsOn: startsOn,
+            timeZone: timeZone
+        )
+        return TariffSelectionRequest(
+            scope: .reference,
+            candidate: .manual(name: write.name, seasons: write.seasons),
+            effectiveFrom: write.effectiveFrom,
+            effectiveTo: effectiveTo
+        )
+    }
+
     private static func normalizedName(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Fixed Rate Plan" : trimmed
