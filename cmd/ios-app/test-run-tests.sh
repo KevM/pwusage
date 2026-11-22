@@ -178,111 +178,34 @@ while IFS= read -r skipped || [[ -n "$skipped" ]]; do
 done < "$script_dir/quick-test-skips.txt"
 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift' "$script_dir/run-tests.sh"
 if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
-  echo 'The default run skipped tests on a detector change' >&2
+  echo 'The default run skipped tests' >&2
   exit 1
 fi
 
-# The default run skips detector parity unless the branch touches the detector or its fixtures.
-parity_skip='-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests'
-# The layout fit and health pass suites take minutes in a Debug build, so they are gated with the detector suites.
-fit_skip='-skip-testing:PWUsageTests/SolarLayoutFitTests'
-health_skip='-skip-testing:PWUsageTests/SolarHealthPassTests'
-health_cache_skip='-skip-testing:PWUsageTests/SolarHealthPassCacheTests'
-expect_parity() {
-  local expected="$1" label="$2"
-  if grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS"; then local ran=0; else local ran=1; fi
-  [[ "$ran" == "$expected" ]] || { echo "Detector parity: $label (ran=$ran, want $expected)" >&2; exit 1; }
-  if grep -qxF -- "$fit_skip" "$PWUSAGE_TEST_ARGS"; then local fit_ran=0; else local fit_ran=1; fi
-  [[ "$fit_ran" == "$expected" ]] || { echo "Fit parity: $label (ran=$fit_ran, want $expected)" >&2; exit 1; }
-  if grep -qxF -- "$health_skip" "$PWUSAGE_TEST_ARGS"; then local health_ran=0; else local health_ran=1; fi
-  [[ "$health_ran" == "$expected" ]] || { echo "Health pass: $label (ran=$health_ran, want $expected)" >&2; exit 1; }
-  if grep -qxF -- "$health_cache_skip" "$PWUSAGE_TEST_ARGS"; then local cache_ran=0; else local cache_ran=1; fi
-  [[ "$cache_ran" == "$expected" ]] || { echo "Health cache: $label (ran=$cache_ran, want $expected)" >&2; exit 1; }
-}
-PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh"
-expect_parity 0 'ran without detector changes'
-for changed in PWUsage/Models/Solar/SolarPosition.swift PWUsage/Models/Solar/MobileSolarLayout.swift \
-  PWUsage/Models/Solar/Health/SolarHealthFit.swift PWUsage/State/Solar/SolarHealthPass.swift \
-  PWUsageTests/Fixtures/SolarLayout/east-west-30d.json PWUsageTests/Fixtures/SolarLayoutFixtureLoader.swift \
-  PWUsageTests/Fixtures/SyntheticSolarSite.swift \
-  PWUsageTests/SolarLayoutDetectorTests.swift PWUsageTests/SolarLayoutSunPOATests.swift \
-  PWUsageTests/SolarHealthPassTests.swift \
-  project.yml run-tests.sh; do
-  PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
-  expect_parity 1 "skipped after changing $changed"
-done
-PWUSAGE_TEST_CHANGED=".github/workflows/ios.yml" "$script_dir/run-tests.sh"
-expect_parity 1 "skipped after changing .github/workflows/ios.yml"
-# Adjacent layout infrastructure tests must not pull in the multi-minute parity suite.
-for changed in PWUsageTests/SolarLayoutCloudSyncTests.swift PWUsageTests/SolarLayoutSessionCleanupTests.swift; do
-  PWUSAGE_TEST_CHANGED="cmd/ios-app/$changed" "$script_dir/run-tests.sh"
-  expect_parity 0 "ignored $changed"
-done
-PWUSAGE_TEST_NO_BASE=1 "$script_dir/run-tests.sh"
-expect_parity 1 'skipped without a merge base'
-PWUSAGE_TEST_DIFF_FAIL=1 "$script_dir/run-tests.sh"
-expect_parity 1 'skipped when diff failed'
-PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh"
-expect_parity 1 'PWUSAGE_DETECTOR_PARITY=1 did not force it'
-PWUSAGE_DETECTOR_PARITY=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsageTests/SolarLayoutDetectorTests.swift' \
-  "$script_dir/run-tests.sh"
-expect_parity 0 'PWUSAGE_DETECTOR_PARITY=0 did not skip it'
-"$script_dir/run-tests.sh" SolarLayoutDetectorFixtureParityTests
-expect_parity 1 'a named filter was gated'
-# The default run stays a Debug build without the opt-in year suite.
+# The default run stays a Debug build without changing optimization level.
 if grep -qE '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
   echo 'The default run changed the optimization level' >&2
   exit 1
 fi
-grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
-# --full (CI) builds optimized, opens the year-parity gate, and skips nothing.
+
+# --full builds optimized and skips nothing.
 "$script_dir/run-tests.sh" --full
 grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
 if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
   echo 'The full run skipped tests' >&2
   exit 1
 fi
 
-# --auto promotes to --full on detector or solar health changes and stays default without them.
-for changed in cmd/ios-app/PWUsage/Models/Solar/LayoutDetection/LayoutFit.swift \
-  cmd/ios-app/PWUsage/State/Solar/SolarHealthPass.swift \
-  cmd/ios-app/project.yml cmd/ios-app/run-tests.sh .github/workflows/ios.yml; do
-  PWUSAGE_TEST_CHANGED="$changed" "$script_dir/run-tests.sh" --auto
-  grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-  grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
-  if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
-    echo "--auto with $changed skipped tests" >&2
-    exit 1
-  fi
-done
-
-PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsage/State/Home/DashboardCoordinator.swift' "$script_dir/run-tests.sh" --auto
+# --auto is an alias for the default Debug run.
+"$script_dir/run-tests.sh" --auto
 if grep -qE '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
-  echo '--auto without detector changes built optimized' >&2
+  echo '--auto changed the optimization level' >&2
   exit 1
 fi
-grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=$' "$PWUSAGE_TEST_ARGS"
-grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
-  echo '--auto without detector changes did not skip parity suites' >&2
-  exit 1
-}
-
-# PWUSAGE_DETECTOR_PARITY overrides --auto as well.
-PWUSAGE_DETECTOR_PARITY=1 "$script_dir/run-tests.sh" --auto
-grep -qE '^SWIFT_OPTIMIZATION_LEVEL=-O$' "$PWUSAGE_TEST_ARGS"
-grep -qE '^env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1$' "$PWUSAGE_TEST_ARGS"
-
-PWUSAGE_DETECTOR_PARITY=0 PWUSAGE_TEST_CHANGED='cmd/ios-app/PWUsageTests/SolarLayoutDetectorTests.swift' \
-  "$script_dir/run-tests.sh" --auto
-if grep -qE '^SWIFT_OPTIMIZATION_LEVEL=' "$PWUSAGE_TEST_ARGS"; then
-  echo 'PWUSAGE_DETECTOR_PARITY=0 with --auto built optimized' >&2
+if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+  echo '--auto skipped tests' >&2
   exit 1
 fi
-grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
-  echo 'PWUSAGE_DETECTOR_PARITY=0 with --auto did not skip parity suites' >&2
-  exit 1
-}
 "$script_dir/run-tests.sh" --quick AppConfigurationTests
 grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
 if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then

@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Usage: ./run-tests.sh [--quick | --full | --auto] [test filters...]
-#   --quick    Everyday sniff test for agents: Debug build, skips the suites listed in
-#              quick-test-skips.txt (multi-minute detector parity runs).
-#   (no flag)  Every default suite, Debug build. Run before opening or updating a PR. The detector
-#              parity suite runs only when this branch (committed or not) changes the detector or
-#              its fixtures; PWUSAGE_DETECTOR_PARITY=1 forces it, =0 skips it.
-#   --full     Optimized build (-O, still testable) so the numeric parity suites run in seconds,
-#              and turns on the opt-in year-fixture parity suite.
-#   --auto     What CI runs: promotes to --full when the branch changes the detector or its
-#              fixtures; stays default (fast Debug build, skips parity suites) otherwise.
+# Usage: ./run-tests.sh [--quick | --full | --build-only] [test filters...]
+#   --quick    Everyday sniff test for agents: Debug build, skips any suites listed in
+#              quick-test-skips.txt.
+#   (no flag)  Every app/widget test suite in PWUsageTests, Debug build.
+#   --full     Optimized build (-O, still testable) for PWUsageTests.
+#   --auto     Kept as an alias for default (core detector/health parity lives in run-core-tests.sh).
 #   --build-only
 #              Builds the default Debug tests without running them. CI runs it on main so pull
 #              requests, which can only restore caches saved on main, start from Debug products.
@@ -20,7 +16,7 @@ mode=default
 case "${1:-}" in
   --quick) mode=quick; shift ;;
   --full) mode=full; shift ;;
-  --auto) mode=auto; shift ;;
+  --auto) mode=default; shift ;;
   --build-only) mode=build; shift ;;
 esac
 
@@ -122,58 +118,9 @@ fi
 
 # Prints 1 when this branch, against its merge base with main, touches the detector or its fixtures.
 # Without a merge base it prints 1, so an unknown diff never skips the parity suite.
-# Prints 1 when this branch touches the detector, its fixtures, or build/CI tooling.
-# Without a merge base or on diff error it prints 1, so an unknown diff never skips parity.
-detector_changed() {
-  local base diff_files
-  base="$(git merge-base HEAD origin/main 2> /dev/null || git merge-base HEAD main 2> /dev/null)" || {
-    echo 1
-    return
-  }
-  # Match the detector math sources, test suites/fixtures, and build/runner tooling.
-  # Pathspec includes .github/workflows/ios.yml which lives outside cmd/ios-app.
-  diff_files="$({ git diff --name-only "$base" -- . :/:.github/workflows/ios.yml && git ls-files --others --exclude-standard -- . :/:.github/workflows/ios.yml; } 2> /dev/null)" || {
-    echo 1
-    return
-  }
-  if printf '%s\n' "$diff_files" | grep -qE '(^|/)(PWUsage/Models/Solar/(LayoutDetection/|Health/|[^/]*(Layout|Position)[^/]*\.swift)|PWUsage/State/Solar/SolarHealth[^/]*\.swift|PWUsageTests/(Fixtures/(SolarLayout(/|[^/]*\.swift)|SyntheticSolarSite\.swift)|SolarLayout(Detector|ClearDays|SunPOA|Fit|Selection|Readiness|Research)[^/]*Tests\.swift|SolarHealth[^/]*Tests\.swift)|project\.yml|run-tests\.sh|\.github/workflows/ios\.yml)'; then
-    echo 1
-  else
-    echo 0
-  fi
-}
-
-run_parity=""
-if [[ "$mode" == auto ]]; then
-  run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
-  if [[ "$run_parity" == 1 ]]; then
-    mode=full
-  else
-    mode=default
-  fi
-fi
-
 mode_build_settings=()
 if [[ "$mode" == full ]]; then
   mode_build_settings=(SWIFT_OPTIMIZATION_LEVEL=-O)
-  export TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=1
-fi
-
-# Named filters pick their own suites; only an unfiltered default run gates detector parity.
-if [[ "$mode" == default && "$#" -eq 0 ]]; then
-  if [[ -z "$run_parity" ]]; then
-    run_parity="${PWUSAGE_DETECTOR_PARITY:-$(detector_changed)}"
-  fi
-  if [[ "$run_parity" != 1 ]]; then
-    echo 'Skipping detector parity suites: no detector changes on this branch (PWUSAGE_DETECTOR_PARITY=1 forces them; --full runs them).'
-    test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests")
-    test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutClearDaysParityTests")
-    # Minutes in a Debug build (about 4.5 of CI's 6); seconds under --full's optimized build.
-    test_filter_args+=("-skip-testing:PWUsageTests/SolarLayoutFitTests")
-    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassTests")
-    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthPassCacheTests")
-    test_filter_args+=("-skip-testing:PWUsageTests/SolarHealthClassifierPassTests")
-  fi
 fi
 
 # run_with_timeout LABEL SECONDS COMMAND... : runs COMMAND in its own process group and stops the

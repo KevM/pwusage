@@ -152,6 +152,8 @@ targets:
     platform: iOS
     sources:
       - path: PWUsageTests
+      - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/BillPricing/single-plan-cycle.json
+        buildPhase: resources
     info:
       path: PWUsageTests/Info.plist
     settings:
