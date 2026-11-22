@@ -43,6 +43,7 @@ vi.mock('@/lib/user-repo', () => ({
 vi.mock('@/lib/site-repo', () => ({
   SiteRepo: class {
     getSitesForUser = state.getSitesForUser;
+    getSiteSummariesForUser = state.getSitesForUser;
   },
 }));
 

@@ -40,6 +40,17 @@ export interface SiteHistoryOverview {
 
 const SITE_BASE_COLUMNS = 'id, user_id, name, utility, updated, installed, timezone, billing_start_day, billing_start_day_confirmed_at, timezone_display_mode, sankey_renderer, last_live_refresh_at, last_live_claim_at, live_status_cache';
 const SITE_COLUMNS_WITH_JSON = `${SITE_BASE_COLUMNS}, json`;
+const SITE_SUMMARY_COLUMNS = 'id, name';
+
+/** A site as a list or redirect needs it: no tariff tree, live cache or JSON. */
+export type SiteSummary = Pick<Site, 'id' | 'name'>;
+
+/** Which sites user `$1` may read; the membership flag picks the source. */
+function userSitesPredicate(): string {
+    return siteMembershipEnabled()
+        ? 'id IN (SELECT site_id FROM "SiteMember" WHERE user_id = $1)'
+        : 'user_id = $1';
+}
 
 /** A site gap-heal checks, with its owner's last auth outage window. */
 export type GapHealSite = { id: string; timezone: string; installed: Date; auth_lost_at: Date | null; auth_restored_at: Date | null };
@@ -66,11 +77,14 @@ export class SiteRepo {
 
     async getSitesForUser(userId: string, options?: SiteQueryOptions): Promise<Site[]> {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
-        const predicate = siteMembershipEnabled()
-            ? 'id IN (SELECT site_id FROM "SiteMember" WHERE user_id = $1)'
-            : 'user_id = $1';
-        const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE ${predicate} ORDER BY id`, [userId]);
+        const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE ${userSitesPredicate()} ORDER BY id`, [userId]);
         return rows as Site[];
+    }
+
+    /** The user's sites as id and name only, in getSitesForUser's order. */
+    async getSiteSummariesForUser(userId: string): Promise<SiteSummary[]> {
+        const { rows } = await pool.query<SiteSummary>(`SELECT ${SITE_SUMMARY_COLUMNS} FROM "Site" WHERE ${userSitesPredicate()} ORDER BY id`, [userId]);
+        return rows;
     }
 
     /** Rows for an already-authorized ID set; IDs with no row are dropped. Empty set = no query. */
@@ -79,6 +93,13 @@ export class SiteRepo {
         const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
         const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE id = ANY($1::text[]) ORDER BY id`, [siteIds]);
         return rows as Site[];
+    }
+
+    /** The given sites as id and name only; IDs with no site row are absent. */
+    async getSiteSummariesByIds(siteIds: string[]): Promise<SiteSummary[]> {
+        if (siteIds.length === 0) return [];
+        const { rows } = await pool.query<SiteSummary>(`SELECT ${SITE_SUMMARY_COLUMNS} FROM "Site" WHERE id = ANY($1::text[]) ORDER BY id`, [siteIds]);
+        return rows;
     }
 
     /** Legacy no-JWT callers prove access with Tesla's product list. */
