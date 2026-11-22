@@ -49,7 +49,7 @@ export default function TrmnlHelpPage() {
                 )}
             />
 
-            <SectionCard className="mb-12" density="compact">
+            <div className="mb-12">
                 <TrmnlLivePreview
                     previewHtml={demoMarkup}
                     previewError=""
@@ -58,10 +58,7 @@ export default function TrmnlHelpPage() {
                     allowNarrowScroll={false}
                     showScaleControls={false}
                 />
-                <p className="mt-3 text-center text-sm text-gray-600 dark:text-gray-400">
-                    A live example with sample data, drawn the same way your Trmnl draws it.
-                </p>
-            </SectionCard>
+            </div>
 
             <div className="mb-12 grid gap-6 md:grid-cols-3">
                 <FeatureCard
