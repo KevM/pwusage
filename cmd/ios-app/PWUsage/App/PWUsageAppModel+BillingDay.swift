@@ -25,7 +25,6 @@ extension PWUsageAppModel {
     /// Saves the site's billing day, then refreshes the bill, whose cycle just moved.
     /// Throws when the server rejects the day or cannot be reached, leaving the site as it was.
     func saveBillingDay(_ day: Int, siteID: String) async throws {
-        if isDemo { throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only") }
         let saved = try await api.setBillingDay(siteID: siteID, day: day)
         guard let index = sites.firstIndex(where: { $0.id == siteID }) else { return }
         sites[index] = sites[index].settingBillingDay(saved.billingDay)

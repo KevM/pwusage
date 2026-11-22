@@ -15,14 +15,14 @@ struct SettingsView: View {
     var siteHistory: SiteHistoryStatus?
     var siteHistoryDebug: SiteHistoryDebugActions?
     var onLocationSaved: () -> Void = {}
-    /// Saves the site's billing day; the row is hidden in the demo, which cannot save.
+    /// Saves the site's billing day.
     var onSaveBillingDay: (Int) async throws -> Void = { _ in }
     var onRevealSeen: () -> Void = {}
     /// The user-started load of older solar history; nil in the demo and without available history.
     var deepHistory: SiteDeepHistoryModel?
     /// On-device solar health model; nil in the demo and without available history.
     var solarHealth: SolarHealthModel?
-    /// Where the Trmnl screen reads from; nil hides the row, as in the demo, which has no devices.
+    /// Where the Trmnl screen reads from; nil hides the row (for example in isolated previews).
     var trmnl: TrmnlSettingsAccess?
 
     @State private var isConfirmingSignOut = false
@@ -53,16 +53,14 @@ struct SettingsView: View {
                 .accessibilityHint("Choose a different site")
             }
             Section {
-                if onExitDemo == nil {
-                    NavigationLink(value: SettingsDestination.billingDay) {
-                        LabeledContent {
-                            Text(BillingDayPresentation.rowValue(day: site.billingDay))
-                        } label: {
-                            Label(BillingDayPresentation.settingTitle, systemImage: "calendar")
-                        }
+                NavigationLink(value: SettingsDestination.billingDay) {
+                    LabeledContent {
+                        Text(BillingDayPresentation.rowValue(day: site.billingDay))
+                    } label: {
+                        Label(BillingDayPresentation.settingTitle, systemImage: "calendar")
                     }
-                    .accessibilityIdentifier("settings.billing-day")
                 }
+                .accessibilityIdentifier("settings.billing-day")
                 NavigationLink(value: SettingsDestination.ratePlans) {
                     Label("Rate Plans", systemImage: "list.bullet.rectangle")
                 }

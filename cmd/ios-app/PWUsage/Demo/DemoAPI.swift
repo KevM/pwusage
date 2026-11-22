@@ -19,6 +19,7 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
     private var nextHoldID = 1
     private var demoTimeline: SiteTariffsTimelineResponse?
     private var nextPeriodID = 100
+    var billingDayOverride: Int?
 
     init(now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -29,20 +30,23 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         Date(timeIntervalSince1970: floor(date.timeIntervalSince1970) - 120)
     }
 
-    private func currentSource() -> Date {
+    func currentSource() -> Date {
         let date = now()
         if date.timeIntervalSince(launchedAt) > Self.sourceLifetime { launchedAt = Self.source(at: date) }
         return launchedAt
     }
 
-    func fetchSites() async throws -> [MobileSite] { [DemoFixtures.site] }
+    func fetchSites() async throws -> [MobileSite] {
+        guard let billingDayOverride else { return [DemoFixtures.site] }
+        return [DemoFixtures.site.settingBillingDay(billingDayOverride)]
+    }
 
     func fetchLive(siteID: String, refresh: Bool) async throws -> MobileLiveResponse {
-        try DemoFixtures.live(asOf: currentSource())
+        try DemoFixtures.live(asOf: currentSource(), billingDay: billingDayOverride)
     }
 
     func fetchBill(siteID: String) async throws -> MobileBillResponse {
-        try DemoFixtures.bill(asOf: currentSource())
+        try DemoFixtures.bill(asOf: currentSource(), billingDay: billingDayOverride)
     }
 
     func fetchLoadPlanningContext(siteID: String) async throws -> MobileLoadPlanningContextResponse {
@@ -282,7 +286,9 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
             reattribution: timeline.reattribution,
             holidayDates: timeline.holidayDates,
             teslaSync: timeline.teslaSync,
-            systemCosts: timeline.systemCosts
+            estimates: timeline.estimates,
+            systemCosts: timeline.systemCosts,
+            rateCountry: timeline.rateCountry
         )
     }
 
@@ -319,23 +325,12 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
         return BatteryHoldCommandResult(status: .succeeded, hold: nil, current: nil)
     }
 
-    func setBillingDay(siteID: String, day: Int) async throws -> MobileBillingDay {
-        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only")
-    }
-
-    /// The demo hides Trmnl settings, so nothing asks for devices.
-    func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice] { [] }
-
-    func fetchTrmnlPreview(siteID: String, screen: TrmnlComponentConfig?) async throws -> String {
-        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo has no Trmnl")
-    }
-
-    func fetchTrmnlScreens(uuid: String) async throws -> [TrmnlManagedScreen] {
-        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo has no Trmnl")
-    }
-
-    func saveTrmnlScreens(_ screens: [TrmnlManagedScreen], for device: TrmnlDevice, siteID: String) async throws {
-        throw PWUsageAPIError.requestRejected(statusCode: 403, message: "The demo is read-only")
+    func setBillingDay(siteID _: String, day: Int) async throws -> MobileBillingDay {
+        guard MobileBillingDay.validDays.contains(day) else {
+            throw PWUsageAPIError.requestRejected(statusCode: 400, message: "Billing day must be between 1 and 31")
+        }
+        billingDayOverride = day
+        return MobileBillingDay(billingDay: day, billingDayConfirmed: true)
     }
 
     func exchangeSession(_ exchange: MobileSessionExchange) async throws -> MobileSessionCredential {
