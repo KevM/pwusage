@@ -73,6 +73,14 @@ export class SiteRepo {
         return rows as Site[];
     }
 
+    /** Rows for an already-authorized ID set; IDs with no row are dropped. Empty set = no query. */
+    async getSitesByIds(siteIds: string[], options?: SiteQueryOptions): Promise<Site[]> {
+        if (siteIds.length === 0) return [];
+        const columns = options?.includeJson ? SITE_COLUMNS_WITH_JSON : SITE_BASE_COLUMNS;
+        const { rows } = await pool.query(`SELECT ${columns} FROM "Site" WHERE id = ANY($1::text[]) ORDER BY id`, [siteIds]);
+        return rows as Site[];
+    }
+
     /** Legacy no-JWT callers prove access with Tesla's product list. */
     async getSiteIdsForTeslaIds(teslaIds: string[]): Promise<string[]> {
         if (teslaIds.length === 0) return [];
