@@ -2,7 +2,7 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { validateSessionAgainstAuthState, verifySiteToken } from './auth-jwt';
 import { UserRepo } from './user-repo';
-import { SiteRepo } from './site-repo';
+import { SiteRepo, type SiteSummary } from './site-repo';
 import { logSessionRejection } from './observability';
 
 const SITE_AUTH_COOKIE = 'site_auth';
@@ -11,6 +11,11 @@ interface ResolvedAuth {
     userId?: string;
     roles: string[];
     siteIds: string[];
+    /**
+     * id + name rows from the same membership read that produced `siteIds`.
+     * Absent for legacy tokens, whose claimed IDs may name deleted sites.
+     */
+    sites?: SiteSummary[];
 }
 
 /**
@@ -54,11 +59,12 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
     }
     if (!authState) return null;
 
-    const userSites = await new SiteRepo().getSitesForUser(decoded.sub);
+    const sites = await new SiteRepo().getSiteSummariesForUser(decoded.sub);
     return {
         userId: decoded.sub,
         roles: authState.roles,
-        siteIds: userSites.map(s => s.id)
+        siteIds: sites.map(s => s.id),
+        sites
     };
 });
 
@@ -97,6 +103,21 @@ export const verifySiteAccess = cache(async (siteId: string): Promise<boolean> =
 export const getAuthorizedSiteIds = cache(async (): Promise<string[]> => {
     const auth = await resolveAuth();
     return auth ? auth.siteIds : [];
+});
+
+/**
+ * The signed-in user's sites as id + name, for lists and redirects that need
+ * nothing heavier. DB-backed sessions reuse the membership read auth already
+ * made (no extra query); a legacy token's claimed IDs are read once, in claim
+ * order, and IDs with no site row are dropped. Empty when signed out or revoked.
+ */
+export const getAuthorizedSites = cache(async (): Promise<SiteSummary[]> => {
+    const auth = await resolveAuth();
+    if (!auth) return [];
+    if (auth.sites) return auth.sites;
+    if (auth.siteIds.length === 0) return [];
+    const found = new Map((await new SiteRepo().getSiteSummariesByIds(auth.siteIds)).map(s => [s.id, s]));
+    return auth.siteIds.flatMap(id => found.get(id) ?? []);
 });
 
 export async function getDefaultSiteId(): Promise<string | null> {

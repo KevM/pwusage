@@ -4,7 +4,8 @@ const mocks = vi.hoisted(() => ({
     cookies: vi.fn(),
     verifySiteToken: vi.fn(),
     getAuthState: vi.fn(),
-    getSitesForUser: vi.fn(),
+    getSiteSummariesForUser: vi.fn(),
+    getSiteSummariesByIds: vi.fn(),
     logSessionRejection: vi.fn(),
 }));
 vi.mock('./observability', () => ({ logSessionRejection: mocks.logSessionRejection }));
@@ -27,11 +28,56 @@ vi.mock('./user-repo', () => ({
 
 vi.mock('./site-repo', () => ({
     SiteRepo: class {
-        getSitesForUser = mocks.getSitesForUser;
+        getSiteSummariesForUser = mocks.getSiteSummariesForUser;
+        getSiteSummariesByIds = mocks.getSiteSummariesByIds;
     }
 }));
 
-import { getCurrentUser, verifySiteAccess, getAuthorizedSiteIds, isUserAdmin, hasValidSession } from './auth-checks';
+import { getCurrentUser, verifySiteAccess, getAuthorizedSiteIds, getAuthorizedSites, isUserAdmin, hasValidSession } from './auth-checks';
+
+describe('getAuthorizedSites', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mocks.cookies.mockResolvedValue({
+            get: vi.fn((name: string) => name === 'site_auth' ? { value: 'test-jwt-token' } : undefined)
+        });
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] });
+    });
+
+    it('returns the id and name rows from the membership read auth already made', async () => {
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['stale'], roles: ['user'] });
+        mocks.getSiteSummariesForUser.mockResolvedValue([{ id: 'a', name: 'Cabin' }, { id: 'b', name: 'Home' }]);
+
+        expect(await getAuthorizedSites()).toEqual([{ id: 'a', name: 'Cabin' }, { id: 'b', name: 'Home' }]);
+        expect(await getAuthorizedSiteIds()).toEqual(['a', 'b']);
+        expect(mocks.getSiteSummariesForUser).toHaveBeenCalledWith('user-1');
+        expect(mocks.getSiteSummariesByIds).not.toHaveBeenCalled();
+    });
+
+    it('reads a legacy token\'s claimed sites in claim order and drops stale IDs', async () => {
+        mocks.verifySiteToken.mockReturnValue({ sites: ['z-site', 'gone', 'a-site'], roles: ['user'] });
+        mocks.getSiteSummariesByIds.mockResolvedValue([{ id: 'a-site', name: 'A' }, { id: 'z-site', name: 'Z' }]);
+
+        expect(await getAuthorizedSites()).toEqual([{ id: 'z-site', name: 'Z' }, { id: 'a-site', name: 'A' }]);
+        expect(mocks.getSiteSummariesByIds).toHaveBeenCalledWith(['z-site', 'gone', 'a-site']);
+        expect(mocks.getAuthState).not.toHaveBeenCalled();
+    });
+
+    it('reads nothing for a revoked session', async () => {
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['a'], roles: ['user'], sv: 0 });
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 3, roles: ['user'] });
+
+        expect(await getAuthorizedSites()).toEqual([]);
+        expect(mocks.getSiteSummariesForUser).not.toHaveBeenCalled();
+        expect(mocks.getSiteSummariesByIds).not.toHaveBeenCalled();
+    });
+
+    it('reads nothing for a legacy token with no claimed sites', async () => {
+        mocks.verifySiteToken.mockReturnValue({ sites: [], roles: ['user'] });
+        expect(await getAuthorizedSites()).toEqual([]);
+        expect(mocks.getSiteSummariesByIds).not.toHaveBeenCalled();
+    });
+});
 
 describe('auth-checks.ts', () => {
     beforeEach(() => {
@@ -40,7 +86,7 @@ describe('auth-checks.ts', () => {
             get: vi.fn((name: string) => name === 'site_auth' ? { value: 'test-jwt-token' } : undefined)
         });
         mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] });
-        mocks.getSitesForUser.mockResolvedValue([{ id: 'site-1' }]);
+        mocks.getSiteSummariesForUser.mockResolvedValue([{ id: 'site-1' }]);
     });
 
     it('returns null/false/empty array when site_auth cookie is missing or malformed', async () => {
@@ -113,7 +159,7 @@ describe('auth-checks.ts', () => {
             roles: ['user']
         });
         mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] });
-        mocks.getSitesForUser.mockResolvedValue([{ id: 'site-1' }]);
+        mocks.getSiteSummariesForUser.mockResolvedValue([{ id: 'site-1' }]);
 
         const user = await getCurrentUser();
         expect(user).toEqual({ id: 'active-user-123' });
@@ -131,7 +177,7 @@ describe('auth-checks.ts', () => {
             roles: ['user']
         });
         mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] });
-        mocks.getSitesForUser.mockResolvedValue([{ id: 'current-site' }]);
+        mocks.getSiteSummariesForUser.mockResolvedValue([{ id: 'current-site' }]);
 
         expect(await verifySiteAccess('unassigned-site')).toBe(false);
         expect(await verifySiteAccess('current-site')).toBe(true);
@@ -146,7 +192,7 @@ describe('auth-checks.ts', () => {
             roles: ['admin']
         });
         mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 0, roles: ['user'] });
-        mocks.getSitesForUser.mockResolvedValue([{ id: 'site-1' }]);
+        mocks.getSiteSummariesForUser.mockResolvedValue([{ id: 'site-1' }]);
 
         expect(await isUserAdmin()).toBe(false);
         expect(await verifySiteAccess('other-site')).toBe(false);
@@ -222,7 +268,7 @@ describe('auth-checks.ts', () => {
 
     it('hasValidSession is true for a car-only user with no sites', async () => {
         mocks.verifySiteToken.mockReturnValue({ sub: 'car-user', sites: [], roles: ['user'], sv: 0 });
-        mocks.getSitesForUser.mockResolvedValue([]);
+        mocks.getSiteSummariesForUser.mockResolvedValue([]);
 
         expect(await hasValidSession()).toBe(true);
         expect(await getAuthorizedSiteIds()).toEqual([]);

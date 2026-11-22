@@ -256,16 +256,16 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         const client=await this.pool.connect();
         try {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
-            const site=await client.query<{timezone:string;has_detail:boolean;verified:boolean;attribution_complete:boolean}>(`SELECT timezone,
+            // verify_compact_day_range checks every whole modern day in one query (raising on a
+            // mismatch); only billing reads need the attribution lookup.
+            const site=await client.query<{timezone:string;has_detail:boolean;verified:boolean;attribution_complete?:boolean}>(`SELECT timezone,
                 EXISTS (SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2
                     AND NOT(a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')}) AND ${HAS_SAMPLES_SQL('a.')}) AS has_detail,
-                COALESCE((SELECT bool_and(public.verify_compact_day_metadata(a.site_id,a.day_start,false))
-                    FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
-                    AND ${MODERN_METADATA_SQL('a.')}),true) AS verified,
+                public.verify_compact_day_range($1,$2,$3) AS verified${mode.billing?`,
                 COALESCE((SELECT bool_and(a.attribution_complete AND NOT EXISTS (
                     SELECT 1 FROM "EnergyDaySummary" s WHERE s.site_id=a.site_id AND s.day_start=a.day_start AND s.revision=a.revision AND s.tariff_schedule_id IS NULL
                 )) FROM "EnergyDayArchive" a WHERE a.site_id=$1 AND a.day_start >= $2 AND a.day_end <= $3
-                    AND ${MODERN_METADATA_SQL('a.')}),true) AS attribution_complete
+                    AND ${MODERN_METADATA_SQL('a.')}),true) AS attribution_complete`:''}
                 FROM "Site" WHERE id=$1`,[siteId,start,end]);
             if(site.rows[0] && !site.rows[0].verified) throw new Error('Day metadata mismatch');
             const timezone=site.rows[0]?.timezone??null;
@@ -293,7 +293,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 WHERE a.site_id=$1 AND a.day_start<$3 AND a.day_end>$2 AND NOT (a.day_start >= $2 AND a.day_end <= $3 AND ${MODERN_METADATA_SQL('a.')})
                 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows:[];
             const days=partial.rows.map(a=>detailDay(a,summaries));
-            await client.query('COMMIT');return {attributionComplete:site.rows[0]?.attribution_complete??true,timezone,aggregates,coverage,detail:{days}};
+            await client.query('COMMIT');
+            return {...(mode.billing?{attributionComplete:site.rows[0]?.attribution_complete??true}:{}),timezone,aggregates,coverage,detail:{days}};
         } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
     }
 

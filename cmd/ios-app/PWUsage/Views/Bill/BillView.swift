@@ -91,12 +91,7 @@ struct BillView: View {
                     estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
                     timeZone: TimeZone(identifier: timeZone) ?? .current,
                     currency: response?.currentBill.currency ?? "USD",
-                    onSave: { request, editing in
-                        await coordinator.saveFixedRatePlan(request, editing: editing)
-                    },
-                    onDelete: { periodID in
-                        await coordinator.removeFixedRatePlan(periodID: periodID)
-                    }
+                    actions: .live(coordinator)
                 )
             case let .ratePlans(startsAdding):
                 RatePlansSheet(site: site, actions: .live(coordinator), startsAddingPlan: startsAdding)

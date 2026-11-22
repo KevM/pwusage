@@ -81,7 +81,7 @@ final class RatePlanEditorState {
 
     var validationError: String? { draft.validate() ?? editRangeProblem }
 
-    static let shortenedEditMessage = "To shorten this plan’s dates, use Edit Dates instead."
+    nonisolated static let shortenedEditMessage = "To shorten this plan’s dates, use Edit Dates instead."
 
     /// A reviewed edit replaces the chosen range and keeps anything outside it, so it can't shorten
     /// a plan: the cut-off part would stay. It must still cover the plan's current dates.
