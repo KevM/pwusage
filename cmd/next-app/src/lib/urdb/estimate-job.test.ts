@@ -360,7 +360,7 @@ describe('estimate job followed comparison plan', () => {
         return { rows: [{ id: 's1', utility: 'Test Utility', grid_utility: null, timezone: 'America/Chicago', rate_country: 'US', tariff_content: null, site_name: 'Home', history_start: null }], rowCount: 1 };
       }
       if (sql.includes('FROM "SiteUtility"')) {
-        return { rows: [{ site_id: 's1', urdb_utility: 'Test Utility', choice: 'owner', urdb_plan_label: null, status: 'pending', urdb_reference_label: reference.label, urdb_reference_from: reference.from }], rowCount: 1 };
+        return { rows: [{ site_id: 's1', urdb_utility: 'Test Utility', choice: 'owner', urdb_plan_label: null, status: 'pending', urdb_reference_label: reference.label, urdb_reference_from_text: reference.from }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     });
@@ -385,6 +385,13 @@ describe('estimate job followed comparison plan', () => {
     expect(followed.every(item => item.role === 'estimated_reference')).toBe(true);
     expect(followed[0].span.effectiveFrom).toBe('2025-03-01');
     expect(preview.reference.some(item => item.span.rate.label === 'D2')).toBe(false);
+  });
+
+  it('leaves the followed range uncovered when the chosen plan cannot be fetched', async () => {
+    previewSnapshot({ label: 'GONE', from: '2025-03-01' });
+    const preview = await previewUrdbEstimatesForSite('s1', { ...api, rateByLabel: async () => null }, now);
+    expect(preview.reference.map(item => item.span.rate.label)).toEqual(['D1']);
+    expect(preview.reference[0].span.effectiveTo).toBe('2025-02-28');
   });
 
   it('keeps the utility defaults when no plan is followed', async () => {

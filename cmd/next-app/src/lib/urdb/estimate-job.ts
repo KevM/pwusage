@@ -56,7 +56,9 @@ export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: 
 async function snapshot(siteId: string): Promise<Snapshot> {
   const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, s.json ->> 'utility' AS grid_utility, COALESCE(s.timezone, 'UTC') AS timezone, s.rate_country, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
-  const utility = (await pool.query<SiteUtilityRow>('SELECT *, urdb_reference_from::text AS urdb_reference_from FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
+  // pg returns date columns as Date objects, so read the reference day as text under its own alias.
+  const utilityRow = (await pool.query<SiteUtilityRow & { urdb_reference_from_text: string | null }>('SELECT *, urdb_reference_from::text AS urdb_reference_from_text FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
+  const utility: SiteUtilityRow | undefined = utilityRow && { ...utilityRow, urdb_reference_from: utilityRow.urdb_reference_from_text };
   const connection = await pool.connect();
   try {
     const spans = await loadExistingSpans(connection, siteId);
@@ -148,14 +150,16 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   if (site.history_start) actualSpans = actualSpans.filter(span => span.effectiveTo === null || span.effectiveTo >= site.history_start!).map(span => ({ ...span, effectiveFrom: span.effectiveFrom < site.history_start! ? site.history_start! : span.effectiveFrom }));
   const defaults = referenceSpans(await api.defaultRates(utilityName), site.timezone).slice(-MAX_REVISIONS);
   // Follow the owner's chosen fixed plan through the revisions that replaced it, like the Tesla plan chain.
+  // The followed range stays uncovered when the plan cannot be fetched: never lay the defaults over the owner's choice.
   let referencePlan = defaults;
   if (utility?.urdb_reference_label && utility.urdb_reference_from) {
     const chosen = await api.rateByLabel(utility.urdb_reference_label);
+    let followed: RevisionSpan[] = [];
     if (chosen) {
       const newest = await newerRevision(chosen, await ratesToday(), api.rateByLabel) ?? chosen;
-      const followed = (await walkSupersedes(newest, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone })).filter(span => isFixedRate(span.rate));
-      if (followed.length) referencePlan = referenceDesiredSpans(defaults, followed, utility.urdb_reference_from);
+      followed = (await walkSupersedes(newest, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone })).filter(span => isFixedRate(span.rate));
     }
+    referencePlan = referenceDesiredSpans(defaults, followed, utility.urdb_reference_from);
   }
   const usage = await monthlyUsage(site.id, site.timezone, now);
   function convert(span: RevisionSpan, role: Converted['role'], sell: number): Converted | null {
