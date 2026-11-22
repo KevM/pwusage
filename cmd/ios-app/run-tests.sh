@@ -198,6 +198,14 @@ def stop_process():
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
 
+def on_terminate(signum, frame):
+    # The script stops a background run (the simulator boot after a failed build) with SIGTERM;
+    # the command is in its own session, so stop its whole group before exiting.
+    stop_process()
+    sys.exit(128 + signum)
+
+signal.signal(signal.SIGTERM, on_terminate)
+
 try:
     status = process.wait(timeout=timeout)
 except subprocess.TimeoutExpired:
@@ -258,7 +266,10 @@ set -e
 
 if [[ -n "$boot_pid" ]]; then
   if [[ "$status" -ne 0 ]]; then
-    kill "$boot_pid" 2> /dev/null || true
+    # $boot_pid is the background shell; its child is the timeout supervisor, which stops the boot
+    # command's process group on SIGTERM. Wait so no boot outlives the run.
+    pkill -TERM -P "$boot_pid" 2> /dev/null || true
+    wait "$boot_pid" 2> /dev/null || true
   else
     set +e
     wait "$boot_pid"

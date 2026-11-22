@@ -16,6 +16,7 @@ cat > "$fixture_dir/bin/xcrun" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1 $2" == 'simctl bootstatus' ]]; then
   echo "boot:$3 $4" >> "$PWUSAGE_TEST_CALLS"
+  echo $$ > "$PWUSAGE_TEST_CALLS.boot-pid"
   [[ "${PWUSAGE_TEST_BOOT_HANG:-0}" == 1 ]] && sleep 30
   [[ "${PWUSAGE_TEST_BOOT_FAIL:-0}" == 1 ]] && exit 3
   exit 0
@@ -122,6 +123,14 @@ fi
 PWUSAGE_TEST_BUILD_FAIL=1 expect_failure 65 'BUILD FAILED' --
 if grep -qE '^xcodebuild:test-without-building$' "$PWUSAGE_TEST_CALLS"; then
   echo 'Tests ran after the build failed' >&2
+  exit 1
+fi
+# A failed build stops a boot that is still running before the run exits.
+started=$SECONDS
+PWUSAGE_TEST_BUILD_FAIL=1 PWUSAGE_TEST_BOOT_HANG=1 expect_failure 65 'BUILD FAILED' --
+(( SECONDS - started < 10 )) || { echo 'A failed build waited for the boot' >&2; exit 1; }
+if kill -0 "$(cat "$PWUSAGE_TEST_CALLS.boot-pid")" 2> /dev/null; then
+  echo 'The simulator boot kept running after the build failed' >&2
   exit 1
 fi
 PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS=0 expect_failure 2 'PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS must be' --
