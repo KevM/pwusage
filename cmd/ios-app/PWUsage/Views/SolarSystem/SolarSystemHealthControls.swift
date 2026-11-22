@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Season, sun-time and year scrubbers for inspecting shading, soiling and aging on the house model.

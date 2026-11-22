@@ -1,4 +1,5 @@
 import Charts
+import PWUsageCore
 import SwiftUI
 
 /// Monthly fitted capacity and current-year daily clear-day ratios.
