@@ -137,14 +137,17 @@ struct DemoAPITests {
         }
     }
 
-    @Test("Trmnl shows the no-devices intro state with a Cedar House preview")
+    @Test("Trmnl shows the no-devices intro state with a real TRMNL framework preview")
     func trmnlShowsIntroStateWithDefaultPreview() async throws {
         let api = api
         #expect(try await api.fetchTrmnlDevices(siteID: DemoFixtures.site.id).isEmpty)
 
         let html = try await api.fetchTrmnlPreview(siteID: DemoFixtures.site.id, screen: nil)
+        #expect(html.contains("https://trmnl.com/css/\(DemoTrmnlPreview.frameworkVersion)/plugins.css"))
+        #expect(html.contains("<body class=\"environment trmnl\"><div class=\"screen\">"))
         #expect(html.contains(DemoFixtures.site.name))
-        #expect(html.contains("Today's energy"))
+        #expect(html.contains("Total Cost"))
+        #expect(html.contains("Wait until Off-peak in 3 hours"))
         #expect(html.contains("\(DemoFixtures.stateOfCharge)%"))
     }
 }
