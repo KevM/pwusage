@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/Button';
@@ -44,18 +43,6 @@ export default function TrmnlHelpPage() {
                     </span>
                 )}
             />
-
-            <SectionCard className="mb-12 overflow-hidden" bodyClassName="p-0">
-                <div className="relative aspect-video w-full bg-gray-100 dark:bg-gray-900">
-                    <Image
-                        src="/trmnl-real.jpg"
-                        alt="Trmnl E-ink Display showing Energy Dashboard"
-                        fill
-                        className="object-cover"
-                        priority
-                    />
-                </div>
-            </SectionCard>
 
             <div className="mb-12 grid gap-6 md:grid-cols-3">
                 <FeatureCard
