@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { TESTFLIGHT_APP_STORE_URL, TESTFLIGHT_JOIN_URL } from '@/lib/ios-beta';
+import { socialMetadata } from '@/lib/social-metadata';
 
 const DESCRIPTION =
     'Join the pwusage beta for iPhone and iPad on TestFlight. See live power, track your bill and find the cheapest time to start a job.';
@@ -15,6 +16,7 @@ export const metadata: Metadata = {
     title: 'iPhone App Beta | Powerwall Usage',
     description: DESCRIPTION,
     alternates: { canonical: '/ios' },
+    ...socialMetadata({ title: 'iPhone app beta', description: DESCRIPTION, hero: 'file' }),
 };
 
 interface Screenshot {
@@ -73,7 +75,7 @@ async function makeJoinQrSvg(): Promise<string> {
     });
 }
 
-function PhoneFrame({ src, alt }: { src: string; alt: string }) {
+function PhoneFrame({ src, alt, priority = false }: { src: string; alt: string; priority?: boolean }) {
     return (
         <div className="mx-auto w-full max-w-[16rem] rounded-[2.25rem] border border-gray-300 bg-gray-900 p-1.5 shadow-xl dark:border-gray-700">
             <Image
@@ -83,6 +85,7 @@ function PhoneFrame({ src, alt }: { src: string; alt: string }) {
                 height={1434}
                 sizes="(min-width: 768px) 16rem, 70vw"
                 className="h-auto w-full rounded-[1.85rem]"
+                priority={priority}
             />
         </div>
     );
@@ -104,7 +107,7 @@ export default async function IosPage() {
     return (
         <PageShell maxWidth="xl" padding="relaxed" fullHeight={false}>
             <div className="space-y-16">
-                <section className="grid items-center gap-10 lg:grid-cols-[2fr_3fr]">
+                <section className="grid items-center gap-10 lg:grid-cols-[3fr_2fr]">
                     <div className="space-y-6">
                         <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                             Now in beta
@@ -123,17 +126,11 @@ export default async function IosPage() {
                             </span>
                         </div>
                     </div>
-                    <div className="rounded-[1.75rem] border border-gray-300 bg-gray-900 p-2 shadow-xl dark:border-gray-700">
-                        <Image
-                            src="/ios/ipad-home.png"
-                            alt="pwusage on iPad showing live power, today’s energy, the current bill and Smart Shift"
-                            width={1376}
-                            height={1032}
-                            sizes="(min-width: 1024px) 36rem, 92vw"
-                            className="h-auto w-full rounded-[1.25rem]"
-                            priority
-                        />
-                    </div>
+                    <PhoneFrame
+                        src="/ios/home.png"
+                        alt="The pwusage Home screen showing live solar, Home, grid and Powerwall power, and today’s energy totals"
+                        priority
+                    />
                 </section>
 
                 <section aria-labelledby="ios-features" className="space-y-8">

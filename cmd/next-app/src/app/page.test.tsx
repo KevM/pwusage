@@ -48,7 +48,7 @@ vi.mock('@/lib/auth-jwt', async importOriginal => ({
     verifySiteToken: () => h.token,
 }));
 
-import Home from './page';
+import Home, { metadata } from './page';
 
 const siteQueries = () => h.queries.filter(q => q.includes('"Site"'));
 
@@ -101,5 +101,10 @@ describe('Home', () => {
     it('sends a legacy token whose sites are all gone to products', async () => {
         h.token = { sites: ['gone'], roles: ['user'] };
         await expect(Home()).rejects.toThrow('REDIRECT:/products');
+    });
+
+    it('unfurls as a large card with the dashboard summary', () => {
+        expect(metadata.twitter).toMatchObject({ card: 'summary_large_image' });
+        expect(metadata.openGraph).toMatchObject({ images: [{ url: '/og/home', width: 1200, height: 630 }] });
     });
 });
