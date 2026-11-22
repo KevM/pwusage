@@ -88,4 +88,27 @@ struct DemoSessionTests {
         #expect(defaults.dictionaryRepresentation()[PWUsageAppModel.selectedTabDefaultsKey] == nil)
         #expect(!FileManager.default.fileExists(atPath: DemoSession.folder(suiteName: suiteName).path))
     }
+
+    @Test("Adding a fixed rate plan in the demo completes and updates the timeline")
+    func addFixedRatePlanCompletesInDemo() async throws {
+        let model = DemoSession.makeModel(suiteName: suiteName)
+        defer { DemoSession.tearDown(suiteName: suiteName) }
+        await model.bootstrap()
+        let coordinator = try #require(model.coordinator)
+        coordinator.scenePhaseChanged(isActive: true)
+        await coordinator.refreshAll(trigger: .userGesture)
+        await coordinator.refreshSavings()
+        #expect(coordinator.bill.response != nil)
+
+        let request = FixedRatePlanDraft.makeWriteRequest(
+            name: "Fixed Rate Plan",
+            buyRate: 0.25,
+            sellRate: 0.0,
+            startsOn: Date(),
+            timeZone: DemoFixtures.timeZone
+        )
+        let error = await coordinator.saveFixedRatePlan(request, editing: nil)
+        #expect(error == nil)
+        #expect(coordinator.savingsTimeline?.referencePeriods.count == 1)
+    }
 }

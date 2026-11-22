@@ -57,6 +57,7 @@ enum DemoSession {
                     accountScopeID: accountScopeID, timerInterval: timerInterval,
                     forecastService: forecastService,
                     history: solar.history, records: solar.records,
+                    ratePlanTimelines: solar.ratePlanTimelines,
                     runner: runner
                 )
             },
@@ -88,6 +89,7 @@ enum DemoSession {
         let history: SolarHistoryStore
         let records: SolarLayoutRecordStore
         let cloudSync: SolarLayoutCloudSync
+        let ratePlanTimelines: RatePlanTimelineStore
 
         init(folder: URL, suiteName: String) {
             let scopeKey = PWUsageAppModel.accountScopeDefaultsKey
@@ -96,6 +98,9 @@ enum DemoSession {
             records = SolarLayoutRecordStore(directory: recordsDir) {
                 UserDefaults(suiteName: suiteName)?.string(forKey: scopeKey)
             }
+            ratePlanTimelines = RatePlanTimelineStore(
+                directory: folder.appendingPathComponent("RatePlanTimeline")
+            )
             cloudSync = SolarLayoutCloudSync(
                 store: records, userDefaults: UserDefaults(suiteName: suiteName) ?? .standard,
                 stateURL: folder.appendingPathComponent("sync-engine-state.json"),

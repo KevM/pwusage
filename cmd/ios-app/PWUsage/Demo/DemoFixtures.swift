@@ -72,7 +72,11 @@ enum DemoFixtures {
         return calendar
     }
 
-    private static func cycle(_ asOf: Date) -> Cycle {
+    private static func cycle(_ asOf: Date, billingDay: Int? = nil) -> Cycle {
+        if let billingDay {
+            let range = BillingCycle.current(billingDay: billingDay, now: asOf, timeZone: timeZone)
+            return Cycle(start: range.start, end: range.end)
+        }
         let today = calendar.startOfDay(for: asOf)
         let end = calendar.date(byAdding: .day, value: 10, to: today) ?? today.addingTimeInterval(10 * 86400)
         let start = calendar.date(byAdding: .month, value: -1, to: end) ?? end.addingTimeInterval(-30 * 86400)
@@ -134,10 +138,10 @@ enum DemoFixtures {
         try MobileContractDecoder.make().decode(type, from: JSONSerialization.data(withJSONObject: object))
     }
 
-    static func live(asOf: Date) throws -> MobileLiveResponse {
+    static func live(asOf: Date, billingDay: Int? = nil) throws -> MobileLiveResponse {
         let source = source(asOf)
         let sourceText = instantText(source)
-        let balance = -usage(through: source, cycleStart: cycle(source).start).onPeak
+        let balance = -usage(through: source, cycleStart: cycle(source, billingDay: billingDay).start).onPeak
         // Solar covers the home and charges the battery; the rest is exported.
         return try decode(MobileLiveResponse.self, [
             "version": 1,
@@ -160,10 +164,10 @@ enum DemoFixtures {
          "isActive": isActive, "nextStartPhrase": nextStart, "buyRate": rate.buy, "sellRate": rate.sell]
     }
 
-    static func bill(asOf: Date) throws -> MobileBillResponse {
+    static func bill(asOf: Date, billingDay: Int? = nil) throws -> MobileBillResponse {
         let source = source(asOf)
         let sourceText = instantText(source)
-        let cycle = cycle(source)
+        let cycle = cycle(source, billingDay: billingDay)
         let used = usage(through: source, cycleStart: cycle.start)
         let dateFormatter = ISO8601DateFormatter()
         let timeline = timeline(from: source, through: source.addingTimeInterval(7 * 86400)).map { segment in

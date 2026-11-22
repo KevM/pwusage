@@ -91,7 +91,7 @@ struct BillView: View {
                     estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
                     timeZone: TimeZone(identifier: timeZone) ?? .current,
                     currency: response?.currentBill.currency ?? "USD",
-                    actions: .live(coordinator)
+                    actions: .live(coordinator, onDismiss: { self.sheet = nil })
                 )
             case let .ratePlans(startsAdding):
                 RatePlansSheet(site: site, actions: .live(coordinator), startsAddingPlan: startsAdding)

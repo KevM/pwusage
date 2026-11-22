@@ -48,17 +48,19 @@ extension PWUsageAppModelTests {
         #expect(model.sites.first?.billingDayConfirmed == false)
     }
 
-    @Test("The demo never saves a billing day and never calls the API")
-    func demoNeverSaves() async throws {
-        let api = ApplicationAPISpy(sites: [Self.unconfirmedSite("site-1")])
+    @Test("The demo saves a billing day in memory without showing the first-run prompt")
+    func demoSavesInMemoryWithoutPrompt() async throws {
+        let api = DemoAPI()
         let model = PWUsageAppModel(
             configuration: try Self.makeConfiguration(), api: api, userDefaults: makeDefaults(), isDemo: true)
         await model.bootstrap()
+        #expect(model.billingDayPromptSite == nil)
 
-        await #expect(throws: PWUsageAPIError.self) {
-            try await model.saveBillingDay(15, siteID: "site-1")
-        }
-        #expect(api.billingDayCalls.isEmpty)
+        try await model.saveBillingDay(15, siteID: DemoFixtures.site.id)
+
+        #expect(model.sites.first?.billingDay == 15)
+        #expect(model.sites.first?.billingDayConfirmed == true)
+        #expect(model.coordinator?.billingDay == 15)
         #expect(model.billingDayPromptSite == nil)
     }
 

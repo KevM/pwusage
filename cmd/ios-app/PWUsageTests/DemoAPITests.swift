@@ -119,4 +119,35 @@ struct DemoAPITests {
             #expect(message?.contains("demo") == true)
         }
     }
+
+    @Test("Setting the billing day updates the demo site and bill cycle")
+    func billingDayUpdatesDemoSiteAndCycle() async throws {
+        let api = api
+        let saved = try await api.setBillingDay(siteID: DemoFixtures.site.id, day: 15)
+        #expect(saved == MobileBillingDay(billingDay: 15, billingDayConfirmed: true))
+        #expect(try await api.fetchSites().first?.billingDay == 15)
+
+        let bill = try await api.fetchBill(siteID: DemoFixtures.site.id)
+        let expected = BillingCycle.current(billingDay: 15, now: api.launchedAt, timeZone: DemoFixtures.timeZone)
+        #expect(bill.currentBill.cycleStart == expected.start)
+        #expect(bill.currentBill.cycleEnd == expected.end)
+
+        await #expect(throws: PWUsageAPIError.self) {
+            _ = try await api.setBillingDay(siteID: DemoFixtures.site.id, day: 0)
+        }
+    }
+
+    @Test("Trmnl shows the no-devices intro state with a real TRMNL framework preview")
+    func trmnlShowsIntroStateWithDefaultPreview() async throws {
+        let api = api
+        #expect(try await api.fetchTrmnlDevices(siteID: DemoFixtures.site.id).isEmpty)
+
+        let html = try await api.fetchTrmnlPreview(siteID: DemoFixtures.site.id, screen: nil)
+        #expect(html.contains("https://trmnl.com/css/\(DemoTrmnlPreview.frameworkVersion)/plugins.css"))
+        #expect(html.contains("<body class=\"environment trmnl\"><div class=\"screen\">"))
+        #expect(html.contains(DemoFixtures.site.name))
+        #expect(html.contains("Total Cost"))
+        #expect(html.contains("Wait until Off-peak in 3 hours"))
+        #expect(html.contains("\(DemoFixtures.stateOfCharge)%"))
+    }
 }

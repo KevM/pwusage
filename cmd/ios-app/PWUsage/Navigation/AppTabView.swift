@@ -31,10 +31,13 @@ struct AppTabView: View {
                 // Stacked rather than a safe-area inset: the floating tab bar ignores
                 // an inset and would sit under the bar. Below the tab bar on iPhone,
                 // across the window's foot under the sidebar on iPad.
+                // Ignoring the keyboard keeps the TabView's frame fixed when a sheet's
+                // keyboard opens or closes, avoiding a UITabBarController layout loop.
                 VStack(spacing: 0) {
                     tabs
                     DemoModeBar { model.presentDemoSheet() }
                 }
+                .ignoresSafeArea(.keyboard)
             } else {
                 tabs
             }
@@ -177,7 +180,7 @@ struct AppTabView: View {
                              ? nil : model.historyOnboarding?.deepHistory,
                          solarHealth: coordinator.solarLayoutStatus == .disabled
                              ? nil : (model.historyOnboarding?.solarHealth ?? model.demoSolarHealth),
-                         trmnl: model.isDemo ? nil : TrmnlSettingsAccess(api: model.api))
+                         trmnl: TrmnlSettingsAccess(api: model.api))
         }
     }
 

@@ -6,8 +6,12 @@ struct FixedRatePlanActions: Sendable {
     var updateDates: (@MainActor (Int, TariffPlanPatchRequest) async throws -> Void)?
     var selection: RatePlanSelectionActions?
     var onApplied: @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void = { _, _ in }
+    var onDismiss: (@MainActor () -> Void)?
 
-    @MainActor static func live(_ coordinator: DashboardCoordinator) -> Self {
+    @MainActor static func live(
+        _ coordinator: DashboardCoordinator,
+        onDismiss: (@MainActor () -> Void)? = nil
+    ) -> Self {
         Self(
             save: { request, editing in
                 await coordinator.saveFixedRatePlan(request, editing: editing)
@@ -21,7 +25,8 @@ struct FixedRatePlanActions: Sendable {
             },
             selection: coordinator.savingsTimeline?.supportsRatePlanSelection == true
                 ? TariffTimelineActions.live(coordinator).selection
-                : nil
+                : nil,
+            onDismiss: onDismiss
         )
     }
 }
@@ -112,14 +117,14 @@ struct FixedRatePlanForm: View {
                     if let review {
                         RatePlanReviewView(model: review) { response, request in
                             actions.onApplied(response, request)
-                            dismiss()
+                            close()
                         }
                     }
                 }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { close() }
                         .disabled(operation != nil)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -141,7 +146,7 @@ struct FixedRatePlanForm: View {
                 if let existing, let updateDates = actions.updateDates {
                     EffectiveDatesSheet(period: existing) { periodID, patch in
                         try await updateDates(periodID, patch)
-                        dismiss()
+                        close()
                     }
                 }
             }
@@ -247,6 +252,7 @@ struct FixedRatePlanForm: View {
               let selection = actions.selection,
               let buyRate = parsedBuyRate,
               let sellRate = parsedSellRate else { return }
+        ManualLayoutKeyboard.dismiss()
         let request = FixedRatePlanDraft.makeSelectionRequest(
             name: name,
             buyRate: buyRate,
@@ -265,6 +271,10 @@ struct FixedRatePlanForm: View {
 
     private func submit() async {
         guard let buyRate = parsedBuyRate, let sellRate = parsedSellRate else { return }
+        // Resign the text field before sheet dismissal starts: letting UIKit call endEditing
+        // inside dismissViewControllerAnimated can trigger a UISheetPresentationController
+        // keyboard-frame layout loop in SwiftUI's AttributeGraph.
+        ManualLayoutKeyboard.dismiss()
         operation = .saving
         errorMessage = nil
         let request = FixedRatePlanDraft.makeWriteRequest(
@@ -279,7 +289,7 @@ struct FixedRatePlanForm: View {
         if let error {
             errorMessage = error
         } else {
-            dismiss()
+            close()
         }
     }
 
@@ -291,6 +301,14 @@ struct FixedRatePlanForm: View {
         operation = nil
         if let error {
             errorMessage = error
+        } else {
+            close()
+        }
+    }
+
+    private func close() {
+        if let onDismiss = actions.onDismiss {
+            onDismiss()
         } else {
             dismiss()
         }
