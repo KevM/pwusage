@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// When a reveal is owed, and what the status, presentation and banner make of it.

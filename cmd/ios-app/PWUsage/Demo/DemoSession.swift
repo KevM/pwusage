@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 /// Builds the demo's model: signed in on the sample home, answered by
 /// `DemoAPI`, with its own defaults suite, a temporary folder for the cache and

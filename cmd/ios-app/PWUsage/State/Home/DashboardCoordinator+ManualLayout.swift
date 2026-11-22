@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import PWUsageCore
 
 private let manualLayoutLogger = Logger(subsystem: "fm.rodeo.pwusage", category: "solar-layout")
 

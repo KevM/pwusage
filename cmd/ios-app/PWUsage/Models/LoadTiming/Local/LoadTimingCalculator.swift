@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum LoadTimingCalculator {
     private struct ActivePeriod {

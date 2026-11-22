@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum LoadTimingTimelineBuilder {
     private struct ResolvedPeriod {

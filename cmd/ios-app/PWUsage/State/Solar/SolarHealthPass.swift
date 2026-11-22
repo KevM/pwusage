@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 /// The health pass: for each calendar year of a site's whole stored history, capacity against the
 /// reference, shade per season and daily ratios. Pure computation on the phone; results are cached

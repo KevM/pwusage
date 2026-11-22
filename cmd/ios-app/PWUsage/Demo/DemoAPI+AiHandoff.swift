@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Serves a sample `pwusage-rate-plan-handoff/v1` Markdown prompt in Demo Mode so visitors can
 /// inspect the exact prompt format and confirm no personal information is included.

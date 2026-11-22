@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// Runs the on-device solar health pass for the active site, classifies findings and tracks
 /// whether the user has seen new findings on the Solar System screen.

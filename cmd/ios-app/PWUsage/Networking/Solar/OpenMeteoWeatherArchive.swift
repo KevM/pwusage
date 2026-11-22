@@ -1,16 +1,5 @@
 import Foundation
-
-struct SolarHealthWeather: Codable, Equatable, Sendable {
-    var rainDays: Set<String> = []
-    var snowDays: Set<String> = []
-
-    var hasPrecipitation: Bool { !rainDays.isEmpty || !snowDays.isEmpty }
-
-    mutating func formUnion(_ other: Self) {
-        rainDays.formUnion(other.rainDays)
-        snowDays.formUnion(other.snowDays)
-    }
-}
+import PWUsageCore
 
 private struct OpenMeteoArchiveDaily: Decodable {
     let time: [String]

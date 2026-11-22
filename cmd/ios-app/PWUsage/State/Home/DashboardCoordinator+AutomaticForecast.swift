@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The automatic forecast: layout status, measured actuals and the service's
 /// publication. Every await is fenced by the forecast generation and selected site.

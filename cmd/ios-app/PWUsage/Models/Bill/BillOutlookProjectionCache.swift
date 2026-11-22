@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Keeps the latest bill projection, so a redraw caused by unrelated dashboard state
 /// does not walk the rest of the billing cycle again. A projection stays good until an

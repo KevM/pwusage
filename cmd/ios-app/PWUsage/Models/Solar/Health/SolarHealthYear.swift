@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Capacity of one period against the reference: 1.00 is a system making what the reference model says.
 struct SolarHealthCapacity: Codable, Equatable, Sendable {

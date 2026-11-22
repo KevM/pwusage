@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Moving imports out of a gap into a cushion on the same plan, priced exactly as the bill settles.
 struct BillOutlookShift: Equatable {

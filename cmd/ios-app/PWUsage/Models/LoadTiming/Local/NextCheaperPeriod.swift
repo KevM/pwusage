@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct CheaperPeriod: Equatable, Sendable {
     let name: String

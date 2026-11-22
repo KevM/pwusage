@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Compares one load against a signed billing-cycle balance using a device-local
 /// solar forecast and the site's historical local-time household/battery profile.

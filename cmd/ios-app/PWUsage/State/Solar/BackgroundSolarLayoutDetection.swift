@@ -2,6 +2,7 @@ import BackgroundTasks
 import Foundation
 import os
 import OSLog
+import PWUsageCore
 
 protocol BackgroundLayoutDetectingTask: AnyObject {
     var expirationHandler: (() -> Void)? { get set }

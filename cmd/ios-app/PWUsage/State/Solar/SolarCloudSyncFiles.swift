@@ -1,5 +1,6 @@
 import CloudKit
 import Foundation
+import PWUsageCore
 
 /// The synchronization metadata files. Account layout records live in the record store.
 struct SolarCloudSyncFiles {

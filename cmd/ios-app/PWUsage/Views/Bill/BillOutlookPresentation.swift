@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum BillOutlookPresentation {
     /// A saving this close to the bill is worth a row above the charts; earlier, the charts can still change.

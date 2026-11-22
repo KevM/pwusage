@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Imports a site's recent history, then keeps reaching back toward a high-confidence layout. A
 /// layout that is already high confidence stops after the recent days and sorts them once.

@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Session-level rows of the lifecycle acceptance matrix: local-save notifications,

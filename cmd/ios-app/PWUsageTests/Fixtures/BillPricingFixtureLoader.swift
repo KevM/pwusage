@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Server-generated bill-pricing parity fixture from `PWUsageTests/Fixtures/BillPricing/`.
 struct BillPricingFixture: Decodable {

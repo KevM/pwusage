@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 // Request side of the rate plan selection contract. Mirrors `TariffSelectionRequest` and
 // `TariffSelectionCommit` in `cmd/next-app/src/lib/tariff-contract.ts`.
@@ -9,12 +10,6 @@ enum TariffSelectionScope: String, Codable, Equatable, Sendable {
     case reference
 }
 
-/// Whether a plan was placed automatically or chosen by an owner.
-enum TariffSelectionChoiceKind: String, Codable, Equatable, Sendable {
-    case automatic
-    case owner
-}
-
 /// Where a plan's export (sell) rates came from.
 enum ExportRateProvenance: String, Codable, Equatable, Sendable {
     case published
@@ -22,12 +17,6 @@ enum ExportRateProvenance: String, Codable, Equatable, Sendable {
     case inherited
     case manual
     case tesla
-}
-
-struct TariffVerificationSummary: Codable, Equatable, Sendable {
-    let verifiedAt: String
-    let verifiedByEmail: String?
-    let verifiedByCurrentUser: Bool
 }
 
 /// The plan an owner wants to apply. The app never sends published rates for a public plan;

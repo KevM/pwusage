@@ -1,11 +1,5 @@
 import Foundation
-
-/// Offer to walk the owner through past rate plans; mirrors `EstimatesStatusDTO.historyGuide`.
-struct RatePlanHistoryGuideDTO: Codable, Equatable, Sendable {
-    let historyStart: String
-    let fillThrough: String?
-    let unconfirmedDays: Int
-}
+import PWUsageCore
 
 enum RatePlanKind: String, Codable, Sendable {
     case fixed

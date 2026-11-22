@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct DayPeriodDraft: Identifiable, Equatable, Hashable, Sendable {
     let id: UUID

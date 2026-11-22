@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 @MainActor

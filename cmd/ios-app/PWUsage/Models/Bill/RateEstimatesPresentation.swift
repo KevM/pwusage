@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The one setup step a site needs before its days can be priced from public rates.
 enum RateEstimatesPrompt: Equatable, Sendable {

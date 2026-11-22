@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Rate Plans' estimate rows: the out-of-date notice when Tesla's plan is behind, then the utility

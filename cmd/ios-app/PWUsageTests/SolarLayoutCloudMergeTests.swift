@@ -2,6 +2,7 @@ import CloudKit
 import Foundation
 import os
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 private final class MockSolarLayoutSync: SolarLayoutSyncing, Sendable {

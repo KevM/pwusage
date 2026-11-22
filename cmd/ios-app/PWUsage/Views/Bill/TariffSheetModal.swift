@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The sheets the Rate Plans screen presents, one at a time.
 enum TariffSheetModal: Identifiable, Equatable {

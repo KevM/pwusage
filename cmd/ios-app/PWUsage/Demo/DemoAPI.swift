@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Answers every request the demo makes from memory: no network, no account,
 /// nothing stored. The battery hold is simulated so the one interactive action

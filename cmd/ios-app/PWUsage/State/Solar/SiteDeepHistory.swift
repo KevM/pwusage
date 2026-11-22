@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Loads a site's older history on request, past the year detection reads: newest to oldest in
 /// short slices, from where onboarding stopped to the server's history start. It makes no

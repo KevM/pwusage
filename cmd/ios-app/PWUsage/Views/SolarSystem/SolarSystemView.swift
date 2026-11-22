@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Solar System in Settings: finding the site's solar system as a picture, which then becomes the

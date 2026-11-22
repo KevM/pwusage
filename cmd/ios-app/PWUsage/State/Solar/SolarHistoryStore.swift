@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum SolarHistorySyncResult: Equatable, Sendable { case disabled, synced(timeZone: TimeZone) }
 

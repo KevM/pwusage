@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Whether the energy history on this phone reaches back far enough to call its savings
 /// "Lifetime". Savings and payback count only stored days, and the phone keeps a year until the

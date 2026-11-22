@@ -145,6 +145,8 @@ targets:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
         Release:
           PWUSAGE_API_ORIGIN: https://pwusage.fm.rodeo
+    dependencies:
+      - package: PWUsageCore
   PWUsageTests:
     type: bundle.unit-test
     platform: iOS

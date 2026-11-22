@@ -1,11 +1,10 @@
 #if DEBUG
     import CryptoKit
     import Foundation
+    import PWUsageCore
     import SwiftUI
 
-    /// The preview site's timezone. The bill fixture, the planning context, and the
-    /// synthetic solar curve must all agree: the coordinator rejects the enhancement
-    /// when the bill's site timezone and the planning context's differ.
+    /// The preview site's timezone, bill fixture, and planning context must agree.
     let sitePreviewTimeZone = "America/Chicago"
 
     /// Synthetic, offline forecast fixtures for Load timing previews. No Solcast key

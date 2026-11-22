@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// What loading a site's history needs from the app: the server fill, the on-device history and
 /// the site's time zone. The onboarding job and the deep-history walk share it.

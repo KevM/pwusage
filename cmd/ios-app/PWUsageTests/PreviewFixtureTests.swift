@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Preview fixtures are only useful if they exercise the paths that matter. These

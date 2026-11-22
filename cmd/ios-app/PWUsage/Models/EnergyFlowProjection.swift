@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Shared household baseline, independent of a Smart Shift job or its pricing rules.
 enum EnergyFlowProjection {

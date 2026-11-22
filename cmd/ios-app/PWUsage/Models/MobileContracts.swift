@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct MobileSite: Codable, Equatable, Identifiable {
     let id: String
@@ -309,15 +310,6 @@ struct LoadTiming: Codable, Equatable {
     }
 }
 
-struct LoadTimingTariffSegment: Codable, Equatable {
-    let start: Date
-    let end: Date
-    let periodKey: String
-    let name: String
-    let buyRate: Double
-    let sellRate: Double
-}
-
 struct LoadTimingPeriod: Codable, Equatable {
     let name: String
     let marginalCost: Double?
@@ -331,10 +323,4 @@ struct LoadTimingPeriod: Codable, Equatable {
     var hasFiniteAmounts: Bool {
         buyRate.isFinite && sellRate.isFinite && (marginalCost?.isFinite ?? true)
     }
-}
-
-struct NextCheaperPeriod: Codable, Equatable {
-    let name: String
-    let marginalCost: Double
-    let phrase: String
 }

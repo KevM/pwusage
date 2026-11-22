@@ -1,4 +1,5 @@
 import Charts
+import PWUsageCore
 import SwiftUI
 
 /// Where a balance sits on the Billing and Smart Shift charts. They read like a bill: using more

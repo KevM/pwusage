@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Known-decline histories through the shipped pass and estimator. Writes synthetic.md into the

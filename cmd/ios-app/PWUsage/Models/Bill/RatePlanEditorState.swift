@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 enum ScheduleDayGroup: String, Hashable, CaseIterable, Sendable {
     case weekdays

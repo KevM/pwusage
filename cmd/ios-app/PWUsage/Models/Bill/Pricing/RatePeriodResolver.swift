@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct ResolvedRatePeriod: Equatable, Sendable {
     let planName: String

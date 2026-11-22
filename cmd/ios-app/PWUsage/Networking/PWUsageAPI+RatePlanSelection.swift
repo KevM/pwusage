@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension PWUsageAPI {
     func siteRateCountry(siteID: String) async throws -> SiteRateCountryDTO {

@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Local-only degradation backtest on the owner's real history (see DegradationBacktestInputs).

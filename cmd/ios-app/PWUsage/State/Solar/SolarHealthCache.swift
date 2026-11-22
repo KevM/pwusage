@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 extension SolarForecastSiteScope {
     /// A file-name-safe digest of the scope, for per-site storage.

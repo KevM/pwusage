@@ -1,5 +1,6 @@
 import CloudKit
 import Foundation
+import PWUsageCore
 
 enum SolarLayoutCloudRecordSystemFields {
     static func encode(_ record: CKRecord) -> Data {

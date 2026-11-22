@@ -1,6 +1,7 @@
 import CloudKit
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 @Suite("Manual Solar Layout")

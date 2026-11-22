@@ -1,45 +1,5 @@
 import Foundation
-
-struct BillOutlookBucket: Codable, Equatable {
-    let tariffName: String
-    let periodName: String
-    var netGridKwh: Double
-    let buyRate: Double
-    let sellRate: Double
-    var key: String { tariffName + "\u{1f}" + periodName }
-}
-struct BillOutlookPeriod: Codable, Equatable {
-    let tariffName: String
-    let periodName: String
-    var netGridKwh: Double
-    var key: String { tariffName + "\u{1f}" + periodName }
-}
-struct BillOutlookPoint: Codable, Equatable {
-    let date: Date
-    let buckets: [BillOutlookBucket]
-    let complete: Bool
-    let estimatedCost: Double
-    let periods: [BillOutlookPeriod]
-}
-struct BillOutlookTariff: Codable, Equatable {
-    let start: Date
-    let end: Date
-    let periodKey: String
-    let name: String
-    let buyRate: Double
-    let sellRate: Double
-    let tariffName: String
-    let periodName: String
-    var segment: LoadTimingTariffSegment {
-        .init(start: start, end: end, periodKey: periodKey, name: name, buyRate: buyRate, sellRate: sellRate)
-    }
-}
-struct BillOutlookHistory: Codable, Equatable {
-    let points: [BillOutlookPoint]
-    let observedThrough: Date
-    let complete: Bool
-    var tariffTimeline: [BillOutlookTariff]
-}
+import PWUsageCore
 
 enum BillOutlook {
     /// Mirrors priceBillUsage: merge rate buckets first, then proportionally net each plan/period.

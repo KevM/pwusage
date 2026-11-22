@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct BillUsageBucket: Equatable, Sendable {
     let planName: String

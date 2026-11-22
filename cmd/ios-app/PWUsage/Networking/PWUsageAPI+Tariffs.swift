@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension PWUsageAPI {
     func searchUtilities(siteID: String, query: String) async throws -> [String] {

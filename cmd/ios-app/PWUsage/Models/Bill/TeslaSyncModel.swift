@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// The server calls Sync to Tesla goes through: a preview, a commit of that preview's fingerprint,
 /// the timeline to refetch when a commit does not return one, and the read-only pull from Tesla
