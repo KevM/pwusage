@@ -82,6 +82,9 @@ export async function createTariffTestDatabase(dbName: string): Promise<Pool> {
   const syncAttemptMigration = (await readdir('db-migrations')).find(f => f.endsWith('_tesla_tariff_sync_attempt.sql'));
   if (!syncAttemptMigration) throw new Error('Tesla tariff sync attempt migration missing');
   await database.query(await readFile(`db-migrations/${syncAttemptMigration}`, 'utf8'));
+  const referenceLabelMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_utility_reference_label.sql'));
+  if (!referenceLabelMigration) throw new Error('Site utility reference label migration missing');
+  await database.query(await readFile(`db-migrations/${referenceLabelMigration}`, 'utf8'));
 
   return database;
 }

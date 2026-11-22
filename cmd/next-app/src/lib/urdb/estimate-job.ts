@@ -21,7 +21,7 @@ import { buildDefaultTariff, parseTariffContent, tariffContentHash, type ParsedT
 import type { TariffV2 } from '../tesla-client';
 import { layoutTimeline } from '../tariff-estimates';
 import * as client from './client';
-import { urdbRateToSeasons } from './convert';
+import { isFixedRate, urdbRateToSeasons } from './convert';
 import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, urdbStartDate, walkSupersedes, type RevisionSpan } from './match';
 import { normalizeUtilityName, resolveUtility } from './utility-lookup';
 import { deriveRatePlanEligibility, US_ELIGIBLE_COUNTRY_LIST } from '../rate-plan-eligibility';
@@ -35,6 +35,17 @@ type Converted = { span: RevisionSpan; seasons: TariffSeasonInput[]; name: strin
 type PlanBackfill = { tariffId: number; name: string | null; code: string | null };
 type Preview = { planBackfill: PlanBackfill | null; matchOutcomes: Array<'matched' | 'no_match' | 'unconvertible' | 'no_utility'>; fallbackTariffIds: number[]; ownerPicked: boolean; status: SiteUtilityStatus; utilityName: string | null; anchors: Anchor[]; actual: Converted[]; reference: Converted[]; changed: Array<{ from: string; to: string | null }> };
 const MAX_REVISIONS = 80;
+// The owner's followed fixed plan owns the comparison from `followedFrom`; the utility defaults keep the days before it.
+export function referenceDesiredSpans(defaults: RevisionSpan[], followed: RevisionSpan[], followedFrom: string | null): RevisionSpan[] {
+  if (!followedFrom) return defaults;
+  const before = defaults
+    .filter(span => span.effectiveFrom < followedFrom)
+    .map(span => span.effectiveTo === null || span.effectiveTo >= followedFrom ? { ...span, effectiveTo: addCalendarDays(followedFrom, -1) } : span);
+  const from = followed
+    .filter(span => span.effectiveTo === null || span.effectiveTo >= followedFrom)
+    .map(span => span.effectiveFrom < followedFrom ? { ...span, effectiveFrom: followedFrom } : span);
+  return [...before, ...from];
+}
 // URDB lists some utilities under an alias ("We energies") whose rates it files under another name
 // ("Wisconsin Electric Power Co"), so accept the names of the rates URDB lists for the stored utility.
 export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: string, inEffect: UrdbRate[]): boolean {
@@ -45,7 +56,7 @@ export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: 
 async function snapshot(siteId: string): Promise<Snapshot> {
   const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, s.json ->> 'utility' AS grid_utility, COALESCE(s.timezone, 'UTC') AS timezone, s.rate_country, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
-  const utility = (await pool.query<SiteUtilityRow>('SELECT * FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
+  const utility = (await pool.query<SiteUtilityRow>('SELECT *, urdb_reference_from::text AS urdb_reference_from FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
   const connection = await pool.connect();
   try {
     const spans = await loadExistingSpans(connection, siteId);
@@ -136,6 +147,16 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   let actualSpans = start ? await walkSupersedes(start, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone }) : [];
   if (site.history_start) actualSpans = actualSpans.filter(span => span.effectiveTo === null || span.effectiveTo >= site.history_start!).map(span => ({ ...span, effectiveFrom: span.effectiveFrom < site.history_start! ? site.history_start! : span.effectiveFrom }));
   const defaults = referenceSpans(await api.defaultRates(utilityName), site.timezone).slice(-MAX_REVISIONS);
+  // Follow the owner's chosen fixed plan through the revisions that replaced it, like the Tesla plan chain.
+  let referencePlan = defaults;
+  if (utility?.urdb_reference_label && utility.urdb_reference_from) {
+    const chosen = await api.rateByLabel(utility.urdb_reference_label);
+    if (chosen) {
+      const newest = await newerRevision(chosen, await ratesToday(), api.rateByLabel) ?? chosen;
+      const followed = (await walkSupersedes(newest, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone })).filter(span => isFixedRate(span.rate));
+      if (followed.length) referencePlan = referenceDesiredSpans(defaults, followed, utility.urdb_reference_from);
+    }
+  }
   const usage = await monthlyUsage(site.id, site.timezone, now);
   function convert(span: RevisionSpan, role: Converted['role'], sell: number): Converted | null {
     const result = urdbRateToSeasons(span.rate, { medianMonthlyKwh: usage, fallbackSellRate: sell });
@@ -172,7 +193,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     ...previewSpans.filter(row => !layout.deleteIds.includes(row.id)).map(row => ({ ...row, periodId: row.id })),
     ...layout.inserts.map((row, index) => ({ ...row, periodId: -1 - index })),
   ];
-  const reference = defaults.flatMap(span => {
+  const reference = referencePlan.flatMap(span => {
     const covering = pickActivePeriodForDate(projected, span.effectiveFrom);
     let sell = averageSell(allTariffs.find(tariff => tariff.id === covering?.tariffId));
     if (covering && covering.tariffId < 0) {
