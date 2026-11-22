@@ -42,7 +42,7 @@ export default function SupportPage() {
                     <p>Read our <Link href="/privacy" className="text-primary underline">privacy policy</Link> for details about account information, energy history, and local app data.</p>
                 </SectionCard>
                 <SectionCard title="TRMNL display help">
-                    <p>For display installation and setup, see the <Link href="/help/trmnl" className="text-primary underline">TRMNL guide</Link>.</p>
+                    <p>For display installation and setup, see the <Link href="/trmnl" className="text-primary underline">TRMNL guide</Link>.</p>
                 </SectionCard>
             </div>
         </PageShell>

@@ -33,7 +33,7 @@ function FeatureCard({ title, description, icon, iconToneClassName }: FeatureCar
     );
 }
 
-export default function TrmnlHelpPage() {
+export default function TrmnlPage() {
     const demoMarkup = renderTrmnlDemoMarkup(new Date());
 
     return (

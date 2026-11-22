@@ -9,6 +9,12 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '2mb',
     },
   },
+  async redirects() {
+    return [
+      // The TRMNL page moved from /help/trmnl; the plugin listing on trmnl.com still links there.
+      { source: '/help/trmnl', destination: '/trmnl', permanent: true },
+    ];
+  },
   images: {
     remotePatterns: [
       {
