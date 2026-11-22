@@ -25,6 +25,12 @@ describe('socialMetadata', () => {
         expect(meta.openGraph?.images).toEqual([{ url: '/og/home', width: 1200, height: 630, alt: 'Dashboard summary' }]);
     });
 
+    it('omits dimensions for a hero of unknown size', () => {
+        const meta = socialMetadata({ title: 't', description: 'd', hero: { url: '/x.png', alt: 'x', size: null } });
+
+        expect(meta.openGraph?.images).toEqual([{ url: '/x.png', alt: 'x' }]);
+    });
+
     it('keeps the default copy free of repeated product names', () => {
         expect(DEFAULT_DESCRIPTION).not.toMatch(/powerwall/i);
     });
