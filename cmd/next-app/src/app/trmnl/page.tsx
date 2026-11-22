@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
@@ -5,10 +6,28 @@ import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+import { socialMetadata } from '@/lib/social-metadata';
 import { renderTrmnlDemoMarkup } from '@/lib/trmnl/demo-screen';
 
 // The demo screen shows the current time and billing cycle; re-render it every few minutes.
 export const revalidate = 300;
+
+const DESCRIPTION =
+    'Today’s solar, home use and your bill so far by rate period, on an e-ink display that updates itself.';
+
+export const metadata: Metadata = {
+    title: 'TRMNL Display | Powerwall Usage',
+    description: DESCRIPTION,
+    alternates: { canonical: '/trmnl' },
+    ...socialMetadata({
+        title: 'TRMNL display',
+        description: DESCRIPTION,
+        hero: {
+            url: '/og/trmnl',
+            alt: 'A TRMNL e-ink display showing today’s energy and the bill so far by rate period',
+        },
+    }),
+};
 
 interface FeatureCardProps {
     title: string;

@@ -10,12 +10,12 @@ import { getDefaultSiteId } from '@/lib/auth-checks';
 import { SiteRepo } from '@/lib/site-repo';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { socialMetadata } from '@/lib/social-metadata';
 
 export const dynamic = 'force-dynamic';
 
 const DEFAULT_NEWS_DESCRIPTION = 'Latest updates and announcements from the developers.';
 const NEWS_TITLE = 'News & Announcements | Powerwall Usage';
-const DEFAULT_OG_IMAGE = '/opengraph-image';
 
 function getFirstParagraph(markdown: string): string {
     const paragraphs = markdown
@@ -50,62 +50,51 @@ function getDescription(content?: string): string {
     return firstParagraph.slice(0, 200);
 }
 
-function getFirstImageUrl(markdown?: string): string | undefined {
+interface PostImage {
+    url: string;
+    alt: string;
+}
+
+function getFirstImage(markdown?: string): PostImage | undefined {
     if (!markdown) {
         return undefined;
     }
 
-    const match = markdown.match(/!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/);
-    if (!match?.[1]) {
+    const match = markdown.match(/!\[([^\]]*)]\(([^)\s]+)(?:\s+"[^"]*")?\)/);
+    if (!match?.[2]) {
         return undefined;
     }
 
-    const candidate = match[1].trim();
+    const candidate = match[2].trim();
     if (candidate.startsWith('http://') || candidate.startsWith('https://') || candidate.startsWith('/')) {
-        return candidate;
+        return { url: candidate, alt: match[1].trim() };
     }
 
     return undefined;
 }
 
+function newsMetadata(description: string, postImage?: PostImage): Metadata {
+    return {
+        title: NEWS_TITLE,
+        description,
+        // A large card only when the latest post has its own image; otherwise the small default.
+        ...socialMetadata({
+            title: NEWS_TITLE,
+            description,
+            hero: postImage && { url: postImage.url, alt: postImage.alt, size: null },
+        }),
+    };
+}
+
 export async function generateMetadata(): Promise<Metadata> {
     try {
         const latestAnnouncement = await new AnnouncementRepo().getLatest();
-        const description = getDescription(latestAnnouncement?.content);
-        const latestPostImage = getFirstImageUrl(latestAnnouncement?.content);
-        const ogImages = latestPostImage ? [latestPostImage, DEFAULT_OG_IMAGE] : [DEFAULT_OG_IMAGE];
-
-        return {
-            title: NEWS_TITLE,
-            description,
-            openGraph: {
-                title: NEWS_TITLE,
-                description,
-                images: ogImages,
-            },
-            twitter: {
-                card: 'summary_large_image',
-                title: NEWS_TITLE,
-                description,
-                images: ogImages,
-            },
-        };
+        return newsMetadata(
+            getDescription(latestAnnouncement?.content),
+            getFirstImage(latestAnnouncement?.content)
+        );
     } catch {
-        return {
-            title: NEWS_TITLE,
-            description: DEFAULT_NEWS_DESCRIPTION,
-            openGraph: {
-                title: NEWS_TITLE,
-                description: DEFAULT_NEWS_DESCRIPTION,
-                images: [DEFAULT_OG_IMAGE],
-            },
-            twitter: {
-                card: 'summary_large_image',
-                title: NEWS_TITLE,
-                description: DEFAULT_NEWS_DESCRIPTION,
-                images: [DEFAULT_OG_IMAGE],
-            },
-        };
+        return newsMetadata(DEFAULT_NEWS_DESCRIPTION);
     }
 }
 

@@ -5,10 +5,9 @@ import "./globals.css";
 import { GlobalHeader } from "@/components/GlobalHeader";
 import { Footer } from "@/components/Footer";
 import { getAppBaseUrl } from "@/lib/url-utils";
+import { APP_TITLE, DEFAULT_DESCRIPTION, socialMetadata } from "@/lib/social-metadata";
 import { ToastProvider } from "@/components/ui/Toast";
 
-const isPreviewDeployment = process.env.VERCEL_ENV === "preview";
-const appTitle = isPreviewDeployment ? "Powerwall Usage (Preview)" : "Powerwall Usage";
 
 const geistSans = localFont({
   src: "./fonts/geist-latin.woff2",
@@ -23,27 +22,10 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: appTitle,
-  description: "Powerwall insights for smarter energy savings.",
+  title: APP_TITLE,
+  description: DEFAULT_DESCRIPTION,
   metadataBase: new URL(getAppBaseUrl()),
-  openGraph: {
-    title: appTitle,
-    description: "Powerwall insights for smarter energy savings.",
-    siteName: "Powerwall Usage",
-    images: [
-      {
-        url: "/opengraph-image",
-        width: 1200,
-        height: 630,
-      },
-    ],
-    locale: "en_US",
-    type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    description: "Powerwall insights for smarter energy savings.",
-  },
+  ...socialMetadata({ title: APP_TITLE, description: DEFAULT_DESCRIPTION }),
   alternates: {
     types: {
       'application/rss+xml': '/feed.xml',

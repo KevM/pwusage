@@ -13,4 +13,18 @@ describe('iOS beta page', () => {
     it('has a canonical URL for /ios', () => {
         expect(metadata.alternates?.canonical).toBe('/ios');
     });
+
+    it('unfurls as a large card with the iPhone screenshots', () => {
+        expect(metadata.twitter).toMatchObject({ card: 'summary_large_image' });
+        expect(metadata.openGraph).toMatchObject({
+            title: 'iPhone app beta',
+            siteName: 'pwusage',
+            images: [{ url: '/og/ios', width: 1200, height: 630 }],
+        });
+    });
+
+    it('leads with an iPhone screenshot, not the iPad one', async () => {
+        const html = renderToStaticMarkup(await IosPage());
+        expect(html).not.toContain('ipad-home');
+    });
 });

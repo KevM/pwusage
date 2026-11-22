@@ -1,4 +1,6 @@
+import type { Metadata } from 'next';
 import { observePage } from '@/lib/observability';
+import { APP_TITLE, DEFAULT_DESCRIPTION, socialMetadata } from '@/lib/social-metadata';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -12,6 +14,12 @@ import { SectionCard } from '@/components/ui/SectionCard';
 
 // Force dynamic rendering to always fetch fresh data
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = socialMetadata({
+  title: APP_TITLE,
+  description: DEFAULT_DESCRIPTION,
+  hero: { url: '/og/home', alt: 'Monitor usage, track costs, maximize savings' },
+});
 
 export default observePage('/', async function Home() {
   const cookieStore = await cookies();
