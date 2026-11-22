@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import PWUsageCore
 
 /// Local, per-site ERA5 archive. A failed fetch leaves any previously saved days usable.
 actor SolarHealthWeatherStore {

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct BillShadowPeriodSummary: Codable, Equatable, Sendable {
     let tariffName: String

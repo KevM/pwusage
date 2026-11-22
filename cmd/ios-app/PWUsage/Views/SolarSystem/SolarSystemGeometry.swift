@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The compass wedge: where the panels may face. Before a fit its width only reflects how many
 /// clear days are in (the prototypes' curves); after one it is the largest plane's 90% azimuth range.

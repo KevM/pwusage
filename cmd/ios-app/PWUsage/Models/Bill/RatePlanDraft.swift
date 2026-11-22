@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// How a rate plan's date range ends. There is no default: the owner chooses one.
 enum RatePlanEnd: Equatable, Sendable {

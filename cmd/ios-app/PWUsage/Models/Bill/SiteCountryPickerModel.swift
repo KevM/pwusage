@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// One country the owner can choose for their site.
 struct SiteCountryOption: Equatable, Identifiable, Sendable {

@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Versioned, fully serializable inputs. Keep the PRNG stable so seed reports remain replayable.
 struct SmartShiftScenario: Codable {

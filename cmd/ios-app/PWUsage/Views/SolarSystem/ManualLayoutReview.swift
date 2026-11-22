@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Entered and detected values side by side before saving. Differences are information only:

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct SavingsScenarioDays: Equatable, Sendable {
     let recorded: [EnergyFlowDay]

@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 @MainActor
 final class FakeOnboardingEnvironment: SiteHistoryOnboardingEnvironment {

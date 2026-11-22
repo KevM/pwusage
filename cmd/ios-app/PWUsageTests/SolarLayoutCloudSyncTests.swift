@@ -1,6 +1,7 @@
 import CloudKit
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 @Suite("Solar Layout Cloud Sync")
@@ -368,13 +369,11 @@ private actor CleanupForecastService: SolarForecastServing {
     nonisolated func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor? { nil }
     func activateAccountScope(_ accountScopeID: String?) async {}
     func publicationAttempt(
-        for request: SolarForecastRequest, actuals: [MobileSolarActualsHour]?
+        for _: SolarForecastRequest, actuals _: [MobileSolarActualsHour]?
     ) async -> SolarForecastPublicationAttempt {
-        SolarForecastPublicationAttempt(publication: nil, providerID: nil, outcome: .unavailable, diagnostic: nil)
+        .init(publication: nil, providerID: nil, outcome: .unavailable, diagnostic: nil)
     }
-    func clearAccountData() async throws {
-        if gate.shouldFail { throw LifecycleCleanupFailure() }
-    }
+    func clearAccountData() async throws { if gate.shouldFail { throw LifecycleCleanupFailure() } }
 }
 @MainActor
 private final class CloudSyncTestAppAPI: PWUsageApplicationAPI {

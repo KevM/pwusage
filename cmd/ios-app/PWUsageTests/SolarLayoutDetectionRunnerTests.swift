@@ -2,6 +2,7 @@ import BackgroundTasks
 import Foundation
 import os
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 private struct TestDetectionError: Error, Equatable {}

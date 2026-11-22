@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension PWUsageAppModel {
     /// A background launch does not bootstrap the dashboard or poll Tesla. Revalidate the

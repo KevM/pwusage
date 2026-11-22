@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The sites whose found layout nobody has seen yet, in one small file beside the layout records so
 /// record enumeration sees only records. Excluded from backup. An unreadable file means nothing is

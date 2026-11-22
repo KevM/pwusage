@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Open-Meteo for the server-detected layout. Owns transport, conversion and the
 /// device-wide request ledger; caching is the shared automatic-provider cache.

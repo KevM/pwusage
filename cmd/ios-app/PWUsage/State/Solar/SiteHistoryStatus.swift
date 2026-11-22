@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// What the phone holds for a site, besides its onboarding progress.
 struct SiteHistoryStoredState: Equatable, Sendable {

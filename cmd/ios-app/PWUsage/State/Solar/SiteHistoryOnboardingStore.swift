@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// One site's onboarding progress. The single cursor is `oldestChecked`: every day in
 /// `[oldestChecked, checkedUntil)` was returned `complete` by a fill. There is no per-day ledger.

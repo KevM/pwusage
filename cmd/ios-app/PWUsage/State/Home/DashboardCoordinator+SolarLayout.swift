@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The automatic layout status: cached per account and site, and updated when detection completes.
 enum SolarForecastSurface: Hashable { case smartShift, bill, settings }

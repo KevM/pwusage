@@ -2,6 +2,7 @@ import CloudKit
 import Foundation
 import os
 @testable import PWUsage
+import PWUsageCore
 
 /// Suspends the first `limit` arrivals at a boundary until released. Later arrivals pass,
 /// so cleanup that crosses the same boundary cannot deadlock behind a held test step.

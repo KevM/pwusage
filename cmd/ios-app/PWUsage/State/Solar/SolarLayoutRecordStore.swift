@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 actor SolarLayoutRecordStore {
     static let shared = SolarLayoutRecordStore()

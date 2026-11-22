@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The sample home behind demo mode and the App Store screenshots. Ships in
 /// Release, so it carries no real site's name, IDs, utility or location.

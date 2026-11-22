@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct SolarForecastAutomaticCacheState: Codable, Equatable, Sendable {
     struct Entry: Codable, Equatable, Sendable {

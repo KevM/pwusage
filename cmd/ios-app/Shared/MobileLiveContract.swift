@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct MobileLiveResponse: Codable, Equatable {
     /// A battery charge reading older than this is unknown, never "fresh". Mirrors the server
@@ -250,20 +251,5 @@ struct MobileLivePowerResponse: Codable, Equatable {
             throw MobileLiveResponse.ContractError.siteMismatch(expected: expected, actual: siteID)
         }
         return self
-    }
-}
-
-struct ReattributionStatusDTO: Codable, Equatable, Sendable {
-    let status: Status
-    let fromDate: String
-    let toDate: String?
-    let totalDays: Int
-    let processedDays: Int
-    let updatedDays: Int
-    let lastError: String?
-    let updatedAt: String
-
-    enum Status: String, Codable, Equatable, Sendable {
-        case pending, running, idle, failed
     }
 }

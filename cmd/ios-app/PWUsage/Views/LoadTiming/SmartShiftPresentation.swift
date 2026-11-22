@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum SmartShiftPresentation {
     /// The pass-wide inputs every Job priced in one evaluation shares.

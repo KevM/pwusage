@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Interactive scrubber state for inspecting shading, soiling and aging on the house model.
 struct SolarHouseHealthState: Equatable, Sendable {

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Which provider a site uses. All requests evaluate the automatic provider.
 struct SolarForecastSelectionPolicy: Sendable {

@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Combined Panel Health section: score, stats, compact findings row, ratio trend, and history analyzed.

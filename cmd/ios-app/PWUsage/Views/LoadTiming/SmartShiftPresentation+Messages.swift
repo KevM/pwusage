@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension SmartShiftPresentation {
     // MARK: - How this is worked out

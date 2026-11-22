@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// When the onboarding job runs. In the foreground it works through the selected site, waiting
 /// out backoffs and throttles in place; leaving the foreground cancels it (confirmed progress is

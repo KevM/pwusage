@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 /// A stable provider name. Unknown values (from a newer build's files) decode fine and simply
 /// never match a registered provider.
@@ -27,11 +28,6 @@ struct SolarForecastProviderDescriptor: Equatable, Sendable {
     /// new history rather than training on the old one.
     let modelVersion: String
     var attributionURL: URL?
-}
-
-struct SolarForecastSiteScope: Hashable, Codable, Sendable {
-    let accountScopeID: String
-    let siteID: String
 }
 
 struct SolarForecastRequest: Sendable {

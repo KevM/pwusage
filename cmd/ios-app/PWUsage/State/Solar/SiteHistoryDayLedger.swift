@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The latest clear-day pass for one site: when it ran, what it counted, and the largest plane's
 /// fitted direction range when a full detection ran with it.

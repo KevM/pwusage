@@ -1,6 +1,7 @@
 import BackgroundTasks
 import Foundation
 import OSLog
+import PWUsageCore
 
 /// Background opportunities for history onboarding. A processing task, because one slice can
 /// keep the server importing for about fifteen seconds and a run asks for several; iOS decides

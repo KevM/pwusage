@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Labels for where a plan came from, who chose it and who verified it. The three are separate:
 /// a public plan an owner chose and verified still reads as public rates.

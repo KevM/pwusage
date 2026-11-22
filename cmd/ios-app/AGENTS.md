@@ -137,22 +137,21 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 
 ## Tests
 
-- Use `cmd/ios-app/run-tests.sh` for every native test run — never `xcodebuild test` directly. The
+- **Core package tests (macOS)**: Use `cmd/ios-app/run-core-tests.sh` for pure-Foundation compute
+  suites (`SolarLayout`, `SolarHealth`, `BillPricing`) in `Packages/PWUsageCore`. It runs
+  `swift test` natively on macOS with zero simulator overhead:
+  - `./cmd/ios-app/run-core-tests.sh` — optimized (`-c release`) build, fast everyday loop (~33 s for all default suites).
+  - `./cmd/ios-app/run-core-tests.sh --debug` — unoptimized (`-c debug`) build.
+  - `./cmd/ios-app/run-core-tests.sh --full` — `-c release` with `PWUSAGE_SOLAR_SLOW_PARITY=1` for opt-in year-fixture and 10-year health suites.
+  - Supports Swift Testing filters, e.g. `./cmd/ios-app/run-core-tests.sh --filter BillPricingParityTests`.
+- **Simulator tests**: Use `cmd/ios-app/run-tests.sh` for every iOS simulator test run — never `xcodebuild test` directly. The
   script generates the project, picks an available iPhone simulator, disables parallel execution
   and stops a run after 10 minutes.
 - **Quick vs full**: while iterating use `./run-tests.sh --quick`, the everyday sniff test. It skips
-  the multi-minute suites listed in `cmd/ios-app/quick-test-skips.txt` and accepts filters, e.g.
-  `./run-tests.sh --quick AppConfigurationTests`. Plain `./run-tests.sh` runs the default suites as
-  a Debug build — once before opening or updating a PR. It runs the multi-minute detector parity
-  suite only when your branch (committed or not) changes the detector or its fixtures, so do not
-  run that suite by hand for unrelated work; `PWUSAGE_DETECTOR_PARITY=1` forces it and `=0` skips
-  it. Add a suite to the skip file only when it
-  takes more than about 30 s in Debug. `./run-tests.sh --full` builds optimized (`-O`, still
-  `@testable`) and runs the opt-in year-fixture parity suite; use it locally to reproduce a
-  failure in the parity suite. CI runs `./run-tests.sh --auto`, which promotes to `--full` when
-  the branch touches the detector or its fixtures, and stays default otherwise. On main, a parallel
-  CI job also runs `./run-tests.sh --build-only` (a Debug build without tests) and caches it,
-  because a new pull request can only restore caches saved on main.
+  any suites listed in `cmd/ios-app/quick-test-skips.txt` and accepts filters, e.g.
+  `./run-tests.sh --quick AppConfigurationTests`. Plain `./run-tests.sh` runs the Debug simulator
+  suites — once before opening or updating a PR. CI runs `core-tests` (`./run-core-tests.sh`) in
+  parallel with `test` (`./run-tests.sh`), so `main` and PRs share one Debug DerivedData cache.
 - **Targeting**: `./run-tests.sh AppConfigurationTests` runs a suite,
   `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin` a method, and
   `./run-tests.sh PWUsageTests` the whole bundle. The script normalizes the target prefix and method

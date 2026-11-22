@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// How often Rate Plans reloads while the server is still working on the site's rate plans.
 /// Re-pricing finishes in seconds. The server starts a pending estimate right after the change

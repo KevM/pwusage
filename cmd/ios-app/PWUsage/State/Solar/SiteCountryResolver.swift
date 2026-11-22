@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// What the saved home location says about a site's country.
 enum SiteCountryInference: Equatable, Sendable {

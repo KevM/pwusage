@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 protocol OpenMeteoTransport: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)

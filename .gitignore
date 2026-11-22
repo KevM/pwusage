@@ -12,6 +12,7 @@ cmd/ios-app/**/Info.plist
 # Xcode build products
 cmd/ios-app/build/
 cmd/ios-app/DerivedData/
+**/.build/
 cmd/ios-app/.bundle/
 cmd/ios-app/vendor/bundle/
 cmd/ios-app/fastlane/report.xml

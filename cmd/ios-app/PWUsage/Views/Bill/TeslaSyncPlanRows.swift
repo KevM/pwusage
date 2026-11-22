@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// A plan's name, an optional source line, and each season's time windows with their buy and sell rates.

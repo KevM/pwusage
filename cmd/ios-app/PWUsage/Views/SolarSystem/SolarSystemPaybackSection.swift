@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Payback section on Solar System, under Savings: what the system has paid back and when it pays for itself.

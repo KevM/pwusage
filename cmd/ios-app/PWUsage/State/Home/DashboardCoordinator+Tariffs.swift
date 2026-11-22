@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension DashboardCoordinator {
     /// Load rate plan timeline only while this coordinator has verified site access. Rate Plans

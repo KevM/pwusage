@@ -1,6 +1,7 @@
 import CloudKit
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Engine-level rows of the lifecycle acceptance matrix: suspended startup, engine-only

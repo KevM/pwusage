@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Fixed copy for Sync to Tesla, from the global constraints and docs/voice-and-terms.md.
 enum TeslaSyncCopy {

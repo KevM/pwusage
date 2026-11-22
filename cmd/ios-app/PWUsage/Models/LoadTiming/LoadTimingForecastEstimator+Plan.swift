@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension LoadTimingForecastEstimator {
     struct Plan {

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PWUsageCore
 import SwiftUI
 
 extension PWUsageAppModel {

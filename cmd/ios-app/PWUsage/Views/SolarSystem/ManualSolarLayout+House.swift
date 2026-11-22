@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension ManualSolarLayout {
     /// The house's panel groups from the faces the owner entered, one per face of every system

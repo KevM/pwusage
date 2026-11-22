@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// One site's deep-history walk. Separate from the onboarding progress, so loading older history
 /// never touches what detection decided. `oldestChecked` is the cursor: every day in

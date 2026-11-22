@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 @MainActor
 protocol MobileTariffDataAPI: Sendable {

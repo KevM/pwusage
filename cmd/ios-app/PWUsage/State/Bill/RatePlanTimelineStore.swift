@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 struct SavedRatePlanTimeline: Codable, Equatable, Sendable {
     let timeline: SiteTariffsTimelineResponse

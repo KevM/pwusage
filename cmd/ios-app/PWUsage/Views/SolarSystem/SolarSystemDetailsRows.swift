@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The found system, as rows under its render: total size, then each panel group's size, direction,

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// What to tell the user when the plan chosen in PWUsage differs from the plan last saved from
 /// Tesla. It names when that Tesla plan was saved, so an old snapshot never reads as live.

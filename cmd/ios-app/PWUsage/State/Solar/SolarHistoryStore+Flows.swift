@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum FlowSyncProgress: Equatable, Sendable {
     case currentCycleReady
@@ -19,16 +20,6 @@ private struct FlowPageRequest {
 private enum FlowPagesOutcome {
     case disabled
     case completed(maxFetchedAt: Date?)
-}
-
-struct EnergyFlowDay: Equatable, Sendable {
-    let day: String
-    let dayStart: Date
-    let solarWh: [Float?]
-    let loadWh: [Float?]
-    let gridWh: [Float?]
-    let batteryWh: [Float?]
-    let batterySoc: [Float?]
 }
 
 extension SolarHistoryStore {

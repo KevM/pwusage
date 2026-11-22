@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 // Response side of the rate plan selection contract: the server-built review an owner must
 // see before a change applies. Mirrors `TariffSelectionPreviewResponse` and its parts in

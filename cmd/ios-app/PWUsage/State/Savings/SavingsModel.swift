@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 enum SavingsNotReadyReason: Equatable, Sendable {
     case flowsMissing

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum SystemComponent: String, Sendable {
     case solar

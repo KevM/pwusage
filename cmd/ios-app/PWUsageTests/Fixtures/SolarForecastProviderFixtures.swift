@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 enum SolarProviderFixture {
     static let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt

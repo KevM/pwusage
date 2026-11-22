@@ -1,6 +1,7 @@
 import Foundation
 import os
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 @Suite("Solar Layout Detection forced runs")

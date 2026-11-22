@@ -10,7 +10,7 @@ import type { TariffSeasonInput, TimePeriodWindowInput } from '../src/lib/tariff
 
 const FIXTURES_DIR = path.resolve(
     __dirname,
-    '../../ios-app/PWUsageTests/Fixtures/BillPricing'
+    '../../ios-app/Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/BillPricing'
 );
 
 function dateRange(fromYmd: string, toYmd: string): string[] {

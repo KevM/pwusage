@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 enum SiteDeepHistoryPhase: Equatable {
     case idle, running, unavailable, finished

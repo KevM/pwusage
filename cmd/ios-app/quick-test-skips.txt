@@ -1,5 +1,0 @@
-PWUsageTests/SolarLayoutDetectorFixtureParityTests
-PWUsageTests/SolarLayoutClearDaysParityTests
-PWUsageTests/SolarHealthPassTests
-PWUsageTests/SolarHealthPassCacheTests
-PWUsageTests/SolarHealthClassifierPassTests

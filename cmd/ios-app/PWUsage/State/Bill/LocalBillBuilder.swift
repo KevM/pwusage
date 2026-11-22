@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 enum NotReadyReason: Equatable, Sendable {
     case flowsMissing

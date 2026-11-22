@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Pure formatting helpers for Savings Phase 2 UI copy and fixed rate plan drafts.
 enum SavingsPresentation {

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Display strings and emphasis flags for the Panel Health card and Potential vs actual caption.
 struct SolarHealthScorePresentation: Equatable {

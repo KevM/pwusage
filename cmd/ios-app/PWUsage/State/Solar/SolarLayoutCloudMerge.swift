@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum SolarLayoutCloudMerge {
     static func merge(local: SolarLayoutRecord?, remote: SolarLayoutRecord) -> SolarLayoutRecord {

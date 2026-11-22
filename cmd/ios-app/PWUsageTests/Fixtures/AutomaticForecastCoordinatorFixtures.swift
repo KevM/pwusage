@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Dashboard, planning and solar history API in one fake, all in UTC.
 @MainActor

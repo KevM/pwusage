@@ -30,6 +30,59 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  core-tests:
+    name: Run Core Package Tests (macOS)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: ./cmd/ios-app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Restore source file times
+        working-directory: .
+        run: python3 cmd/ios-app/restore-git-mtimes.py cmd/ios-app/Packages/PWUsageCore
+
+      - name: Cache PWUsageCore build
+        uses: actions/cache@v6.1.0
+        with:
+          path: cmd/ios-app/Packages/PWUsageCore/.build
+          key: ios-core-build-${{ runner.os }}-${{ hashFiles('cmd/ios-app/Packages/PWUsageCore/Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            ios-core-build-${{ runner.os }}-${{ hashFiles('cmd/ios-app/Packages/PWUsageCore/Package.swift') }}-
+
+      - name: Run PWUsageCore Tests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mode="--release"
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            mode="--full"
+          else
+            if ! diff_out="$(git diff --name-only "origin/${BASE_REF}...HEAD" -- \
+              Packages/PWUsageCore/Sources/PWUsageCore/SolarLayout \
+              Packages/PWUsageCore/Sources/PWUsageCore/SolarHealth \
+              Packages/PWUsageCore/Tests/PWUsageCoreTests/SolarLayout \
+              Packages/PWUsageCore/Tests/PWUsageCoreTests/SolarHealth \
+              Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/SolarLayout)"; then
+              mode="--full"
+            elif [[ -n "$diff_out" ]]; then
+              mode="--full"
+            fi
+          fi
+          ./run-core-tests.sh "$mode"
+
   test:
     name: Run iOS Tests
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -85,31 +138,26 @@ jobs:
         working-directory: .
         run: python3 cmd/ios-app/restore-git-mtimes.py cmd/ios-app
 
-      # Pull requests build Debug and main builds optimized, so each keeps its own cache. A run starts from
-      # the newest cache for its kind and saves its own when the tests pass.
+      # Heavy compute/parity suites run in core-tests, so both main and PRs run the same Debug
+      # simulator suite and share one Debug DerivedData cache.
       - name: Restore build products
         id: build-cache
         uses: actions/cache/restore@v6.1.0
         with:
           path: /tmp/pwusage-derived-data
-          key: ios-derived-data-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'full' }}-${{ hashFiles('cmd/ios-app/project.yml') }}-${{ github.sha }}
+          key: ios-derived-data-${{ runner.os }}-debug-${{ hashFiles('cmd/ios-app/project.yml') }}-${{ github.sha }}
           restore-keys: |
-            ios-derived-data-${{ runner.os }}-${{ github.event_name == 'pull_request' && 'pr' || 'full' }}-${{ hashFiles('cmd/ios-app/project.yml') }}-
+            ios-derived-data-${{ runner.os }}-debug-${{ hashFiles('cmd/ios-app/project.yml') }}-
 
       - name: Run iOS Tests
         env:
           TMPDIR: /tmp
           PWUSAGE_DERIVED_DATA: /tmp/pwusage-derived-data
-          # 30 minutes: full --auto/--full runs (parity + 10-year solar health budget) now take ~20 min on macos-26 runners.
           PWUSAGE_TEST_TIMEOUT_SECONDS: 1800
           # The simulator boots while the tests build, under this separate limit. Cold boots on a
           # busy runner have taken over ten minutes.
           PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS: 900
-          # Pushes to main and manual workflow dispatch force the full -O suite.
-          # Pull requests use change detection via --auto.
-          PWUSAGE_DETECTOR_PARITY: ${{ github.event_name != 'pull_request' && '1' || '' }}
-        # --auto: promotes to --full (-O + year fixtures) on detector changes; runs default fast suite otherwise.
-        run: ./run-tests.sh --auto
+        run: ./run-tests.sh
 
       - name: Save build products
         uses: actions/cache/save@v6.1.0
@@ -125,60 +173,3 @@ jobs:
           # Only the result bundle (with on-failure diagnostics); DerivedData is gigabytes.
           path: /tmp/pwusage-ios-tests.*/**/TestResults.xcresult
           if-no-files-found: ignore
-
-  # A pull request can only restore caches saved on its own branch or on main, and main tests an
-  # optimized build. Without a Debug cache from main, the first run of every new pull request rebuilds
-  # everything. This job builds the Debug tests on its own runner, in parallel with main's tests, and
-  # saves them under the pull-request key, starting from the last one main saved.
-  pr-build-cache:
-    name: Build Debug cache for pull requests
-    if: github.event_name != 'pull_request'
-    runs-on: macos-15
-    timeout-minutes: 60
-
-    defaults:
-      run:
-        working-directory: ./cmd/ios-app
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7.0.1
-        with:
-          # restore-git-mtimes.py needs each file's last commit; a shallow clone would stamp every file
-          # with one time and the saved products would not match pull-request checkouts.
-          fetch-depth: 0
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app
-
-      - name: Install XcodeGen
-        run: |
-          if ! command -v xcodegen &> /dev/null; then
-            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
-          fi
-
-      - name: Restore source file times
-        working-directory: .
-        run: python3 cmd/ios-app/restore-git-mtimes.py cmd/ios-app
-
-      - name: Restore Debug build products for pull requests
-        id: pr-build-cache
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: /tmp/pwusage-derived-data
-          key: ios-derived-data-${{ runner.os }}-pr-${{ hashFiles('cmd/ios-app/project.yml') }}-${{ github.sha }}
-          restore-keys: |
-            ios-derived-data-${{ runner.os }}-pr-${{ hashFiles('cmd/ios-app/project.yml') }}-
-
-      - name: Build Debug tests for pull requests
-        env:
-          TMPDIR: /tmp
-          PWUSAGE_DERIVED_DATA: /tmp/pwusage-derived-data
-          PWUSAGE_TEST_TIMEOUT_SECONDS: 1200
-        run: ./run-tests.sh --build-only
-
-      - name: Save Debug build products for pull requests
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: /tmp/pwusage-derived-data
-          key: ${{ steps.pr-build-cache.outputs.cache-primary-key }}

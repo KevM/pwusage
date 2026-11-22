@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The System Costs inputs. Pure: the sheet binds to it and saves `request` when it is non-nil.

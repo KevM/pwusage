@@ -1,7 +1,7 @@
 import Foundation
-@testable import PWUsage
+import PWUsageCore
 
-/// Server-generated bill-pricing parity fixture from `PWUsageTests/Fixtures/BillPricing/`.
+/// Loads `single-plan-cycle.json` for app-level bill/savings tests that stay in `PWUsageTests`.
 struct BillPricingFixture: Decodable {
     let name: String
     let now: Date
@@ -56,19 +56,6 @@ struct BillPricingFixture: Decodable {
         let netGridKwh: Double
         let cost: Double
     }
-
-    static let allNames: [String] = [
-        "billing-day-31-february",
-        "dst-fall-back",
-        "dst-spring-forward",
-        "gapped-day",
-        "holiday-weekday",
-        "no-plan",
-        "plan-change-mid-cycle",
-        "season-boundary-mid-month",
-        "single-plan-cycle",
-        "uncovered-window"
-    ]
 
     static func load(_ name: String) throws -> BillPricingFixture {
         guard let url = Bundle(for: BillPricingFixtureToken.self).url(forResource: name, withExtension: "json") else {

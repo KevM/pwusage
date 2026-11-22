@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum SolarLayoutDetectionSchedule {
     static func isDue(_ record: SolarLayoutRecord, now: Date) -> Bool {

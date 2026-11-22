@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension DashboardCoordinator {
     func performBill(siteID: String, generation: Int) async {

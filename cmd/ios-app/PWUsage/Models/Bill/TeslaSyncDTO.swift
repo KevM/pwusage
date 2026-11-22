@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// PWUsage's plan for today, as the sync would send it, next to Tesla's plan as it stands now.
 struct TeslaSyncPreviewDTO: Decodable, Equatable, Sendable {

@@ -1,5 +1,6 @@
 import CloudKit
 import Foundation
+import PWUsageCore
 
 protocol SolarLayoutSyncing: AnyObject, Sendable {
     /// `session` is the authority captured when the save committed, never the current one.
@@ -385,7 +386,6 @@ actor SolarLayoutCloudSync: SolarLayoutSyncing {
     }
 
     // MARK: - Metadata
-
     private func saveSystemFields(for record: CKRecord) {
         systemFields[record.recordID.recordName] = SolarLayoutCloudRecordSystemFields.encode(record)
         try? files.saveSystemFields(systemFields)
