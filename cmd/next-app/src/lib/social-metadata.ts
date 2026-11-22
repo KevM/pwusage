@@ -27,10 +27,10 @@ export interface SocialMetadataInput {
     title: string;
     description: string;
     /**
-     * Omit for the small card. `'file'` when the route segment has its own `opengraph-image`
-     * file (Next adds the image tags); otherwise a URL for a 1200×630 image.
+     * Omit for the small card. Otherwise a 1200×630 image, served from an `/og/*` route so the
+     * URL resolves against `metadataBase` (see src/app/og/home/route.ts).
      */
-    hero?: 'file' | { url: string; alt: string };
+    hero?: { url: string; alt: string };
 }
 
 export function socialMetadata({ title, description, hero }: SocialMetadataInput): Pick<Metadata, 'openGraph' | 'twitter'> {
@@ -42,11 +42,7 @@ export function socialMetadata({ title, description, hero }: SocialMetadataInput
         type: 'website',
     };
 
-    if (!hero) {
-        openGraph.images = [ICON_IMAGE];
-    } else if (hero !== 'file') {
-        openGraph.images = [{ url: hero.url, ...HERO_IMAGE_SIZE, alt: hero.alt }];
-    }
+    openGraph.images = hero ? [{ url: hero.url, ...HERO_IMAGE_SIZE, alt: hero.alt }] : [ICON_IMAGE];
 
     return {
         openGraph,

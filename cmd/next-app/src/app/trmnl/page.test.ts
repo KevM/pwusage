@@ -4,7 +4,11 @@ import { metadata } from './page';
 describe('TRMNL page metadata', () => {
     it('unfurls as a large card with the demo screen', () => {
         expect(metadata.twitter).toMatchObject({ card: 'summary_large_image' });
-        expect(metadata.openGraph).toMatchObject({ title: 'TRMNL display', siteName: 'pwusage' });
+        expect(metadata.openGraph).toMatchObject({
+            title: 'TRMNL display',
+            siteName: 'pwusage',
+            images: [{ url: '/og/trmnl', width: 1200, height: 630 }],
+        });
         expect(metadata.alternates?.canonical).toBe('/trmnl');
     });
 });

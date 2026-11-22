@@ -19,7 +19,14 @@ export const metadata: Metadata = {
     title: 'TRMNL Display | Powerwall Usage',
     description: DESCRIPTION,
     alternates: { canonical: '/trmnl' },
-    ...socialMetadata({ title: 'TRMNL display', description: DESCRIPTION, hero: 'file' }),
+    ...socialMetadata({
+        title: 'TRMNL display',
+        description: DESCRIPTION,
+        hero: {
+            url: '/og/trmnl',
+            alt: 'A TRMNL e-ink display showing today’s energy and the bill so far by rate period',
+        },
+    }),
 };
 
 interface FeatureCardProps {

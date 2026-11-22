@@ -16,7 +16,11 @@ export const metadata: Metadata = {
     title: 'iPhone App Beta | Powerwall Usage',
     description: DESCRIPTION,
     alternates: { canonical: '/ios' },
-    ...socialMetadata({ title: 'iPhone app beta', description: DESCRIPTION, hero: 'file' }),
+    ...socialMetadata({
+        title: 'iPhone app beta',
+        description: DESCRIPTION,
+        hero: { url: '/og/ios', alt: 'The pwusage iPhone app: live power, the bill so far and Smart Shift' },
+    }),
 };
 
 interface Screenshot {
