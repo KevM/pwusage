@@ -1,7 +1,6 @@
 import Foundation
-import PWUsageCore
 
-enum BillOutlookHistoryBuilder {
+public enum BillOutlookHistoryBuilder {
     private static let slotSeconds: TimeInterval = 300
 
     private struct BucketKey: Hashable {
@@ -16,16 +15,32 @@ enum BillOutlookHistoryBuilder {
         let periodName: String
     }
 
-    struct Input {
-        let days: [EnergyFlowDay]
-        let cycleStart: Date
-        let cycleEnd: Date
-        let now: Date
-        let resolver: RatePeriodResolver
-        let timeZone: TimeZone
+    public struct Input {
+        public let days: [EnergyFlowDay]
+        public let cycleStart: Date
+        public let cycleEnd: Date
+        public let now: Date
+        public let resolver: RatePeriodResolver
+        public let timeZone: TimeZone
+
+        public init(
+            days: [EnergyFlowDay],
+            cycleStart: Date,
+            cycleEnd: Date,
+            now: Date,
+            resolver: RatePeriodResolver,
+            timeZone: TimeZone
+        ) {
+            self.days = days
+            self.cycleStart = cycleStart
+            self.cycleEnd = cycleEnd
+            self.now = now
+            self.resolver = resolver
+            self.timeZone = timeZone
+        }
     }
 
-    static func build(_ input: Input) -> BillOutlookHistory? {
+    public static func build(_ input: Input) -> BillOutlookHistory? {
         guard let lastTimestamp = lastObservedSlotStart(
             in: input.days,
             cycleStart: input.cycleStart,
@@ -82,12 +97,42 @@ enum BillOutlookHistoryBuilder {
                 date: through,
                 buckets: cumulativeBuckets,
                 complete: runningComplete,
-                estimatedCost: BillOutlook.cost(cumulativeBuckets),
+                estimatedCost: cost(cumulativeBuckets),
                 periods: summarizePeriods(cumulativeBuckets)
             ))
             dayStart = next
         }
         return points
+    }
+
+    /// Mirrors priceBillUsage: merge rate buckets first, then proportionally net each plan/period.
+    public static func cost(_ buckets: [BillOutlookBucket]) -> Double {
+        Dictionary(grouping: merged(buckets), by: \.key).values.reduce(0) { total, group in
+            let imports = group.reduce(0) { $0 + max($1.netGridKwh, 0) }
+            let exports = group.reduce(0) { $0 + max(-$1.netGridKwh, 0) }
+            let net = imports - exports
+            return total + group.reduce(0) { sum, bucket in
+                if net > 0 && bucket.netGridKwh > 0 {
+                    return sum + bucket.netGridKwh * (net / imports) * bucket.buyRate
+                }
+                if net < 0 && bucket.netGridKwh < 0 {
+                    return sum + bucket.netGridKwh * (-net / exports) * abs(bucket.sellRate)
+                }
+                return sum
+            }
+        }
+    }
+
+    public static func merged(_ buckets: [BillOutlookBucket]) -> [BillOutlookBucket] {
+        var result: [BillOutlookBucket] = []
+        for bucket in buckets {
+            if let index = result.firstIndex(where: {
+                $0.key == bucket.key && $0.buyRate == bucket.buyRate && $0.sellRate == bucket.sellRate
+            }) {
+                result[index].netGridKwh += bucket.netGridKwh
+            } else { result.append(bucket) }
+        }
+        return result
     }
 
     private static func buildTariffTimeline(

@@ -1,12 +1,12 @@
 import Foundation
 
-enum BillPricing {
+public enum BillPricing {
     private struct GroupKey: Hashable {
         let planName: String
         let periodName: String
     }
 
-    static func costs(_ buckets: [BillUsageBucket]) -> [Double] {
+    public static func costs(_ buckets: [BillUsageBucket]) -> [Double] {
         var result = Array(repeating: 0.0, count: buckets.count)
         var groupIndices: [GroupKey: [Int]] = [:]
 

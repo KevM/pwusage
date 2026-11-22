@@ -1,7 +1,6 @@
 import Foundation
-import PWUsageCore
 
-enum LoadTimingTimelineBuilder {
+public enum LoadTimingTimelineBuilder {
     private struct ResolvedPeriod {
         let identity: RatePeriodResolver.WindowIdentity
         let periodKey: String
@@ -25,7 +24,7 @@ enum LoadTimingTimelineBuilder {
         }
     }
 
-    static func segments(
+    public static func segments(
         resolver: RatePeriodResolver,
         from start: Date,
         to horizonEnd: Date,
@@ -34,7 +33,7 @@ enum LoadTimingTimelineBuilder {
         segments(resolver: resolver, from: start, to: horizonEnd, requiredEnd: now)
     }
 
-    static func segments(
+    public static func segments(
         resolver: RatePeriodResolver,
         from start: Date,
         to horizonEnd: Date,

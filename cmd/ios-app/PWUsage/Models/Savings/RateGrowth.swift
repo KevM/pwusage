@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// How fast the site's actual rate plans have risen per year, for projecting savings forward.
 struct RateGrowth: Equatable, Sendable {

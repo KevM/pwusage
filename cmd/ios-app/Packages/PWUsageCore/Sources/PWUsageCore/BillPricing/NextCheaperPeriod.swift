@@ -1,5 +1,4 @@
 import Foundation
-import PWUsageCore
 
 struct CheaperPeriod: Equatable, Sendable {
     let name: String
@@ -23,10 +22,6 @@ struct CyclePeriodUsage: Equatable, Sendable {
 extension NextCheaperPeriod {
     private static let hourSeconds: TimeInterval = 3600
     private static let daySeconds: TimeInterval = 86_400
-
-    static func periodKey(_ name: String) -> String {
-        name
-    }
 
     static func walkScheduleTransitions(
         resolver: RatePeriodResolver,

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Everything one Smart Shift pass priced, and what it concluded, as JSON the
 /// owner can paste into a debugging chat. It carries every input

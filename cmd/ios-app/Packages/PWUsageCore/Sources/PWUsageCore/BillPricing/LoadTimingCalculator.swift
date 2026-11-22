@@ -1,7 +1,6 @@
 import Foundation
-import PWUsageCore
 
-enum LoadTimingCalculator {
+public enum LoadTimingCalculator {
     private struct ActivePeriod {
         let name: String
         let buyRate: Double
@@ -35,7 +34,7 @@ enum LoadTimingCalculator {
         )
     }
 
-    static func compute(
+    public static func compute(
         buckets: [BillUsageBucket],
         costs _: [Double],
         resolver: RatePeriodResolver,

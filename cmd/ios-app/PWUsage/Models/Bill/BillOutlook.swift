@@ -4,31 +4,7 @@ import PWUsageCore
 enum BillOutlook {
     /// Mirrors priceBillUsage: merge rate buckets first, then proportionally net each plan/period.
     static func cost(_ buckets: [BillOutlookBucket]) -> Double {
-        Dictionary(grouping: merged(buckets), by: \.key).values.reduce(0) { total, group in
-            let imports = group.reduce(0) { $0 + max($1.netGridKwh, 0) }
-            let exports = group.reduce(0) { $0 + max(-$1.netGridKwh, 0) }
-            let net = imports - exports
-            return total + group.reduce(0) { sum, bucket in
-                if net > 0 && bucket.netGridKwh > 0 {
-                    return sum + bucket.netGridKwh * (net / imports) * bucket.buyRate
-                }
-                if net < 0 && bucket.netGridKwh < 0 {
-                    return sum + bucket.netGridKwh * (-net / exports) * abs(bucket.sellRate)
-                }
-                return sum
-            }
-        }
-    }
-    private static func merged(_ buckets: [BillOutlookBucket]) -> [BillOutlookBucket] {
-        var result: [BillOutlookBucket] = []
-        for bucket in buckets {
-            if let index = result.firstIndex(where: {
-                $0.key == bucket.key && $0.buyRate == bucket.buyRate && $0.sellRate == bucket.sellRate
-            }) {
-                result[index].netGridKwh += bucket.netGridKwh
-            } else { result.append(bucket) }
-        }
-        return result
+        BillOutlookHistoryBuilder.cost(buckets)
     }
     static func point(date: Date, buckets: [BillOutlookBucket]) -> BillOutlookPoint {
         let periods = Dictionary(grouping: buckets, by: \.key).values.compactMap { group -> BillOutlookPeriod? in
@@ -71,9 +47,10 @@ enum BillOutlook {
         calendar.timeZone = TimeZone(identifier: context.timeZone) ?? .gmt
         for interval in intervals {
             let tariff = tariffs[interval.tariffIndex]
-            buckets = merged(buckets + [.init(tariffName: tariff.tariffName, periodName: tariff.periodName,
-                                              netGridKwh: -interval.netExportKwh, buyRate: tariff.buyRate,
-                                              sellRate: tariff.sellRate)])
+            buckets = BillOutlookHistoryBuilder.merged(
+                buckets + [.init(tariffName: tariff.tariffName, periodName: tariff.periodName,
+                                 netGridKwh: -interval.netExportKwh, buyRate: tariff.buyRate,
+                                 sellRate: tariff.sellRate)])
             if calendar.startOfDay(for: interval.end) == interval.end || interval.end == intervals.last?.end {
                 points.append(point(date: interval.end, buckets: buckets))
             }

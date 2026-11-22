@@ -1,6 +1,5 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite(.serialized)

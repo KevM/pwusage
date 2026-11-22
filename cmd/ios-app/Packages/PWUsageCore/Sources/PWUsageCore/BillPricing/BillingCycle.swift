@@ -1,9 +1,9 @@
 import Foundation
 
-enum BillingCycle {
+public enum BillingCycle {
     /// Returns the `[start, end)` UTC instants of the site-local billing cycle containing `now`.
     /// Clamps `billingDay` to each month's length (e.g. 31 -> Feb 28/29) and re-anchors on the next month.
-    static func current(billingDay: Int, now: Date, timeZone: TimeZone) -> (start: Date, end: Date) {
+    public static func current(billingDay: Int, now: Date, timeZone: TimeZone) -> (start: Date, end: Date) {
         let anchorDay = (1 ... 31).contains(billingDay) ? billingDay : 1
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -43,7 +43,7 @@ enum BillingCycle {
         return (start: start, end: end)
     }
 
-    static func cycles(
+    public static func cycles(
         billingDay: Int,
         from startDate: Date,
         through endDate: Date,

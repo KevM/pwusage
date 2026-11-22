@@ -1,13 +1,19 @@
 import Foundation
-import PWUsageCore
 
-struct ResolvedRatePeriod: Equatable, Sendable {
-    let planName: String
-    let periodName: String
-    let buyRate: Double
-    let sellRate: Double
+public struct ResolvedRatePeriod: Equatable, Sendable {
+    public let planName: String
+    public let periodName: String
+    public let buyRate: Double
+    public let sellRate: Double
 
-    static let unknown = ResolvedRatePeriod(
+    public init(planName: String, periodName: String, buyRate: Double, sellRate: Double) {
+        self.planName = planName
+        self.periodName = periodName
+        self.buyRate = buyRate
+        self.sellRate = sellRate
+    }
+
+    public static let unknown = ResolvedRatePeriod(
         planName: "Unknown",
         periodName: "Unknown",
         buyRate: 0,
@@ -16,23 +22,28 @@ struct ResolvedRatePeriod: Equatable, Sendable {
 }
 
 /// A slot resolved from the plan that matched it: the bucket identity, and whether that plan is an estimate.
-struct MatchedRatePeriod: Equatable, Sendable {
-    let resolved: ResolvedRatePeriod
-    let isEstimated: Bool
+public struct MatchedRatePeriod: Equatable, Sendable {
+    public let resolved: ResolvedRatePeriod
+    public let isEstimated: Bool
 
-    static let unknown = MatchedRatePeriod(resolved: .unknown, isEstimated: false)
+    public init(resolved: ResolvedRatePeriod, isEstimated: Bool) {
+        self.resolved = resolved
+        self.isEstimated = isEstimated
+    }
+
+    public static let unknown = MatchedRatePeriod(resolved: .unknown, isEstimated: false)
 }
 
-struct RatePeriodResolver: Sendable {
-    struct ScheduleMatch: Equatable, Sendable {
-        let period: TariffPeriodDTO
-        let season: TariffSeasonInput
-        let window: TimePeriodWindowInput
-        let seasonIndex: Int
-        let isWeekend: Bool
-        let windowIndex: Int
+public struct RatePeriodResolver: Sendable {
+    public struct ScheduleMatch: Equatable, Sendable {
+        public let period: TariffPeriodDTO
+        public let season: TariffSeasonInput
+        public let window: TimePeriodWindowInput
+        public let seasonIndex: Int
+        public let isWeekend: Bool
+        public let windowIndex: Int
 
-        var windowIdentity: WindowIdentity {
+        public var windowIdentity: WindowIdentity {
             WindowIdentity(
                 periodId: period.periodId,
                 seasonIndex: seasonIndex,
@@ -42,24 +53,24 @@ struct RatePeriodResolver: Sendable {
         }
     }
 
-    struct WindowIdentity: Hashable, Sendable {
-        let periodId: Int
-        let seasonIndex: Int
-        let isWeekend: Bool
-        let windowIndex: Int
+    public struct WindowIdentity: Hashable, Sendable {
+        public let periodId: Int
+        public let seasonIndex: Int
+        public let isWeekend: Bool
+        public let windowIndex: Int
     }
 
     private let periods: [TariffPeriodDTO]
     private let holidayDates: Set<String>
     private let calendar: Calendar
 
-    var earliestEffectiveFrom: String? { periods.map(\.effectiveFrom).min() }
+    public var earliestEffectiveFrom: String? { periods.map(\.effectiveFrom).min() }
 
-    var siteTimeZone: TimeZone {
+    public var siteTimeZone: TimeZone {
         calendar.timeZone
     }
 
-    init?(timeline: SiteTariffsTimelineResponse) {
+    public init?(timeline: SiteTariffsTimelineResponse) {
         self.init(
             periods: timeline.periods,
             timezone: timeline.timezone,
@@ -67,7 +78,7 @@ struct RatePeriodResolver: Sendable {
         )
     }
 
-    init?(referenceOf timeline: SiteTariffsTimelineResponse) {
+    public init?(referenceOf timeline: SiteTariffsTimelineResponse) {
         guard !timeline.referencePeriods.isEmpty else { return nil }
         self.init(
             periods: timeline.referencePeriods,
@@ -85,13 +96,13 @@ struct RatePeriodResolver: Sendable {
         self.calendar = calendar
     }
 
-    func period(at instant: Date, strict: Bool = false) -> ResolvedRatePeriod {
+    public func period(at instant: Date, strict: Bool = false) -> ResolvedRatePeriod {
         matchedPeriod(at: instant, strict: strict).resolved
     }
 
     /// Resolves `instant` like `period(at:strict:)` and also reports whether the matched plan is an estimate,
     /// from the same schedule match, so callers need no second lookup.
-    func matchedPeriod(at instant: Date, strict: Bool = false) -> MatchedRatePeriod {
+    public func matchedPeriod(at instant: Date, strict: Bool = false) -> MatchedRatePeriod {
         guard let match = scheduleMatch(at: instant, strict: strict) else { return .unknown }
         let planName = match.period.name.isEmpty ? "Unknown" : match.period.name
         return MatchedRatePeriod(
@@ -105,12 +116,12 @@ struct RatePeriodResolver: Sendable {
         )
     }
 
-    func match(at instant: Date) -> ActiveTariffPeriodMatch? {
+    public func match(at instant: Date) -> ActiveTariffPeriodMatch? {
         guard let found = scheduleMatch(at: instant) else { return nil }
         return ActiveTariffPeriodMatch(period: found.period, season: found.season, window: found.window)
     }
 
-    func scheduleMatch(at instant: Date, strict: Bool = false) -> ScheduleMatch? {
+    public func scheduleMatch(at instant: Date, strict: Bool = false) -> ScheduleMatch? {
         let comps = calendar.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: instant)
         guard let year = comps.year, let month = comps.month, let day = comps.day,
               let weekday = comps.weekday, let hour = comps.hour, let minute = comps.minute else {

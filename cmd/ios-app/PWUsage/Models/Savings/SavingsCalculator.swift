@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct ScenarioCosts: Equatable, Sendable {
     let recorded: Double
