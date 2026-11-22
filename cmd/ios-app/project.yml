@@ -20,6 +20,9 @@ settings:
     # The server a Debug build signs in to; Release always uses Prod. Switch to Beta
     # (https://pwusagebeta.fm.rodeo, the Dev database) when testing unmerged server changes.
     PWUSAGE_DEBUG_API_ORIGIN: https://pwusagebeta.fm.rodeo
+packages:
+  PWUsageCore:
+    path: Packages/PWUsageCore
 targets:
   PWUsage:
     type: application
@@ -69,6 +72,7 @@ targets:
     dependencies:
       - target: PWUsageWidgets
         embed: true
+      - package: PWUsageCore
     entitlements:
       path: PWUsage/PWUsage.entitlements
       properties:
