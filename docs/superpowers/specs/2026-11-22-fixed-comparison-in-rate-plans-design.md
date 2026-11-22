@@ -70,8 +70,11 @@ The UX hides it:
 For each actual period, its fixed comparison rows are the reference periods overlapping its dates,
 clipped to them, oldest first. A plan spanning a utility rate change shows one row per revision.
 Days of the plan no reference period covers produce a "No fixed comparison yet" row for that
-sub-range. Build this as a small pure unit (e.g. `FixedComparisonPairing`) with unit tests; both the
-editor and the guide review use it.
+sub-range. Build this as a small pure unit (e.g. `FixedComparisonPairing`) in
+`Packages/PWUsageCore/Sources/PWUsageCore/BillPricing/`, beside `RatePeriodResolver`, since
+`TariffPeriodDTO` and `SiteTariffsTimelineResponse` now live in `PWUsageCore/SharedModels`
+(PR #424). Test it in `PWUsageCoreTests/BillPricing` with `run-core-tests.sh`; both the editor and
+the guide review use it.
 
 Row content: fixed plan name, flat buy rate (`$0.16 / kWh`), `Estimated` when `source == .estimated`,
 and a **Change** button.
@@ -165,8 +168,8 @@ never changes the plan for your energy."
 
 ## Constraints
 
-- iOS CI: `swiftformat --lint` + `swiftlint --strict`, zero compiler warnings; tests via
-  `run-tests.sh` (see `cmd/ios-app/AGENTS.md`).
+- iOS CI: `lint.sh` (swiftformat + swiftlint `--strict`), zero compiler warnings; core logic tests
+  via `run-core-tests.sh`, simulator tests via `run-tests.sh` (see `cmd/ios-app/AGENTS.md`).
 - Web: append-only tariff versioning and reference precedence rules in `DesignDecisions.md` hold.
 - iOS is in beta: change the mobile API in place, no version gates.
 
