@@ -49,6 +49,10 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.3.app
 
+      - name: Restore source file times
+        working-directory: .
+        run: python3 cmd/ios-app/restore-git-mtimes.py cmd/ios-app/Packages/PWUsageCore
+
       - name: Cache PWUsageCore build
         uses: actions/cache@v6.1.0
         with:
@@ -65,11 +69,17 @@ jobs:
           mode="--release"
           if [[ "$EVENT_NAME" != "pull_request" ]]; then
             mode="--full"
-          elif git diff --name-only "origin/${BASE_REF}...HEAD" -- \
-            Packages/PWUsageCore/Sources/PWUsageCore/SolarLayout \
-            Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/SolarLayout \
-            | grep -q .; then
-            mode="--full"
+          else
+            if ! diff_out="$(git diff --name-only "origin/${BASE_REF}...HEAD" -- \
+              Packages/PWUsageCore/Sources/PWUsageCore/SolarLayout \
+              Packages/PWUsageCore/Sources/PWUsageCore/SolarHealth \
+              Packages/PWUsageCore/Tests/PWUsageCoreTests/SolarLayout \
+              Packages/PWUsageCore/Tests/PWUsageCoreTests/SolarHealth \
+              Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/SolarLayout)"; then
+              mode="--full"
+            elif [[ -n "$diff_out" ]]; then
+              mode="--full"
+            fi
           fi
           ./run-core-tests.sh "$mode"
 
