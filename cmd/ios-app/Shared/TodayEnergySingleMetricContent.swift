@@ -6,14 +6,15 @@ struct TodayEnergySingleMetricContent: View {
     let metric: TodayEnergyMetric
 
     var body: some View {
+        let availability = snapshot?.availability(at: date) ?? .missing
         VStack(spacing: 5) {
             HStack(spacing: 4) {
                 Text("Today").font(.footnote.weight(.bold)).lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
-                if let snapshot, snapshot.availability(at: date) != .missing,
+                if let snapshot, availability != .missing,
                    let source = snapshot.energy.energyDataThrough {
-                    let stale = snapshot.availability(at: date) == .stale
+                    let stale = availability == .stale
                     Label(stale ? "Stale" : time(source, timezone: snapshot.timezone),
                           systemImage: stale ? "clock.badge.exclamationmark" : "clock")
                         .font(.system(size: 9)).foregroundStyle(.white.opacity(stale ? 1 : secondaryOpacity))
@@ -23,7 +24,7 @@ struct TodayEnergySingleMetricContent: View {
                         )
                 }
             }
-            if let tile = selectedTile {
+            if let tile = selectedTile(availability: availability) {
                 tile
             } else {
                 let identity = TodayEnergyPresentation.tiles(homeKwh: 0, solarKwh: 0, gridNetKwh: 0, batteryNetKwh: 0,
@@ -32,7 +33,7 @@ struct TodayEnergySingleMetricContent: View {
                            compact: true, prominentValue: true,
                            spokenRole: "Energy unavailable. Open pwusage to refresh.", surface: .onFill)
             }
-            if snapshot == nil || snapshot?.availability(at: date) == .missing {
+            if availability == .missing {
                 Text("Open pwusage").font(.caption2).foregroundStyle(.white.opacity(secondaryOpacity))
             } else if let snapshot {
                 HStack(spacing: 4) {
@@ -51,8 +52,9 @@ struct TodayEnergySingleMetricContent: View {
     /// Secondary text on the metric fill: white, slightly receded, still readable on the deep end.
     private let secondaryOpacity = 0.8
 
-    private var selectedTile: MetricTile? {
-        guard var tile = TodayEnergyPresentation.tile(for: metric, snapshot: snapshot, at: date) else { return nil }
+    private func selectedTile(availability: TodayEnergySnapshot.Availability) -> MetricTile? {
+        guard var tile = TodayEnergyPresentation.tile(for: metric, snapshot: snapshot, at: date,
+                                                      availability: availability) else { return nil }
         tile.prominentValue = true
         tile.surface = .onFill
         return tile

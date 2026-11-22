@@ -181,11 +181,17 @@ struct TodayEnergyWidgetTests {
     @MainActor
     @Test func smallWidgetNeverShowsPriorDayOrMissingEnergy() {
         let value = TodayEnergyPreviewFixtures.snapshot()
+        let nextDay = TodayEnergyPreviewFixtures.date.addingTimeInterval(86400)
         for metric in TodayEnergyMetric.allCases {
             #expect(TodayEnergyPresentation.tile(for: metric, snapshot: nil, at: now) == nil)
-            #expect(TodayEnergyPresentation.tile(for: metric, snapshot: value,
-                                                 at: TodayEnergyPreviewFixtures.date.addingTimeInterval(86400)) == nil)
+            #expect(TodayEnergyPresentation.tile(for: metric, snapshot: value, at: nextDay) == nil)
+            #expect(TodayEnergyPresentation.tile(for: metric, snapshot: value, at: TodayEnergyPreviewFixtures.date,
+                                                 availability: .missing) == nil)
         }
+        let stale = TodayEnergyPreviewFixtures.snapshot(sourceAge: 2 * 3600)
+        #expect(stale.availability(at: TodayEnergyPreviewFixtures.date) == .stale)
+        #expect(TodayEnergyPresentation.tile(for: .grid, snapshot: stale, at: TodayEnergyPreviewFixtures.date,
+                                             availability: .stale)?.title == "Grid")
     }
 
     @Test func bothWidgetKindsUseSourceExpiryTimelineDates() throws {
