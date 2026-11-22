@@ -169,6 +169,32 @@ describe('SiteRepo site payload selection', () => {
     });
 });
 
+describe('SiteRepo.getSitesByIds', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('reads only the requested rows in SQL', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteRow()] });
+        const sites = await new SiteRepo().getSitesByIds(['site-1', 'stale-site']);
+
+        expect(sites.map(site => site.id)).toEqual(['site-1']);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('WHERE id = ANY($1::text[])');
+        expect(sql).not.toContain('json');
+        expect(params).toEqual([['site-1', 'stale-site']]);
+    });
+
+    it('selects the JSON column only when asked', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await new SiteRepo().getSitesByIds(['site-1'], { includeJson: true });
+        expect(queryMock.mock.calls[0][0]).toContain(', json FROM "Site"');
+    });
+
+    it('never queries for an empty ID set', async () => {
+        expect(await new SiteRepo().getSitesByIds([])).toEqual([]);
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+});
+
 describe('SiteRepo getSite request-scoped cache', () => {
     beforeEach(() => {
         queryMock.mockReset();
