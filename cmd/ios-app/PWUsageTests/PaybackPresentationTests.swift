@@ -145,6 +145,27 @@ struct PaybackPresentationTests {
             "Rates rise about 3% a year, a typical pace",
             "Solar output falls about 0.5% a year, a typical rate"
         ])
+
+        let flat = PaybackAssumptions(
+            rateGrowth: RateGrowth(annualRate: 0, isMeasured: true, measuredSince: "2022-05-01"),
+            solarDecline: 0,
+            solarDeclineMeasured: true,
+            batteryFadePerYear: nil
+        )
+        #expect(PaybackPresentation.assumptionLines(flat, hasPowerwall: false) == [
+            "Your usage stays like the last 12 months",
+            "Rates stay flat, in line with your rate plans since 2022",
+            "Solar output stays steady, as Panel Health measured"
+        ])
+    }
+
+    @Test("Pre-history note formats the first stored day and hides when nil")
+    func preHistoryNoteFormatsDate() {
+        #expect(PaybackPresentation.preHistoryNote(firstStoredDay: nil) == nil)
+        #expect(
+            PaybackPresentation.preHistoryNote(firstStoredDay: "2024-03-15")
+                == "Savings before Mar 15, 2024 aren’t in your history yet."
+        )
     }
 
     @Test("Progress is the paid share, clamped, and zero when there is no cost")
