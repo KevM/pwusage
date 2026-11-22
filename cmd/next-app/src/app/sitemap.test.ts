@@ -15,18 +15,19 @@ describe('sitemap', () => {
   it('includes only genuinely public, crawlable pages as absolute URLs', () => {
     const urls = sitemap().map((e) => e.url);
     expect(urls).toContain('https://pwusage.fm.rodeo');
-    for (const path of ['/about', '/ios', '/news', '/help/trmnl', '/privacy', '/support']) {
+    for (const path of ['/about', '/ios', '/news', '/trmnl', '/privacy', '/support']) {
       expect(urls).toContain(`https://pwusage.fm.rodeo${path}`);
     }
   });
 
   it('excludes routes that 404, redirect to auth, or are not content', () => {
     const urls = sitemap().map((e) => e.url);
-    // /help has no page (only /help/trmnl), /products redirects anon users to
-    // /login, and /login is an OAuth action handler — none are crawlable.
+    // /help has no page and /help/trmnl redirects to /trmnl, /products redirects
+    // anon users to /login, and /login is an OAuth action handler — none are crawlable.
     // Plus the auth-gated/private areas.
     for (const path of [
       '/help',
+      '/help/trmnl',
       '/products',
       '/login',
       '/site',
