@@ -16,6 +16,7 @@ cat > "$fixture_dir/bin/xcrun" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1 $2" == 'simctl bootstatus' ]]; then
   echo "boot:$3 $4" >> "$PWUSAGE_TEST_CALLS"
+  echo $$ > "$PWUSAGE_TEST_CALLS.boot-pid"
   [[ "${PWUSAGE_TEST_BOOT_HANG:-0}" == 1 ]] && sleep 30
   [[ "${PWUSAGE_TEST_BOOT_FAIL:-0}" == 1 ]] && exit 3
   exit 0
@@ -43,9 +44,14 @@ EOF
 cat > "$fixture_dir/bin/xcodebuild" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$PWUSAGE_TEST_ARGS"
+echo "xcodebuild:${*: -1}" >> "$PWUSAGE_TEST_CALLS"
 echo "env:TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY=${TEST_RUNNER_PWUSAGE_SOLAR_SLOW_PARITY:-}" >> "$PWUSAGE_TEST_ARGS"
 if [[ "${PWUSAGE_TEST_HANG:-0}" == 1 ]]; then
   sleep 30
+fi
+if [[ "${PWUSAGE_TEST_BUILD_FAIL:-0}" == 1 && "${*: -1}" == build-for-testing ]]; then
+  echo 'BUILD FAILED'
+  exit 65
 fi
 EOF
 # Reports PWUSAGE_TEST_CHANGED (newline-separated, repo-relative) as the branch diff;
@@ -69,13 +75,16 @@ export PWUSAGE_TEST_ARGS="$fixture_dir/args"
 
 "$script_dir/run-tests.sh"
 grep -qE '^generated$' "$PWUSAGE_TEST_CALLS"
-grep -qE '^test$' "$PWUSAGE_TEST_ARGS"
+# The tests build first (while the simulator boots), then run from those products.
+grep -qE '^test-without-building$' "$PWUSAGE_TEST_ARGS"
+[[ "$(grep -E '^xcodebuild:' "$PWUSAGE_TEST_CALLS" | tail -2 | tr '\n' ' ')" == 'xcodebuild:build-for-testing xcodebuild:test-without-building ' ]] || {
+  cat "$PWUSAGE_TEST_CALLS"; echo 'Expected build-for-testing, then test-without-building' >&2; exit 1; }
 grep -qE '^id=TEST-UDID$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^-parallel-testing-enabled$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^-collect-test-diagnostics$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^on-failure$' "$PWUSAGE_TEST_ARGS"
 grep -qE '^COMPILER_INDEX_STORE_ENABLE=NO$' "$PWUSAGE_TEST_ARGS"
-# The simulator is booted before the timed xcodebuild run, so a slow boot has its own limit.
+# The simulator boots alongside the build, with its own limit for a slow boot.
 grep -qxF 'boot:TEST-UDID -b' "$PWUSAGE_TEST_CALLS"
 
 # expect_failure <expected-status> <output-pattern> -- <run-tests.sh args...>
@@ -102,10 +111,28 @@ PWUSAGE_SIMULATOR_ID=PINNED "$script_dir/run-tests.sh"
 grep -qE '^id=PINNED$' "$PWUSAGE_TEST_ARGS"
 grep -qxF 'boot:PINNED -b' "$PWUSAGE_TEST_CALLS"
 
-# A simulator that fails to boot stops the run before xcodebuild starts.
-rm -f "$PWUSAGE_TEST_ARGS"
+# A simulator that fails to boot stops the run before any test runs.
+: > "$PWUSAGE_TEST_CALLS"
 PWUSAGE_TEST_BOOT_FAIL=1 expect_failure 3 'did not boot' --
-[[ ! -e "$PWUSAGE_TEST_ARGS" ]] || { echo 'xcodebuild ran after the simulator failed to boot' >&2; exit 1; }
+if grep -qE '^xcodebuild:test-without-building$' "$PWUSAGE_TEST_CALLS"; then
+  echo 'Tests ran after the simulator failed to boot' >&2
+  exit 1
+fi
+# A failed build stops the run with the build's status, without running tests.
+: > "$PWUSAGE_TEST_CALLS"
+PWUSAGE_TEST_BUILD_FAIL=1 expect_failure 65 'BUILD FAILED' --
+if grep -qE '^xcodebuild:test-without-building$' "$PWUSAGE_TEST_CALLS"; then
+  echo 'Tests ran after the build failed' >&2
+  exit 1
+fi
+# A failed build stops a boot that is still running before the run exits.
+started=$SECONDS
+PWUSAGE_TEST_BUILD_FAIL=1 PWUSAGE_TEST_BOOT_HANG=1 expect_failure 65 'BUILD FAILED' --
+(( SECONDS - started < 10 )) || { echo 'A failed build waited for the boot' >&2; exit 1; }
+if kill -0 "$(cat "$PWUSAGE_TEST_CALLS.boot-pid")" 2> /dev/null; then
+  echo 'The simulator boot kept running after the build failed' >&2
+  exit 1
+fi
 PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS=0 expect_failure 2 'PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS must be' --
 
 # A bare test-target name runs the whole bundle, not an invented suite.
