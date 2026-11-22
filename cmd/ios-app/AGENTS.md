@@ -150,17 +150,19 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   takes more than about 30 s in Debug. `./run-tests.sh --full` builds optimized (`-O`, still
   `@testable`) and runs the opt-in year-fixture parity suite; use it locally to reproduce a
   failure in the parity suite. CI runs `./run-tests.sh --auto`, which promotes to `--full` when
-  the branch touches the detector or its fixtures, and stays default otherwise. On main, CI also
-  runs `./run-tests.sh --build-only` (a Debug build without tests) and caches it, because a new
-  pull request can only restore caches saved on main.
+  the branch touches the detector or its fixtures, and stays default otherwise. On main, a parallel
+  CI job also runs `./run-tests.sh --build-only` (a Debug build without tests) and caches it,
+  because a new pull request can only restore caches saved on main.
 - **Targeting**: `./run-tests.sh AppConfigurationTests` runs a suite,
   `./run-tests.sh AppConfigurationTests/defaultsToProductionAPIOrigin` a method, and
   `./run-tests.sh PWUsageTests` the whole bundle. The script normalizes the target prefix and method
   parentheses. A run that executes zero tests (for example a misspelled suite) exits non-zero even
   though `xcodebuild` prints `TEST SUCCEEDED`. After changing the script, run `./test-run-tests.sh`.
 - **Tuning**: set `PWUSAGE_SIMULATOR_ID` to target a specific simulator, or
-  `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline. The simulator boots before that deadline
-  starts, under `PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS` (900 by default). A failed or timed-out
+  `PWUSAGE_TEST_TIMEOUT_SECONDS` to change the deadline, which covers the build and the test run
+  together. The simulator boots in the background while the tests build (`build-for-testing`, then
+  `test-without-building`), under its own `PWUSAGE_SIMULATOR_BOOT_TIMEOUT_SECONDS` (900 by
+  default). A failed or timed-out
   run prints the retained test-artifact path; inspect those artifacts and the simulator state
   before changing app code, and avoid overlapping runs.
 - **Framework**: Swift Testing only — `import Testing`, `@Suite`, `@Test`, `#expect`, `#require`.

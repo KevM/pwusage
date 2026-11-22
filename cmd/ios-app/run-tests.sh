@@ -211,14 +211,6 @@ sys.exit(status)
 PY
 }
 
-xcodebuild_action=test
-test_options=(-parallel-testing-enabled NO -collect-test-diagnostics on-failure)
-if [[ "$mode" == build ]]; then
-  # Same build settings as the default run, so its products are valid for that run's incremental build.
-  xcodebuild_action=build-for-testing
-  test_options=()
-fi
-
 artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/pwusage-ios-tests.XXXXXX")"
 # CI points this at a directory it caches between runs; otherwise the build products are throwaway.
 derived_data="${PWUSAGE_DERIVED_DATA:-$artifacts_dir/DerivedData}"
@@ -229,40 +221,74 @@ if [[ "${#test_filter_args[@]}" -gt 0 ]]; then
 fi
 echo "Test artifacts: $artifacts_dir"
 
-# Boot the simulator before the timed run. xcodebuild boots it only after building, and on a busy
-# hosted Mac the wait between the build and the first test has taken over ten minutes of the limit.
+# Settings shared by the build and the test run, so the test run uses exactly the products built.
+xcodebuild_args=(
+  -project PWUsage.xcodeproj
+  -scheme PWUsage
+  -destination "id=$simulator_id"
+  -derivedDataPath "$derived_data"
+  CODE_SIGNING_ALLOWED=NO
+  COMPILER_INDEX_STORE_ENABLE=NO
+  "PWUSAGE_FUZZ_STRESS=${PWUSAGE_FUZZ_STRESS:-0}"
+  "PWUSAGE_FUZZ_SEED=${PWUSAGE_FUZZ_SEED:-}"
+  ${mode_build_settings[@]+"${mode_build_settings[@]}"}
+)
+
+# The simulator boots in the background while the tests build. Booting first and building after
+# used to cost one to two minutes of boot on every CI run, and a just-booted simulator on a hosted Mac
+# can take minutes more to settle before it launches anything; the build now covers both. The boot
+# keeps its own limit, separate from the build and test limit.
+boot_pid=""
+boot_log="$artifacts_dir/simulator-boot.log"
 if [[ "$mode" != build ]]; then
-  echo "Booting simulator $simulator_id (limit: ${boot_timeout_seconds}s)"
+  echo "Booting simulator $simulator_id in the background (limit: ${boot_timeout_seconds}s)"
   boot_started=$SECONDS
-  set +e
-  run_with_timeout 'Simulator boot' "$boot_timeout_seconds" xcrun simctl bootstatus "$simulator_id" -b
-  status=$?
-  set -e
-  if [[ "$status" -ne 0 ]]; then
-    echo "Simulator $simulator_id did not boot (exit $status)" >&2
-    rm -rf "$artifacts_dir"
-    exit "$status"
-  fi
-  echo "Simulator ready after $((SECONDS - boot_started))s"
+  run_with_timeout 'Simulator boot' "$boot_timeout_seconds" xcrun simctl bootstatus "$simulator_id" -b \
+    > "$boot_log" 2>&1 &
+  boot_pid=$!
 fi
 
+# One limit covers the build and the test run together.
+deadline=$((SECONDS + timeout_seconds))
+
 set +e
-run_with_timeout 'iOS test run' "$timeout_seconds" xcodebuild \
-  -project PWUsage.xcodeproj \
-  -scheme PWUsage \
-  -destination "id=$simulator_id" \
-  ${test_options[@]+"${test_options[@]}"} \
-  -derivedDataPath "$derived_data" \
-  -resultBundlePath "$artifacts_dir/TestResults.xcresult" \
-  CODE_SIGNING_ALLOWED=NO \
-  COMPILER_INDEX_STORE_ENABLE=NO \
-  "PWUSAGE_FUZZ_STRESS=${PWUSAGE_FUZZ_STRESS:-0}" \
-  "PWUSAGE_FUZZ_SEED=${PWUSAGE_FUZZ_SEED:-}" \
-  ${mode_build_settings[@]+"${mode_build_settings[@]}"} \
-  ${test_filter_args[@]+"${test_filter_args[@]}"} \
-  "$xcodebuild_action"
+run_with_timeout 'iOS build' "$timeout_seconds" xcodebuild "${xcodebuild_args[@]}" build-for-testing
 status=$?
 set -e
+
+if [[ -n "$boot_pid" ]]; then
+  if [[ "$status" -ne 0 ]]; then
+    kill "$boot_pid" 2> /dev/null || true
+  else
+    set +e
+    wait "$boot_pid"
+    boot_status=$?
+    set -e
+    cat "$boot_log"
+    if [[ "$boot_status" -ne 0 ]]; then
+      echo "Simulator $simulator_id did not boot (exit $boot_status)" >&2
+      rm -rf "$artifacts_dir"
+      exit "$boot_status"
+    fi
+    echo "Simulator ready after $((SECONDS - boot_started))s"
+
+    remaining=$((deadline - SECONDS))
+    if [[ "$remaining" -lt 1 ]]; then
+      echo "iOS test run exceeded ${timeout_seconds}s before the tests started" >&2
+      status=124
+    else
+      set +e
+      run_with_timeout 'iOS test run' "$remaining" xcodebuild "${xcodebuild_args[@]}" \
+        -parallel-testing-enabled NO \
+        -collect-test-diagnostics on-failure \
+        -resultBundlePath "$artifacts_dir/TestResults.xcresult" \
+        ${test_filter_args[@]+"${test_filter_args[@]}"} \
+        test-without-building
+      status=$?
+      set -e
+    fi
+  fi
+fi
 
 # xcodebuild reports TEST SUCCEEDED when a filter matches nothing, so a green
 # exit only counts if the result bundle shows tests actually ran.
