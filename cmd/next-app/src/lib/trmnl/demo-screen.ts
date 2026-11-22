@@ -1,5 +1,5 @@
 /**
- * A demo TRMNL screen for public pages (e.g. /help/trmnl): the real renderer fed with sample data,
+ * A demo TRMNL screen for public pages (e.g. /trmnl): the real renderer fed with sample data,
  * so the preview always matches what the plugin draws today. Only the clock time, active period
  * and billing-cycle dates follow `now`; the numbers are fixed sample values.
  */
