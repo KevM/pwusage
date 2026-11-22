@@ -118,6 +118,11 @@ struct SolarSystemPaybackSection: View {
         Text(verbatim: parts.joined(separator: " · "))
             .font(.caption2)
             .foregroundStyle(.tertiary)
+        if let note = PaybackPresentation.preHistoryNote(firstStoredDay: result.unrecordedBeforeDay) {
+            Text(note)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
         SavingsCaveatRows(caveats: SavingsPresentation.caveats(result.coverage), onAction: onCaveatAction)
     }
 }
