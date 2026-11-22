@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Turns forecast state into what the Smart Shift card can show.
 ///

@@ -2,6 +2,7 @@ import CoreLocation
 import Foundation
 import MapKit
 import Observation
+import PWUsageCore
 
 /// An address or ZIP code suggestion while the user types.
 struct HomeLocationSuggestion: Identifiable, Equatable, Sendable {

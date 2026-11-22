@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The backtest's array model: Hay-Davies sky + 0.25-albedo ground diffuse,
 /// physical beam IAM, 14% losses, then a shared hard inverter clip.

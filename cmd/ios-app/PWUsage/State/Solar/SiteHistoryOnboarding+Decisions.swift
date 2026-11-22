@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The checkpoint rules: which targets run detection, when it is due, and which results end the search.
 extension SiteHistoryOnboarding {

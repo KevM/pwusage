@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension SolarHealthClassifier {
     // MARK: - Shading & Shading Growth

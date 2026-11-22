@@ -1,5 +1,5 @@
 import Foundation
-@testable import PWUsage
+@testable import PWUsageCore
 import Testing
 
 @Suite("Solar layout selection parity")

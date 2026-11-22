@@ -2,16 +2,22 @@ import Foundation
 
 /// One plane of the detector's layout: orientation, tilt and effective (post-IAM, temperature
 /// adjusted) size in kW.
-struct LayoutPlane: Equatable, Sendable {
-    let azimuth: Double
-    let tilt: Double
-    let effectiveKw: Double
+public struct LayoutPlane: Equatable, Sendable {
+    public let azimuth: Double
+    public let tilt: Double
+    public let effectiveKw: Double
+
+    public init(azimuth: Double, tilt: Double, effectiveKw: Double) {
+        self.azimuth = azimuth
+        self.tilt = tilt
+        self.effectiveKw = effectiveKw
+    }
 }
 
 /// Plane-of-array model (port of the detector's `poa.ts`): Hay-Davies sky diffuse, ground
 /// diffuse at albedo 0.2, physical beam IAM, Marion-integrated diffuse IAM, then the
 /// irradiance-dependent temperature prior and the ambient-temperature factor.
-enum LayoutPOA {
+public enum LayoutPOA {
     static let maxTilt = 50.0
 
     private static let albedo = 0.2
@@ -21,7 +27,7 @@ enum LayoutPOA {
     private static let radians = Double.pi / 180
 
     /// Plane-of-array output in kW for `planes` under `sun`, summed over planes.
-    static func modelKw(sun: LayoutSunSample, planes: [LayoutPlane]) -> Double {
+    public static func modelKw(sun: LayoutSunSample, planes: [LayoutPlane]) -> Double {
         planes.reduce(0) { total, plane in
             total + plane.effectiveKw
                 * effectiveIrradiance(sun, azimuth: LayoutFit.wrapDegrees(plane.azimuth), tilt: plane.tilt) / 1000
@@ -139,7 +145,7 @@ enum LayoutPOA {
 
     /// Smooth min(ratio, 1) with scale `scale` (reference `_softmin`).
     @_optimize(speed)
-    static func softmin(_ ratio: Double, scale: Double = 0.01) -> Double {
+    public static func softmin(_ ratio: Double, scale: Double = 0.01) -> Double {
         let scaled = (ratio - 1) / scale
         let logAddExp = scaled > 0 ? scaled + log1p(exp(-scaled)) : log1p(exp(scaled))
         return ratio - scale * logAddExp
@@ -225,7 +231,7 @@ private final class DiffuseIamCache: @unchecked Sendable {
 }
 
 /// Struct-of-arrays sun geometry for fast per-plane columns, one entry per row (reference `toSunArrays`).
-struct LayoutSunArrays: Sendable {
+public struct LayoutSunArrays: Sendable {
     let cosZ: [Double]
     let sinZ: [Double]
     let cosSaz: [Double]

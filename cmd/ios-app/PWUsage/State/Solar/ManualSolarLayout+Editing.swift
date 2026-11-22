@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension ManualSolarLayout {
     /// What the editor opens with when nothing was entered yet: one system, one face, with the

@@ -1,11 +1,13 @@
 import Foundation
-@testable import PWUsage
+@testable import PWUsageCore
 import Testing
 
 @Suite("Mobile solar layout contract")
 struct MobileSolarLayoutTests {
     private func layout(_ json: String) throws -> MobileSolarLayoutResponse {
-        try MobileContractDecoder.make().decode(MobileSolarLayoutResponse.self, from: Data(json.utf8))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(MobileSolarLayoutResponse.self, from: Data(json.utf8))
     }
 
     private static let twoPlanes = """

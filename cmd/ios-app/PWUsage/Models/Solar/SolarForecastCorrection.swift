@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Scales a forecast by how it has compared with measured production, per site-local hour.
 /// Trained only on raw forecasts and complete measured hours, never on corrected output.

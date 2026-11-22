@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The calendar strip: a cell per stored day in its type's color. Tapping a day shows its date and

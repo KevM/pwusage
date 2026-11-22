@@ -3,20 +3,20 @@ import Foundation
 /// Clear-day selection shared by layout detection, the clear-day pass and the health pass.
 extension SolarLayoutDetector {
     /// The stages through clear-day selection, shared by `detect` and `classifyDays`.
-    struct ClearDaySelection {
-        let clipKw: Double?
-        let fit: ClearFit
-        let keep: [Bool]
-        let shadeMask: ShadeMask
-        let days: (clear: Set<String>, use: Set<String>)
+    public struct ClearDaySelection {
+        public let clipKw: Double?
+        public let fit: ClearFit
+        public let keep: [Bool]
+        public let shadeMask: ShadeMask
+        public let days: (clear: Set<String>, use: Set<String>)
 
         /// The rows the layout fit uses: kept by the outlier and shade mask, on a day with enough clear rows.
-        var finalKeep: [Bool] {
+        public var finalKeep: [Bool] {
             fit.rows.powerKw.indices.map { keep[$0] && days.use.contains(fit.dayIds[$0]) }
         }
     }
 
-    enum ClearDayStage {
+    public enum ClearDayStage {
         /// An early exit, with the AC clip when it was detected first.
         case stopped(DetectedSolarLayout.Shortfall, clipKw: Double?)
         case selected(ClearDaySelection)
@@ -25,7 +25,7 @@ extension SolarLayoutDetector {
     /// Clear-day selection without the producing-day gate: peak, AC clip, clear rows and the
     /// shade mask learned from a two-plane fit.
     @_optimize(speed)
-    static func selectClearDays(
+    public static func selectClearDays(
         _ series: LayoutSeries, checkCancellation: () throws -> Void
     ) throws -> ClearDayStage {
         let peak = quantile(series.points.filter { $0.sun.elevation > 10 }.map(\.powerKw), 0.999)
@@ -47,15 +47,15 @@ extension SolarLayoutDetector {
     }
 
     /// The clear-selected rows with their sun geometry, and the two-plane fit that learns the shade mask.
-    struct ClearFit {
-        let rows: LayoutFit.Rows
-        let columns: [[Float]]
-        let clipKw: Double?
-        let peak: Double
+    public struct ClearFit {
+        public let rows: LayoutFit.Rows
+        public let columns: [[Float]]
+        public let clipKw: Double?
+        public let peak: Double
         /// Sun azimuth (`saz`), elevation (`sel`) and local day per clear row.
-        let azimuths: [Double]
-        let elevations: [Double]
-        let dayIds: [String]
+        public let azimuths: [Double]
+        public let elevations: [Double]
+        public let dayIds: [String]
 
         init(
             series: LayoutSeries, clearIndices: [Int], rows: LayoutFit.Rows, columns: [[Float]],

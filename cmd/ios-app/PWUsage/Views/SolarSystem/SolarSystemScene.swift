@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// What the visual draws: the stored days with their types, the wedge, and the panel groups once
@@ -390,7 +391,6 @@ struct SolarSystemFlightCanvas: View {
         }
         .frame(height: frame.sceneHeight + strip.height)
     }
-
     static func bezier(_ start: CGPoint, _ control: CGPoint, _ end: CGPoint, _ time: Double) -> CGPoint {
         let inverse = 1 - time
         return CGPoint(

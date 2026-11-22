@@ -1,5 +1,5 @@
 import Foundation
-@testable import PWUsage
+@testable import PWUsageCore
 import Testing
 
 /// Full detections on the fixtures small enough for the full suite (about two minutes in Debug).

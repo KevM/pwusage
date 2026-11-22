@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Enter the solar system as it was installed: systems, each with its panel faces. Route-agnostic:

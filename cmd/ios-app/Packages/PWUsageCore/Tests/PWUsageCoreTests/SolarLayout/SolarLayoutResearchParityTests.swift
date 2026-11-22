@@ -1,5 +1,5 @@
 import Foundation
-@testable import PWUsage
+@testable import PWUsageCore
 import Testing
 
 /// Local-only parity run for the detector against the Python reference's research sites.

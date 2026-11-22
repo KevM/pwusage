@@ -4,16 +4,36 @@ import Foundation
 /// detector's `sun.ts`). Geometry comes from `SolarPosition`, which matches sun.ts; this file
 /// adds Kasten-Young airmass, Ineichen-Perez clear sky at a Linke turbidity of 3.0, and the
 /// generic ambient-temperature factor.
-struct LayoutSunSample: Equatable, Sendable {
-    let apparentZenith: Double
-    let elevation: Double
-    let azimuth: Double
-    let dniExtra: Double
-    let ghi: Double
-    let dni: Double
-    let dhi: Double
+public struct LayoutSunSample: Equatable, Sendable {
+    public let apparentZenith: Double
+    public let elevation: Double
+    public let azimuth: Double
+    public let dniExtra: Double
+    public let ghi: Double
+    public let dni: Double
+    public let dhi: Double
     /// Relative efficiency from the generic ambient-temperature prior (sun.ts `tfac`).
-    let ambientFactor: Double
+    public let ambientFactor: Double
+
+    public init(
+        apparentZenith: Double,
+        elevation: Double,
+        azimuth: Double,
+        dniExtra: Double,
+        ghi: Double,
+        dni: Double,
+        dhi: Double,
+        ambientFactor: Double
+    ) {
+        self.apparentZenith = apparentZenith
+        self.elevation = elevation
+        self.azimuth = azimuth
+        self.dniExtra = dniExtra
+        self.ghi = ghi
+        self.dni = dni
+        self.dhi = dhi
+        self.ambientFactor = ambientFactor
+    }
 }
 
 private let linkeTurbidity = 3.0
@@ -24,7 +44,7 @@ private let radians = Double.pi / 180
 
 /// Sun geometry and clear-sky irradiance at `time`, for the detector's 5-minute sample grid.
 @_optimize(speed)
-func layoutSun(at time: Date, latitude: Double, longitude: Double) -> LayoutSunSample {
+public func layoutSun(at time: Date, latitude: Double, longitude: Double) -> LayoutSunSample {
     let position = SolarPosition.at(time, latitude: latitude, longitude: longitude)
     let apparentZenith = position.apparentZenith
     let elevation = 90 - apparentZenith

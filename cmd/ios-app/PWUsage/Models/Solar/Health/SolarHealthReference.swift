@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 
 /// One plane of the health reference: what a healthy array of this size should produce.
 struct SolarHealthPlane: Codable, Equatable, Sendable {

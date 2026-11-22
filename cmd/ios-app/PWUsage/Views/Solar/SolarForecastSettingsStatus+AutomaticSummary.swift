@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension SolarForecastSettingsStatus {
     /// Ordered lines for the settings sheet's automatic forecast section: source, panel faces,

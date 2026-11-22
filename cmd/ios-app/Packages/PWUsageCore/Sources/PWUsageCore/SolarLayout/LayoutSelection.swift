@@ -7,22 +7,22 @@ private let stepMs = 300_000.0
 private let dayMs = 86_400_000.0
 private let azimuthBinCount = 36
 
-struct LayoutSeriesPoint: Equatable, Sendable {
-    let time: Date
+public struct LayoutSeriesPoint: Equatable, Sendable {
+    public let time: Date
     /// Production in kW with the night baseline removed; NaN where no sample exists.
-    let powerKw: Double
-    let sun: LayoutSunSample
+    public let powerKw: Double
+    public let sun: LayoutSunSample
     /// Site-local calendar day, `yyyy-MM-dd`.
-    let localDay: String
+    public let localDay: String
 }
 
-struct LayoutSeries: RandomAccessCollection, Sendable {
-    let points: [LayoutSeriesPoint]
+public struct LayoutSeries: RandomAccessCollection, Sendable {
+    public let points: [LayoutSeriesPoint]
 
-    var startIndex: Int { points.startIndex }
-    var endIndex: Int { points.endIndex }
+    public var startIndex: Int { points.startIndex }
+    public var endIndex: Int { points.endIndex }
 
-    subscript(position: Int) -> LayoutSeriesPoint { points[position] }
+    public subscript(position: Int) -> LayoutSeriesPoint { points[position] }
 }
 
 struct ClipDetection: Equatable, Sendable {
@@ -31,56 +31,8 @@ struct ClipDetection: Equatable, Sendable {
     let days: Int
 }
 
-struct ShadeSegment: Equatable, Sendable {
-    var azimuthFrom: Double
-    var azimuthTo: Double
-    var belowElevation: Double
-}
-
-/// A strong-deficit bin above the horizon: 10 degrees of azimuth by 5 degrees of elevation.
-struct ShadeHotBin: Equatable, Sendable {
-    let azimuth: Double
-    let elevation: Double
-}
-
-/// Learned horizon profile (one value per 10 degrees of azimuth) plus isolated hot bins.
-struct ShadeMask: Sendable {
-    let horizon: [Double]
-    let hotBins: [ShadeHotBin]
-    let observedBins: [Bool]
-
-    init(horizon: [Double], hotBins: [ShadeHotBin], observedBins: [Bool] = []) {
-        self.horizon = horizon; self.hotBins = hotBins; self.observedBins = observedBins
-    }
-
-    func shaded(azimuth: Double, elevation: Double) -> Bool {
-        guard azimuth.isFinite else { return false }
-        let bin = Int(min(max(floor(azimuth / 10), 0), Double(horizon.count - 1)))
-        if elevation <= horizon[bin] { return true }
-        return hotBins.contains { hot in
-            azimuth >= hot.azimuth && azimuth < hot.azimuth + 10
-                && elevation >= hot.elevation && elevation < hot.elevation + 5
-        }
-    }
-
-    /// Horizon profile merged into contiguous segments (reference `summary` / `_merge_segments`).
-    func summary() -> [ShadeSegment] {
-        var out: [ShadeSegment] = []
-        for (bin, height) in horizon.enumerated() where height.isFinite {
-            if let last = out.last, last.azimuthTo == Double(bin * 10), abs(last.belowElevation - height) <= 5 {
-                out[out.count - 1].azimuthTo = Double((bin + 1) * 10)
-                out[out.count - 1].belowElevation = max(last.belowElevation, height)
-            } else {
-                out.append(ShadeSegment(
-                    azimuthFrom: Double(bin * 10), azimuthTo: Double((bin + 1) * 10), belowElevation: height))
-            }
-        }
-        return out
-    }
-}
-
 /// numpy-style linear-interpolated quantile of the finite values; NaN when there are none.
-func quantile(_ values: [Double], _ fraction: Double) -> Double {
+public func quantile(_ values: [Double], _ fraction: Double) -> Double {
     let sorted = values.filter(\.isFinite).sorted()
     guard !sorted.isEmpty else { return .nan }
     let position = fraction * Double(sorted.count - 1)
@@ -89,12 +41,12 @@ func quantile(_ values: [Double], _ fraction: Double) -> Double {
     return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - Double(lower))
 }
 
-func median(_ values: [Double]) -> Double {
+public func median(_ values: [Double]) -> Double {
     quantile(values, 0.5)
 }
 
 /// Regular 5-minute series with midpoint sun and the night baseline removed (reference `detect` lines 426-432).
-func layoutSeries(
+public func layoutSeries(
     samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double, timeZone: TimeZone
 ) -> LayoutSeries {
     guard !samples.isEmpty else { return LayoutSeries(points: []) }
@@ -323,7 +275,7 @@ func flatRuns(powerKw: [Double], model: [Double], clipKw: Double?) -> [Bool] {
 /// Horizon profile: for each 10° sun-azimuth bin, the lowest elevation above which the
 /// 80th-percentile measured/model ratio is >= `threshold` in every populated 2.5° bin, plus
 /// isolated strong-deficit bins above it (chimney, vent, pole).
-func learnShade(
+public func learnShade(
     saz: [Double], sel: [Double], ratio: [Double], dayIds: [String], threshold: Double = 0.85
 ) -> ShadeMask {
     var azimuthBins = [[Int]](repeating: [], count: azimuthBinCount)

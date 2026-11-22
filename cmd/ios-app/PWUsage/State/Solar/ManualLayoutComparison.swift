@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Where the entered layout and the detected one disagree. Informational: a flag never blocks a save.
 enum ManualLayoutFlag: Equatable, Sendable {

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// One calendar year of the health pass: clear rows against the reference model, then capacity
 /// per year and month, shade per season and the daily ratios. It reuses the detector's clear-day

@@ -19,7 +19,10 @@ let package = Package(
         ),
         .testTarget(
             name: "PWUsageCoreTests",
-            dependencies: ["PWUsageCore"]
+            dependencies: ["PWUsageCore"],
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )

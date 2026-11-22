@@ -8,8 +8,8 @@ import Foundation
 
 /// The detector's result on the phone (port of `detect.ts` `SolarLayoutResult`, without the
 /// shading profile, which nothing on the phone reads).
-struct DetectedSolarLayout: Codable, Equatable, Sendable {
-    enum Status: String, Codable, Sendable {
+public struct DetectedSolarLayout: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable {
         case detected
         case lowConfidence = "low-confidence"
         case notEnoughHistory = "not-enough-history"
@@ -17,31 +17,71 @@ struct DetectedSolarLayout: Codable, Equatable, Sendable {
     }
 
     /// One detected plane. Ranges are `[low, high]` in degrees (`azimuthRange90`, `tiltRange90`).
-    struct Plane: Codable, Equatable, Sendable {
-        let azimuth: Double
-        let tilt: Double
-        let dcKwp: Double
-        let effectiveKw: Double
-        let azimuthRange90: [Double]
-        let tiltRange90: [Double]
+    public struct Plane: Codable, Equatable, Sendable {
+        public let azimuth: Double
+        public let tilt: Double
+        public let dcKwp: Double
+        public let effectiveKw: Double
+        public let azimuthRange90: [Double]
+        public let tiltRange90: [Double]
+
+        public init(
+            azimuth: Double,
+            tilt: Double,
+            dcKwp: Double,
+            effectiveKw: Double,
+            azimuthRange90: [Double],
+            tiltRange90: [Double]
+        ) {
+            self.azimuth = azimuth
+            self.tilt = tilt
+            self.dcKwp = dcKwp
+            self.effectiveKw = effectiveKw
+            self.azimuthRange90 = azimuthRange90
+            self.tiltRange90 = tiltRange90
+        }
     }
 
-    let status: Status
+    public let status: Status
     /// "high", "medium" or "low"; nil when there was not enough history to judge.
-    let confidence: String?
-    let reasons: [String]
-    let planes: [Plane]
-    let acClipKw: Double?
-    let historyDays: Int
-    let clearDays: Int
-    let firstDay: String?
-    let lastDay: String?
+    public let confidence: String?
+    public let reasons: [String]
+    public let planes: [Plane]
+    public let acClipKw: Double?
+    public let historyDays: Int
+    public let clearDays: Int
+    public let firstDay: String?
+    public let lastDay: String?
     /// Which early exit stopped the run; nil when the fit ran to an assessment, and for results
     /// stored before it was recorded. Phone-only: `reasons` keeps the reference's labels.
-    var shortfall: Shortfall?
+    public var shortfall: Shortfall?
+
+    public init(
+        status: Status,
+        confidence: String?,
+        reasons: [String],
+        planes: [Plane],
+        acClipKw: Double?,
+        historyDays: Int,
+        clearDays: Int,
+        firstDay: String?,
+        lastDay: String?,
+        shortfall: Shortfall? = nil
+    ) {
+        self.status = status
+        self.confidence = confidence
+        self.reasons = reasons
+        self.planes = planes
+        self.acClipKw = acClipKw
+        self.historyDays = historyDays
+        self.clearDays = clearDays
+        self.firstDay = firstDay
+        self.lastDay = lastDay
+        self.shortfall = shortfall
+    }
 
     /// The detector's early exits. The reference labels the last three `few-clear-days`.
-    enum Shortfall: String, Codable, Sendable {
+    public enum Shortfall: String, Codable, Sendable {
         /// Fewer than `minHistoryDays` producing days.
         case fewProducingDays = "few-producing-days"
         /// Producing days, but no production with the sun more than 10° up: usually a wrong location.
@@ -78,14 +118,14 @@ struct SolarLayoutDetectorOutcome: Sendable {
 
 /// Solar layout detection from a site's own 5-minute production history (port of `detect.ts`).
 /// The version is 2 on the phone; the TypeScript reference reports 1.
-enum SolarLayoutDetector {
-    static let version = 2
-    static let derate = 0.85
-    static let minHistoryDays = 42
+public enum SolarLayoutDetector {
+    public static let version = 2
+    public static let derate = 0.85
+    public static let minHistoryDays = 42
     /// Longitude error (degrees) above which the stored location is treated as another place.
-    static let locationMismatchDegrees = 3.0
+    public static let locationMismatchDegrees = 3.0
 
-    static func detect(
+    public static func detect(
         samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
         timeZone: TimeZone, checkCancellation: () throws -> Void
     ) throws -> DetectedSolarLayout {
@@ -95,7 +135,7 @@ enum SolarLayoutDetector {
     }
 
     /// The layout the forecast may use: only detected with high or medium confidence (mirrors `toMobileSolarLayout`).
-    static func forecastLayout(_ result: DetectedSolarLayout, detectedAt: Date) -> SolarLayout? {
+    public static func forecastLayout(_ result: DetectedSolarLayout, detectedAt: Date) -> SolarLayout? {
         guard result.status == .detected,
               let confidence = result.confidence.flatMap(SolarLayoutConfidence.init(rawValue:)),
               confidence == .high || confidence == .medium else {
@@ -204,7 +244,7 @@ enum SolarLayoutDetector {
 
     /// The clear-day pass: each stored site-local day as clear, cloudy or without production, from
     /// the same stages `detect` runs before its fit. It writes nothing and needs no minimum history.
-    static func classifyDays(
+    public static func classifyDays(
         samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
         timeZone: TimeZone, checkCancellation: () throws -> Void
     ) throws -> SolarDayClassification {

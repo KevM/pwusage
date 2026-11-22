@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// What the Solar System screen, its Settings row and the banner say about finding a site's
 /// solar system. Counts are the phone's stored days and the latest clear-day pass; there is no

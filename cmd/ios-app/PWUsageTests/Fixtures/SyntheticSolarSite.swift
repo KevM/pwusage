@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Synthetic 5-minute production with a known problem built in. Clear days follow the app's own
 /// plane-of-array model (so the truth is the layout and the factors given), cloudy days are cut down,

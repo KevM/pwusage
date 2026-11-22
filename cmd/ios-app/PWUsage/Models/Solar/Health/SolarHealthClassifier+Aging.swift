@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension SolarHealthClassifier {
     // MARK: - Aging & Change Over Time

@@ -2,15 +2,21 @@ import Foundation
 
 /// NOAA/Meeus solar geometry with SPA's atmospheric-refraction approximation.
 /// Matches the detector's geometry; pvlib SPA fixtures bound the forecast error.
-struct SolarPosition: Sendable {
-    let apparentZenith: Double
-    let azimuth: Double
-    let extraterrestrialDni: Double
+public struct SolarPosition: Sendable {
+    public let apparentZenith: Double
+    public let azimuth: Double
+    public let extraterrestrialDni: Double
+
+    public init(apparentZenith: Double, azimuth: Double, extraterrestrialDni: Double) {
+        self.apparentZenith = apparentZenith
+        self.azimuth = azimuth
+        self.extraterrestrialDni = extraterrestrialDni
+    }
 
     private static let radians = Double.pi / 180
 
     @_optimize(speed)
-    static func at(_ date: Date, latitude: Double, longitude: Double) -> SolarPosition {
+    public static func at(_ date: Date, latitude: Double, longitude: Double) -> SolarPosition {
         let time = date.timeIntervalSince1970
         let century = (time / 86_400 + 2_440_587.5 - 2_451_545) / 36_525
         let meanLongitude = mod(280.46646 + century * (36_000.76983 + century * 0.0003032), by: 360)

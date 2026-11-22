@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Context needed to render and scrub the house model when inspecting a health finding.

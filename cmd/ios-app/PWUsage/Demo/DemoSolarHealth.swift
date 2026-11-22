@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Synthetic multi-year solar health data for Demo Mode, including active soiling,
 /// summer morning shading, and 3 years of aging so all House View visuals can be explored.

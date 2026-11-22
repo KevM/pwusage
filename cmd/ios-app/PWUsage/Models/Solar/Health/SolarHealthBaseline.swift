@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// A calendar month on the timeline, used to order solar health baselines and windows.
 struct SolarHealthMonthStamp: Comparable, Hashable, Sendable {

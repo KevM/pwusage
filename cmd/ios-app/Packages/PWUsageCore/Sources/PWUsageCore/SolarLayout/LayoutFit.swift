@@ -8,7 +8,7 @@ import Foundation
 /// This file holds the data types, the grid search and the Gram accumulation. The continuous
 /// refinement lives in `LayoutFit+Refine.swift`, the plane-count selection and bootstrap in
 /// `LayoutFit+PlaneCount.swift`.
-enum LayoutFit {
+public enum LayoutFit {
     static let fScale = 0.08
     static let hAzimuth = 0.5
     static let hTilt = 0.25
@@ -24,12 +24,12 @@ enum LayoutFit {
 
     /// Rows used for fitting: geometry, measured kW (`y` in the reference), day index and a
     /// weight (bootstrap counts).
-    struct Rows: Sendable {
-        var sun: LayoutSunArrays
-        var powerKw: [Double]
-        var day: [Int]
-        var days: [String]
-        var weight: [Double]
+    public struct Rows: Sendable {
+        public var sun: LayoutSunArrays
+        public var powerKw: [Double]
+        public var day: [Int]
+        public var days: [String]
+        public var weight: [Double]
     }
 
     /// Gram matrix of one group (reference `G`, `b`, `yy`): `normal` is the m x m row-major
@@ -102,7 +102,7 @@ enum LayoutFit {
     }
 
     /// The rows for which `keep` holds, in order.
-    static func subsetRows(_ rows: Rows, keep: (Int) -> Bool) -> Rows {
+    public static func subsetRows(_ rows: Rows, keep: (Int) -> Bool) -> Rows {
         let indices = rows.powerKw.indices.filter(keep)
         return Rows(
             sun: rows.sun.subset(indices), powerKw: indices.map { rows.powerKw[$0] },
@@ -291,7 +291,7 @@ enum LayoutFit {
 
     /// Model kW for packed params [azimuth, tilt, kW, ...] over the rows.
     @_optimize(speed)
-    static func modelRows(_ params: [Double], rows: Rows, clipKw clipInput: Double?) -> [Double] {
+    public static func modelRows(_ params: [Double], rows: Rows, clipKw clipInput: Double?) -> [Double] {
         let count = rows.powerKw.count
         var total = [Double](repeating: 0, count: count)
         for base in stride(from: 0, to: params.count, by: 3) {
@@ -330,13 +330,13 @@ enum LayoutFit {
     }
 
     /// The reference's `clipKw` truthiness: absent, zero and NaN all mean no clip.
-    static func clip(_ clipKw: Double?) -> Double? {
+    public static func clip(_ clipKw: Double?) -> Double? {
         guard let clipKw, clipKw != 0, !clipKw.isNaN else { return nil }
         return clipKw
     }
 
     /// `((v % 360) + 360) % 360`, in [0, 360).
-    static func wrapDegrees(_ value: Double) -> Double {
+    public static func wrapDegrees(_ value: Double) -> Double {
         (value.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
     }
 }

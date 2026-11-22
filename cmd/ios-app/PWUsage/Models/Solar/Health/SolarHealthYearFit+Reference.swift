@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension SolarHealthYearFit {
     /// The reference model for every row: kW per direction, with the planes of the system set in

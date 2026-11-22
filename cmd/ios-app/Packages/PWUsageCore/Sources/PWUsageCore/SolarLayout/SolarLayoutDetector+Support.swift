@@ -122,12 +122,12 @@ extension SolarLayoutDetector {
         return floor(value * scale + 0.5) / scale
     }
 
-    static func rangeWidth(_ range: [Double]) -> Double {
+    public static func rangeWidth(_ range: [Double]) -> Double {
         ((range[1] - range[0]).truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
     }
 
     /// Plane-of-array model kW with the AC clip applied as a smooth cap (`modelKw` in poa.ts).
-    static func modelKw(_ sun: LayoutSunSample, planes: [LayoutPlane], clipKw: Double?) -> Double {
+    public static func modelKw(_ sun: LayoutSunSample, planes: [LayoutPlane], clipKw: Double?) -> Double {
         let total = LayoutPOA.modelKw(sun: sun, planes: planes)
         guard let clipKw = LayoutFit.clip(clipKw) else { return total }
         return clipKw * LayoutPOA.softmin(total / clipKw)

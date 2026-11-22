@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension ManualSolarFace {
     var nameplateKw: Double { Double(panelCount) * panelWatts / 1000 }

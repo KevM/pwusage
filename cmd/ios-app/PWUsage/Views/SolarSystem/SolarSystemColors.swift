@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The prototypes' colors, shared by the strip, the banner and the flying dots: grey until sorted,

@@ -1,4 +1,5 @@
 import Foundation
+@testable import PWUsageCore
 
 /// Plane-of-array model output for one fixture.
 struct SolarLayoutPOA: Decodable {
@@ -127,7 +128,11 @@ struct SolarLayoutFixture: Decodable {
     /// Loads `<name>.json` from the test bundle. Throws when the resource is missing, so a
     /// fixture that fails to bundle fails the suite loudly instead of passing vacuously.
     static func load(_ name: String) throws -> SolarLayoutFixture {
-        guard let url = Bundle(for: FixtureBundleToken.self).url(forResource: name, withExtension: "json") else {
+        guard let url = Bundle.module.url(
+            forResource: name,
+            withExtension: "json",
+            subdirectory: "Fixtures/SolarLayout"
+        ) else {
             throw LoadError.missingResource(name)
         }
         let decoder = JSONDecoder()
@@ -149,8 +154,6 @@ struct SolarLayoutFixture: Decodable {
         case missingResource(String)
     }
 }
-
-private final class FixtureBundleToken {}
 
 private enum InputKeys: String, CodingKey {
     case latitude, longitude, timeZone, start, stepMinutes, solarWh

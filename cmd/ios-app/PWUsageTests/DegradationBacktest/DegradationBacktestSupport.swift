@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Research inputs for the solar degradation backtest. They live outside the repo, in the folder named
 /// by PWUSAGE_SOLAR_BACKTEST_DIR (passed as TEST_RUNNER_PWUSAGE_SOLAR_BACKTEST_DIR=/abs/path to

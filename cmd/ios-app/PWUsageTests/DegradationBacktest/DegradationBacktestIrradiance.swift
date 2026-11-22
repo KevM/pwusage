@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Section 3: expected energy from ERA5 hourly irradiance on the entered layout, against production
 /// over the same UTC hours. The shipped clear-sky reference is evaluated on the same hours (at each

@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import PWUsageCore
 
 enum HomeLocationError: Error, Equatable {
     case denied

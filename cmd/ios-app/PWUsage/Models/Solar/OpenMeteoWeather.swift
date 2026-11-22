@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The hourly radiation columns of an Open-Meteo response.
 struct OpenMeteoWeatherHourly: Decodable, Sendable {

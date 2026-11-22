@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Pure classification of `SolarHealthResult` into plain-language findings and health stats.
 enum SolarHealthClassifier {
