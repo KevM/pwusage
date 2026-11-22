@@ -3,6 +3,7 @@ import SwiftUI
 struct FixedRatePlanActions: Sendable {
     var save: @MainActor (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?
     var delete: (@MainActor (Int) async -> String?)?
+    var updateDates: (@MainActor (Int, TariffPlanPatchRequest) async throws -> Void)?
     var selection: RatePlanSelectionActions?
     var onApplied: @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void = { _, _ in }
 
@@ -13,6 +14,10 @@ struct FixedRatePlanActions: Sendable {
             },
             delete: { periodID in
                 await coordinator.removeFixedRatePlan(periodID: periodID)
+            },
+            updateDates: { periodID, patch in
+                let timeline = try await coordinator.updateReferenceRatePlan(periodID: periodID, body: patch)
+                await coordinator.refreshSavings(timeline: timeline)
             },
             selection: coordinator.savingsTimeline?.supportsRatePlanSelection == true
                 ? TariffTimelineActions.live(coordinator).selection
@@ -42,6 +47,7 @@ struct FixedRatePlanForm: View {
     @State private var errorMessage: String?
     @State private var path: [Route] = []
     @State private var review: RatePlanReviewModel?
+    @State private var isEditingDates = false
 
     /// The write in flight; Save and Delete never run together.
     private enum Operation { case saving, deleting }
@@ -131,6 +137,14 @@ struct FixedRatePlanForm: View {
                     }
                 }
             }
+            .sheet(isPresented: $isEditingDates) {
+                if let existing, let updateDates = actions.updateDates {
+                    EffectiveDatesSheet(period: existing) { periodID, patch in
+                        try await updateDates(periodID, patch)
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 
@@ -156,6 +170,17 @@ struct FixedRatePlanForm: View {
                let date = Self.parseDate(suggestedStartDate, timeZone: timeZone),
                RatePlanTimelineFormatting.formatYMD(startsOn, in: timeZone) != suggestedStartDate {
                 Button("Start on \(RatePlanTimelineFormatting.displayDate(suggestedStartDate))") { startsOn = date }
+            }
+            if let editRangeProblem {
+                Label(editRangeProblem, systemImage: "exclamationmark.circle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+            if existing != nil, actions.selection != nil, actions.updateDates != nil {
+                Button("Edit Dates", systemImage: "calendar") {
+                    isEditingDates = true
+                }
+                .disabled(operation != nil)
             }
         } footer: {
             Text("This is the flat rate you would pay without solar or your current rate plan.")
@@ -204,12 +229,22 @@ struct FixedRatePlanForm: View {
         return FixedRatePlanDraft.parseRate(trimmed)
     }
 
+    private var editRangeProblem: String? {
+        FixedRatePlanDraft.editRangeProblem(
+            existing: existing,
+            startsOn: startsOn,
+            timeZone: timeZone,
+            usesSelection: actions.selection != nil
+        )
+    }
+
     private var canSave: Bool {
-        parsedBuyRate != nil && parsedSellRate != nil
+        parsedBuyRate != nil && parsedSellRate != nil && editRangeProblem == nil
     }
 
     private func startReview() {
-        guard let selection = actions.selection,
+        guard canSave,
+              let selection = actions.selection,
               let buyRate = parsedBuyRate,
               let sellRate = parsedSellRate else { return }
         let request = FixedRatePlanDraft.makeSelectionRequest(

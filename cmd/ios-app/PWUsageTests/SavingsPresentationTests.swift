@@ -147,6 +147,44 @@ struct SavingsPresentationTests {
         #expect(bounded.effectiveTo == "2026-06-30")
     }
 
+    @Test("FixedRatePlanDraft blocks shortening start date only for reviewed edits")
+    func fixedRatePlanEditRangeProblem() throws {
+        let zone = try #require(TimeZone(identifier: "America/Chicago"))
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = zone
+        let existing = TariffPeriodDTO(
+            periodId: 42,
+            tariffId: 7,
+            name: "Fixed Rate Plan",
+            version: 1,
+            source: .manual,
+            effectiveFrom: "2026-03-01",
+            effectiveTo: nil,
+            isCurrentToday: true,
+            updatedBy: nil,
+            seasons: []
+        )
+        let earlier = try #require(cal.date(from: DateComponents(year: 2026, month: 2, day: 15)))
+        let same = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: 1)))
+        let later = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: 10)))
+
+        #expect(FixedRatePlanDraft.editRangeProblem(
+            existing: nil, startsOn: later, timeZone: zone, usesSelection: true
+        ) == nil)
+        #expect(FixedRatePlanDraft.editRangeProblem(
+            existing: existing, startsOn: later, timeZone: zone, usesSelection: false
+        ) == nil)
+        #expect(FixedRatePlanDraft.editRangeProblem(
+            existing: existing, startsOn: earlier, timeZone: zone, usesSelection: true
+        ) == nil)
+        #expect(FixedRatePlanDraft.editRangeProblem(
+            existing: existing, startsOn: same, timeZone: zone, usesSelection: true
+        ) == nil)
+        #expect(FixedRatePlanDraft.editRangeProblem(
+            existing: existing, startsOn: later, timeZone: zone, usesSelection: true
+        ) == RatePlanEditorState.shortenedEditMessage)
+    }
+
     @Test("FixedRatePlanDraft formats and parses rates using the given locale")
     func fixedRatePlanDraftLocaleRates() {
         let german = Locale(identifier: "de_DE")

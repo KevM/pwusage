@@ -214,6 +214,18 @@ enum FixedRatePlanDraft {
         )
     }
 
+    static func editRangeProblem(
+        existing: TariffPeriodDTO?,
+        startsOn: Date,
+        timeZone: TimeZone,
+        usesSelection: Bool
+    ) -> String? {
+        guard usesSelection, let existing else { return nil }
+        return formatDate(startsOn, timeZone: timeZone) > existing.effectiveFrom
+            ? RatePlanEditorState.shortenedEditMessage
+            : nil
+    }
+
     static func makeSelectionRequest(
         name: String,
         buyRate: Double,
