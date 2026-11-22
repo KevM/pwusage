@@ -111,8 +111,8 @@ export class SiteService {
                         throw new Error('Unauthorized: Revoked or inactive user');
                     }
                     // Close stale claims: derive site membership from the DB, not the JWT.
-                    const userSites = await this.deps.siteRepo.getSitesForUser(decoded.sub);
-                    authorizedSiteIds = new Set(userSites.map(s => s.id));
+                    // The user-scoped query already returns the rows, so no second read.
+                    return this.deps.siteRepo.getSitesForUser(decoded.sub, { includeJson: options?.includeJson });
                 } else {
                     authorizedSiteIds = new Set(decoded.sites);
                 }
@@ -135,13 +135,9 @@ export class SiteService {
             }
         }
 
-        // Fetch all known sites from DB
-        const allSites = await this.deps.siteRepo.getSites({ includeJson: options?.includeJson });
-
-
-
-        // Filter sites to only those the user is authorized for
-        return allSites.filter(s => authorizedSiteIds.has(s.id));
+        // Legacy tokens and the Tesla fallback: read only the authorized rows.
+        if (authorizedSiteIds.size === 0) return [];
+        return this.deps.siteRepo.getSitesByIds([...authorizedSiteIds], { includeJson: options?.includeJson });
     }
 
     async loadSitePageData(siteId: string, queryDate?: string, options: SitePageDataOptions = {}): Promise<SitePageDataResult> {

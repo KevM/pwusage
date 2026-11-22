@@ -1,8 +1,7 @@
 import { observePage, logSessionRejection } from '@/lib/observability';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getAuthorizedSiteIds, getCurrentUser, hasValidSession } from '@/lib/auth-checks';
-import { SiteRepo } from '@/lib/site-repo';
+import { getAuthorizedSites, getCurrentUser, hasValidSession } from '@/lib/auth-checks';
 import { DashboardCards, ProductWithLiveData } from '@/components/DashboardCards';
 import Link from 'next/link';
 import { createTeslaClientForUser } from '@/lib/tesla-client-factory';
@@ -40,66 +39,25 @@ export default observePage('/products', async function ProductsPage({ searchPara
         redirect('/login');
     }
 
-    const repo = new SiteRepo();
-    let energyProducts: ProductWithLiveData[] = [];
-    let vehicleProducts: ProductWithLiveData[] = [];
+    // Start Tesla's product list now so the energy-site read doesn't wait on it.
+    // The lookup settles to [] on failure, keeping the energy cards.
+    const vehicleProductsPromise = loadVehicleProducts();
 
-    const targetSiteIds = await getAuthorizedSiteIds();
-
-    if (targetSiteIds.length > 0 && !shouldHideEnergyForDebug) {
-        const sitePromises = targetSiteIds.map(id => repo.getSite(id));
-        const sitesResults = await Promise.all(sitePromises);
-        const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
-        energyProducts = validSites.map(s => ({
-            id: s.id,
-            site_name: s.name,
-            energy_site_id: s.id,
-            percentage_charged: 0,
-            currentTariff: 'Loading...',
-            liveBatteryPower: 0,
-            liveSolarPower: 0,
-            liveLoadPower: 0,
-            liveGridPower: 0,
-            type: 'energy' // Marker
-        }));
-    }
-
-    const currentUser = await getCurrentUser();
-    if (currentUser) {
-        try {
-            const client = await createTeslaClientForUser(currentUser.id);
-            if (client) {
-                const fleetProducts = await client.getProducts();
-                vehicleProducts = fleetProducts
-                    .filter((product) => product.resource_type === 'vehicle' || !!product.vehicle_id || !!product.vin)
-                    .map((product) => {
-                        const displayName = product.display_name || product.site_name || 'Tesla Vehicle';
-                        const vehicleIdentifier = product.vehicle_id?.toString() || product.id_s || product.id;
-                        const meta: VehicleMeta = {
-                            state: product.state,
-                            vehicle_id: product.vehicle_id,
-                            option_codes: product.option_codes
-                        };
-
-                        return {
-                            id: `vehicle-${vehicleIdentifier}`,
-                            site_name: displayName,
-                            energy_site_id: `vehicle-${vehicleIdentifier}`,
-                            percentage_charged: 0,
-                            currentTariff: product.vin || '--',
-                            liveBatteryPower: 0,
-                            liveSolarPower: 0,
-                            liveLoadPower: 0,
-                            liveGridPower: 0,
-                            type: 'vehicle',
-                            meta
-                        };
-                    });
-            }
-        } catch (error) {
-            console.warn('[ProductsPage] Failed to load vehicle products:', error);
-        }
-    }
+    // Cards start from id + name; DashboardCards fetches live data itself.
+    const sites = shouldHideEnergyForDebug ? [] : await getAuthorizedSites();
+    const energyProducts: ProductWithLiveData[] = sites.map(s => ({
+        id: s.id,
+        site_name: s.name,
+        energy_site_id: s.id,
+        percentage_charged: 0,
+        currentTariff: 'Loading...',
+        liveBatteryPower: 0,
+        liveSolarPower: 0,
+        liveLoadPower: 0,
+        liveGridPower: 0,
+        type: 'energy' // Marker
+    }));
+    const vehicleProducts = await vehicleProductsPromise;
 
     const products = [...energyProducts, ...vehicleProducts];
     const hasEnergyProducts = energyProducts.length > 0;
@@ -125,3 +83,41 @@ export default observePage('/products', async function ProductsPage({ searchPara
         </PageShell>
     );
 });
+
+async function loadVehicleProducts(): Promise<ProductWithLiveData[]> {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) return [];
+    try {
+        const client = await createTeslaClientForUser(currentUser.id);
+        if (!client) return [];
+        const fleetProducts = await client.getProducts();
+        return fleetProducts
+            .filter((product) => product.resource_type === 'vehicle' || !!product.vehicle_id || !!product.vin)
+            .map((product) => {
+                const displayName = product.display_name || product.site_name || 'Tesla Vehicle';
+                const vehicleIdentifier = product.vehicle_id?.toString() || product.id_s || product.id;
+                const meta: VehicleMeta = {
+                    state: product.state,
+                    vehicle_id: product.vehicle_id,
+                    option_codes: product.option_codes
+                };
+
+                return {
+                    id: `vehicle-${vehicleIdentifier}`,
+                    site_name: displayName,
+                    energy_site_id: `vehicle-${vehicleIdentifier}`,
+                    percentage_charged: 0,
+                    currentTariff: product.vin || '--',
+                    liveBatteryPower: 0,
+                    liveSolarPower: 0,
+                    liveLoadPower: 0,
+                    liveGridPower: 0,
+                    type: 'vehicle',
+                    meta
+                };
+            });
+    } catch (error) {
+        console.warn('[ProductsPage] Failed to load vehicle products:', error);
+        return [];
+    }
+}

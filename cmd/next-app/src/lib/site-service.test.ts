@@ -33,15 +33,20 @@ describe('SiteService Security', () => {
         getProducts: vi.fn()
     };
 
+    // The "Site" table behind the repo; getSitesByIds is the SQL ANY($1) read.
+    let siteTable: Site[] = [];
+    const seedSites = (rows: Site[]) => { siteTable = rows; };
+
     const mockEnergyRepo = {
-        getSites: vi.fn(),
+        getSites: vi.fn(async () => { throw new Error('all-sites loader must not be called'); }),
+        getSitesByIds: vi.fn(async (ids: string[]) => siteTable.filter(site => ids.includes(site.id))),
         getSiteIdsForTeslaIds: vi.fn().mockResolvedValue(['12345']),
         getSitesForUser: vi.fn().mockResolvedValue([{ id: '12345' }])
     };
 
     it('should filter sites based on API authorization when no JWT provided', async () => {
         mockTeslaClient.getProducts.mockResolvedValue([mockProduct]);
-        mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
+        seedSites([mockSite, mockUnauthorizedSite]);
 
         const service = new SiteService({
             teslaClient: mockTeslaClient as unknown as TeslaClient,
@@ -59,7 +64,7 @@ describe('SiteService Security', () => {
     it('maps a Tesla product ID back to the pwusage site ID in the legacy path', async () => {
         mockTeslaClient.getProducts.mockResolvedValue([{ energy_site_id: 98765 }]);
         mockEnergyRepo.getSiteIdsForTeslaIds.mockResolvedValueOnce(['pwusage-site']);
-        mockEnergyRepo.getSites.mockResolvedValueOnce([{ id: 'pwusage-site', name: 'Home' }]);
+        seedSites([{ id: 'pwusage-site', name: 'Home' } as Site]);
         const service = new SiteService({
             teslaClient: mockTeslaClient as unknown as TeslaClient,
             siteRepo: mockEnergyRepo as unknown as SiteRepo,
@@ -70,7 +75,7 @@ describe('SiteService Security', () => {
 
     it('should use JWT for authorization if provided and valid', async () => {
         mockTeslaClient.getProducts.mockClear();
-        mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
+        seedSites([mockSite, mockUnauthorizedSite]);
 
         // Mock verify to return authorized object
         vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [] });
@@ -92,7 +97,7 @@ describe('SiteService Security', () => {
     it('should fall back to API if JWT is invalid', async () => {
         mockTeslaClient.getProducts.mockClear();
         mockTeslaClient.getProducts.mockResolvedValue([mockProduct]);
-        mockEnergyRepo.getSites.mockResolvedValue([mockSite]);
+        seedSites([mockSite]);
 
         // Mock verify to return null
         vi.mocked(authJwt.verifySiteToken).mockReturnValue(null);
@@ -211,7 +216,7 @@ describe('SiteService Security', () => {
 
         it('getAuthorizedSites rejects a revoked user as unauthorized', async () => {
             mockTeslaClient.getProducts.mockClear();
-            mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
+            seedSites([mockSite, mockUnauthorizedSite]);
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1' });
 
             const service = new SiteService({
@@ -244,7 +249,7 @@ describe('SiteService Security', () => {
 
         it('getAuthorizedSites rejects a session revoked by a session_version bump', async () => {
             mockTeslaClient.getProducts.mockClear();
-            mockEnergyRepo.getSites.mockResolvedValue([mockSite, mockUnauthorizedSite]);
+            seedSites([mockSite, mockUnauthorizedSite]);
             vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['12345'], roles: [], sub: 'u1', sv: 0 });
 
             const service = new SiteService({
@@ -297,8 +302,7 @@ describe('SiteService Security', () => {
         });
 
         it('rejects old cookie issued before account recreation in both getAuthorizedSites and validateSiteAccess, while accepting fresh cookie', async () => {
-            mockEnergyRepo.getSites.mockResolvedValue([mockSite]);
-            mockEnergyRepo.getSitesForUser.mockResolvedValue([{ id: '12345' }]);
+            mockEnergyRepo.getSitesForUser.mockResolvedValue([mockSite]);
             const recreatedAtSeconds = 2000.5;
 
             // Old cookie: same sub and sv=0, but orig_iat predates recreated account
@@ -656,5 +660,84 @@ describe('SiteService Security', () => {
             // The missing-site recovery path must still be attempted.
             expect(mockImporter.ensureSite).toHaveBeenCalledWith('12345');
         });
+    });
+});
+
+// GET /api/sites must read only the caller's rows: never the all-sites loader.
+describe('SiteService.getAuthorizedSites query scoping', () => {
+    const owned = { id: 'owned', name: 'Owned' } as Site;
+    const unrelated = { id: 'unrelated', name: 'Unrelated' } as Site;
+    const activeAuth = async () => ({ isActive: true, sessionVersion: 0, roles: ['user'] });
+
+    function makeRepo(userSites: Site[] = [owned]) {
+        const table = [owned, unrelated];
+        return {
+            getSites: vi.fn(async () => { throw new Error('all-sites loader must not be called'); }),
+            getSitesForUser: vi.fn(async () => userSites),
+            getSitesByIds: vi.fn(async (ids: string[]) => table.filter(site => ids.includes(site.id))),
+            getSiteIdsForTeslaIds: vi.fn(async () => ['owned']),
+        };
+    }
+
+    beforeEach(() => vi.mocked(authJwt.verifySiteToken).mockReset());
+
+    it('returns the user-scoped rows directly for a session with a user ID', async () => {
+        const repo = makeRepo();
+        vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['unrelated'], roles: [], sub: 'u1' });
+        const service = new SiteService({ siteRepo: repo as unknown as SiteRepo, siteAuthToken: 't', getAuthState: activeAuth });
+
+        expect(await service.getAuthorizedSites({ includeJson: true })).toEqual([owned]);
+        expect(repo.getSitesForUser).toHaveBeenCalledTimes(1);
+        expect(repo.getSitesForUser).toHaveBeenCalledWith('u1', { includeJson: true });
+        expect(repo.getSites).not.toHaveBeenCalled();
+        expect(repo.getSitesByIds).not.toHaveBeenCalled();
+    });
+
+    it('still rejects a revoked session before reading any sites', async () => {
+        const repo = makeRepo();
+        vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['owned'], roles: [], sub: 'u1', sv: 0 });
+        const service = new SiteService({
+            siteRepo: repo as unknown as SiteRepo, siteAuthToken: 't',
+            getAuthState: vi.fn().mockResolvedValue({ isActive: true, sessionVersion: 1, roles: ['user'] }),
+        });
+
+        await expect(service.getAuthorizedSites()).rejects.toThrow('Unauthorized: Revoked session');
+        expect(repo.getSitesForUser).not.toHaveBeenCalled();
+        expect(repo.getSites).not.toHaveBeenCalled();
+    });
+
+    it('fetches only the claimed IDs for a legacy token without a user ID, dropping stale ones', async () => {
+        const repo = makeRepo();
+        vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: ['owned', 'deleted-site'], roles: [] });
+        const service = new SiteService({ siteRepo: repo as unknown as SiteRepo, siteAuthToken: 't' });
+
+        expect(await service.getAuthorizedSites({ includeJson: true })).toEqual([owned]);
+        expect(repo.getSitesByIds).toHaveBeenCalledWith(['owned', 'deleted-site'], { includeJson: true });
+        expect(repo.getSites).not.toHaveBeenCalled();
+    });
+
+    it('fetches only the Tesla-authorized IDs on the API fallback', async () => {
+        const repo = makeRepo();
+        const teslaClient = { getProducts: vi.fn().mockResolvedValue([{ energy_site_id: 111 }]) };
+        const service = new SiteService({ siteRepo: repo as unknown as SiteRepo, teslaClient: teslaClient as unknown as TeslaClient });
+
+        expect(await service.getAuthorizedSites()).toEqual([owned]);
+        expect(repo.getSitesByIds).toHaveBeenCalledWith(['owned'], { includeJson: undefined });
+        expect(repo.getSites).not.toHaveBeenCalled();
+    });
+
+    it('skips the site read entirely when the authorized set is empty', async () => {
+        const repo = makeRepo();
+        repo.getSiteIdsForTeslaIds.mockResolvedValue([]);
+        const teslaClient = { getProducts: vi.fn().mockResolvedValue([]) };
+        const fallback = new SiteService({ siteRepo: repo as unknown as SiteRepo, teslaClient: teslaClient as unknown as TeslaClient });
+        expect(await fallback.getAuthorizedSites()).toEqual([]);
+
+        vi.mocked(authJwt.verifySiteToken).mockReturnValue({ sites: [], roles: [] });
+        const legacy = new SiteService({ siteRepo: repo as unknown as SiteRepo, siteAuthToken: 't' });
+        expect(await legacy.getAuthorizedSites()).toEqual([]);
+
+        expect(repo.getSitesByIds).not.toHaveBeenCalled();
+        expect(repo.getSites).not.toHaveBeenCalled();
     });
 });

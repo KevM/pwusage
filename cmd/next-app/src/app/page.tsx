@@ -3,9 +3,7 @@ import { cookies } from 'next/headers';
 import Link from 'next/link';
 import Image from 'next/image';
 import { redirect } from 'next/navigation';
-import { getAuthorizedSiteIds, hasValidSession } from '@/lib/auth-checks';
-import { SiteRepo } from '@/lib/site-repo';
-import { ProductWithLiveData } from '@/components/DashboardCards';
+import { getAuthorizedSites, hasValidSession } from '@/lib/auth-checks';
 import { AnnouncementRepo } from '@/lib/announcement-repo';
 import { LoginAnnouncement } from '@/components/LoginAnnouncement';
 import { Button } from '@/components/ui/Button';
@@ -19,11 +17,10 @@ export default observePage('/', async function Home() {
   const cookieStore = await cookies();
   const siteAuthToken = cookieStore.get('site_auth')?.value;
 
-  const announcementRepo = new AnnouncementRepo();
-  const latestAnnouncement = await announcementRepo.getLatest();
-
   // If no token at all, show login screen
   if (!siteAuthToken) {
+    // Only the login screen shows the announcement.
+    const latestAnnouncement = await new AnnouncementRepo().getLatest();
     return (
       <div className="bg-bg-muted/30">
         <PageShell
@@ -78,47 +75,14 @@ export default observePage('/', async function Home() {
     );
   }
 
-  let products: ProductWithLiveData[] = []; // We will map this to ProductWithLiveData
-  const repo = new SiteRepo();
-
   // DB-backed: revoked sessions go to login; site membership comes from the DB,
   // not the JWT claims.
   if (!await hasValidSession()) {
     redirect('/login');
   }
 
-  const siteIds = await getAuthorizedSiteIds();
-  if (siteIds.length === 0) {
-    // Car-only users are authenticated and should land on the products page.
-    redirect('/products');
-  }
-
-  const sitePromises = siteIds.map(id => repo.getSite(id));
-  const sitesResults = await Promise.all(sitePromises);
-  const validSites = sitesResults.filter((s): s is NonNullable<typeof s> => !!s);
-
-  products = validSites.map(s => ({
-    id: s.id,
-    site_name: s.name,
-    energy_site_id: s.id,
-    percentage_charged: 0,
-    currentTariff: 'Loading...',
-    liveBatteryPower: 0,
-    liveSolarPower: 0,
-    liveLoadPower: 0,
-    liveGridPower: 0
-  }));
-
-  if (products.length === 1) {
-    redirect(`/site/${products[0].id}`);
-  } else if (products.length > 1) {
-    redirect('/products');
-  } else {
-    // 0 energy sites.
-    // Redirect to products page (it will try to show vehicles or "No Products")
-    redirect('/products');
-  }
-
-  // This code below is unreachable now due to redirects, but kept for type safety if logic changes
-  return null;
+  // id + name is all the redirect needs; legacy tokens' stale IDs are dropped.
+  // One site opens its dashboard; none (car-only) or several go to Products.
+  const sites = await getAuthorizedSites();
+  redirect(sites.length === 1 ? `/site/${sites[0].id}` : '/products');
 });

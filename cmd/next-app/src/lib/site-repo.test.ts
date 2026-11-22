@@ -169,6 +169,67 @@ describe('SiteRepo site payload selection', () => {
     });
 });
 
+describe('SiteRepo.getSitesByIds', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('reads only the requested rows in SQL', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [makeSiteRow()] });
+        const sites = await new SiteRepo().getSitesByIds(['site-1', 'stale-site']);
+
+        expect(sites.map(site => site.id)).toEqual(['site-1']);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('WHERE id = ANY($1::text[])');
+        expect(sql).not.toContain('json');
+        expect(params).toEqual([['site-1', 'stale-site']]);
+    });
+
+    it('selects the JSON column only when asked', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [] });
+        await new SiteRepo().getSitesByIds(['site-1'], { includeJson: true });
+        expect(queryMock.mock.calls[0][0]).toContain(', json FROM "Site"');
+    });
+
+    it('never queries for an empty ID set', async () => {
+        expect(await new SiteRepo().getSitesByIds([])).toEqual([]);
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('SiteRepo site summaries', () => {
+    beforeEach(() => queryMock.mockReset());
+
+    it('reads only id and name for a user, ordered like getSitesForUser', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 'site-1', name: 'Home' }] });
+        expect(await new SiteRepo().getSiteSummariesForUser('user-1')).toEqual([{ id: 'site-1', name: 'Home' }]);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toMatch(/SELECT id, name FROM "Site" WHERE user_id = \$1 ORDER BY id/);
+        expect(params).toEqual(['user-1']);
+    });
+
+    it('uses memberships for summaries when the cutover is enabled', async () => {
+        vi.stubEnv('SITE_MEMBERSHIP_ENABLED', 'true');
+        try {
+            queryMock.mockResolvedValueOnce({ rows: [] });
+            await new SiteRepo().getSiteSummariesForUser('invited-user');
+            expect(queryMock.mock.calls[0][0]).toContain('id IN (SELECT site_id FROM "SiteMember" WHERE user_id = $1)');
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('reads only id and name for requested IDs and never queries an empty set', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ id: 'site-1', name: 'Home' }] });
+        expect(await new SiteRepo().getSiteSummariesByIds(['site-1', 'stale'])).toEqual([{ id: 'site-1', name: 'Home' }]);
+        const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
+        expect(sql).toMatch(/SELECT id, name FROM "Site" WHERE id = ANY\(\$1::text\[\]\)/);
+        expect(params).toEqual([['site-1', 'stale']]);
+
+        queryMock.mockClear();
+        expect(await new SiteRepo().getSiteSummariesByIds([])).toEqual([]);
+        expect(queryMock).not.toHaveBeenCalled();
+    });
+});
+
 describe('SiteRepo getSite request-scoped cache', () => {
     beforeEach(() => {
         queryMock.mockReset();

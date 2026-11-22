@@ -6,8 +6,11 @@ import { SiteRepo } from './site-repo';
 import { Site } from './db';
 
 // Mock dependencies
+// Legacy tokens (no `sub`) list their claimed sites through the ID-scoped read.
+let siteTable: Site[] = [];
 const mockEnergyRepo = {
-    getSites: vi.fn(),
+    getSites: vi.fn(async () => { throw new Error('all-sites loader must not be called'); }),
+    getSitesByIds: vi.fn(async (ids: string[]) => siteTable.filter(site => ids.includes(site.id))),
 } as unknown as SiteRepo;
 
 describe('Admin Authorization', () => {
@@ -80,7 +83,7 @@ describe('Admin Authorization', () => {
                 { id: 'site1', name: 'Site 1', user_id: 'u1', updated: new Date(), installed: new Date(), timezone: 'UTC', json: {}, billing_start_day: 1 },
                 { id: 'site2', name: 'Site 2', user_id: 'u2', updated: new Date(), installed: new Date(), timezone: 'UTC', json: {}, billing_start_day: 1 }
             ];
-            vi.mocked(mockEnergyRepo.getSites).mockResolvedValue(allSites);
+            siteTable = allSites;
 
             // Admin token with ONLY site1
             const token = signSiteToken(['site1'], ['admin']);
@@ -99,7 +102,7 @@ describe('Admin Authorization', () => {
                 { id: 'site1', name: 'Site 1', user_id: 'u1', updated: new Date(), installed: new Date(), timezone: 'UTC', json: {}, billing_start_day: 1 },
                 { id: 'site2', name: 'Site 2', user_id: 'u2', updated: new Date(), installed: new Date(), timezone: 'UTC', json: {}, billing_start_day: 1 }
             ];
-            vi.mocked(mockEnergyRepo.getSites).mockResolvedValue(allSites);
+            siteTable = allSites;
 
             const token = signSiteToken(['site1'], ['user']);
             siteService = new SiteService({
