@@ -142,4 +142,28 @@ struct RatePlanReviewModelTests {
         #expect(model.preview != nil)
         #expect(spy.previews.count == 2)
     }
+
+    @Test("Fixed comparison plan routes through reference-scope review and commit")
+    func fixedReferencePlanReviewAndCommit() async throws {
+        let spy = try Spy(preview: Self.preview())
+        let startsOn = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01 UTC
+        let request = FixedRatePlanDraft.makeSelectionRequest(
+            name: "Fixed Comparison",
+            buyRate: 0.28,
+            sellRate: 0.04,
+            startsOn: startsOn,
+            timeZone: .gmt
+        )
+        let model = RatePlanReviewModel(request: request, actions: spy.actions)
+        await model.load()
+        #expect(spy.previews == [request])
+        #expect(spy.previews.first?.scope == .reference)
+        #expect(!model.canApply)
+
+        model.isAcknowledged = true
+        #expect(await model.apply())
+        #expect(spy.commits.first == TariffSelectionCommit(
+            request: request, expectedReviewHash: "hash-1", verifiedAgainstBill: false
+        ))
+    }
 }
