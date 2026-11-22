@@ -20,8 +20,9 @@ enum TodayEnergyPresentation {
             + "Export \(money(cost.exportCredits, currency: cost.currency, locale: locale))"
     }
 
-    static func tile(for metric: TodayEnergyMetric, snapshot: TodayEnergySnapshot?, at date: Date) -> MetricTile? {
-        guard let snapshot, snapshot.availability(at: date) != .missing else { return nil }
+    static func tile(for metric: TodayEnergyMetric, snapshot: TodayEnergySnapshot?, at date: Date,
+                     availability: TodayEnergySnapshot.Availability? = nil) -> MetricTile? {
+        guard let snapshot, (availability ?? snapshot.availability(at: date)) != .missing else { return nil }
         return tiles(homeKwh: snapshot.energy.homeKwh, solarKwh: snapshot.energy.solarKwh,
                      gridNetKwh: snapshot.energy.gridNetKwh, batteryNetKwh: snapshot.energy.batteryNetKwh,
                      compact: true, showsStateOfCharge: true,

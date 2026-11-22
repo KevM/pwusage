@@ -84,6 +84,14 @@ extension TodayEnergyWidgetTests {
                 try render(view, name: "today-widget-small-\(selection.name)-\(dark ? "dark" : "light").png")
             }
         }
+        let pastMidnight = try #require(TodayEnergyPreviewFixtures.snapshot().nextMidnight)
+        let midnightView = TodayEnergySingleMetricContent(snapshot: TodayEnergyPreviewFixtures.snapshot(),
+                                                          date: pastMidnight,
+                                                          metric: .home)
+            .padding(TodayEnergyWidgetLayout.singleMetricInsets).frame(width: 141, height: 141)
+            .background(TodayEnergyMetricFill(metric: .home))
+            .environment(\.colorScheme, .light)
+        try render(midnightView, name: "today-widget-small-past-midnight-light.png")
     }
 
     @MainActor
