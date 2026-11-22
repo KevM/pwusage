@@ -285,7 +285,10 @@ grep -qxF -- "$parity_skip" "$PWUSAGE_TEST_ARGS" || {
 }
 "$script_dir/run-tests.sh" --quick AppConfigurationTests
 grep -qE '^-only-testing:PWUsageTests/AppConfigurationTests$' "$PWUSAGE_TEST_ARGS"
-grep -qE '^-skip-testing:PWUsageTests/SolarLayoutDetectorFixtureParityTests$' "$PWUSAGE_TEST_ARGS"
+if grep -qE '^-skip-testing:' "$PWUSAGE_TEST_ARGS"; then
+  echo '--quick passed -skip-testing: when quick-test-skips.txt is empty' >&2
+  exit 1
+fi
 
 # CI keeps a stable derived-data directory between runs; without it the build products are throwaway.
 derived_data="$fixture_dir/derived-data"

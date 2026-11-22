@@ -11,6 +11,7 @@
 - `Authentication/` — Auth service and session handling.
 - `Shared/` — Cross-target code shared by app and widget.
 - `PWUsageWidgets/` — Widget extension.
+- `Packages/PWUsageCore/` — Local Swift Package holding pure-Foundation compute engines (`SolarLayout`, `SolarHealth`, `BillPricing`, `SharedModels`) tested natively on macOS; app/UI/widget/store orchestration lives in `PWUsage`.
 - `PWUsageTests/<Feature>/` — Feature tests; `PWUsageTests/Support/` holds shared doubles/clocks.
 
 ## File naming
@@ -47,7 +48,8 @@
 ## Commands
 - Generate project: `cd cmd/ios-app && xcodegen generate`
 - Build: `cd cmd/ios-app && xcodebuild -project PWUsage.xcodeproj -scheme PWUsage -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`
-- Tests: `cd cmd/ios-app && ./run-tests.sh` (or `./run-tests.sh <Suite>`)
+- Core package tests (macOS): `cd cmd/ios-app && ./run-core-tests.sh` (`--debug`, `--full`, `--filter <pattern>`)
+- Simulator tests: `cd cmd/ios-app && ./run-tests.sh` (or `./run-tests.sh <Suite>`)
 - Format + lint: `./cmd/ios-app/lint.sh` (add `--fix` to apply SwiftFormat first)
 - Format only: `swiftformat cmd/ios-app --config .swiftformat` or `./cmd/ios-app/format.sh`
 - Lint only: `swiftlint lint cmd/ios-app --strict --no-cache`
