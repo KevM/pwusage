@@ -6,7 +6,7 @@ import { buildBillPricingFixture } from './bill-pricing-fixtures';
 
 const FIXTURES_DIR = path.resolve(
   __dirname,
-  '../../../ios-app/PWUsageTests/Fixtures/BillPricing'
+  '../../../ios-app/Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/BillPricing'
 );
 
 describe('bill-pricing-fixtures', () => {
