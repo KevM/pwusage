@@ -1,12 +1,14 @@
-'use client';
-
-import Image from 'next/image';
 import type { ReactNode } from 'react';
 
+import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+import { renderTrmnlDemoMarkup } from '@/lib/trmnl/demo-screen';
+
+// The demo screen shows the current time and billing cycle; re-render it every few minutes.
+export const revalidate = 300;
 
 interface FeatureCardProps {
     title: string;
@@ -32,6 +34,8 @@ function FeatureCard({ title, description, icon, iconToneClassName }: FeatureCar
 }
 
 export default function TrmnlHelpPage() {
+    const demoMarkup = renderTrmnlDemoMarkup(new Date());
+
     return (
         <PageShell maxWidth="lg" padding="relaxed" fullHeight={false}>
             <PageHeader
@@ -45,17 +49,16 @@ export default function TrmnlHelpPage() {
                 )}
             />
 
-            <SectionCard className="mb-12 overflow-hidden" bodyClassName="p-0">
-                <div className="relative aspect-video w-full bg-gray-100 dark:bg-gray-900">
-                    <Image
-                        src="/trmnl-real.jpg"
-                        alt="Trmnl E-ink Display showing Energy Dashboard"
-                        fill
-                        className="object-cover"
-                        priority
-                    />
-                </div>
-            </SectionCard>
+            <div className="mb-12">
+                <TrmnlLivePreview
+                    previewHtml={demoMarkup}
+                    previewError=""
+                    previewLoading={false}
+                    hasSource
+                    allowNarrowScroll={false}
+                    showScaleControls={false}
+                />
+            </div>
 
             <div className="mb-12 grid gap-6 md:grid-cols-3">
                 <FeatureCard
