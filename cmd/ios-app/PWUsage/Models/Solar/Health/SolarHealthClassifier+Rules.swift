@@ -182,8 +182,8 @@ extension SolarHealthClassifier {
         for index in 1 ..< ratios.count {
             let prev = ratios[index - 1]
             let curr = ratios[index]
-            guard daysBetween(prev.day, curr.day) > 1,
-                  curr.ratio - prev.ratio >= minSoilingStep else { continue }
+            guard curr.ratio - prev.ratio >= minSoilingStep,
+                  daysBetween(prev.day, curr.day) > 1 else { continue }
             let run = decliningRun(in: ratios, from: lastRecoveryIndex, endingAt: index - 1)
             if run.drop >= minSoilingStep, run.slope < 0 {
                 lastRecoveredDay = curr.day
