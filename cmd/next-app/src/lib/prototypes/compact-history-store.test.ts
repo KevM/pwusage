@@ -69,7 +69,7 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
         await pool.query(`CREATE TABLE "User" (id text PRIMARY KEY, auth_restored_at timestamptz); INSERT INTO "User" VALUES ('owner', NULL)`);
         const migrationDir = new URL('../../../db-migrations/', import.meta.url);
         const migrations = readdirSync(migrationDir);
-        for (const suffix of ['_historic_effective_tariffs.sql', '_tariff_reference_periods.sql', '_urdb_estimated_rate_plans.sql']) {
+        for (const suffix of ['_historic_effective_tariffs.sql', '_tariff_reference_periods.sql', '_urdb_estimated_rate_plans.sql', '_compact_day_range_verification.sql']) {
             const migration = migrations.find(file => file.endsWith(suffix));
             if (!migration) throw new Error(`Missing migration ${suffix}`);
             await pool.query(readFileSync(new URL(migration, migrationDir), 'utf8'));
@@ -453,7 +453,8 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
                 has_table_privilege('service_role',$1,'SELECT,INSERT,UPDATE,DELETE') AS service`, [`"${table}"`]);
             expect(grants.rows[0]).toEqual({ anon:false, authenticated:false, service:true });
         }
-        for(const signature of ['public.verify_compact_latest_metadata(text,timestamptz)','public.verify_compact_day_metadata(text,timestamptz,boolean)']) {
+        for(const signature of ['public.verify_compact_latest_metadata(text,timestamptz)','public.verify_compact_day_metadata(text,timestamptz,boolean)',
+            'public.verify_compact_day_range(text,timestamptz,timestamptz)']) {
             const grants=await pool.query(`SELECT has_function_privilege('anon',$1,'EXECUTE') AS anon,has_function_privilege('authenticated',$1,'EXECUTE') AS authenticated,has_function_privilege('service_role',$1,'EXECUTE') AS service`,[signature]);
             expect(grants.rows[0]).toEqual({anon:false,authenticated:false,service:true});
         }
@@ -488,6 +489,66 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
                 await pool.query(`UPDATE "EnergyDayArchive" SET attribution=$1`,[JSON.stringify(meta.attribution)]);
                 expect((await verify()).rows[0].ok).toBe(true);
             }
+        });
+        // The set-based range check must reach the per-day function's verdict on every record.
+        const settle=(query:Promise<{rows:{ok:boolean}[]}>)=>query.then(r=>r.rows[0].ok,(error:Error)=>error.message);
+        const agree=async()=>{
+            const perDay=await settle(verify());
+            expect(await settle(pool.query<{ok:boolean}>('SELECT public.verify_compact_day_range($1,$2,$3) AS ok',['site',start,end]))).toBe(perDay);
+            return perDay;
+        };
+        it('verifies a range set-based with the per-day verdict on valid and corrupted records',async()=>{
+            await insertV2();
+            expect(await agree()).toBe(true);
+            for(const corrupt of [
+                `UPDATE "EnergyDayArchive" SET attribution=jsonb_set(attribution,'{segments,1,offset}','485')`,
+                `UPDATE "EnergyDayArchive" SET attribution=jsonb_set(attribution,'{segments,1,scheduleId}','2')`,
+                `UPDATE "EnergyDayArchive" SET attribution=jsonb_set(attribution,'{timelineRevision}','"current-tariff:9"')`,
+                `UPDATE "EnergyDayArchive" SET attribution=jsonb_set(attribution,'{segments}',(attribution->'segments')-1)`,
+                `UPDATE "EnergyDayArchive" SET first_timestamp=first_timestamp+interval '5 minutes'`,
+                `UPDATE "EnergyDayArchive" SET last_timestamp=last_timestamp-interval '5 minutes'`,
+                `UPDATE "EnergyDayArchive" SET max_interior_gap_ms=max_interior_gap_ms+1`,
+                `UPDATE "EnergyDayArchive" SET attribution_complete=NOT attribution_complete`,
+                `UPDATE "EnergyDayArchive" SET metadata_checksum=repeat('0',64)`,
+                `UPDATE "EnergyDaySummary" SET load_power=load_power+1 WHERE tariff_schedule_id=2`,
+                `UPDATE "EnergyDaySummary" SET sample_import_wh=sample_import_wh+1 WHERE tariff_schedule_id IS NULL`,
+                `UPDATE "EnergyDaySummary" SET sample_count=sample_count+1 WHERE tariff_schedule_id=2`,
+                `DELETE FROM "EnergyDaySummary" WHERE tariff_schedule_id IS NULL`,
+                `DELETE FROM "EnergyDaySummary"`,
+            ]) {
+                await pool.query('TRUNCATE "EnergyDayArchive" CASCADE');
+                await insertV2();
+                await pool.query(corrupt);
+                expect(await agree(),corrupt).toBe('Day metadata mismatch');
+            }
+        });
+        it('fails a range on any one corrupted day and passes ranges without it',async()=>{
+            const tz='America/Chicago',day=(n:number)=>addDaysInSiteTimezone(start,n,tz);
+            const samplesOf=(d:Date)=>Array.from({length:288},(_,n)=>({site_id:'site',timestamp:new Date(+d+n*300000),tariff_id:1,tariff_schedule_id:2,
+                load_power:20,solar_power:3,grid_power:10,battery_power:-2,battery_soc:null}));
+            for(const n of [0,1,2]) await store.writeDay('site',day(n),samplesOf(day(n)),new Date('2026-01-09T12:00:00Z'),new Date('2026-01-10T12:00:00Z'));
+            const range=(from:Date,until:Date)=>settle(pool.query<{ok:boolean}>('SELECT public.verify_compact_day_range($1,$2,$3) AS ok',['site',from,until]));
+            expect(await range(day(0),day(3))).toBe(true);
+            await pool.query(`UPDATE "EnergyDaySummary" SET grid_power=grid_power+1 WHERE day_start=$1`,[day(1)]);
+            expect(await range(day(0),day(3))).toBe('Day metadata mismatch');
+            for(const mode of [{billing:true,coverage:true},{billing:false,coverage:true},{billing:true,coverage:false}])
+                await expect(store.readScalarSnapshot('site',day(0),day(3),mode)).rejects.toThrow('Day metadata mismatch');
+            expect(await range(day(0),day(1))).toBe(true);
+            expect(await range(day(2),day(3))).toBe(true);
+            // A day only partly inside the window is read in detail, not verified as a whole day.
+            expect(await range(new Date(+day(1)+3600000),day(3))).toBe(true);
+        });
+        it('checks billing attribution only for billing reads',async()=>{
+            const meta=await insertV2();
+            expect(meta.attributionComplete).toBe(false);
+            expect((await store.readScalarSnapshot('site',start,end,{billing:true,coverage:true})).attributionComplete).toBe(false);
+            expect((await store.readScalarSnapshot('site',start,end,{billing:true,coverage:false})).attributionComplete).toBe(false);
+            const coverageOnly=await store.readScalarSnapshot('site',start,end,{billing:false,coverage:true});
+            expect(coverageOnly.attributionComplete).toBeUndefined();
+            expect(coverageOnly.coverage.map(c=>c.count)).toEqual([5]);
+            const reader=new CompactHistoryReader(store,'America/Chicago');
+            await expect(reader.getCycleAggregates('site',start,end)).rejects.toThrow(/attribution/i);
+            expect((await reader.getDailyCoverage('site',start,end,'America/Chicago')).map(c=>c.count)).toEqual([5]);
         });
         it('passes billing verification for a fully attributed v2 day',async()=>{
             await insertV2({},{timelineRevision:'current-tariff:1',segments:[{offset:0,tariffId:1,scheduleId:2}]});
