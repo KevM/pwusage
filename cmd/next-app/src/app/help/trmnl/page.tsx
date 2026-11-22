@@ -1,11 +1,14 @@
-'use client';
-
 import type { ReactNode } from 'react';
 
+import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageShell } from '@/components/ui/PageShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+import { renderTrmnlDemoMarkup } from '@/lib/trmnl/demo-screen';
+
+// The demo screen shows the current time and billing cycle; re-render it every few minutes.
+export const revalidate = 300;
 
 interface FeatureCardProps {
     title: string;
@@ -31,6 +34,8 @@ function FeatureCard({ title, description, icon, iconToneClassName }: FeatureCar
 }
 
 export default function TrmnlHelpPage() {
+    const demoMarkup = renderTrmnlDemoMarkup(new Date());
+
     return (
         <PageShell maxWidth="lg" padding="relaxed" fullHeight={false}>
             <PageHeader
@@ -43,6 +48,20 @@ export default function TrmnlHelpPage() {
                     </span>
                 )}
             />
+
+            <SectionCard className="mb-12" density="compact">
+                <TrmnlLivePreview
+                    previewHtml={demoMarkup}
+                    previewError=""
+                    previewLoading={false}
+                    hasSource
+                    allowNarrowScroll={false}
+                    showScaleControls={false}
+                />
+                <p className="mt-3 text-center text-sm text-gray-600 dark:text-gray-400">
+                    A live example with sample data, drawn the same way your Trmnl draws it.
+                </p>
+            </SectionCard>
 
             <div className="mb-12 grid gap-6 md:grid-cols-3">
                 <FeatureCard
