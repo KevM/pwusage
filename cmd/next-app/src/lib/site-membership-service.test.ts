@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SiteMembershipService } from './site-membership-service';
 import type { FleetProduct, TeslaClient } from './tesla-client';
 import type { SiteMembershipJoinRepo } from './site-membership-join-repo';
@@ -118,5 +118,36 @@ describe('SiteMembershipService login reconciliation', () => {
         clientForUser.mockResolvedValue({ getProducts: async () => { throw new Error('Tesla unavailable'); } });
         await expect(service().syncLogin('invited', [product(20)], fetchedAt)).rejects.toThrow('Tesla unavailable');
         expect(members.commitDecision).not.toHaveBeenCalled();
+    });
+
+    describe('isolated test account', () => {
+        afterEach(() => vi.unstubAllEnvs());
+
+        it('gets its own fresh site instead of joining the shared Powerwall', async () => {
+            vi.stubEnv('VERCEL_ENV', 'preview');
+            vi.stubEnv('ISOLATED_TEST_USER_IDS', 'other, tester ');
+            members.membersForHardware.mockResolvedValue([{ site_id: 'home', user_id: 'owner',
+                tesla_energy_site_id: '10', is_active: true, refresh_token: 'r',
+                auth_status: 'active', tesla_refresh_state: 'ready' }]);
+            members.commitDecision.mockResolvedValue({ kind: 'fresh', siteId: '20' });
+
+            expect(await service().syncLogin('tester', [product(20)], fetchedAt)).toEqual(['20']);
+            expect(members.membersForHardware).not.toHaveBeenCalled();
+            expect(clientForUser).not.toHaveBeenCalled();
+            expect(members.commitDecision).toHaveBeenCalledWith(expect.objectContaining({
+                teslaId: '20', hardwareId: null, observedMembers: [], verifiedSiteId: null,
+            }));
+            expect(importer.ensureSite).toHaveBeenCalledWith('20');
+        });
+
+        it('joins as usual in production even when listed', async () => {
+            vi.stubEnv('VERCEL_ENV', 'production');
+            vi.stubEnv('ISOLATED_TEST_USER_IDS', 'tester');
+            members.commitDecision.mockResolvedValue({ kind: 'fresh', siteId: '20' });
+
+            await service().syncLogin('tester', [product(20)], fetchedAt);
+            expect(members.membersForHardware).toHaveBeenCalledWith('hardware-1');
+            expect(members.commitDecision).toHaveBeenCalledWith(expect.objectContaining({ hardwareId: 'hardware-1' }));
+        });
     });
 });

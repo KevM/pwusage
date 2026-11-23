@@ -78,6 +78,36 @@ it its own grant (it lasts until the next copy).
 When a table holds new secrets, add its rule to `sanitize-dev-copy.sql` in the
 same PR that creates the table.
 
+## Rehearsing a brand-new user
+
+Beta can treat one Tesla account as a brand-new owner of a real Powerwall, so the
+whole first run is real: sign-in, history backfill, rate plan and solar layout
+setup. Normally an account invited to a Powerwall joins the site that Powerwall
+already has (matched by `Site.tesla_hardware_id`). An account whose `User.id` is
+listed in `ISOLATED_TEST_USER_IDS` (comma-separated) gets a site of its own
+instead. `VERCEL_ENV=production` ignores the setting, so set it only on Preview.
+It applies only to the shared-site sign-in path (`SITE_MEMBERSHIP_ENABLED=true`);
+without it, every Tesla site ID already gets its own site.
+
+One-time setup:
+
+1. In the Tesla app, share the Powerwall with a spare Tesla account.
+2. Sign in to beta with that account. This first time it joins the existing
+   site, which is harmless.
+3. Read its `User.id` from the Dev DB (it is derived from the Tesla `sub`, so it
+   never changes) and add it to `ISOLATED_TEST_USER_IDS` on Preview.
+4. Delete the account in the app, or wait for the next copy, which drops it.
+5. Sign in again: the account now gets a new site with no history, tariff or
+   layout, and the backfill runs as it would for a new owner.
+
+Every later copy resets the account to brand new; sign in again to start over.
+Use a simulator or device with no Apple ID (or a test one) so the iOS app finds
+no iCloud solar layout.
+
+The isolated site is still the same Powerwall: the import records the same
+hardware ID, so battery holds coordinate with the real site, but a Smart Shift
+or Battery Saver started from the test account changes the real battery.
+
 ## The dev marker
 
 Every dev-only script starts with `assert-dev-database.sql`, which refuses to run
