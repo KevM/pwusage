@@ -34,7 +34,13 @@ import {
 } from './tariff-timeline-repo';
 import * as urdbClient from './urdb/client';
 import { isFixedRate, urdbRateToSeasons } from './urdb/convert';
-import { monthlyUsage as defaultMonthlyUsage, ownerPlanMatchesUtility, type UrdbApi } from './urdb/estimate-job';
+import {
+  followedFixedRevisions,
+  monthlyUsage as defaultMonthlyUsage,
+  ownerPlanMatchesUtility,
+  referenceDesiredSpans,
+  type UrdbApi,
+} from './urdb/estimate-job';
 import { memoisedApi } from './urdb/memoised-api';
 import { expandHistoryPeriod, HistoryPeriodError } from './urdb/history-expand';
 import { urdbStartDate } from './urdb/match';
@@ -515,6 +521,14 @@ async function preparePublicRateOutsideLock(params: {
       if (error instanceof HistoryPeriodError) throw new TariffValidationError(error.message);
       throw error;
     }
+  } else if (params.scope === 'reference' && isFixedRate(rate)) {
+    const inEffect = await params.urdb.ratesEffectiveOn(params.utilityName, params.todaySiteLocal, params.timezone);
+    const followed = await followedFixedRevisions(rate, inEffect, params.urdb.rateByLabel, params.timezone);
+    revisions = referenceDesiredSpans([], followed, params.effectiveFrom).map(span => ({
+      ...span,
+      label: span.rate.label,
+      revisionStart: urdbStartDate(span.rate) ?? span.effectiveFrom,
+    }));
   }
 
   return {
@@ -593,9 +607,9 @@ export async function previewTariffSelection(
       fallbackSellRate: snapshot.fallbackSellRate,
       hasTeslaSellFallback: snapshot.hasTeslaSellFallback,
     });
-    candidatePlan = plans[0].plan;
-    conversionInputs = plans[0].conversionInputs;
-    candidateRevisions = preparedPublic.revisions ? plans : undefined;
+    candidatePlan = plans.candidate.plan;
+    conversionInputs = plans.candidate.conversionInputs;
+    candidateRevisions = plans.revisions;
   } else if (validatedRequest.candidate.kind === 'manual') {
     candidatePlan = buildManualCandidateSnapshot(
       validatedRequest.candidate.name,

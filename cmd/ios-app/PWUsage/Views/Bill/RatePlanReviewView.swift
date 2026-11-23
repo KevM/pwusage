@@ -106,7 +106,9 @@ struct RatePlanReviewView: View {
     private func confirmationSection(_ preview: TariffSelectionPreviewResponse) -> some View {
         Section {
             Toggle(RatePlanReviewPresentation.acknowledgementLabel, isOn: $model.isAcknowledged)
-            Toggle(RatePlanReviewPresentation.verificationLabel, isOn: $model.isVerifiedAgainstBill)
+            if model.canVerifyAgainstBill {
+                Toggle(RatePlanReviewPresentation.verificationLabel, isOn: $model.isVerifiedAgainstBill)
+            }
             Button {
                 Task { await model.apply() }
             } label: {

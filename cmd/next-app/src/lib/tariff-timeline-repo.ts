@@ -2194,15 +2194,8 @@ export function resolvePublicSelectionPlans(
   selection: PreparedPublicSelection,
   resolve: ResolvePublicPlan,
   context: PublicSelectionConversionContext
-): ResolvedPublicRevision[] {
-  const intervals = selection.revisions ?? [{
-    effectiveFrom: context.effectiveFrom,
-    effectiveTo: context.effectiveTo,
-    rate: selection.rate,
-    label: selection.rate.label,
-    revisionStart: undefined,
-  }];
-  return intervals.map(({ rate, effectiveFrom, effectiveTo, label, revisionStart }) => {
+): { candidate: ResolvedPublicRevision; revisions?: ResolvedPublicRevision[] } {
+  const resolveRevision = ({ rate, effectiveFrom, effectiveTo, label, revisionStart }: Omit<PreparedPublicRevision, 'revisionStart'> & { revisionStart?: string }): ResolvedPublicRevision => {
     const { candidatePlan, applyCandidate, conversionInputs } = resolve({
       ...context, rate, effectiveFrom, effectiveTo, medianMonthlyKwh: selection.medianMonthlyKwh,
     });
@@ -2216,7 +2209,10 @@ export function resolvePublicSelectionPlans(
       applyCandidate: { ...applyCandidate, ...identity },
       conversionInputs,
     };
-  });
+  };
+  const revisions = selection.revisions?.map(resolveRevision);
+  const candidate = revisions?.[0] ?? resolveRevision({ ...context, rate: selection.rate, label: selection.rate.label });
+  return { candidate, revisions };
 }
 
 export interface CommitReviewedSelectionInput {
@@ -4276,10 +4272,10 @@ export class TariffTimelineRepo {
           fallbackSellRate: fallback.fallbackSellRate,
           hasTeslaSellFallback: fallback.hasTeslaSellFallback,
         });
-        candidatePlan = plans[0].plan;
-        applyCandidate = plans[0].applyCandidate;
-        conversionInputs = plans[0].conversionInputs;
-        revisions = publicRate.revisions ? plans : undefined;
+        candidatePlan = plans.candidate.plan;
+        applyCandidate = plans.candidate.applyCandidate;
+        conversionInputs = plans.candidate.conversionInputs;
+        revisions = plans.revisions;
       } else if (commit.candidate.kind === 'manual') {
         const parsed = compileSeasonsToParsedTariff(commit.candidate.name, commit.candidate.seasons);
         const contentHash = tariffContentHash(parsed);
@@ -4336,6 +4332,9 @@ export class TariffTimelineRepo {
       });
 
       const follow = followsUtilityPlan(commit) && publicRate && isFixedRate(publicRate.rate);
+      if (follow && commit.verifiedAgainstBill) {
+        throw new TariffValidationError('Bill verification is unavailable when following a utility plan.');
+      }
       if (currentPreview.reviewHash !== commit.expectedReviewHash) {
         // A retry is only the same follow when no owner reference row still overlaps it; reselecting would have cleared those.
         const alreadyFollowing = follow && commit.candidate.kind === 'public'

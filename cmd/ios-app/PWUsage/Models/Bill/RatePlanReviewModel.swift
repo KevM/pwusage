@@ -50,6 +50,13 @@ final class RatePlanReviewModel {
         return false
     }
 
+    var canVerifyAgainstBill: Bool {
+        if request.scope == .reference, request.effectiveTo == nil, case .publicPlan = request.candidate {
+            return false
+        }
+        return true
+    }
+
     /// A restoration with no saved Tesla original in range has nothing to apply.
     var canApply: Bool {
         guard case .reviewing(let preview) = phase, isAcknowledged else { return false }
@@ -76,7 +83,9 @@ final class RatePlanReviewModel {
         applyError = nil
         phase = .applying(preview)
         let commit = TariffSelectionCommit(
-            request: request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: isVerifiedAgainstBill
+            request: request,
+            expectedReviewHash: preview.reviewHash,
+            verifiedAgainstBill: canVerifyAgainstBill && isVerifiedAgainstBill
         )
         do {
             phase = .applied(try await actions.commit(commit))

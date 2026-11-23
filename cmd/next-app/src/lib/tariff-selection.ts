@@ -979,8 +979,9 @@ export function buildTariffSelectionPreview(
         });
       }
     } else {
-      const revision = input.candidateRevisions?.find(span => spanContainsDate(span.effectiveFrom, span.effectiveTo, segFrom));
-      afterPlan = revision?.plan ?? input.candidatePlan as TariffReviewPlanSnapshot;
+      afterPlan = input.candidateRevisions
+        ? input.candidateRevisions.find(span => spanContainsDate(span.effectiveFrom, span.effectiveTo, segFrom))?.plan ?? null
+        : input.candidatePlan ?? null;
       kind = existingMatch ? 'replace' : 'fill_gap';
       const preserved = buildPreservedOriginalForSpan(existingMatch, segFrom, segTo);
       if (preserved) {
@@ -1081,7 +1082,7 @@ export function buildTariffSelectionPreview(
       hasSellRateChanges,
       hasRateChanges: hasBuyRateChanges || hasSellRateChanges,
       hasPeriodNameChanges,
-      fillsGap: affectedIntervals.some(i => i.kind === 'fill_gap'),
+      fillsGap: affectedIntervals.some(i => i.kind === 'fill_gap' && i.after !== null),
       replacesExistingPlan: affectedIntervals.some(i => i.kind === 'replace' || i.kind === 'restore'),
     },
   };

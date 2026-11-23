@@ -55,6 +55,18 @@ export function referenceDesiredSpans(defaults: RevisionSpan[], followed: Revisi
     return merged;
   }, []);
 }
+/** Loads the fixed revisions that the estimate refresh can lay for an open comparison choice. */
+export async function followedFixedRevisions(
+  chosen: UrdbRate,
+  inEffect: UrdbRate[],
+  fetchByLabel: UrdbApi['rateByLabel'],
+  timeZone: string
+): Promise<RevisionSpan[]> {
+  const newest = await newerRevision(chosen, inEffect, fetchByLabel) ?? chosen;
+  const revisions = await walkSupersedes(newest, fetchByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone });
+  return revisions.filter(span => isFixedRate(span.rate));
+}
+
 // URDB lists some utilities under an alias ("We energies") whose rates it files under another name
 // ("Wisconsin Electric Power Co"), so accept the names of the rates URDB lists for the stored utility.
 export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: string, inEffect: UrdbRate[]): boolean {
@@ -163,11 +175,7 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   let referencePlan = defaults;
   if (utility?.urdb_reference_label && utility.urdb_reference_from) {
     const chosen = await api.rateByLabel(utility.urdb_reference_label);
-    let followed: RevisionSpan[] = [];
-    if (chosen) {
-      const newest = await newerRevision(chosen, await ratesToday(), api.rateByLabel) ?? chosen;
-      followed = (await walkSupersedes(newest, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone })).filter(span => isFixedRate(span.rate));
-    }
+    const followed = chosen ? await followedFixedRevisions(chosen, await ratesToday(), api.rateByLabel, site.timezone) : [];
     referencePlan = referenceDesiredSpans(defaults, followed, utility.urdb_reference_from);
   }
   const usage = await monthlyUsage(site.id, site.timezone, now);
