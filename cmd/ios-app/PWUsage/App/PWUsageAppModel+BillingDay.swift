@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension PWUsageAppModel {
     /// The site to ask about now, or nil. Re-evaluated whenever the site list, the selection or a

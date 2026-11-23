@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Smart Shift presents the Solar System screen as a sheet; Settings pushes it.
