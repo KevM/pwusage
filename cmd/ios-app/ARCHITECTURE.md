@@ -11,7 +11,7 @@
 - `Authentication/` — Auth service and session handling.
 - `Shared/` — Cross-target code shared by app and widget.
 - `PWUsageWidgets/` — Widget extension.
-- `Packages/PWUsageCore/` — Local Swift Package holding pure-Foundation compute engines (`SolarLayout`, `SolarHealth`, `SolarForecast`, `BillPricing`, `SharedModels`) tested natively on macOS; app/UI/widget/store orchestration lives in `PWUsage`.
+- `Packages/PWUsageCore/` — Local Swift Package holding pure-Foundation compute engines (`SolarLayout`, `SolarHealth`, `SolarForecast`, `BillPricing`, `LoadTiming`, `SharedModels`) tested natively on macOS; app/UI/widget/store orchestration lives in `PWUsage`.
 - `PWUsageTests/<Feature>/` — Feature tests; `PWUsageTests/Support/` holds shared doubles/clocks.
 
 ## File naming

@@ -1,4 +1,5 @@
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 extension SmartShiftPresentationTests {
