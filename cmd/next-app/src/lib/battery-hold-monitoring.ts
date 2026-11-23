@@ -72,11 +72,16 @@ export function seedHoldMonitoring(hold: BatteryHold, live: HoldLiveStatus, now:
   return { ...result, phase: 'watching', baseline_load_w: Math.round(hold.baseline_load_w), peak_load_w: result.home_load_w };
 }
 
-/** True once an Auto hold has seen at least two fresh no-load checks spanning NO_LOAD_CONFIRM_MS. */
-export function noLoadConfirmed(monitoring: BatteryHoldMonitoring, now: Date): boolean {
+/**
+ * True once an Auto hold has seen at least two fresh no-load checks spanning
+ * NO_LOAD_CONFIRM_MS. The span runs to the last fresh check, not to now, so a
+ * later check without new history can never complete it.
+ */
+export function noLoadConfirmed(monitoring: BatteryHoldMonitoring): boolean {
   const since = Date.parse(monitoring.no_load_since ?? '');
+  const lastFresh = Date.parse(monitoring.no_load_last_checked_at ?? '');
   return !monitoring.job_detected && (monitoring.no_load_checks ?? 0) >= 2
-    && Number.isFinite(since) && now.getTime() - since >= NO_LOAD_CONFIRM_MS;
+    && Number.isFinite(since) && Number.isFinite(lastFresh) && lastFresh - since >= NO_LOAD_CONFIRM_MS;
 }
 
 export function summarizeHoldMonitoring(

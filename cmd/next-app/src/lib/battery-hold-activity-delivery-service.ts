@@ -9,9 +9,11 @@ import {
 } from './battery-hold-apns';
 import { withIoDeadline } from './io-deadline';
 
-// Separate from the 60 s battery monitor. Worst case: 2 s reconcile + 2 s claim
-// + 15 s of sends (the last starts no later than one request timeout before the
-// end) + bookkeeping writes + session close, comfortably inside the route's 30 s.
+// Runs after the hold check in the same route (battery-hold-cron-service.ts),
+// which passes a send budget of at most 15 s. Worst case: the budget (reconcile,
+// claim and sends; the last send starts no later than one request timeout before
+// its end, and its write is bounded at 2 s), then one batched release write and
+// the session close.
 export const DELIVERY_BATCH_LIMIT = 50;
 export const DELIVERY_CONCURRENCY = 8;
 export const DELIVERY_SEND_BUDGET_MS = 15_000;
@@ -79,6 +81,9 @@ export async function deliverBatteryHoldActivities(deps: DeliveryDeps = {}): Pro
   const sendDeadline = started + (deps.sendBudgetMs ?? DELIVERY_SEND_BUDGET_MS);
   const client = (deps.createClient ?? (c => new ApnsClient({ credentials: c, requestTimeoutMs })))(credentials);
   const blocked = new Set<ApnsEnvironment>();
+  // Claims this run will not attempt, released together: one bounded write
+  // however many remain, so the tail after the send deadline stays short.
+  const unsent: number[] = [];
   const write = async (what: string, work: () => Promise<unknown>) => {
     try { await withIoDeadline(DB_BUDGET_MS, work, null); }
     catch (e) { console.warn(`[ActivityDelivery] ${what} write deferred to lease expiry`, activityErrorTag(e)); }
@@ -91,7 +96,7 @@ export async function deliverBatteryHoldActivities(deps: DeliveryDeps = {}): Pro
   const deliver = async (activity: ClaimedActivity) => {
     if (blocked.has(activity.apnsEnvironment) || Date.now() + requestTimeoutMs > sendDeadline) {
       summary.released++;
-      await write('release', () => repo.releaseClaim(activity.id, owner));
+      unsent.push(activity.id);
       return;
     }
     let request: ApnsSendRequest;
@@ -137,6 +142,7 @@ export async function deliverBatteryHoldActivities(deps: DeliveryDeps = {}): Pro
     await Promise.all(Array.from({ length: Math.min(deps.concurrency ?? DELIVERY_CONCURRENCY, claims.length) }, async () => {
       while (next < claims.length) await deliver(claims[next++]);
     }));
+    if (unsent.length) await write('release', () => repo.releaseClaims(unsent, owner));
   } finally {
     await client.close();
   }

@@ -10,7 +10,8 @@ import type { BatteryHold } from './db';
 // hold, then send the Live Activity updates that check produced. The monitor
 // runs first so a slow Apple endpoint can never delay a restore.
 export const BATTERY_HOLD_CRON_BUDGET_MS = 55_000;
-// Delivery's bookkeeping writes and APNs session close after its send deadline.
+// After its send deadline, delivery makes one batched release write (2 s
+// bound) and closes the APNs session.
 const DELIVERY_TAIL_MS = 5_000;
 // Below this, delivery could not finish one APNs request after reconcile and claim.
 const MIN_SEND_BUDGET_MS = 5_000;

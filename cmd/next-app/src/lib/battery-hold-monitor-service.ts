@@ -77,7 +77,7 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
         }
       }
       const monitoring = summarizeHoldMonitoring(hold, samples, now, decision, live);
-      if (!decision && !hold.restore_attempted_at && hold.mode === 'auto' && noLoadConfirmed(monitoring, now)) {
+      if (!decision && !hold.restore_attempted_at && hold.mode === 'auto' && noLoadConfirmed(monitoring)) {
         decision = { restore: true, reason: 'no_load_detected' };
         monitoring.phase = 'restoring';
       }

@@ -33,22 +33,31 @@ describe('battery hold monitoring', () => {
     let monitoring = summarizeHoldMonitoring(hold, [point(5, 500)], at('10:06:00'), null);
     for (const [minute, time] of [[10, '10:11:00'], [15, '10:16:00']] as const) {
       monitoring = summarizeHoldMonitoring({ ...hold, monitoring }, [point(minute, 500)], at(time), null);
-      expect(noLoadConfirmed(monitoring, at(time))).toBe(false);
+      expect(noLoadConfirmed(monitoring)).toBe(false);
     }
     monitoring = summarizeHoldMonitoring({ ...hold, monitoring }, [point(20, 500)], at('10:21:00'), null);
-    expect(noLoadConfirmed(monitoring, at('10:21:00'))).toBe(true);
+    expect(noLoadConfirmed(monitoring)).toBe(true);
     // The old 15-minute cadence still confirms on its second check, despite a little cron jitter.
     const quarter = summarizeHoldMonitoring(hold, [point(10, 500)], at('10:15:03'), null);
     const next = summarizeHoldMonitoring({ ...hold, monitoring: quarter }, [point(25, 500)], at('10:30:01'), null);
-    expect(noLoadConfirmed(next, at('10:30:01'))).toBe(true);
-    expect(noLoadConfirmed(quarter, at('10:30:01'))).toBe(false);
+    expect(noLoadConfirmed(next)).toBe(true);
+    expect(noLoadConfirmed(quarter)).toBe(false);
+  });
+  it('needs the fresh checks themselves to span the window, not a later check without new data', () => {
+    const at = (iso: string) => new Date(`2026-10-02T${iso}Z`);
+    const first = summarizeHoldMonitoring(hold, [point(5, 500)], at('10:06:00'), null);
+    const second = summarizeHoldMonitoring({ ...hold, monitoring: first }, [point(10, 500)], at('10:11:00'), null);
+    // History stopped: no new sample, so this check adds no evidence.
+    const stalled = summarizeHoldMonitoring({ ...hold, monitoring: second }, [point(10, 500)], at('10:21:00'), null);
+    expect(stalled.no_load_checks).toBe(2);
+    expect(noLoadConfirmed(stalled)).toBe(false);
   });
   it('dates a hold counted before this rule from its first recorded no-load check', () => {
     const legacy = { phase: 'watching' as const, checked_at: '2026-10-02T10:15:00.000Z', next_check_at: '2026-10-02T10:30:00.000Z',
       sampled_at: null, estimated_load_w: null, no_load_checks: 1, no_load_last_checked_at: '2026-10-02T10:15:00.000Z', no_load_last_sample_at: '2026-10-02T10:10:00.000Z' };
     const next = summarizeHoldMonitoring({ ...hold, monitoring: legacy }, [point(15, 500)], new Date('2026-10-02T10:20:00Z'), null);
     expect(next).toMatchObject({ no_load_checks: 2, no_load_since: '2026-10-02T10:15:00.000Z' });
-    expect(noLoadConfirmed(next, new Date('2026-10-02T10:20:00Z'))).toBe(false);
+    expect(noLoadConfirmed(next)).toBe(false);
   });
   it('remembers a detected job even if later history is missing', () => {
     const first = summarizeHoldMonitoring(hold, [point(15, 500)], now, null);
