@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 extension TrmnlComponentConfig {
     static func fixture(showEstimatedBill: Bool = false) -> TrmnlComponentConfig {

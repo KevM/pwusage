@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// Edits the screens one Trmnl device rotates through. Changes save themselves: edits wait for a quiet
 /// moment, then go up together, and adding, deleting or moving a screen saves at once. Each screen shows a

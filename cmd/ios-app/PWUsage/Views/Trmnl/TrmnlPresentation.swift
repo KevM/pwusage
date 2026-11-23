@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Copy and links for the Trmnl screen in Settings. Voice follows `docs/voice-and-terms.md`.
 enum TrmnlPresentation {

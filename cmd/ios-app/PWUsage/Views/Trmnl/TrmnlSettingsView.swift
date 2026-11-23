@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// What Settings needs to open the Trmnl screen: where to read and save.
