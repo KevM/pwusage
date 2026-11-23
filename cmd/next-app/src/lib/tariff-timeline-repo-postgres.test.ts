@@ -1405,7 +1405,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           const siteId = 's-editor-follow';
           await harrisonSite(siteId, 'none');
           const { preview } = await choose(siteId, 'fx-2024', '2024-01-01', null);
-          expect(preview.reviewHash).toBeTruthy();
+          // The preview shows the plan in effect at the start over the whole open range; later revisions are laid by the estimate run.
+          expect(preview.affectedIntervals.map(item => [item.effectiveFrom, item.effectiveTo, item.after?.urdbLabel])).toEqual([['2024-01-01', null, 'fx-2024']]);
           expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2024-01-01' });
           expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toEqual([]);
           const pending = await local.database.query(`SELECT status FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
@@ -1415,6 +1416,29 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
             { label: 'fx-2024', from: '2024-01-01', to: '2024-12-31' },
             { label: 'fx-2025', from: '2025-01-01', to: null },
           ]);
+          // The first laid span is exactly what the preview reported for the start of the range.
+          const [first] = await laid(siteId);
+          expect([first.from, first.label]).toEqual([preview.affectedIntervals[0].effectiveFrom, preview.affectedIntervals[0].after?.urdbLabel]);
+        });
+
+        it('retryingTheSameFollowIsUnchangedButStillChecksTheUtility', async () => {
+          const siteId = 's-editor-follow-retry';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const commitRequest = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
+          await commitTariffSelection(siteId, 'u1', commitRequest, deps);
+          // Once the estimate run lays rows the stale hash mismatches; the same follow is an unchanged retry.
+          await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+          expect((await commitTariffSelection(siteId, 'u1', commitRequest, deps)).unchanged).toBe(true);
+          // A utility change between the pre-lock read and the locked commit is refused even for a matching follow.
+          await expect(new TariffTimelineRepo().commitReviewedSelection(siteId, {
+            userId: 'u1',
+            commit: commitRequest,
+            publicRate: { rate: rates[0], preLockUtilityName: 'Some Other Utility', medianMonthlyKwh: null },
+            resolvePublicPlan: () => { throw new Error('unreachable'); },
+            now: new Date('2026-11-16T18:00:00Z'),
+          })).rejects.toThrow(UtilityChangedError);
         });
 
         it('openPublicChoiceDropsOwnerReferenceRowsFromItsStart', async () => {
