@@ -82,3 +82,13 @@ large_tuple:
 function_parameter_count:
   warning: 5
   error: 8
+
+# Defaults kept (i, id, x, y, z); `to` is the inclusive end of a date range (FixedComparisonRow.to, mirroring `effectiveTo`).
+identifier_name:
+  excluded:
+    - i
+    - id
+    - x
+    - y
+    - z
+    - to
