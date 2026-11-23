@@ -1,29 +1,28 @@
 import CryptoKit
 import Foundation
-import PWUsageCore
 
-struct SavedRatePlanTimeline: Codable, Equatable, Sendable {
-    let timeline: SiteTariffsTimelineResponse
-    let etag: String?
+public struct SavedRatePlanTimeline: Codable, Equatable, Sendable {
+    public let timeline: SiteTariffsTimelineResponse
+    public let etag: String?
     let savedAt: Date
 }
 
 /// Saved rate plan timeline per account and site, stored in Application Support.
-actor RatePlanTimelineStore {
-    static let shared = RatePlanTimelineStore()
+public actor RatePlanTimelineStore {
+    public static let shared = RatePlanTimelineStore()
 
     private let directory: URL
     private let fileManager: FileManager
     private var cache: [SolarForecastSiteScope: SavedRatePlanTimeline] = [:]
 
-    init(fileManager: FileManager = .default, directory: URL? = nil) {
+    public init(fileManager: FileManager = .default, directory: URL? = nil) {
         self.fileManager = fileManager
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
         self.directory = directory ?? support.appendingPathComponent("RatePlanTimeline", isDirectory: true)
     }
 
-    func saved(scope: SolarForecastSiteScope) throws -> SavedRatePlanTimeline? {
+    public func saved(scope: SolarForecastSiteScope) throws -> SavedRatePlanTimeline? {
         if let entry = cache[scope] { return entry }
         let url = fileURL(scope)
         guard fileManager.fileExists(atPath: url.path) else { return nil }
@@ -32,7 +31,7 @@ actor RatePlanTimelineStore {
         return entry
     }
 
-    func save(
+    public func save(
         _ timeline: SiteTariffsTimelineResponse,
         etag: String?,
         scope: SolarForecastSiteScope,
@@ -41,10 +40,12 @@ actor RatePlanTimelineStore {
         try ensureProtectedDirectory()
         let entry = SavedRatePlanTimeline(timeline: timeline, etag: etag, savedAt: savedAt)
         let url = fileURL(scope)
-        try JSONEncoder().encode(entry).write(
-            to: url,
-            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-        )
+        #if os(iOS)
+            let writeOptions: Data.WritingOptions = [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        #else
+            let writeOptions: Data.WritingOptions = [.atomic]
+        #endif
+        try JSONEncoder().encode(entry).write(to: url, options: writeOptions)
         cache[scope] = entry
         try applyProtectionAndBackupExclusion(to: url)
     }
@@ -56,7 +57,7 @@ actor RatePlanTimelineStore {
         } catch let error as CocoaError where error.code == .fileNoSuchFile {}
     }
 
-    func removeAll() throws {
+    public func removeAll() throws {
         cache.removeAll()
         guard fileManager.fileExists(atPath: directory.path) else { return }
         try fileManager.removeItem(at: directory)
@@ -74,17 +75,21 @@ actor RatePlanTimelineStore {
         values.isExcludedFromBackup = true
         var protectedDirectory = directory
         try protectedDirectory.setResourceValues(values)
-        try fileManager.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: directory.path
-        )
+        #if os(iOS)
+            try fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: directory.path
+            )
+        #endif
     }
 
     private func applyProtectionAndBackupExclusion(to url: URL) throws {
-        try fileManager.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: url.path
-        )
+        #if os(iOS)
+            try fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: url.path
+            )
+        #endif
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         var protectedFile = url

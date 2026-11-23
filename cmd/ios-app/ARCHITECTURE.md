@@ -27,7 +27,8 @@
 - A file belongs to the feature whose screen or lifecycle consumes it.
 - Cross-target code lives in `Shared`.
 - `Models` holds value types only.
-- `State` holds coordinators, stores, and actors.
+- `State` holds app coordinators, stores, and actors. The portable rate plan timeline cache lives in
+  `PWUsageCore/BillPricing`. The app handles API revalidation and session cleanup.
 - A declaration belongs in one place; access-level changes are only to promote `private`/`fileprivate` to `internal` for cross-file extensions.
 
 ## Dynamic entry points (retained)
