@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Copy and formatting for the rate plan history guide. Voice follows `docs/voice-and-terms.md`.
 enum RatePlanHistoryPresentation {

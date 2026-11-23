@@ -74,8 +74,26 @@ extension MobileTariffDataAPI {
         throw PWUsageAPIError.invalidResponse
     }
 
+    func rateHistory(siteID _: String) async throws -> RatePlanHistoryDTO {
+        throw PWUsageAPIError.invalidResponse
+    }
+
+    func saveRateHistory(
+        siteID _: String,
+        periods _: [RatePlanHistoryPeriod]
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
+    }
+
     func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
         .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
+    }
+
+    func saveSystemCosts(
+        siteID _: String,
+        body _: SystemCostsWriteRequest
+    ) async throws -> SiteTariffsTimelineResponse {
+        throw PWUsageAPIError.invalidResponse
     }
 
     func siteRateCountry(siteID _: String) async throws -> SiteRateCountryDTO {

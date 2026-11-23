@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// Changing a rate plan to a public utility plan, or restoring the saved Tesla plan an override
 /// replaced. Both need explicitly chosen dates and go through the same server review.

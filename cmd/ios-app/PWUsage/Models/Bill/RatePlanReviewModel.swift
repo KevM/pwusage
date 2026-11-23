@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// The server calls a rate plan change goes through: a review first, then applying that review.
 struct RatePlanSelectionActions: Sendable {

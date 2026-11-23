@@ -32,6 +32,8 @@
   `PWUsageCore/BillPricing`. The app handles API revalidation and session cleanup.
 - `PWUsageCore/BillPricing` assembles local bills from energy flows. The app’s `LocalBillBuilder` reads the
   history store and wraps the result in the mobile bill response.
+- `PWUsageCore/BillPricing` owns rate plan history and tariff write contracts. The app handles API
+  transport, validation error mapping, review state, and display.
 - A declaration belongs in one place; access-level changes are only to promote `private`/`fileprivate` to `internal` for cross-file extensions.
 
 ## Dynamic entry points (retained)

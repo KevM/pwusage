@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// We Energies 2024: Option A (7 AM – 7 PM) is priced apart from B–D, so the server lists two

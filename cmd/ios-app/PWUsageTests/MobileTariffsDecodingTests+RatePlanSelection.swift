@@ -72,25 +72,6 @@ extension MobileTariffsDecodingTests {
         #expect(period.verification?.verifiedByCurrentUser == true)
     }
 
-    @Test("Selection requests always send explicit dates, with null meaning ongoing")
-    func encodesSelectionRequests() throws {
-        let request = TariffSelectionRequest(
-            scope: .actual, candidate: .publicPlan(label: "abc123"), effectiveFrom: "2025-03-01", effectiveTo: nil
-        )
-        let commit = TariffSelectionCommit(request: request, expectedReviewHash: "hash-1", verifiedAgainstBill: false)
-        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(commit)) as? [String: Any])
-        #expect(Set(object.keys) == [
-            "scope", "candidate", "effectiveFrom", "effectiveTo", "expectedReviewHash", "verifiedAgainstBill"
-        ])
-        #expect(object["effectiveTo"] is NSNull)
-        #expect(object["verifiedAgainstBill"] as? Bool == false)
-        #expect(object["candidate"] as? [String: String] == ["kind": "public", "label": "abc123"])
-
-        let restore = try JSONEncoder().encode(TariffSelectionCandidate.restoreTesla(originalSelectionID: 9))
-        let restoreObject = try JSONSerialization.jsonObject(with: restore) as? [String: AnyHashable]
-        #expect(restoreObject == ["kind": "restore_tesla", "originalSelectionId": 9])
-    }
-
     @Test("Decodes a review with restoration provenance and tolerates new note kinds")
     func decodesPreview() throws {
         let preview = try MobileContractDecoder.make()

@@ -149,6 +149,7 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   revalidation, editor writes, and sign-out cleanup.
 - The native suite checks local bill assembly from stored flow values and checks timeline fingerprints.
   The simulator suite exercises the history store and bill response adapter.
+- `RatePlanWireContractTests` checks rate history decoding and request encoding on macOS.
 - **Simulator tests**: Use `cmd/ios-app/run-tests.sh` for every iOS simulator test run — never `xcodebuild test` directly. The
   script generates the project, picks an available iPhone simulator, disables parallel execution
   and stops a run after 10 minutes.
