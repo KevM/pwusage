@@ -1,8 +1,8 @@
+import PWUsageCore
 import SwiftUI
 
 /// Card on the Bill tab showing current-cycle savings or a setup prompt that opens Rate Plans.
 struct BillSavingsCard: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let state: SavingsState
     let currency: String
     let hasRatePlans: Bool?
@@ -13,7 +13,13 @@ struct BillSavingsCard: View {
         switch state {
         case .ready(let report):
             if SavingsPresentation.showsCard(report.cycle) {
-                readyCard(report.cycle)
+                ReadyBillSavingsCard(
+                    figures: report.cycle,
+                    currency: currency,
+                    hasRatePlans: hasRatePlans,
+                    onOpenRatePlans: onOpenRatePlans,
+                    onCaveatAction: onCaveatAction
+                )
             }
         case .notReady(.noReferencePlan):
             setupCard
@@ -22,17 +28,45 @@ struct BillSavingsCard: View {
         }
     }
 
-    private func readyCard(_ figures: SavingsFigures) -> some View {
+    private var setupCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("See what you’ve saved")
+                .font(.subheadline.weight(.semibold))
+            Text(SavingsPresentation.billSetupPrompt)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).title, action: onOpenRatePlans)
+                .emphasisProminentButton()
+                .controlSize(.small)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            SectionTheme.secondaryGroupedBackground,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+    }
+}
+
+private struct ReadyBillSavingsCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let figures: SavingsFigures
+    let currency: String
+    let hasRatePlans: Bool?
+    let onOpenRatePlans: () -> Void
+    let onCaveatAction: (SavingsCaveat.Action) -> Void
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if figures.daysWithData > 0 {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 6) {
-                        headline(figures)
+                        headline
                         editButton
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline) {
-                        headline(figures)
+                        headline
                         Spacer(minLength: 8)
                         editButton
                     }
@@ -64,7 +98,7 @@ struct BillSavingsCard: View {
         )
     }
 
-    private func headline(_ figures: SavingsFigures) -> some View {
+    private var headline: some View {
         Text(SavingsPresentation.cycleHeadline(figures, currency: currency))
             .font(.subheadline.weight(.semibold))
     }
@@ -73,50 +107,19 @@ struct BillSavingsCard: View {
         Button(SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).title, action: onOpenRatePlans)
             .font(.caption.weight(.medium))
     }
-
-    private var setupCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("See what you’ve saved")
-                .font(.subheadline.weight(.semibold))
-            Text(SavingsPresentation.billSetupPrompt)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button(SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).title, action: onOpenRatePlans)
-                .emphasisProminentButton()
-                .controlSize(.small)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            SectionTheme.secondaryGroupedBackground,
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
-    }
 }
 
 #Preview("Ready") {
-    let figures = SavingsFigures(
-        costs: ScenarioCosts(recorded: 40, batteryFixed: 40, solarAlone: 86, noSolar: 182),
-        daysWithData: 18,
-        daysInPeriod: 18
-    )
-    let report = SavingsReport(
-        cycle: figures,
-        year: figures,
-        lifetime: figures,
-        cycleStart: .now,
-        solarSinceInstall: figures,
-        powerwallSinceInstall: nil,
-        cycles: [],
-        recentCycles: [],
-        batteryStartDay: nil,
-        rateGrowth: .typical
-    )
-    return BillSavingsCard(
-        state: .ready(report),
+    ReadyBillSavingsCard(
+        figures: SavingsFigures(
+            costs: ScenarioCosts(recorded: 40, batteryFixed: 40, solarAlone: 86, noSolar: 182),
+            daysWithData: 18,
+            daysInPeriod: 18
+        ),
         currency: "USD",
         hasRatePlans: true,
-        onOpenRatePlans: {}
+        onOpenRatePlans: {},
+        onCaveatAction: { _ in }
     )
     .padding()
 }

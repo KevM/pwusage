@@ -68,6 +68,25 @@ struct LocalBillBuilderTests {
             return
         }
         try assertReadyResponse(response, matches: fixture, site: site)
+        try await assertSavingsMatchesBill(response.currentBill, fixture: fixture, store: store)
+    }
+
+    private func assertSavingsMatchesBill(
+        _ bill: MobileBillResponse.Bill,
+        fixture: BillPricingFixture,
+        store: SolarHistoryStore
+    ) async throws {
+        let resolver = try #require(RatePeriodResolver(timeline: fixture.timeline))
+        let flowDays = try #require(try await store.flowDays(scope: scope, from: bill.cycleStart, to: bill.cycleEnd))
+        let estimate = try #require(bill.estimatedCost)
+        let savings = SavingsCalculator.compute(
+            scenarios: SavingsScenarioFlows.build(days: flowDays, battery: nil),
+            actual: resolver,
+            reference: resolver,
+            billingDay: fixture.billingDay,
+            now: fixture.now
+        )
+        #expect(abs(savings.cycle.costs.recorded - estimate) < 1e-6)
     }
 
     private func assertReadyResponse(

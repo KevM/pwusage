@@ -1,15 +1,14 @@
 import Foundation
-import PWUsageCore
 
-struct SavingsScenarioDays: Equatable, Sendable {
+public struct SavingsScenarioDays: Equatable, Sendable {
     let recorded: [EnergyFlowDay]
     let batteryFixed: [EnergyFlowDay]
     let solarAlone: [EnergyFlowDay]
     let noSolar: [EnergyFlowDay]
-    let batteryStartDay: String?
+    public let batteryStartDay: String?
 }
 
-enum SavingsScenarioFlows {
+public enum SavingsScenarioFlows {
     private static let batteryThresholdWh: Double = 1.0
     private static let slotHours: Double = 5.0 / 60.0
 
@@ -46,7 +45,7 @@ enum SavingsScenarioFlows {
         }
     }
 
-    static func build(
+    public static func build(
         days: [EnergyFlowDay],
         battery: SiteBatteryDTO?,
         batteryStartOverride: String? = nil,
