@@ -85,7 +85,7 @@ struct RatePlanReviewPresentationTests {
     func unavailableRestoreKeepsPlan() throws {
         let replaced = try #require(RatePlanReviewModelTests.preview().affectedIntervals.first)
         #expect(RatePlanReviewPresentation.keepsPlanLine(replaced) == nil)
-        let json = MobileTariffsDecodingTests.previewJSON.replacingOccurrences(
+        let json = RatePlanResponseFixture.previewJSON.replacingOccurrences(
             of: "\"kind\": \"replace\"", with: "\"kind\": \"restore_unavailable\""
         )
         let unavailable = try #require(
@@ -103,7 +103,7 @@ struct RatePlanReviewPresentationTests {
     func borrowedPlanNote() throws {
         let replaced = try #require(RatePlanReviewModelTests.preview().affectedIntervals.first)
         #expect(RatePlanReviewPresentation.fallbackNote(replaced) == nil)
-        let json = MobileTariffsDecodingTests.previewJSON
+        let json = RatePlanResponseFixture.previewJSON
             .replacingOccurrences(
                 of: "\"kind\": \"replace\", \"beforeIsFallback\": false",
                 with: "\"kind\": \"fill_gap\", \"beforeIsFallback\": true"
@@ -128,29 +128,26 @@ struct RatePlanReviewPresentationTests {
         #expect(RatePlanReviewPresentation.recalculationNote(fromStart)
             == "All past bills and savings estimates will be recalculated in the background.")
         #expect(RatePlanReviewPresentation.powerwallWarning.contains("Your Powerwall will continue using"))
-        let row = TariffAlignedTimeRow(
-            fromHour: 16, fromMinute: 0, toHour: 21, toMinute: 0,
-            before: TariffComparisonSlotRate(touName: .onPeak, buyRate: 0.3, sellRate: 0.05),
-            after: TariffComparisonSlotRate(touName: .offPeak, buyRate: 0.12, sellRate: 0.05),
-            buyRateDelta: -0.18, sellRateDelta: 0, buyRateChanged: true, sellRateChanged: false,
-            rateChanged: true, periodNameChanged: true
-        )
+        let row = try decodeRow("""
+        "fromHour":16,"fromMinute":0,"toHour":21,"toMinute":0,
+        "before":{"touName":"ON_PEAK","buyRate":0.3,"sellRate":0.05},
+        "after":{"touName":"OFF_PEAK","buyRate":0.12,"sellRate":0.05}
+        """)
         #expect(RatePlanReviewPresentation.timeLabel(row) == "4:00 PM – 9:00 PM")
-        let odd = TariffAlignedTimeRow(
-            fromHour: 6, fromMinute: 7, toHour: 6, toMinute: 22, before: nil, after: nil,
-            buyRateDelta: nil, sellRateDelta: nil, buyRateChanged: false, sellRateChanged: false,
-            rateChanged: false, periodNameChanged: false
-        )
+        let odd = try decodeRow(#""fromHour":6,"fromMinute":7,"toHour":6,"toMinute":22"#)
         #expect(RatePlanReviewPresentation.timeLabel(odd) == "6:07 AM – 6:22 AM", "Minute boundaries are kept")
-        let toMidnight = TariffAlignedTimeRow(
-            fromHour: 21, fromMinute: 0, toHour: 24, toMinute: 0, before: nil, after: nil,
-            buyRateDelta: nil, sellRateDelta: nil, buyRateChanged: false, sellRateChanged: false,
-            rateChanged: false, periodNameChanged: false
-        )
+        let toMidnight = try decodeRow(#""fromHour":21,"fromMinute":0,"toHour":24,"toMinute":0"#)
         #expect(RatePlanReviewPresentation.timeLabel(toMidnight) == "9:00 PM – 12:00 AM")
         let usage = RatePlanReviewPresentation.rateChange(
             before: row.before, after: row.after, rate: \.buyRate, currency: "USD"
         )
         #expect(usage.contains("Peak") && usage.contains("→"))
+    }
+
+    private func decodeRow(_ fields: String) throws -> TariffAlignedTimeRow {
+        let json = """
+        {\(fields),"buyRateChanged":false,"sellRateChanged":false,"rateChanged":false,"periodNameChanged":false}
+        """
+        return try JSONDecoder().decode(TariffAlignedTimeRow.self, from: Data(json.utf8))
     }
 }

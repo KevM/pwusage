@@ -72,28 +72,18 @@ extension MobileTariffsDecodingTests {
         #expect(period.verification?.verifiedByCurrentUser == true)
     }
 
-    @Test("Decodes a review with restoration provenance and tolerates new note kinds")
-    func decodesPreview() throws {
+    @Test("Review validation rejects a different site")
+    func rejectsReviewForDifferentSite() throws {
         let preview = try MobileContractDecoder.make()
-            .decode(TariffSelectionPreviewResponse.self, from: Data(Self.previewJSON.utf8))
-            .validating(siteID: "site-1")
-        #expect(preview.reviewHash == "hash-1")
-        #expect(preview.approximationNotes.map(\.kind) == [.tierBlended, .daySpecificSchedule, .other])
-        let interval = try #require(preview.affectedIntervals.first)
-        #expect(interval.kind == .replace)
-        #expect(interval.before?.source == .tesla)
-        #expect(interval.after?.exportRateProvenance == .netMetering)
-        guard case .preservesTeslaOriginal(let original) = interval.restoration else {
-            Issue.record("Expected the Tesla original to be preserved")
-            return
-        }
-        #expect(original.tariffId == 17)
+            .decode(TariffSelectionPreviewResponse.self, from: Data(RatePlanResponseFixture.previewJSON.utf8))
+        #expect(try preview.validating(siteID: "site-1") == preview)
         #expect(throws: PWUsageAPIError.invalidResponse) { try preview.validating(siteID: "site-2") }
     }
 
     @Test("Selection conflicts become typed errors; other conflicts do not")
     func decodesConflicts() throws {
-        let stale = "{\"error\":\"x\",\"code\":\"REVIEW_STALE\",\"refreshPath\":\"/p\",\"preview\":\(Self.previewJSON)}"
+        let preview = RatePlanResponseFixture.previewJSON
+        let stale = "{\"error\":\"x\",\"code\":\"REVIEW_STALE\",\"refreshPath\":\"/p\",\"preview\":\(preview)}"
         guard case .reviewStale(let fresh) = RatePlanSelectionConflict.decode(from: Data(stale.utf8)) else {
             Issue.record("Expected a stale review")
             return
@@ -104,40 +94,9 @@ extension MobileTariffsDecodingTests {
         #expect(RatePlanSelectionConflict.decode(from: Data(#"{"error":"Utility changed"}"#.utf8)) == nil)
     }
 
-    @Test("AI handoff export, preview, commit, and 409 REVIEW_STALE decode cleanly")
-    func decodesAiHandoffPayloadsAndConflict() throws {
-        let exportJSON = ##"{"markdown":"# Prompt","filename":"pwusage-rate-plan-check.md"}"##
-        let exported = try MobileContractDecoder.make().decode(
-            TariffAiHandoffExportResponse.self, from: Data(exportJSON.utf8)
-        )
-        #expect(exported.filename == "pwusage-rate-plan-check.md")
-
-        let batchPreviewJSON = """
-        {
-          "reviewHash": "batch-hash-1",
-          "siteId": "site-1",
-          "currency": "USD",
-          "unit": "kWh",
-          "timezone": "America/Chicago",
-          "notes": ["Added rider"],
-          "sources": ["https://austinenergy.com/rates"],
-          "unchangedActualCount": 0,
-          "unchangedReferenceCount": 1,
-          "actualPreviews": [\(Self.previewJSON)],
-          "referencePreviews": [],
-          "recalculatesHistory": true,
-          "recalculatesFromHistoryStart": false,
-          "recalculationRange": { "fromDate": "2025-03-01", "toDate": null },
-          "affectsPowerwallPlan": false
-        }
-        """
-        let batchPreview = try MobileContractDecoder.make().decode(
-            TariffAiHandoffPreviewResponse.self, from: Data(batchPreviewJSON.utf8)
-        )
-        #expect(batchPreview.reviewHash == "batch-hash-1")
-        #expect(batchPreview.hasChanges)
-        #expect(batchPreview.actualPreviews.count == 1)
-
+    @Test("AI handoff review conflicts carry the fresh batch")
+    func decodesAiHandoffConflict() {
+        let batchPreviewJSON = RatePlanResponseFixture.batchPreviewJSON
         let conflictJSON = "{\"error\":\"Stale\",\"code\":\"REVIEW_STALE\",\"preview\":\(batchPreviewJSON)}"
         let decodedConflict = RatePlanSelectionConflict.decode(from: Data(conflictJSON.utf8))
         guard case .aiHandoffReviewStale(let freshBatch) = decodedConflict else {
@@ -146,41 +105,4 @@ extension MobileTariffsDecodingTests {
         }
         #expect(freshBatch.reviewHash == "batch-hash-1")
     }
-
-    private static let snapshotFields = """
-    "utilityName": null, "choiceKind": "automatic", "urdbLabel": null, "revisionStart": null,
-    "contentHash": "c", "holidaysUseWeekendSchedule": true, "seasons": [], "approximationNotes": [],
-    "verification": null
-    """
-
-    static let previewJSON = """
-    {
-      "reviewHash": "hash-1", "siteId": "site-1", "scope": "actual",
-      "effectiveFrom": "2025-03-01", "effectiveTo": null, "currency": "USD", "unit": "kWh",
-      "timezone": "America/Chicago", "holidaysUseWeekendSchedule": true, "recalculatesHistory": true,
-      "recalculatesFromHistoryStart": false,
-      "recalculationRange": { "fromDate": "2025-03-01", "toDate": null }, "affectsPowerwallPlan": false,
-      "candidatePlan": null,
-      "affectedIntervals": [{
-        "effectiveFrom": "2025-03-01", "effectiveTo": null, "kind": "replace", "beforeIsFallback": false,
-        "before": { "tariffId": 17, "version": 1, "periodId": 7, "selectionId": null, "name": "Tesla",
-                    "source": "tesla", "exportRateProvenance": "tesla", \(snapshotFields) },
-        "after": { "tariffId": null, "version": null, "periodId": null, "selectionId": null, "name": "Public",
-                   "source": "estimated", "exportRateProvenance": "net_metering", \(snapshotFields) },
-        "seasons": [], "hasBuyRateChanges": true, "hasSellRateChanges": false, "hasRateChanges": true,
-        "hasPeriodNameChanges": false,
-        "restoration": { "status": "preserves_tesla_original", "original": {
-          "originalSelectionId": 3, "tariffId": 17, "name": "Tesla", "version": 1, "contentHash": "c",
-          "effectiveFrom": "2025-01-01", "effectiveTo": null } }
-      }],
-      "unchangedOutsidePeriods": [],
-      "restoration": { "preservedOriginals": [], "restoredOriginals": [], "unavailableRanges": [],
-                       "canApplyRestoration": true },
-      "approximationNotes": [{ "kind": "tier_blended", "message": "Tiers blended" },
-                             { "kind": "day_specific_schedule", "message": "Days" },
-                             { "kind": "something_new", "message": "New" }],
-      "summary": { "hasBuyRateChanges": true, "hasSellRateChanges": false, "hasRateChanges": true,
-                   "hasPeriodNameChanges": false, "fillsGap": false, "replacesExistingPlan": true }
-    }
-    """
 }

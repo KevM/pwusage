@@ -148,3 +148,27 @@ enum RatePlanSelectionConflict {
         }
     }
 }
+
+extension TariffSelectionPreviewResponse {
+    func validating(siteID: String) throws -> Self {
+        let snapshots = affectedIntervals.flatMap { [$0.before, $0.after] } + [candidatePlan]
+        let ratesAreFinite = snapshots.compactMap(\.self).allSatisfy { plan in
+            plan.seasons.allSatisfy { season in
+                (season.weekdayPeriods + season.weekendPeriods)
+                    .allSatisfy { $0.buyRate.isFinite && $0.sellRate.isFinite }
+            }
+        }
+        guard siteId == siteID, !reviewHash.isEmpty, !affectsPowerwallPlan,
+              TimeZone(identifier: timezone) != nil, ratesAreFinite else {
+            throw PWUsageAPIError.invalidResponse
+        }
+        return self
+    }
+}
+
+extension TariffAiHandoffPreviewResponse {
+    func validating(siteID expectedSiteID: String) throws -> Self {
+        guard siteId == expectedSiteID else { throw PWUsageAPIError.invalidResponse }
+        return self
+    }
+}
