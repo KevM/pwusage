@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import PWUsageCore
 
 /// The Live Activity for one battery hold. Shared by the app, which starts it,
 /// and the widget extension, which draws it.

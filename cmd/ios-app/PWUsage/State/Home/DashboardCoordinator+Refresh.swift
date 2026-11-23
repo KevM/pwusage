@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PWUsageCore
 
 extension DashboardCoordinator {
     /// Called by the foreground timer and lifecycle events. Missed intervals collapse to one request.

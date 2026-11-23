@@ -1,16 +1,22 @@
 import Foundation
 
-struct BatteryHoldCommandResult: Decodable, Equatable {
-    enum Status: String, Decodable {
+public struct BatteryHoldCommandResult: Decodable, Equatable, Sendable {
+    public enum Status: String, Decodable, Sendable {
         case succeeded = "ok"
         case alreadyActive = "already_active"
         case reserveChanged = "reserve_changed"
     }
-    let status: Status
-    let hold: BatteryHold?
-    let current: Int?
+    public let status: Status
+    public let hold: BatteryHold?
+    public let current: Int?
 
-    func validating(siteID: String, command: BatteryHoldCommand) throws -> Self {
+    public init(status: Status, hold: BatteryHold?, current: Int?) {
+        self.status = status
+        self.hold = hold
+        self.current = current
+    }
+
+    public func validating(siteID: String, command: BatteryHoldCommand) throws -> Self {
         _ = try hold?.validating(siteID: siteID, status: .active)
         switch (command, status) {
         case (.park, .succeeded), (.park, .alreadyActive):

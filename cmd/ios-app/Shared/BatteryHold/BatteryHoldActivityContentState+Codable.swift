@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension BatteryHoldActivityContentState {
     init(from decoder: any Decoder) throws {

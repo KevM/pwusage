@@ -1,4 +1,5 @@
 import ActivityKit
+import PWUsageCore
 import SwiftUI
 import WidgetKit
 

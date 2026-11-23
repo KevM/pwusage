@@ -2,6 +2,7 @@ import AuthenticationServices
 import CryptoKit
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 extension MobileAuthServiceTests {

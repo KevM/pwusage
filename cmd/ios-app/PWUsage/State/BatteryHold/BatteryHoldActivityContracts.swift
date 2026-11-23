@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import os
 import OSLog
+import PWUsageCore
 
 /// The APNs environment a build's `aps-environment` entitlement selects. The
 /// server keeps sandbox and production registrations apart and accepts

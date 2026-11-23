@@ -8,26 +8,6 @@ struct MobileSessionExchange: Codable, Equatable {
     let state: String
 }
 
-enum PWUsageAPIError: Error, Equatable, LocalizedError {
-    case signInRequired
-    case recoverableServerError(statusCode: Int)
-    case requestRejected(statusCode: Int, message: String?)
-    case invalidResponse
-
-    var errorDescription: String? {
-        switch self {
-        case .signInRequired:
-            "Please sign in again."
-        case .recoverableServerError(let statusCode):
-            "Server error (\(statusCode)). Please try again."
-        case .requestRejected(let statusCode, let message):
-            message ?? "Request failed (\(statusCode))."
-        case .invalidResponse:
-            "Unexpected response from server."
-        }
-    }
-}
-
 /// The `site_auth` cookie a session exchange returned, not yet stored. The exchange
 /// opts out of URLSession's cookie handling, so the cookie reaches the shared jar only
 /// when `MobileAuthService` stores it for the sign-in that still owns it.
