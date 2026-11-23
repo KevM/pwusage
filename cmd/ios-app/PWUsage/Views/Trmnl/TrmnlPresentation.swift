@@ -6,7 +6,6 @@ enum TrmnlPresentation {
     static let title = "Trmnl"
     static let previewHeader = "Your screen"
     static let previewUnavailable = "The preview is not available right now."
-    static let devicesHeader = "Devices"
     static let devicesFailure = "Your Trmnl devices could not be loaded."
     static let emptyTitle = "Show your energy on a Trmnl"
     static let emptyMessage = "Add the pwusage plugin on trmnl.com. Your device appears here once it connects."

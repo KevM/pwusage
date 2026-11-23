@@ -48,10 +48,6 @@ public struct CountryBoundaries: Sendable {
 
     let countries: [Country]
 
-    init(countries: [Country]) {
-        self.countries = countries
-    }
-
     public init(data: Data) throws {
         var reader = BoundaryReader(data: data)
         guard try reader.bytes(4) == Array("PWCB".utf8), try reader.uint8() == 1 else {

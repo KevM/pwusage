@@ -18,7 +18,7 @@ protocol HomeLocationProviding: AnyObject {
 protocol HomeLocationEvents: AnyObject {
     func authorizationChanged(_ status: CLAuthorizationStatus)
     func received(_ locations: [CLLocation])
-    func failed(_ error: any Error)
+    func failed()
 }
 
 /// The slice of `CLLocationManager` the provider uses, so tests can drive it.
@@ -105,7 +105,7 @@ final class DeviceHomeLocationProvider: HomeLocationProviding, HomeLocationEvent
         )))
     }
 
-    func failed(_ error: any Error) {
+    func failed() {
         finish(.failure(HomeLocationError.unavailable))
     }
 
@@ -149,6 +149,6 @@ final class CoreLocationHomeManager: NSObject, HomeLocationManaging, @preconcurr
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
-        events?.failed(error)
+        events?.failed()
     }
 }

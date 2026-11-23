@@ -31,8 +31,8 @@ extension SmartShiftPresentationTests {
 
     // MARK: Projection choice and assumptions
 
-    static func historyContext(asOf: Date, forecastHours: Bool = false) -> Estimator.PlanningContext {
-        SmartShiftFixtures.historyContext(asOf: asOf, forecastHours: forecastHours)
+    static func historyContext(asOf: Date) -> Estimator.PlanningContext {
+        SmartShiftFixtures.historyContext(asOf: asOf)
     }
 
     @Test func evaluateUsesHistoryWithoutSolcast() throws {

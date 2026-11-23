@@ -257,11 +257,10 @@ public enum LoadTimingForecastEstimator {
         return calendar.date(byAdding: .day, value: 2, to: startOfToday)
     }
 
-    static func firstContextGap(from start: Date, to end: Date, model: FlowModel,
-                                tariffs: [LoadTimingTariffSegment]) -> Date? {
+    static func firstContextGap(from start: Date, to end: Date, model: FlowModel) -> Date? {
         guard model.projection.projectsFlow else { return nil }
         guard start < end else { return start }
-        let points = integrationBoundaries(from: start, to: end, model: model, tariffs: tariffs)
+        let points = integrationBoundaries(from: start, to: end, model: model)
         guard points.count >= 2 else { return start }
         for index in 0 ..< (points.count - 1) {
             let midpoint = points[index].addingTimeInterval(points[index + 1].timeIntervalSince(points[index]) / 2)
@@ -270,8 +269,7 @@ public enum LoadTimingForecastEstimator {
         return nil
     }
 
-    static func integrationBoundaries(from start: Date, to end: Date, model: FlowModel,
-                                      tariffs: [LoadTimingTariffSegment]) -> [Date] {
+    static func integrationBoundaries(from start: Date, to end: Date, model: FlowModel) -> [Date] {
         model.boundaries(from: start, to: end)
     }
 

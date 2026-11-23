@@ -57,8 +57,6 @@ public enum LayoutFit {
 
     struct Fitted: Sendable {
         let params: [Double]
-        let rmseKw: Double
-        let candidates: [Candidate]
     }
 
     struct PlaneCount: Sendable {
@@ -321,12 +319,10 @@ public enum LayoutFit {
             if best.map({ candidateRmse < $0.rmseKw }) ?? true { best = (params, candidateRmse) }
         }
         if let best {
-            return Fitted(params: best.params, rmseKw: best.rmseKw, candidates: candidates)
+            return Fitted(params: best.params)
         }
         // No feasible candidate (e.g. no rows): zero-size planes.
-        return Fitted(
-            params: (0 ..< planes).flatMap { [180 + 90 * Double($0), 20, 0] },
-            rmseKw: rmse([Double](repeating: 0, count: rows.powerKw.count), rows.powerKw), candidates: candidates)
+        return Fitted(params: (0 ..< planes).flatMap { [180 + 90 * Double($0), 20, 0] })
     }
 
     /// The reference's `clipKw` truthiness: absent, zero and NaN all mean no clip.

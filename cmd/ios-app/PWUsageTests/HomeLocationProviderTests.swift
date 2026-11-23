@@ -28,7 +28,7 @@ final class FakeHomeLocationManager: HomeLocationManaging {
         locationRequests += 1
         switch answer {
         case .success(let locations): events?.received(locations)
-        case .failure(let error): events?.failed(error)
+        case .failure: events?.failed()
         case nil: break
         }
     }

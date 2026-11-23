@@ -101,7 +101,7 @@ struct SolarSystemVisual: View {
             }
             .overlay(alignment: .topLeading) {
                 if frame.stripPresence > 0 {
-                    SolarSystemFlightCanvas(input: input, strip: strip, clocks: motion, frame: frame, now: now)
+                    SolarSystemFlightCanvas(strip: strip, clocks: motion, frame: frame, now: now)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -350,7 +350,6 @@ struct SceneProjection {
 /// Newly clear days flying from their strip dot to the rim, then melting into a ray toward the
 /// center over the flight's last 38%.
 struct SolarSystemFlightCanvas: View {
-    let input: SolarSystemSceneInput
     let strip: SolarSystemStripLayout
     let clocks: SolarSystemSceneClocks
     let frame: SceneFrame

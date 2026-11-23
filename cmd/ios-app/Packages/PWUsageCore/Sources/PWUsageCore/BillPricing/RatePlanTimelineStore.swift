@@ -50,13 +50,6 @@ public actor RatePlanTimelineStore {
         try applyProtectionAndBackupExclusion(to: url)
     }
 
-    func remove(scope: SolarForecastSiteScope) throws {
-        cache.removeValue(forKey: scope)
-        do {
-            try fileManager.removeItem(at: fileURL(scope))
-        } catch let error as CocoaError where error.code == .fileNoSuchFile {}
-    }
-
     public func removeAll() throws {
         cache.removeAll()
         guard fileManager.fileExists(atPath: directory.path) else { return }

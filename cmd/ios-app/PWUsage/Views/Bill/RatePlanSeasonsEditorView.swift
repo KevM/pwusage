@@ -75,12 +75,12 @@ struct RatePlanSeasonsEditorView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if state.draft.seasons.count > 1 {
-                boundaryStepperRow(index: index, season: season)
+                boundaryStepperRow(index: index)
             }
         }
     }
 
-    private func boundaryStepperRow(index: Int, season: SeasonDraft) -> some View {
+    private func boundaryStepperRow(index: Int) -> some View {
         let nextIndex = (index + 1) % state.draft.seasons.count
         let nextMonth = state.draft.seasons[nextIndex].fromMonth
         return HStack(spacing: 8) {

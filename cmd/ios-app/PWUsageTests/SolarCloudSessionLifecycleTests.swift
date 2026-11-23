@@ -15,7 +15,11 @@ struct SolarCloudSessionLifecycleTests {
         SolarForecastSiteScope(accountScopeID: account, siteID: site)
     }
 
-    enum Replacement: CaseIterable, Sendable { case none, sameAccount, otherAccount }
+    enum Replacement: CaseIterable, Sendable {
+        case none, sameAccount
+        // periphery:ignore - runs through `Replacement.allCases`
+        case otherAccount
+    }
 
     @Test("A local-save notification released after sign-out recreates nothing", arguments: Replacement.allCases)
     func notificationAfterSignOutIsRejected(_ replacement: Replacement) async throws {

@@ -31,5 +31,8 @@ SwiftPM does not warn about it.
 - JSON fixtures live in `Tests/PWUsageCoreTests/Fixtures/` and load through `Bundle.module`.
 - Swift fixtures shared with the simulator suite live in `Tests/PWUsageCoreTests/Support/` and are
   also listed under `PWUsageTests` in `cmd/ios-app/project.yml`, so both suites use one copy.
+- `./cmd/ios-app/periphery.sh` finds unused code but cannot see these tests, which run through SwiftPM.
+  Mark a declaration only they read with `// periphery:ignore - read by <SuiteName>` above it (and
+  above its doc comment).
 - A test that needs app state, copy or a platform framework stays in `cmd/ios-app/PWUsageTests`. When
   you move logic here, move its pure tests with it and split any suite that mixes both.
