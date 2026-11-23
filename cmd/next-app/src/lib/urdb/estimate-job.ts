@@ -47,7 +47,13 @@ export function referenceDesiredSpans(defaults: RevisionSpan[], followed: Revisi
   // The owner's range may start before the label's oldest known revision; that revision applies back to it.
   const oldest = from.reduce<number>((best, span, index) => best < 0 || span.effectiveFrom < from[best].effectiveFrom ? index : best, -1);
   if (oldest >= 0 && from[oldest].effectiveFrom > followedFrom) from[oldest] = { ...from[oldest], effectiveFrom: followedFrom };
-  return [...before, ...from];
+  // One revision on both sides of the boundary is one source row: merge it so it is not upserted twice.
+  return [...before, ...from].reduce<RevisionSpan[]>((merged, span) => {
+    const last = merged.at(-1);
+    if (last && last.rate.label === span.rate.label && last.effectiveTo !== null && addCalendarDays(last.effectiveTo, 1) === span.effectiveFrom) merged[merged.length - 1] = { ...last, effectiveTo: span.effectiveTo };
+    else merged.push(span);
+    return merged;
+  }, []);
 }
 // URDB lists some utilities under an alias ("We energies") whose rates it files under another name
 // ("Wisconsin Electric Power Co"), so accept the names of the rates URDB lists for the stored utility.

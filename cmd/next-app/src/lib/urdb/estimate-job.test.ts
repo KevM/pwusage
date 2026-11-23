@@ -351,6 +351,14 @@ describe('referenceDesiredSpans', () => {
       ['X', '2024-06-01', null],
     ]);
   });
+  it('merges a followed revision that already supplies the defaults into one span', () => {
+    const result = referenceDesiredSpans(
+      [span('A', '2024-01-01', null)],
+      [span('A', '2024-01-01', null)],
+      '2025-03-01',
+    );
+    expect(result.map(item => [item.rate.label, item.effectiveFrom, item.effectiveTo])).toEqual([['A', '2024-01-01', null]]);
+  });
   it('extends the oldest followed revision back to the followed start when it begins later', () => {
     const result = referenceDesiredSpans(
       [span('A', '2023-01-01', null)],

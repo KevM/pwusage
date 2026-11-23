@@ -827,6 +827,22 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       expect((await actualSpans(siteId)).map(row => [row.urdb_label, row.effective_from, row.effective_to])).toEqual([['older', '2024-06-01', '2024-12-31'], ['picked', '2025-01-01', null]]);
     });
 
+    it('follows the label that already supplies the default from partway through', async () => {
+      const siteId = 's-followed-default';
+      const base = await seeded(siteId);
+      await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'default', urdb_reference_from = '2025-03-01', status = 'pending' WHERE site_id = $1`, [siteId]);
+      const defaultRate = flatRate('default', '2024-01-01', 0.15);
+      const api: UrdbApi = { ...base, rateByLabel: async label => label === 'default' ? defaultRate : base.rateByLabel(label) };
+
+      const result = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+
+      expect(result.status).toBe('ready');
+      const reference = await referenceRows(siteId);
+      expect(reference.map(row => [row.effective_from, row.effective_to])).toEqual([['2024-01-01', null]]);
+      const sources = await local.database.query(`SELECT urdb_label FROM "TariffUrdbSource" WHERE site_id = $1 AND role = 'estimated_reference'`, [siteId]);
+      expect(sources.rows).toEqual([{ urdb_label: 'default' }]);
+    });
+
     it('still rejects removing reference days when no plan is followed', async () => {
       const siteId = 's-unfollowed-removal';
       const base = await seeded(siteId);
