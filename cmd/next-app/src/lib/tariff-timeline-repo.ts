@@ -1660,6 +1660,7 @@ export async function loadRestorationTargets(
 /**
  * Turns the estimated reference rows the followed label laid over [from, before) into owner selections,
  * so ending the follow keeps the owner's choice for those days. Rows reaching past `before` end the day before.
+ * A row that began before `from` (the followed plan merged with the default before it) keeps its earlier part as estimated.
  */
 async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId: string, userId: string, from: string, before: string): Promise<void> {
   const rows = (await client.query<{
@@ -1674,17 +1675,18 @@ async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId
      LEFT JOIN "TariffUrdbSource" u ON u.tariff_id = p.tariff_id AND u.site_id = p.site_id AND u.role = 'estimated_reference'
      LEFT JOIN "TariffSelection" s ON s.id = p.selection_id
      WHERE p.site_id = $1 AND p.source = 'estimated' AND COALESCE(s.choice_kind, 'automatic') <> 'owner'
-       AND p.effective_from >= $2::date AND p.effective_from < $3::date
+       AND p.effective_from < $3::date AND (p.effective_to IS NULL OR p.effective_to >= $2::date)
      ORDER BY p.effective_from`,
     [siteId, from, before]
   )).rows;
   for (const row of rows) {
     const to = row.effective_to === null || row.effective_to >= before ? addCalendarDays(before, -1) : row.effective_to;
+    const clippedFrom = row.effective_from < from ? from : row.effective_from;
     const selectionId = await insertTariffSelectionOnClient(client, {
       siteId,
       scope: 'reference',
       tariffId: Number(row.tariff_id),
-      effectiveFrom: row.effective_from,
+      effectiveFrom: clippedFrom,
       effectiveTo: to,
       source: 'estimated',
       choiceKind: 'owner',
@@ -1696,9 +1698,19 @@ async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId
       exportRateProvenance: 'published',
       selectedContentHash: row.content_hash,
     });
+    if (clippedFrom === row.effective_from) {
+      await client.query(
+        `UPDATE "TariffReferencePeriod" SET effective_to = $2::date, selection_id = $3, updated_by_user_id = $4 WHERE id = $1`,
+        [row.id, to, selectionId, userId]
+      );
+      continue;
+    }
+    // Shrink first: periods of a site may not overlap.
+    await client.query(`UPDATE "TariffReferencePeriod" SET effective_to = $2::date WHERE id = $1`, [row.id, addCalendarDays(from, -1)]);
     await client.query(
-      `UPDATE "TariffReferencePeriod" SET effective_to = $2::date, selection_id = $3, updated_by_user_id = $4 WHERE id = $1`,
-      [row.id, to, selectionId, userId]
+      `INSERT INTO "TariffReferencePeriod"(site_id, tariff_id, effective_from, effective_to, updated_by_user_id, source, selection_id)
+       VALUES ($1, $2, $3::date, $4::date, $5, 'estimated', $6)`,
+      [siteId, Number(row.tariff_id), clippedFrom, to, userId, selectionId]
     );
   }
 }

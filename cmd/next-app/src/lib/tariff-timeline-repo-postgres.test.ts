@@ -1579,6 +1579,31 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           ]);
         });
 
+        it('movingTheFollowLaterKeepsAFollowedPeriodThatStraddlesItsStart', async () => {
+          const siteId = 's-editor-follow-straddle';
+          await harrisonSite(siteId, 'none');
+          const day = new Date('2026-11-16T18:00:00Z');
+          const firstApi = { ...chainApi([flatRate('fy-2026', '2026-01-01', 0.2)]), defaultRates: async () => [flatRate('d', '2023-01-01', 0.12)] };
+          await runUrdbEstimatesForSite(siteId, firstApi, day);
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'd' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const firstDeps = { ...deps, urdb: { ...firstApi, rateByLabel: async (label: string) => label === 'd' ? flatRate('d', '2023-01-01', 0.12) : firstApi.rateByLabel(label) } };
+          const first = await previewTariffSelection(siteId, 'u1', request, firstDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: first.reviewHash, verifiedAgainstBill: false }, firstDeps);
+          await runUrdbEstimatesForSite(siteId, firstDeps.urdb, day);
+          // The followed D merges with the default D into one period that starts before the follow.
+          expect((await references(siteId)).map(row => [row.name, row.effective_from, row.effective_to])).toEqual([['Plan d', '2023-01-01', null]]);
+          const move = { ...request, candidate: { kind: 'public' as const, label: 'fy-2026' }, effectiveFrom: '2026-01-01' };
+          const nextApi = { ...firstDeps.urdb, defaultRates: async () => [flatRate('d', '2023-01-01', 0.12), flatRate('e', '2025-01-01', 0.3, 'd')] };
+          const nextDeps = { ...deps, urdb: nextApi };
+          const second = await previewTariffSelection(siteId, 'u1', move, nextDeps);
+          await commitTariffSelection(siteId, 'u1', { ...move, expectedReviewHash: second.reviewHash, verifiedAgainstBill: false }, nextDeps);
+          await runUrdbEstimatesForSite(siteId, nextApi, day);
+          const rows = (await references(siteId)).map(row => [row.name, row.effective_from, row.effective_to, row.choice_kind]);
+          expect(rows.filter(row => row[0] === 'Plan d' && row[3] === 'owner')).toEqual([['Plan d', '2024-01-01', '2025-12-31', 'owner']]);
+          expect(rows.some(row => row[0] === 'Plan e' && (row[1] as string) < '2026-01-01')).toBe(false);
+          expect(rows.filter(row => row[3] !== 'owner' && row[0] === 'Plan d').every(row => (row[2] as string) <= '2023-12-31')).toBe(true);
+        });
+
         it('laterOpenManualChoiceStartingOnOrBeforeTheFollowedRangeClearsTheLabel', async () => {
           const siteId = 's-editor-clears-manual';
           await harrisonSite(siteId, 'none');
