@@ -10,28 +10,6 @@ struct TariffReviewDateRange: Codable, Equatable, Sendable {
     let toDate: String?
 }
 
-enum TariffApproximationKind: String, Codable, Equatable, Sendable {
-    case tierBlended = "tier_blended"
-    case exportInheritedFromTesla = "export_inherited_from_tesla"
-    case exportNetMeteringAssumed = "export_net_metering_assumed"
-    case exportFallbackZero = "export_fallback_zero"
-    case holidayWeekendSchedule = "holiday_weekend_schedule"
-    /// The plan has rules for specific days the weekday/weekend comparison can't show.
-    case daySpecificSchedule = "day_specific_schedule"
-    case other
-
-    /// A kind added on the server later reads as `other`, so the note still shows.
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = Self(rawValue: raw) ?? .other
-    }
-}
-
-struct TariffApproximationNote: Codable, Equatable, Sendable {
-    let kind: TariffApproximationKind
-    let message: String
-}
-
 struct TariffReviewPlanSnapshot: Decodable, Equatable, Sendable {
     let tariffId: Int?
     let version: Int?
@@ -223,12 +201,4 @@ struct TariffSelectionPreviewResponse: Decodable, Equatable, Sendable {
         }
         return self
     }
-}
-
-/// `PublicUtilityPlansResponse`: public plans in effect on one date, with full rate details.
-struct PublicUtilityPlansResponse: Decodable, Equatable, Sendable {
-    let utilityName: String
-    let effectiveDate: String
-    let currency: String
-    let plans: [UtilityPlanDTO]
 }

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Demo sends nothing to Tesla, so Sync to Tesla is always unavailable here.
 extension DemoAPI: MobileTeslaSyncAPI {
