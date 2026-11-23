@@ -2,6 +2,7 @@ import BackgroundTasks
 import Foundation
 import os
 @testable import PWUsage
+import PWUsageCore
 
 actor HistoryAPI: MobileSolarHistoryDataAPI {
     struct Request: Sendable { let from: String; let changedSince: Date? }

@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Weather provenance remains linked wherever its data contributes to an estimate.

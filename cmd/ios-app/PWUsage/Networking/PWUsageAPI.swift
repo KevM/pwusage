@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct MobileSessionExchange: Codable, Equatable {
     let attemptId: String

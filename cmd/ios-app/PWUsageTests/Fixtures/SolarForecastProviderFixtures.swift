@@ -1,6 +1,7 @@
 import Foundation
 @testable import PWUsage
 import PWUsageCore
+import Testing
 
 enum SolarProviderFixture {
     static let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
@@ -165,4 +166,60 @@ actor SyntheticForecastProvider: SolarForecastProviding {
     func cachedForecast(for request: SolarForecastRequest) async -> SolarForecastRawBatch? { cache[request.scope] }
     func activateAccountScope(_ accountScopeID: String?) async {}
     func clearAccountData() async throws { cache.removeAll() }
+}
+
+actor OpenMeteoTestTransport: OpenMeteoTransport {
+    var requests: [URLRequest] = []
+    let body: Data
+    let status: Int
+    let host: String
+    init(body: Data, status: Int = 200, host: String = "api.open-meteo.com") {
+        self.body = body
+        self.status = status
+        self.host = host
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        let url = try #require(URL(string: "https://\(host)/v1/forecast"))
+        let response = try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
+        return (body, response)
+    }
+}
+
+enum OpenMeteoFixture {
+    static func body(start: Date, hours: Int = 72, missing: Bool = false) throws -> Data {
+        let time = (0 ..< hours).map { start.addingTimeInterval(Double($0) * 3600).timeIntervalSince1970 }
+        let values: [Double?] = (0 ..< hours).map { missing && $0 == 1 ? nil : 400 }
+        return try JSONEncoder().encode(OpenMeteoFixtureBody(
+            utcOffsetSeconds: 0,
+            units: ["time": "unixtime", "shortwave_radiation": "W/m²",
+                    "direct_normal_irradiance": "W/m²", "diffuse_radiation": "W/m²"],
+            hourly: OpenMeteoFixtureHourly(time: time, ghi: values, dni: values, dhi: values)
+        ))
+    }
+}
+
+private struct OpenMeteoFixtureBody: Encodable {
+    let utcOffsetSeconds: Int
+    let units: [String: String]
+    let hourly: OpenMeteoFixtureHourly
+    enum CodingKeys: String, CodingKey {
+        case utcOffsetSeconds = "utc_offset_seconds"
+        case units = "hourly_units"
+        case hourly
+    }
+}
+
+private struct OpenMeteoFixtureHourly: Encodable {
+    let time: [Double]
+    let ghi: [Double?]
+    let dni: [Double?]
+    let dhi: [Double?]
+    enum CodingKeys: String, CodingKey {
+        case time
+        case ghi = "shortwave_radiation"
+        case dni = "direct_normal_irradiance"
+        case dhi = "diffuse_radiation"
+    }
 }

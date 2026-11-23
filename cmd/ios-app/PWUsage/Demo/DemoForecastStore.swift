@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// An offline solar forecast for the demo home: two arrays, a week of winter
 /// days shaped in the home's local time. Nothing is fetched, stored or

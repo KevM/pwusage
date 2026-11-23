@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PWUsageCore
 
 /// The calendar strip: one column per week (Sunday first, newest on the right), one row per
 /// weekday. Only stored days get cells; the strip grows from the center as older weeks arrive and

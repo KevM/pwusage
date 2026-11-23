@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension LoadTimingForecastEstimator {
     /// The estimator's name for `LoadTimingProjection`, kept so callers never see

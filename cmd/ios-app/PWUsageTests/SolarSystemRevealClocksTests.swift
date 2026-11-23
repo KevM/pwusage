@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// The replay of a found system for someone who wasn't watching when it was found.

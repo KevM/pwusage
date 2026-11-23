@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 import Security
 
 /// Installation markers live in the sandbox so deleting the app resets them.
