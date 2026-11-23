@@ -2,7 +2,6 @@ import Foundation
 import PWUsageCore
 
 enum FlowSyncProgress: Equatable, Sendable {
-    case currentCycleReady
     case complete
     case partial(oldestMissing: String)
 }

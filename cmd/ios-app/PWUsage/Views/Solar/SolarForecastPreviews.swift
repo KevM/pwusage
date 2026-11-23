@@ -183,11 +183,9 @@
     private struct SolarForecastPreview: View {
         @StateObject private var coordinator: DashboardCoordinator
         private let profileStore: LoadProfileStore
-        private let mode: ForecastPreviewMode
         private let site = MobileSite(id: "preview-home", name: "Cedar House", utility: "Demo utility")
 
         init(mode: ForecastPreviewMode) {
-            self.mode = mode
             let now = Date.now
             _coordinator = StateObject(wrappedValue: makePreviewCoordinator(mode: mode, now: now))
             let suiteName = "pwusage.preview.solar.\(mode.rawValue)"
@@ -360,7 +358,7 @@
                 Group {
                     switch fixture.screen.content {
                     case .verdict(let verdict):
-                        SmartShiftVerdictView(verdict: verdict, timeZone: SmartShiftPreviewFixture.timeZone)
+                        SmartShiftVerdictView(verdict: verdict)
                     case .blocked(let message):
                         Text(message)
                     case .loading:

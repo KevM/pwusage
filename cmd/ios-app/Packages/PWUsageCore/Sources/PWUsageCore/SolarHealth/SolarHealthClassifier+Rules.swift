@@ -42,7 +42,7 @@ extension SolarHealthClassifier {
             guard let latest = latestBySeason[season] else { continue }
             let segments = combinedShadeSegments(from: latest.map.mask)
             guard !segments.isEmpty else { continue }
-            let growth = grownRanges(for: season, history: allBySeason[season] ?? [])
+            let growth = grownRanges(history: allBySeason[season] ?? [])
             for segment in segments {
                 let grew = growth.contains {
                     $0.from < segment.azimuthTo && $0.upper > segment.azimuthFrom
@@ -83,9 +83,7 @@ extension SolarHealthClassifier {
         return segments
     }
 
-    private static func grownRanges(
-        for season: SolarSeason, history: [(year: Int, shade: SolarSeasonShade)]
-    ) -> [AzimuthRange] {
+    private static func grownRanges(history: [(year: Int, shade: SolarSeasonShade)]) -> [AzimuthRange] {
         guard history.count >= 2,
               let previous = history.first?.shade,
               let latest = history.last?.shade else { return [] }

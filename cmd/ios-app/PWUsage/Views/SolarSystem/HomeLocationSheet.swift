@@ -139,6 +139,7 @@ struct HomeLocationMapStep: View {
     let isSaving: Bool
     let onConfirm: (SolarHomeLocation) -> Void
 
+    // periphery:ignore - read through its $binding by Map
     @State private var position: MapCameraPosition
     @State private var center: CLLocationCoordinate2D?
 

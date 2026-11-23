@@ -3,8 +3,6 @@ import Foundation
 public enum LoadTimingCalculator {
     private struct ActivePeriod {
         let name: String
-        let buyRate: Double
-        let sellRate: Double
     }
 
     private struct PeriodRate {
@@ -141,11 +139,7 @@ public enum LoadTimingCalculator {
         guard seasonRatesFinite, match.window.buyRate.isFinite, match.window.sellRate.isFinite else {
             return nil
         }
-        return ActivePeriod(
-            name: match.window.touName.rawValue,
-            buyRate: match.window.buyRate,
-            sellRate: match.window.sellRate
-        )
+        return ActivePeriod(name: match.window.touName.rawValue)
     }
 
     private static func buildContext(

@@ -23,8 +23,6 @@ struct SolarHealthModelTests {
             return index
         }
 
-        func count() -> Int { started }
-
         func resume(index: Int) {
             guard index < continuations.count else { return }
             continuations[index].resume()

@@ -2,8 +2,15 @@ import Testing
 
 /// Shared bounded waits for asynchronous tests. Never assert after a fixed sleep:
 /// wait for the state that proves the work ran, or hold an invariant for a window.
-struct WaitTimeout: Error { let message: String }
-struct InvariantBroken: Error { let message: String }
+struct WaitTimeout: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
+}
+
+struct InvariantBroken: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
+}
 
 /// Polls until `condition` is true, failing at the deadline instead of hanging.
 /// The deadline only limits a failure: a passing wait returns as soon as the condition

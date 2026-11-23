@@ -6,7 +6,6 @@ import Testing
 struct SmartShiftPresentationTests {
     typealias Estimator = LoadTimingForecastEstimator
 
-    static let day0 = SmartShiftFixtures.day0
     static func at(_ hours: Double) -> Date { SmartShiftFixtures.at(hours) }
     static let now = SmartShiftFixtures.now
     static let horizonEnd = SmartShiftFixtures.horizonEnd

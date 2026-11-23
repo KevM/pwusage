@@ -136,10 +136,6 @@ enum BatteryHoldActivityPresentation {
         TimeZone(identifier: attributes.timeZoneIdentifier) ?? .current
     }
 
-    static func reserveText(_ state: State) -> String {
-        isRestoring(state) || state.isFinal ? "\(state.originalReserve)%" : "\(state.targetReserve)%"
-    }
-
     static func clock(_ date: Date, timeZone: TimeZone, now: Date) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone

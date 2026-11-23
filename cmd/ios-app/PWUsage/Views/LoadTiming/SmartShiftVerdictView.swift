@@ -3,7 +3,6 @@ import UIKit
 
 struct SmartShiftVerdictView: View {
     let verdict: SmartShiftVerdict
-    let timeZone: String
     var isSelected = true
     var onOpenDetails: (SmartShiftChoiceID) -> Void = { _ in }
     var onOpenSolarSettings: () -> Void = {}
@@ -15,13 +14,12 @@ struct SmartShiftVerdictView: View {
     @State private var isPopping = false
     @State private var tappedBarKey: String?
 
-    init(verdict: SmartShiftVerdict, timeZone: String, isSelected: Bool = true,
+    init(verdict: SmartShiftVerdict, isSelected: Bool = true,
          onOpenDetails: @escaping (SmartShiftChoiceID) -> Void = { _ in },
          onOpenSolarSettings: @escaping () -> Void = {},
          onHeroFrameChange: @escaping (CGRect) -> Void = { _ in }) {
         self.onHeroFrameChange = onHeroFrameChange
         self.verdict = verdict
-        self.timeZone = timeZone
         self.isSelected = isSelected
         self.onOpenDetails = onOpenDetails
         self.onOpenSolarSettings = onOpenSolarSettings

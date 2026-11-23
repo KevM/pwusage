@@ -99,20 +99,27 @@ public struct DetectedSolarLayout: Codable, Equatable, Sendable {
 /// `stages`. Fields stay at their defaults when the run stops before that stage.
 struct SolarLayoutDetectionStages: Sendable {
     var producingDays = 0
+    // periphery:ignore - parity tests
     var clipKw: Double?
     var clearDays = 0
+    // periphery:ignore - parity tests
     /// The site-local clear days behind `clearDays`.
     var clearDayIds: Set<String> = []
     var selectedRows = 0
+    // periphery:ignore - parity tests
     var shading: [ShadeSegment] = []
+    // periphery:ignore - parity tests
     /// nil unless the plane-count fit ran.
     var planeCount: Int?
+    // periphery:ignore - parity tests
     var cvNrmse: [Int: Double] = [:]
+    // periphery:ignore - parity tests
     var bestPlanes: [LayoutPlane] = []
 }
 
 struct SolarLayoutDetectorOutcome: Sendable {
     let result: DetectedSolarLayout
+    // periphery:ignore - read by SolarLayoutDetectorTests
     let stages: SolarLayoutDetectionStages
 }
 

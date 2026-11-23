@@ -201,7 +201,7 @@ struct LoadTimingView: View {
             case .verdict(let verdict):
                 carSummaryRow
                 SmartShiftVerdictView(
-                    verdict: verdict, timeZone: timeZone, isSelected: isSelected,
+                    verdict: verdict, isSelected: isSelected,
                     onOpenDetails: { detailsSnapshot = detailsSnapshot(state, verdict: verdict, selected: $0) },
                     onOpenSolarSettings: { isSolarForecastSheetPresented = true },
                     onHeroFrameChange: heroFrameChanged)

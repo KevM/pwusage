@@ -116,11 +116,6 @@ extension DashboardCoordinator {
         solarForecastState = .enhanced
     }
 
-    /// Keeps the selected site's status current for settings.
-    func refreshSolarLayoutStatus(siteID: String, operation: Int) async {
-        _ = await solarLayoutLookup(siteID: siteID, operation: operation)
-    }
-
     private func solarRequest(
         scope: SolarForecastSiteScope,
         timeZone: TimeZone,

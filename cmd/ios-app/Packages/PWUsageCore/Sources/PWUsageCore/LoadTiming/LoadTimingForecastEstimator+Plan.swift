@@ -14,7 +14,6 @@ extension LoadTimingForecastEstimator {
     struct Prepared {
         let now: Date
         let projection: Projection
-        let projectionStart: Date
         let projectionEnd: Date
         let horizonEnd: Date
         let safetyEnd: Date
@@ -190,9 +189,8 @@ extension LoadTimingForecastEstimator {
                 endsAtRateChange = true
             }
             guard projectionEnd > request.now else { throw PlanFailure(reason: .incompleteCoverage) }
-            if let contextGap = firstContextGap(from: projectionStart, to: projectionEnd, model: model,
-                                                tariffs: tariffs),
-                contextGap < projectionEnd {
+            if let contextGap = firstContextGap(from: projectionStart, to: projectionEnd, model: model),
+               contextGap < projectionEnd {
                 projectionEnd = contextGap
                 endsAtRateChange = false
                 guard projectionEnd > request.now else { throw PlanFailure(reason: .incompleteContext) }
@@ -299,8 +297,8 @@ extension LoadTimingForecastEstimator {
                 }
                 nowBalances = projected
             }
-            return Prepared(now: request.now, projection: request.projection, projectionStart: projectionStart,
-                            projectionEnd: projectionEnd, horizonEnd: min(tomorrowEnd, projectionEnd),
+            return Prepared(now: request.now, projection: request.projection, projectionEnd: projectionEnd,
+                            horizonEnd: min(tomorrowEnd, projectionEnd),
                             safetyEnd: safetyEnd, endsAtRateChange: endsAtRateChange, tariffs: tariffs,
                             model: model, steps: steps, rates: rates, baseBalances: baseBalances,
                             nowBalances: nowBalances, cautiousBalances: cautiousBalances,

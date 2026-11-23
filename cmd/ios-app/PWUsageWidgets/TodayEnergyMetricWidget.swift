@@ -12,6 +12,7 @@ extension TodayEnergyMetric: AppEnum {
 
 struct TodayEnergyMetricConfiguration: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "Today's Metric"
+    // periphery:ignore - an AppIntent requirement the system reads
     static let description = IntentDescription("Choose Home, Solar, Grid, or Battery for your small widget.")
 
     @Parameter(title: "Metric", default: .home)

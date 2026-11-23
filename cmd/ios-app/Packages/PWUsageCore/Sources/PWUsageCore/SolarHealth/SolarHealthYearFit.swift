@@ -162,6 +162,7 @@ public struct SolarHealthYearFit {
         return ScaledEnergyInputs(clipKw: clip, dayPowers: dayPowers)
     }
 
+    // periphery:ignore - read by SolarHealthPassTests and SolarHealthClassifierTests
     /// Expected clear-day energy (kWh) keyed by day string, scaling reference power before clipping.
     func expectedDailyKwh(referenceScale: Double) -> [String: Double] {
         if let inputs = scaledEnergyInputs {

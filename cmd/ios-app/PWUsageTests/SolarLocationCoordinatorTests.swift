@@ -22,10 +22,6 @@ final class StubHomeLocationProvider: HomeLocationProviding {
 @Suite("Sharing the home location from the app")
 struct SolarLocationCoordinatorTests {
     private static let home = SolarHomeLocation(latitude: 43.39, longitude: -87.87, source: .device)
-    private static let estimated = MobileSolarLayoutResponse.enabled(
-        location: SolarHomeLocation(latitude: 43.4, longitude: -87.9, source: .estimated),
-        layout: AutomaticForecastHarness.detectedLayout, reason: nil
-    )
 
     @Test("Denied permission posts nothing and keeps the history path")
     func denied() async throws {

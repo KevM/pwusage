@@ -77,6 +77,7 @@ public struct SolarHealthReference: Equatable, Sendable {
         self.steps = steps
     }
 
+    // periphery:ignore - read by SolarHealthReferenceTests
     func planes(on date: Date) -> [SolarHealthPlane] {
         steps.last { $0.from <= date }?.planes ?? []
     }

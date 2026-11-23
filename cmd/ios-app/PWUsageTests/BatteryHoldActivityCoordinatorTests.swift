@@ -201,7 +201,7 @@ final class FakeActivityHost: BatteryHoldActivityHost {
 @MainActor
 final class FakeActivityAPI: BatteryHoldActivityAPI {
     struct Registered { let siteID: String; let registration: BatteryHoldActivityRegistration }
-    struct Removed { let siteID: String; let registrationID: UUID }
+    struct Removed { let registrationID: UUID }
     var registrations: [Registered] = []
     /// Completed calls in order.
     var events: [String] = []
@@ -244,7 +244,7 @@ final class FakeActivityAPI: BatteryHoldActivityAPI {
         events.append("register")
     }
     func unregisterBatteryHoldActivity(siteID: String, registrationID: UUID) async throws {
-        removals.append(.init(siteID: siteID, registrationID: registrationID))
+        removals.append(.init(registrationID: registrationID))
         events.append("remove")
     }
     func resume() { isPaused = false }
