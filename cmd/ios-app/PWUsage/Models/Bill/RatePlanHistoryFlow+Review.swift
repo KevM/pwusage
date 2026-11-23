@@ -49,17 +49,28 @@ extension RatePlanHistoryFlow {
         return FixedComparisonPairing.rows(for: (span.from, span.endDate), references: referencePeriods)
     }
 
+    /// The fixed plans the guide offers for the plan at `index`: those listed for the year covering
+    /// its start, the default first. Empty for an index out of range.
+    func fixedChoices(forSpanAt index: Int) -> [FixedComparisonChoice] {
+        guard spans.indices.contains(index) else { return [] }
+        return fixedChoices(startingIn: spans[index].from)
+    }
+
     private func fallbackFixedPlan(startingIn day: String) -> FixedComparisonChoice? {
+        fixedChoices(startingIn: day).first
+    }
+
+    private func fixedChoices(startingIn day: String) -> [FixedComparisonChoice] {
         let year = Int(day.prefix(4))
-        // Only the year covering the start. A year the server lists with no plans stages nothing; a year
+        // Only the year covering the start. A year the server lists with no plans offers none; a year
         // it does not list is the current (trusted) year, whose plans are `history.current`.
         let listed = history.years.first { $0.year == year }?.plans ?? (
             history.years.contains { $0.year == year } ? [] : history.current
         )
         let fixedPlans = listed.filter { $0.kind == .fixed && $0.fixedLabel != nil }
-        guard let plan = fixedPlans.first(where: \.isDefault) ?? fixedPlans.first, let label = plan.fixedLabel else {
-            return nil
+        let ordered = fixedPlans.filter(\.isDefault) + fixedPlans.filter { !$0.isDefault }
+        return ordered.compactMap { plan in
+            plan.fixedLabel.map { .publicPlan(label: $0, name: plan.name, buyRate: plan.lowRate) }
         }
-        return .publicPlan(label: label, name: plan.name, buyRate: plan.lowRate)
     }
 }

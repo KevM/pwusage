@@ -6,6 +6,8 @@ struct FixedRatePlanActions: Sendable {
     var delete: (@MainActor (Int) async -> String?)?
     var updateDates: (@MainActor (Int, TariffPlanPatchRequest) async throws -> Void)?
     var selection: RatePlanSelectionActions?
+    /// The guide's staging: with a locked range the form hands back a manual choice instead of saving.
+    var stage: (@MainActor (FixedComparisonChoice) -> Void)?
     var onApplied: @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void = { _, _ in }
     var onDismiss: (@MainActor () -> Void)?
 
@@ -43,6 +45,8 @@ struct FixedRatePlanForm: View {
     let timeZone: TimeZone
     let currency: String
     let actions: FixedRatePlanActions
+    /// Enter rates myself for one fixed comparison row: the dates are fixed and not editable here.
+    let lockedRange: (from: String, to: String?)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -66,8 +70,10 @@ struct FixedRatePlanForm: View {
         estimateCoverageNote: String? = nil,
         timeZone: TimeZone,
         currency: String,
-        actions: FixedRatePlanActions
+        actions: FixedRatePlanActions,
+        lockedRange: (from: String, to: String?)? = nil
     ) {
+        self.lockedRange = lockedRange
         self.existing = existing
         self.defaultStartDate = defaultStartDate
         self.suggestedStartDate = suggestedStartDate
@@ -83,7 +89,9 @@ struct FixedRatePlanForm: View {
             initialValue: window.map { FixedRatePlanDraft.formatRate($0.sellRate) } ?? FixedRatePlanDraft.formatRate(0)
         )
         _startsOn = State(
-            initialValue: Self.parseDate(existing?.effectiveFrom ?? defaultStartDate, timeZone: timeZone) ?? Date()
+            initialValue: Self.parseDate(
+                lockedRange?.from ?? existing?.effectiveFrom ?? defaultStartDate, timeZone: timeZone
+            ) ?? Date()
         )
     }
 
@@ -92,7 +100,7 @@ struct FixedRatePlanForm: View {
             Form {
                 detailsSection
                 ratesSection
-                if actions.selection != nil {
+                if actions.selection != nil, !stagesChoice {
                     Section {
                         Text("Next, you’ll review exactly what changes before anything is saved.")
                             .font(.footnote)
@@ -110,7 +118,7 @@ struct FixedRatePlanForm: View {
                     deleteSection(periodID: existing.periodId)
                 }
             }
-            .navigationTitle(existing == nil ? "Add Fixed Rate Plan" : "Edit Fixed Rate Plan")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Route.self) { route in
                 switch route {
@@ -129,7 +137,11 @@ struct FixedRatePlanForm: View {
                         .disabled(operation != nil)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if actions.selection != nil {
+                    if stagesChoice {
+                        Button(FixedComparisonPresentation.useRatesTitle) { stageChoice() }
+                            .fontWeight(.semibold)
+                            .disabled(!canSave)
+                    } else if actions.selection != nil {
                         Button("Review") { startReview() }
                             .fontWeight(.semibold)
                             .disabled(!canSave || operation != nil)
@@ -168,11 +180,17 @@ struct FixedRatePlanForm: View {
             }
             TextField("Plan name", text: $name)
                 .textInputAutocapitalization(.words)
-            RatePlanDateField(
-                title: "Starts on", date: $startsOn,
-                boundary: suggestedStartDate == nil ? .first : nil, timeZone: timeZone
-            )
-            if let suggestedStartDate,
+            if let lockedRange {
+                LabeledContent("Dates", value: RatePlanTimelineFormatting.displayRange(
+                    from: lockedRange.from, to: lockedRange.to
+                ))
+            } else {
+                RatePlanDateField(
+                    title: "Starts on", date: $startsOn,
+                    boundary: suggestedStartDate == nil ? .first : nil, timeZone: timeZone
+                )
+            }
+            if lockedRange == nil, let suggestedStartDate,
                let date = Self.parseDate(suggestedStartDate, timeZone: timeZone),
                RatePlanTimelineFormatting.formatYMD(startsOn, in: timeZone) != suggestedStartDate {
                 Button("Start on \(RatePlanTimelineFormatting.displayDate(suggestedStartDate))") { startsOn = date }
@@ -182,7 +200,7 @@ struct FixedRatePlanForm: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
-            if existing != nil, actions.selection != nil, actions.updateDates != nil {
+            if lockedRange == nil, existing != nil, actions.selection != nil, actions.updateDates != nil {
                 Button("Edit Dates", systemImage: "calendar") {
                     isEditingDates = true
                 }
@@ -244,6 +262,24 @@ struct FixedRatePlanForm: View {
         )
     }
 
+    private var navigationTitle: String {
+        if lockedRange != nil { return FixedComparisonPresentation.pickerTitle }
+        return existing == nil ? "Add Fixed Rate Plan" : "Edit Fixed Rate Plan"
+    }
+
+    private var stagesChoice: Bool {
+        lockedRange != nil && actions.stage != nil
+    }
+
+    private func stageChoice() {
+        guard canSave, let stage = actions.stage, let buyRate = parsedBuyRate, let sellRate = parsedSellRate else {
+            return
+        }
+        ManualLayoutKeyboard.dismiss()
+        stage(.manual(name: FixedRatePlanDraft.normalizedName(name), buyRate: buyRate, sellRate: sellRate))
+        close()
+    }
+
     private var canSave: Bool {
         parsedBuyRate != nil && parsedSellRate != nil && editRangeProblem == nil
     }
@@ -254,14 +290,20 @@ struct FixedRatePlanForm: View {
               let buyRate = parsedBuyRate,
               let sellRate = parsedSellRate else { return }
         ManualLayoutKeyboard.dismiss()
-        let request = FixedRatePlanDraft.makeSelectionRequest(
-            name: name,
-            buyRate: buyRate,
-            sellRate: sellRate,
-            startsOn: startsOn,
-            effectiveTo: existing?.effectiveTo,
-            timeZone: timeZone
-        )
+        let request = if let lockedRange {
+            FixedRatePlanDraft.makeSelectionRequest(
+                name: name, buyRate: buyRate, sellRate: sellRate, range: lockedRange
+            )
+        } else {
+            FixedRatePlanDraft.makeSelectionRequest(
+                name: name,
+                buyRate: buyRate,
+                sellRate: sellRate,
+                startsOn: startsOn,
+                effectiveTo: existing?.effectiveTo,
+                timeZone: timeZone
+            )
+        }
         if review?.request != request {
             review = RatePlanReviewModel(request: request, actions: selection)
         }

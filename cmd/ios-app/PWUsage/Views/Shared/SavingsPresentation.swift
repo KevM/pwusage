@@ -250,7 +250,26 @@ enum FixedRatePlanDraft {
         )
     }
 
-    private static func normalizedName(_ raw: String) -> String {
+    /// A manual comparison for exactly `range`, as the guide and editor's locked-dates form send it.
+    static func makeSelectionRequest(
+        name: String,
+        buyRate: Double,
+        sellRate: Double,
+        range: (from: String, to: String?)
+    ) -> TariffSelectionRequest {
+        TariffSelectionRequest(
+            scope: .reference,
+            candidate: .manual(
+                name: normalizedName(name),
+                seasons: makeSeasons(buyRate: buyRate, sellRate: sellRate)
+            ),
+            effectiveFrom: range.from,
+            effectiveTo: range.to
+        )
+    }
+
+    /// The name as saved: trimmed, `Fixed Rate Plan` when blank.
+    static func normalizedName(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Fixed Rate Plan" : trimmed
     }

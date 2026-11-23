@@ -174,6 +174,7 @@ struct TariffSheet: View {
                     onRestoreTesla: RatePlanSourcePresentation.canRestoreTesla(period, in: data)
                         ? { activeModal = .restore(period) } : nil
                 )
+                comparisonRows(for: period, in: data)
             }
         }
     }
@@ -197,6 +198,8 @@ struct TariffSheet: View {
             )
         case .aiHandoff:
             RatePlanAiHandoffSheet(actions: actions.aiHandoff) { timeline = $0 }
+        case .fixedComparison(let row):
+            FixedComparisonChangeFlow(row: row, timeline: timeline, actions: actions, onApplied: selectionApplied)
         case .teslaSync:
             TeslaSyncSheet(actions: actions.teslaSync, currency: timeline?.currency ?? "USD") { timeline = $0 }
         case .editor(let mode):
@@ -221,15 +224,6 @@ struct TariffSheet: View {
     private func historyOfferStart(_ data: SiteTariffsTimelineResponse) -> String? {
         guard !historyOfferDismissals.isDismissed(siteID: site.id) else { return nil }
         return data.estimates?.historyGuide?.historyStart
-    }
-
-    private var rateHistorySheet: some View {
-        RatePlanHistorySheet(
-            // Opens from the loaded timeline (the Find button lives on it), so its reference periods are there.
-            teslaPlanName: timeline?.teslaSync.latestTariffName, referencePeriods: timeline?.referencePeriods ?? [],
-            load: { try await actions.loadRateHistory() },
-            save: { timeline = try await actions.saveRateHistory($0) }
-        )
     }
 
     private func openStartingAddFormIfNeeded(_ timelineLoaded: Bool) {

@@ -6,6 +6,13 @@ struct RatePlanHistoryReviewView: View {
     let flow: RatePlanHistoryFlow
     let model: RatePlanHistoryModel
     let teslaRow: RatePlanHistoryPresentation.TeslaRow?
+    @State private var changingFixedSpan: ChangingFixedSpan?
+
+    /// The plan whose fixed comparison is being changed, by its index in `flow.spans`.
+    private struct ChangingFixedSpan: Identifiable {
+        let index: Int
+        var id: Int { index }
+    }
 
     var body: some View {
         HistoryStepFrame(title: RatePlanHistoryPresentation.question(flow)) {
@@ -39,6 +46,19 @@ struct RatePlanHistoryReviewView: View {
             }
             .font(.headline)
             .controlSize(.large)
+        }
+        .sheet(item: $changingFixedSpan) { target in fixedChangeSheet(forSpanAt: target.index) }
+    }
+
+    private func fixedChangeSheet(forSpanAt index: Int) -> some View {
+        FixedComparisonGuideChange(
+            options: flow.fixedChoices(forSpanAt: index).compactMap { FixedComparisonOption(choice: $0) },
+            range: flow.spans.indices.contains(index) ? (flow.spans[index].from, flow.spans[index].endDate) : ("", nil),
+            // The guide offers US utility plans only.
+            currency: "USD",
+            utilityName: flow.history.utilityName
+        ) { choice in
+            model.update { $0.chooseFixed(choice, forSpanAt: index) }
         }
     }
 
@@ -88,6 +108,12 @@ struct RatePlanHistoryReviewView: View {
                 model.update { $0.reopenSpan(at: index) }
             }
             .font(.subheadline)
+            Divider()
+            FixedComparisonRowsView(
+                rows: flow.comparisonRows(forSpanAt: index),
+                currency: "USD",
+                onChangeAll: { changingFixedSpan = ChangingFixedSpan(index: index) }
+            )
         }
     }
 }
