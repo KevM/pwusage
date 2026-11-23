@@ -252,6 +252,24 @@ describe('PUT /api/site/[id]/utility/history', () => {
       expect((await save(undefined)).status).toBe(200);
       expect(mocks.saveRatePlanHistory.mock.calls[0][5]).toEqual([]);
     });
+    describe('open period', () => {
+      const openSave = (label: string) => {
+        mocks.getRatePlanHistoryInputs.mockResolvedValueOnce({ window: { ...window, fillThrough: null }, tesla: null });
+        return PUT(put({ periods: [{ label: OPTION_B, from: '2025-06-01', to: null, fixed: { label } }] }), context);
+      };
+      it('rejectsAFollowedLabelThatIsNotAFixedPlan', async () => {
+        const response = await openSave(OPTION_B);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Choose a fixed rate plan.' });
+        expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+      });
+      it('followsAFixedLabel', async () => {
+        const fixed = { ...y2025[0], label: 'flat-1', energyratestructure: [[{ rate: 0.12 }]], energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)), energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)) };
+        mocks.rateByLabel.mockImplementation(async (label: string) => [fixed, ...optionBChain, ...y2025].find(rate => rate.label === label) ?? null);
+        expect((await openSave('flat-1')).status).toBe(200);
+        expect(mocks.saveRatePlanHistory.mock.calls[0][5][0]).toMatchObject({ kind: 'public', to: null, label: 'flat-1' });
+      });
+    });
     it('rejectsAFixedLabelFromAnotherUtility', async () => {
       mocks.rateByLabel.mockResolvedValue({ ...y2025[0], utility: 'Madison Gas & Electric Co' });
       expect((await save({ label: OPTION_B })).status).toBe(400);
