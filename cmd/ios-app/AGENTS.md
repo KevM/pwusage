@@ -139,7 +139,8 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 
 - **Core package tests (macOS)**: Use `cmd/ios-app/run-core-tests.sh` for pure-Foundation compute
   suites (`SolarLayout`, `SolarHealth`, `SolarForecast`, `BillPricing`, `LoadTiming`, `Savings`) in
-  `Packages/PWUsageCore`. It runs `swift test` natively on macOS with zero simulator overhead:
+  `Packages/PWUsageCore`. Bill Pricing includes Bill Outlook projections and server pricing parity.
+  The runner invokes `swift test` natively on macOS:
   - `./cmd/ios-app/run-core-tests.sh` — optimized (`-c release`) build, fast everyday loop (~33 s for all default suites).
   - `./cmd/ios-app/run-core-tests.sh --debug` — unoptimized (`-c debug`) build.
   - `./cmd/ios-app/run-core-tests.sh --full` — `-c release` with `PWUSAGE_SOLAR_SLOW_PARITY=1` for opt-in year-fixture and 10-year health suites.

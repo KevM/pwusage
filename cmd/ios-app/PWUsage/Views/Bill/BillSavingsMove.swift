@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// One way to lower the bill: use energy in `destination` rather than `source`. Every view reads
 /// this shape, so another kind of saving only needs a new `Role` and a way to build the move.

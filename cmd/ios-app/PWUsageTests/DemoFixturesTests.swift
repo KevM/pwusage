@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// The demo is what App Review sees, so these pin the story it has to tell at any
