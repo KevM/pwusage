@@ -15,7 +15,7 @@ import * as urdb from '@/lib/urdb/client';
 import { monthlyUsage } from '@/lib/urdb/estimate-job';
 import { memoisedApi } from '@/lib/urdb/memoised-api';
 import { buildRatePlanHistory, mapWithConcurrency } from '@/lib/urdb/history-candidates';
-import { expandFollowedHistoryPeriod, expandHistoryPeriod, HistoryPeriodError, type HistoryPeriodInput } from '@/lib/urdb/history-expand';
+import { actualSellFallbackAt, expandFollowedHistoryPeriod, expandHistoryPeriod, HistoryPeriodError, type HistoryPeriodInput } from '@/lib/urdb/history-expand';
 import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
@@ -135,18 +135,22 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const expandCtx = { api, utilityName, timeZone: site.timezone, today, convert };
       const fixedPeriods = periods.filter((period): period is ParsedPeriod & { fixed: FixedInput } => period.fixed !== undefined);
       // One deadline covers both expansions so the worst case stays under maxDuration.
-      const { expanded, fixed } = await withIoDeadline(45_000, async () => ({
-        expanded: await mapWithConcurrency(periods, 4, period => expandHistoryPeriod(period, expandCtx)),
-        fixed: await mapWithConcurrency(fixedPeriods, 4, async (period): Promise<FixedComparisonWrite> => {
+      const { expanded, fixed } = await withIoDeadline(45_000, async () => {
+        const expanded = await mapWithConcurrency(periods, 4, period => expandHistoryPeriod(period, expandCtx));
+        // Like the estimate refresh, a comparison revision's missing export prices come from the actual plan
+        // covering it: the plans saved in this request, then Tesla's.
+        const comparisonCtx = { ...expandCtx, sellRateForDate: actualSellFallbackAt(expanded.flat(), convert.fallbackSellRate) };
+        const fixed = await mapWithConcurrency(fixedPeriods, 4, async (period): Promise<FixedComparisonWrite> => {
           const { fixed: choice, from, to } = period;
           if ('name' in choice) return { kind: 'manual', from, to, name: choice.name, buyRate: choice.buyRate, sellRate: choice.sellRate };
           // An open choice is followed through the plan's later revisions using the same fixed-revision policy as the estimate refresh.
           const revisions = to === null
-            ? await expandFollowedHistoryPeriod({ label: choice.label, from }, expandCtx)
-            : await expandHistoryPeriod({ label: choice.label, from, to }, expandCtx);
+            ? await expandFollowedHistoryPeriod({ label: choice.label, from }, comparisonCtx)
+            : await expandHistoryPeriod({ label: choice.label, from, to }, comparisonCtx);
           return { kind: 'public', from, to, label: choice.label, revisions };
-        }),
-      }));
+        });
+        return { expanded, fixed };
+      });
       const revisions = expanded.flatMap((items, index) => periods[index] === open ? items.filter(item => item.to !== null) : items);
       const timeline = await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null, fixed);
       startPendingEstimates(siteId, timeline);

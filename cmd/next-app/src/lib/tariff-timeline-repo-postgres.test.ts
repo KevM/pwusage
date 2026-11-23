@@ -1531,6 +1531,24 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         ]);
       });
 
+      it('openGuideFollowSavesTheActualPlanExportRateAndKeepsItAcrossEstimateRefresh', async () => {
+        const siteId = 's-fixed-guide-actual-export';
+        await harrisonSite(siteId, 'none');
+        const actualPlan = { ...flatRate('act-2024', '2024-01-01', 0.2), energyratestructure: [[{ rate: 0.2, sell: 0.05 }]] };
+        const fixedPlan = flatRate('fx-2024', '2024-01-01', 0.12);
+        const api: UrdbApi = { ...chainApi([actualPlan, fixedPlan]), ratesEffectiveOn: async () => [actualPlan, fixedPlan], defaultRates: async () => [fixedPlan] };
+        const { expandHistoryPeriod, expandFollowedHistoryPeriod, actualSellFallbackAt } = await import('./urdb/history-expand');
+        const ctx = { api, utilityName: UTILITY, timeZone: 'America/Chicago', today: '2026-11-16', convert: { medianMonthlyKwh: null, fallbackSellRate: 0 } };
+        const actual = await expandHistoryPeriod({ label: 'act-2024', from: '2024-01-01', to: null }, ctx);
+        const revisions = await expandFollowedHistoryPeriod({ label: 'fx-2024', from: '2024-01-01' }, { ...ctx, sellRateForDate: actualSellFallbackAt(actual, 0) });
+        const repo = new TariffTimelineRepo();
+        const sells = (timeline: { referencePeriods?: Array<{ seasons: TariffSeasonInput[] }> }) => timeline.referencePeriods?.map(row => row.seasons[0].weekdayPeriods[0].sellRate);
+        const saved = await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [], 'act-2024', [{ kind: 'public', from: '2024-01-01', to: null, label: 'fx-2024', revisions }]);
+        expect(sells(saved)).toEqual([0.05]);
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect(sells(await repo.getTimeline(siteId, 'u1'))).toEqual([0.05]);
+      });
+
       describe('editor choice of a utility plan', () => {
         const rates = [flatRate('fx-2024', '2024-01-01', 0.12), flatRate('fx-2025', '2025-01-01', 0.13, 'fx-2024')];
         const api = chainApi(rates);

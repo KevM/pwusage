@@ -293,6 +293,24 @@ describe('PUT /api/site/[id]/utility/history', () => {
         ]);
       });
     });
+    it('resolvesFixedExportRatesFromTheActualPlansBeingSaved', async () => {
+      const flat = (label: string, name: string, tier: Record<string, number>) => ({
+        ...y2025[0], label, name, startdate: Date.UTC(2023, 0, 1) / 1000, dgrules: undefined,
+        energyratestructure: [[tier]],
+        energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+        energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+      });
+      const actual = flat('act-1', 'Actual public', { rate: 0.2, sell: 0.05 });
+      const comparison = flat('fx-1', 'Fixed comparison', { rate: 0.12 });
+      mocks.ratesEffectiveOn.mockResolvedValue([actual, comparison]);
+      mocks.rateByLabel.mockImplementation(async (label: string) => [actual, comparison].find(rate => rate.label === label) ?? null);
+      mocks.getRatePlanHistoryInputs.mockResolvedValueOnce({ window: { ...window, fillThrough: null }, tesla: null });
+      const response = await PUT(put({ periods: [{ label: 'act-1', from: '2024-01-01', to: null, fixed: { label: 'fx-1' } }] }), context);
+      expect(response.status).toBe(200);
+      const [, , , , , fixed] = mocks.saveRatePlanHistory.mock.calls[0];
+      const sells = fixed[0].revisions.map((revision: { seasons: Array<{ weekdayPeriods: Array<{ sellRate: number }> }> }) => revision.seasons[0].weekdayPeriods[0].sellRate);
+      expect(sells).toEqual([0.05]);
+    });
     it('rejectsAFixedLabelFromAnotherUtility', async () => {
       mocks.rateByLabel.mockResolvedValue({ ...y2025[0], utility: 'Madison Gas & Electric Co' });
       expect((await save({ label: OPTION_B })).status).toBe(400);
