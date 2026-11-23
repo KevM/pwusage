@@ -20,6 +20,21 @@ The SwiftLint baseline is empty and the file is gone. There is no "my violation 
 bookkeeping any more: `--strict` must report zero. Never add a baseline entry or a
 `swiftlint:disable` comment to get green — fix the code or ask.
 
+## Folder READMEs
+
+Folders carry a `README.md` that says what they own and where the related code lives, starting with
+[`Packages/PWUsageCore`](Packages/PWUsageCore/README.md) and each of its domain folders.
+
+- **Before you edit**, read the `README.md` in the folder you are working in and in each parent up to
+  `cmd/ios-app`. Where new code belongs is decided in
+  [`ARCHITECTURE.md`](ARCHITECTURE.md#where-code-goes): pure logic and contracts go in `PWUsageCore`.
+- **Keep them true in the same change.** When you add, move or remove a type, change what a folder owns,
+  or move its app half, update that folder's README (and the one you moved from). A new core domain
+  gets a README, an `exclude` entry in `Package.swift`, and a row in the `ARCHITECTURE.md` domain
+  table.
+- READMEs describe ownership and where things live, not every type, so they stay short and do not go
+  stale with each file.
+
 ## Swift API design and naming
 
 - **Clarity at call site**: call sites read like fluent English prose.
@@ -137,22 +152,13 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 
 ## Tests
 
-- **Core package tests (macOS)**: Use `cmd/ios-app/run-core-tests.sh` for pure-Foundation compute
-  suites (`SolarLayout`, `SolarHealth`, `SolarForecast`, `BillPricing`, `LoadTiming`, `Savings`) in
-  `Packages/PWUsageCore`. Bill Pricing includes Bill Outlook projections and server pricing parity.
-  The runner invokes `swift test` natively on macOS:
+- **Core package tests (macOS)**: Use `cmd/ios-app/run-core-tests.sh` for the `PWUsageCore` suites,
+  which run natively on macOS. Each domain README says which tests live there and which stay in the
+  simulator. The runner invokes `swift test`:
   - `./cmd/ios-app/run-core-tests.sh` — optimized (`-c release`) build, fast everyday loop (~33 s for all default suites).
   - `./cmd/ios-app/run-core-tests.sh --debug` — unoptimized (`-c debug`) build.
   - `./cmd/ios-app/run-core-tests.sh --full` — `-c release` with `PWUSAGE_SOLAR_SLOW_PARITY=1` for opt-in year-fixture and 10-year health suites.
   - Supports Swift Testing filters, e.g. `./cmd/ios-app/run-core-tests.sh --filter BillPricingParityTests`.
-- The rate plan timeline cache’s disk round-trip test runs in the core package. The simulator suite covers API
-  revalidation, editor writes, and sign-out cleanup.
-- The native suite checks local bill assembly from stored flow values and checks timeline fingerprints.
-  The simulator suite exercises the history store and bill response adapter.
-- The macOS contract tests cover rate history, tariff requests, public utility plans, Tesla Sync, rate plan reviews,
-  and AI handoff responses. The native suite also checks rate plan draft validation and schedule editing, and the
-  rate plan history guide’s walk-back and fixed comparison staging, Rate Plans polling and scroll targets. Their
-  copy is still tested in the simulator.
 - **Simulator tests**: Use `cmd/ios-app/run-tests.sh` for every iOS simulator test run — never `xcodebuild test` directly. The
   script generates the project, picks an available iPhone simulator, disables parallel execution
   and stops a run after 10 minutes.
@@ -194,7 +200,8 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 
 - `asc` (App Store Connect) CLI: [`ASC.md`](../../ASC.md) — read it before App Store / TestFlight
   work.
-- Architecture and folder contract: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+- Architecture, folder contract and where code goes: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+- Core package conventions and domains: [`Packages/PWUsageCore/README.md`](Packages/PWUsageCore/README.md).
 - Open iOS audit findings and their live queue: [`CODE_AUDIT.md`](../../CODE_AUDIT.md) — start at
   the queue, not the historical prose below it.
 - Skills at the repo root, under `.agents/skills/`: `swift-craft` (idioms, budgets, formatting),

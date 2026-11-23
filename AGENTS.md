@@ -48,6 +48,8 @@ There is deliberately no `CLAUDE.md`: Claude Code reads `AGENTS.md` directly, an
 ## Working style (every app)
 
 - Use `task.md` to track huge chunks of work.
+- Before editing a folder, read its `README.md` (and its parents') when one exists, and keep it accurate in
+  the same change. The app guides say which folders carry one.
 - Always verify builds, lint and tests before finishing a task; never report done on unverified code.
 - Commit verified changes with clear, conventional commit messages.
 - Open pull requests as drafts initially unless the user asks otherwise.

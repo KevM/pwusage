@@ -15,7 +15,19 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "PWUsageCore"
+            name: "PWUsageCore",
+            // Each domain folder's README guides contributors; list a new domain's here too.
+            exclude: [
+                "BatteryHold/README.md",
+                "BillPricing/README.md",
+                "LoadTiming/README.md",
+                "Savings/README.md",
+                "SharedModels/README.md",
+                "SiteCountry/README.md",
+                "SolarForecast/README.md",
+                "SolarHealth/README.md",
+                "SolarLayout/README.md"
+            ]
         ),
         .testTarget(
             name: "PWUsageCoreTests",
