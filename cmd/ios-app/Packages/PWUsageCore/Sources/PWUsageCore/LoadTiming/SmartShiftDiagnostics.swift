@@ -1,5 +1,4 @@
 import Foundation
-import PWUsageCore
 
 /// Everything one Smart Shift pass priced, and what it concluded, as JSON the
 /// owner can paste into a debugging chat. It carries every input
@@ -7,17 +6,17 @@ import PWUsageCore
 ///
 /// It never carries a credential: cookies and
 /// tokens are not inputs to the estimator, and nothing here is handed them.
-struct SmartShiftDiagnostics: Codable, Equatable {
-    typealias Estimator = LoadTimingForecastEstimator
+public struct SmartShiftDiagnostics: Codable, Equatable {
+    public typealias Estimator = LoadTimingForecastEstimator
 
-    static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 1
 
-    struct App: Codable, Equatable {
-        let version: String
-        let build: String
+    public struct App: Codable, Equatable {
+        public let version: String
+        public let build: String
 
         /// This build's marketing version and build number, from its Info.plist.
-        static var current: App {
+        public static var current: App {
             let info = Bundle.main.infoDictionary ?? [:]
             return App(version: info["CFBundleShortVersionString"] as? String ?? "unknown",
                        build: info["CFBundleVersion"] as? String ?? "unknown")
@@ -25,11 +24,11 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     }
 
     /// `ForecastAvailability` as a flat state name plus the card's one-sentence note.
-    struct Availability: Codable, Equatable {
-        let state: String
-        let note: String?
+    public struct Availability: Codable, Equatable {
+        public let state: String
+        public let note: String?
 
-        init(_ availability: ForecastAvailability) {
+        public init(_ availability: ForecastAvailability) {
             switch availability {
             case .none: (state, note) = ("none", nil)
             case .loading: (state, note) = ("loading", nil)
@@ -42,28 +41,28 @@ struct SmartShiftDiagnostics: Codable, Equatable {
 
     /// The device's solar forecast bookkeeping when the copy was made. Built from the
     /// publication's intervals and fetch time.
-    struct SolarForecast: Codable, Equatable {
-        let connection: String
-        let state: String
-        let unavailableReason: String?
-        let fetchedAt: Date?
-        let ageMinutes: Double?
-        let intervalCount: Int
-        let firstPeriodStart: Date?
-        let lastPeriodStart: Date?
-        let cautiousIntervalCount: Int
-        let hasCautiousPowerKw: Bool
-        let recommendationUsable: Bool
-        let lastErrorDescription: String?
-        let lastRefreshResult: String?
-        let unavailableCause: String?
+    public struct SolarForecast: Codable, Equatable {
+        public let connection: String
+        public let state: String
+        public let unavailableReason: String?
+        public let fetchedAt: Date?
+        public let ageMinutes: Double?
+        public let intervalCount: Int
+        public let firstPeriodStart: Date?
+        public let lastPeriodStart: Date?
+        public let cautiousIntervalCount: Int
+        public let hasCautiousPowerKw: Bool
+        public let recommendationUsable: Bool
+        public let lastErrorDescription: String?
+        public let lastRefreshResult: String?
+        public let unavailableCause: String?
         /// The automatic forecast in use, when there is one.
-        var source: SmartShiftForecastSource?
-        var automaticProviderID: String?
-        var automaticRefreshOutcome: String?
-        var automaticDiagnostic: String?
+        public var source: SmartShiftForecastSource?
+        public var automaticProviderID: String?
+        public var automaticRefreshOutcome: String?
+        public var automaticDiagnostic: String?
 
-        init(
+        public init(
             publication: SolarForecastPublication? = nil,
             intervals: [SolarForecastInterval]? = nil,
             fetchedAt: Date? = nil,
@@ -95,37 +94,37 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         }
     }
 
-    struct Outcome: Codable, Equatable {
-        let comparison: Estimator.Comparison?
-        let unavailableReason: Estimator.UnavailableReason?
+    public struct Outcome: Codable, Equatable {
+        public let comparison: Estimator.Comparison?
+        public let unavailableReason: Estimator.UnavailableReason?
     }
 
-    var schemaVersion = Self.currentSchemaVersion
-    let capturedAt: Date
-    let app: App?
-    let siteId: String
-    let job: LoadProfile
-    let now: Date
-    let balanceSourceTime: Date?
-    let billingCycleEnd: Date
-    let currencyCode: String
-    let timeZone: String
-    let loadTiming: LoadTiming
+    public var schemaVersion = Self.currentSchemaVersion
+    public let capturedAt: Date
+    public let app: App?
+    public let siteId: String
+    public let job: LoadProfile
+    public let now: Date
+    public let balanceSourceTime: Date?
+    public let billingCycleEnd: Date
+    public let currencyCode: String
+    public let timeZone: String
+    public let loadTiming: LoadTiming
     /// The projection that priced `result`; `nil` when none could run.
-    let projection: Estimator.Projection.Kind?
-    let forecastAvailability: Availability
-    let forecastFetchedAt: Date?
+    public let projection: Estimator.Projection.Kind?
+    public let forecastAvailability: Availability
+    public let forecastFetchedAt: Date?
     /// The forecast and planning context the pass was offered, whichever projection used them.
-    let forecastIntervals: [SolarForecastInterval]?
-    let planningContext: Estimator.PlanningContext?
-    let result: Outcome
+    public let forecastIntervals: [SolarForecastInterval]?
+    public let planningContext: Estimator.PlanningContext?
+    public let result: Outcome
     /// Added when the copy is made, since reading the store is asynchronous.
-    var solarForecast: SolarForecast?
+    public var solarForecast: SolarForecast?
 
-    init(siteId: String, app: App?, job: LoadProfile, now: Date, balanceSourceTime: Date?, billingCycleEnd: Date,
-         currencyCode: String, timeZone: String, timing: LoadTiming, evaluation: SmartShiftEvaluation,
-         intervals: [SolarForecastInterval]?, context: Estimator.PlanningContext?, forecastFetchedAt: Date?,
-         capturedAt: Date? = nil) {
+    public init(siteId: String, app: App?, job: LoadProfile, now: Date, balanceSourceTime: Date?, billingCycleEnd: Date,
+                currencyCode: String, timeZone: String, timing: LoadTiming, evaluation: SmartShiftEvaluation,
+                intervals: [SolarForecastInterval]?, context: Estimator.PlanningContext?, forecastFetchedAt: Date?,
+                capturedAt: Date? = nil) {
         self.capturedAt = capturedAt ?? now
         self.app = app
         self.siteId = siteId
@@ -146,7 +145,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     }
 
     /// Re-runs the recorded projection on the recorded inputs; `nil` when they can't rebuild it.
-    func replay() -> Estimator.Result? {
+    public func replay() -> Estimator.Result? {
         guard let balanceSourceTime, let projection = rebuiltProjection() else { return nil }
         let plan = Estimator.plan(.init(now: now, timing: loadTiming, projection: projection,
                                         balanceSourceTime: balanceSourceTime, billingCycleEnd: billingCycleEnd,
@@ -171,7 +170,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
     /// Pretty, key-sorted JSON with UTC ISO 8601 dates. Non-finite numbers are
     /// written as strings rather than failing the copy, since they are exactly
     /// what a debugging session would want to see.
-    func json() throws -> String {
+    public func json() throws -> String {
         let data = try Self.encoder().encode(self)
         guard let text = String(bytes: data, encoding: .utf8) else {
             throw CocoaError(.fileReadInapplicableStringEncoding)
@@ -179,7 +178,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         return text
     }
 
-    static func encoder() -> JSONEncoder {
+    public static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .custom { date, encoder in
@@ -191,7 +190,7 @@ struct SmartShiftDiagnostics: Codable, Equatable {
         return encoder
     }
 
-    static func decoder() -> JSONDecoder {
+    public static func decoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()

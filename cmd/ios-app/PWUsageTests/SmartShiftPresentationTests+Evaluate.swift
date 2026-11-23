@@ -32,12 +32,7 @@ extension SmartShiftPresentationTests {
     // MARK: Projection choice and assumptions
 
     static func historyContext(asOf: Date, forecastHours: Bool = false) -> Estimator.PlanningContext {
-        let slots = stride(from: 0, to: 1440, by: 30).map { minute in
-            Estimator.PlanningSlot(localMinute: minute, homeKw: 0.5, batteryNetChargeKw: 0,
-                                   gridNetExportKw: (480 ..< 1200).contains(minute) ? 2 : -0.5,
-                                   cautiousGridNetExportKw: (480 ..< 1200).contains(minute) ? 1 : -0.5)
-        }
-        return .init(timeZone: "UTC", slots: slots, asOf: asOf)
+        SmartShiftFixtures.historyContext(asOf: asOf, forecastHours: forecastHours)
     }
 
     @Test func evaluateUsesHistoryWithoutSolcast() throws {
