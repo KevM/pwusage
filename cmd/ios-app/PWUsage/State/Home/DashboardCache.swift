@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PWUsageCore
 import WidgetKit
 
 /// A disposable launch snapshot, never evidence of a valid authenticated session.

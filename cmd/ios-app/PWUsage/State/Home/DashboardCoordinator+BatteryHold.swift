@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PWUsageCore
 
 extension DashboardCoordinator {
     /// Reads database-backed hold status without making a Tesla request.

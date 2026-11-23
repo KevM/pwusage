@@ -1,5 +1,6 @@
 #if DEBUG
     import Foundation
+    import PWUsageCore
 
     /// Local-only fixtures for the native hold sheet, including interactive commands.
     @MainActor

@@ -1,8 +1,9 @@
 import Foundation
-@testable import PWUsage
+@testable import PWUsageCore
 import Testing
 
-extension MobileContractsTests {
+@Suite("Mobile live contract")
+struct MobileLiveContractTests {
     @Test("Suppresses a battery charge reading older than the two-hour rule")
     func suppressesStaleStateOfCharge() throws {
         let response = try LiveFixture.decode(
@@ -85,5 +86,46 @@ extension MobileContractsTests {
         let encoded = try JSONEncoder().encode(live)
         let object = try JSONDecoder().decode([String: Double].self, from: encoded)
         #expect(object == ["solarPower": 1200, "loadPower": 900, "batteryPower": -300, "gridPower": 0])
+    }
+}
+
+enum LiveFixture {
+    static let now = Date(timeIntervalSince1970: 1_000_000)
+
+    /// A `stateOfChargeAt` fixture value: an ISO-8601 stamp, `nil` for an explicit JSON `null`,
+    /// or `.absent` to leave the key out of `sources` entirely.
+    enum StateOfChargeAt {
+        case stamped(String)
+        case absent
+    }
+
+    static func timestamp(_ offset: TimeInterval) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: now.addingTimeInterval(offset))
+    }
+
+    static func payload(stateOfCharge: String, stateOfChargeAt: StateOfChargeAt?) -> String {
+        let source: String
+        switch stateOfChargeAt {
+        case .some(.stamped(let stamp)):
+            source = "\"stateOfChargeAt\":\"\(stamp)\""
+        case .some(.absent):
+            source = ""
+        case nil:
+            source = "\"stateOfChargeAt\":null"
+        }
+        return """
+        {"version":1,"site":{"id":"site-1","name":"Home","timezone":"UTC","localDate":"1970-01-12"},\
+        "live":{"solarPower":1200,"loadPower":900,"batteryPower":-300,"gridPower":0},\
+        "stateOfCharge":\(stateOfCharge),\
+        "today":{"homeKwh":12,"solarKwh":8,"gridNetKwh":4,"batteryNetKwh":1},\
+        "todayComplete":true,"currentBill":null,\
+        "sources":{"liveStatusAt":null,"energyDataThrough":null\(source.isEmpty ? "" : "," + source)}}
+        """
+    }
+
+    static func decode(_ json: String) throws -> MobileLiveResponse {
+        try MobileContractDecoder.make(now: { now }).decode(MobileLiveResponse.self, from: Data(json.utf8))
     }
 }
