@@ -155,6 +155,7 @@ targets:
       - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Support/RatePlanResponseFixture.swift
       - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Support/SmartShiftFixtures.swift
       - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Support/ManualSolarLayoutFixtures.swift
+      - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Support/TariffTimelineFixture.swift
       - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/BillPricing/single-plan-cycle.json
         buildPhase: resources
     info:

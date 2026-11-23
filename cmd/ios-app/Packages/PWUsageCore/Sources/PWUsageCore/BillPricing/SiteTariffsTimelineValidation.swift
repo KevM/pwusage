@@ -1,8 +1,8 @@
 import Foundation
-import PWUsageCore
 
 extension SiteTariffsTimelineResponse {
-    func validating(siteID: String) throws -> Self {
+    /// Rejects a timeline for another site, an old version, an unknown time zone or a non-finite rate.
+    public func validating(siteID: String) throws -> Self {
         let allPeriods = periods + referencePeriods
         let ratesAreFinite = allPeriods.allSatisfy { period in
             period.seasons.allSatisfy { season in
@@ -23,12 +23,13 @@ extension SiteTariffsTimelineResponse {
         return self
     }
 
-    func activePeriodNow(at now: Date = .now) -> ActiveTariffPeriodMatch? {
+    public func activePeriodNow(at now: Date = .now) -> ActiveTariffPeriodMatch? {
         RatePeriodResolver(timeline: self)?.match(at: now)
     }
 }
 
-enum TimelineFetch: Equatable, Sendable {
+/// A conditional timeline fetch: unchanged, or a new timeline with its ETag.
+public enum TimelineFetch: Equatable, Sendable {
     case unchanged
     case changed(SiteTariffsTimelineResponse, etag: String?)
 }
