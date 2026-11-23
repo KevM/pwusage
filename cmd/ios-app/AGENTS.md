@@ -145,6 +145,8 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
   - `./cmd/ios-app/run-core-tests.sh --debug` — unoptimized (`-c debug`) build.
   - `./cmd/ios-app/run-core-tests.sh --full` — `-c release` with `PWUSAGE_SOLAR_SLOW_PARITY=1` for opt-in year-fixture and 10-year health suites.
   - Supports Swift Testing filters, e.g. `./cmd/ios-app/run-core-tests.sh --filter BillPricingParityTests`.
+- The rate plan timeline cache’s disk round-trip test runs in the core package. The simulator suite covers API
+  revalidation, editor writes, and sign-out cleanup.
 - **Simulator tests**: Use `cmd/ios-app/run-tests.sh` for every iOS simulator test run — never `xcodebuild test` directly. The
   script generates the project, picks an available iPhone simulator, disables parallel execution
   and stops a run after 10 minutes.

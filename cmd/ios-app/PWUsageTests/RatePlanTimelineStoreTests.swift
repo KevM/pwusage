@@ -8,33 +8,6 @@ import Testing
 struct RatePlanTimelineStoreTests {
     private let scopeA = SolarForecastSiteScope(accountScopeID: "account-1", siteID: "a")
     private let scopeB = SolarForecastSiteScope(accountScopeID: "account-1", siteID: "b")
-    private let otherAccountScope = SolarForecastSiteScope(accountScopeID: "account-2", siteID: "a")
-
-    @Test("Saves and reads per account and site scope")
-    func savesAndReadsPerScope() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let store = RatePlanTimelineStore(directory: folder)
-        let timelineA = try decodeFixture(siteID: "a")
-        let timelineB = try decodeFixture(siteID: "b")
-        let timelineOtherAccount = try decodeFixture(siteID: "a", currency: "EUR")
-
-        try await store.save(timelineA, etag: "\"etag-a\"", scope: scopeA)
-        try await store.save(timelineB, etag: "\"etag-b\"", scope: scopeB)
-        try await store.save(timelineOtherAccount, etag: "\"etag-other\"", scope: otherAccountScope)
-
-        let reloaded = RatePlanTimelineStore(directory: folder)
-        let savedA = try #require(await reloaded.saved(scope: scopeA))
-        let savedB = try #require(await reloaded.saved(scope: scopeB))
-        let savedOther = try #require(await reloaded.saved(scope: otherAccountScope))
-
-        #expect(savedA.timeline == timelineA)
-        #expect(savedA.etag == "\"etag-a\"")
-        #expect(savedB.timeline == timelineB)
-        #expect(savedB.etag == "\"etag-b\"")
-        #expect(savedOther.timeline == timelineOtherAccount)
-        #expect(savedOther.etag == "\"etag-other\"")
-    }
 
     @Test("Revalidating with 304 keeps the saved copy intact")
     func unchangedKeepsSavedCopy() async throws {
