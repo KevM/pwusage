@@ -1,15 +1,14 @@
 import Foundation
-import PWUsageCore
 
-struct DayPeriodDraft: Identifiable, Equatable, Hashable, Sendable {
-    let id: UUID
-    var touName: TariffPeriodName
-    var startSlot: Int
-    var endSlot: Int
-    var buyRateText: String
-    var sellRateText: String
+public struct DayPeriodDraft: Identifiable, Equatable, Hashable, Sendable {
+    public let id: UUID
+    public var touName: TariffPeriodName
+    public internal(set) var startSlot: Int
+    public internal(set) var endSlot: Int
+    public var buyRateText: String
+    public var sellRateText: String
 
-    init(
+    public init(
         id: UUID = UUID(),
         touName: TariffPeriodName,
         startSlot: Int,
@@ -36,27 +35,20 @@ struct DayPeriodDraft: Identifiable, Equatable, Hashable, Sendable {
         sellRateText = Self.formatInputNumber(window.sellRate)
     }
 
-    var isAllDay: Bool {
+    public var isAllDay: Bool {
         startSlot == 0 && (endSlot == 48 || endSlot == 0)
     }
 
-    var slotDuration: Int {
+    public var slotDuration: Int {
         if isAllDay { return 48 }
         if endSlot > startSlot { return endSlot - startSlot }
         if endSlot < startSlot { return (48 - startSlot) + endSlot }
         return 0
     }
 
-    var formattedTimeRange: String {
-        if isAllDay { return "12:00 AM – 12:00 AM" }
-        let startText = RatePlanTimelineFormatting.slotTimeLabel(startSlot)
-        let endText = RatePlanTimelineFormatting.slotTimeLabel(endSlot)
-        return "\(startText) – \(endText)"
-    }
-
-    func toInput() -> TimePeriodWindowInput? {
-        guard case .success(let buy) = RateFormatting.parseRate(buyRateText),
-              case .success(let sell) = RateFormatting.parseRate(sellRateText) else {
+    public func toInput() -> TimePeriodWindowInput? {
+        guard case .success(let buy) = RateInput.parse(buyRateText),
+              case .success(let sell) = RateInput.parse(sellRateText) else {
             return nil
         }
         let fromHour = startSlot / 2
@@ -91,14 +83,25 @@ struct DayPeriodDraft: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
-struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
-    let id: UUID
-    var name: String
-    var fromMonth: Int
-    var toMonth: Int
-    var weekdayWindows: [DayPeriodDraft]
-    var weekendWindows: [DayPeriodDraft]
-    var sameScheduleAsWeekdays: Bool
+public struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
+    public enum ScheduleIssue: Equatable, Sendable {
+        case missingPeriods
+        case zeroLengthPeriod
+        case incompleteDayCoverage
+    }
+
+    enum RateIssue {
+        case buy
+        case sell
+    }
+
+    public let id: UUID
+    public var name: String
+    public var fromMonth: Int
+    public var toMonth: Int
+    public var weekdayWindows: [DayPeriodDraft]
+    public var weekendWindows: [DayPeriodDraft]
+    public var sameScheduleAsWeekdays: Bool
 
     static func makeDefault(name: String, fromMonth: Int, toMonth: Int) -> SeasonDraft {
         let offPeak = DayPeriodDraft(
@@ -155,29 +158,31 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         )
     }
 
-    func validateWeekdaySlots() -> String? {
-        Self.validateSlots(weekdayWindows, label: "\(name) weekdays")
+    func validateWeekdaySlots() -> ScheduleIssue? {
+        Self.validateSlots(weekdayWindows)
     }
 
-    func validateWeekendSlots() -> String? {
+    func validateWeekendSlots() -> ScheduleIssue? {
         let target = sameScheduleAsWeekdays ? weekdayWindows : weekendWindows
-        return Self.validateSlots(target, label: "\(name) weekends")
+        return Self.validateSlots(target)
     }
 
-    func validateRates() -> String? {
+    public var hasValidRates: Bool { validateRates() == nil }
+
+    func validateRates() -> RateIssue? {
         let all = weekdayWindows + (sameScheduleAsWeekdays ? [] : weekendWindows)
         for window in all {
-            if case .failure = RateFormatting.parseRate(window.buyRateText) {
-                return "\(name): enter a valid Buy rate (0 to $10.00, up to 5 decimal places)."
+            if case .failure = RateInput.parse(window.buyRateText) {
+                return .buy
             }
-            if case .failure = RateFormatting.parseRate(window.sellRateText) {
-                return "\(name): enter a valid Sell rate (0 to $10.00, up to 5 decimal places)."
+            if case .failure = RateInput.parse(window.sellRateText) {
+                return .sell
             }
         }
         return nil
     }
 
-    mutating func addTimePeriod(isWeekday: Bool) {
+    public mutating func addTimePeriod(isWeekday: Bool) {
         var list = isWeekday ? weekdayWindows : weekendWindows
         guard let longestIndex = list.indices.max(by: { list[$0].slotDuration < list[$1].slotDuration }),
               list[longestIndex].slotDuration >= 2 else {
@@ -200,7 +205,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         assignWindows(list, isWeekday: isWeekday)
     }
 
-    mutating func removeTimePeriod(at index: Int, isWeekday: Bool) {
+    public mutating func removeTimePeriod(at index: Int, isWeekday: Bool) {
         var list = isWeekday ? weekdayWindows : weekendWindows
         guard list.count > 1, list.indices.contains(index) else { return }
         let removed = list.remove(at: index)
@@ -216,7 +221,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         assignWindows(list, isWeekday: isWeekday)
     }
 
-    mutating func movePeriodBoundary(afterIndex index: Int, toSlot candidateSlot: Int, isWeekday: Bool) {
+    public mutating func movePeriodBoundary(afterIndex index: Int, toSlot candidateSlot: Int, isWeekday: Bool) {
         var list = isWeekday ? weekdayWindows : weekendWindows
         // A lone all-day period can be given its own timespan: ending it early hands the rest of
         // the day to a new period, so a schedule can be built one period at a time.
@@ -268,7 +273,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
     }
 
     /// True while the schedule is still the blank all-day default nobody has touched.
-    var hasDefaultSchedule: Bool {
+    public var hasDefaultSchedule: Bool {
         let blank = Self.makeDefault(name: name, fromMonth: fromMonth, toMonth: toMonth)
         func shape(_ windows: [DayPeriodDraft]) -> [[String]] {
             windows.map { [$0.touName.rawValue, "\($0.startSlot)", "\($0.endSlot)", $0.buyRateText, $0.sellRateText] }
@@ -279,7 +284,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
     }
 
     /// Uses another season's time periods and rates as a starting point (new identities, same values).
-    mutating func copySchedule(from other: SeasonDraft) {
+    public mutating func copySchedule(from other: SeasonDraft) {
         func fresh(_ windows: [DayPeriodDraft]) -> [DayPeriodDraft] {
             windows.map {
                 DayPeriodDraft(
@@ -344,12 +349,12 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
         }
     }
 
-    private static func validateSlots(_ windows: [DayPeriodDraft], label: String) -> String? {
-        guard !windows.isEmpty else { return "\(label) needs at least one rate period." }
+    private static func validateSlots(_ windows: [DayPeriodDraft]) -> ScheduleIssue? {
+        guard !windows.isEmpty else { return .missingPeriods }
         var coverage = [Int](repeating: 0, count: 48)
         for window in windows {
             guard window.slotDuration >= 1 else {
-                return "\(label) contains a zero-length rate period."
+                return .zeroLengthPeriod
             }
             if window.isAllDay {
                 for slot in 0 ..< 48 { coverage[slot] += 1 }
@@ -361,7 +366,7 @@ struct SeasonDraft: Identifiable, Equatable, Hashable, Sendable {
             }
         }
         guard coverage.allSatisfy({ $0 == 1 }) else {
-            return "\(label) must cover all 24 hours without gaps or overlaps."
+            return .incompleteDayCoverage
         }
         return nil
     }

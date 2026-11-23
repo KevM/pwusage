@@ -296,12 +296,16 @@ struct RatePlanEditorFlowTests {
         )
         #expect(state.draft.effectiveFrom == nil, "Copying keeps the rates but never the dates")
         #expect(state.draft.end == nil)
+        #expect(state.validationError == "Choose a start date.")
         #expect(!state.canReview)
         state.startReview()
         #expect(state.review == nil)
 
         state.draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01 UTC
+        #expect(state.validationError == "Choose an end date, or choose Ongoing.")
         #expect(!state.canReview, "Ongoing or an end date must be chosen too")
+        state.draft.end = .endsOn(Date(timeIntervalSince1970: 1_767_139_200)) // 2025-12-31 UTC
+        #expect(state.validationError == "Effective end date must be on or after the start date.")
         state.draft.end = .ongoing
         #expect(state.canReview)
         state.startReview()

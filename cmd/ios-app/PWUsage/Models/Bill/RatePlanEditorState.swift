@@ -80,7 +80,7 @@ final class RatePlanEditorState {
     /// True once the user has changed anything, so a stray swipe cannot throw the work away.
     var hasUnsavedChanges: Bool { draft != initialDraft }
 
-    var validationError: String? { draft.validate() ?? editRangeProblem }
+    var validationError: String? { draft.validationMessage ?? editRangeProblem }
 
     nonisolated static let shortenedEditMessage = "To shorten this plan’s dates, use Edit Dates instead."
 
@@ -211,7 +211,7 @@ final class RatePlanEditorState {
 
     func save() async -> Bool {
         saveError = nil
-        if let message = draft.validate() {
+        if let message = draft.validationMessage {
             saveError = message
             return false
         }

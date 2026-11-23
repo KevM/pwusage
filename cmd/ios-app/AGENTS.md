@@ -150,7 +150,7 @@ The formatter and linter now agree on trailing commas (`.swiftformat` sets
 - The native suite checks local bill assembly from stored flow values and checks timeline fingerprints.
   The simulator suite exercises the history store and bill response adapter.
 - The macOS contract tests cover rate history, tariff requests, public utility plans, Tesla Sync, rate plan reviews,
-  and AI handoff responses.
+  and AI handoff responses. The native suite also checks rate plan draft validation and schedule editing.
 - **Simulator tests**: Use `cmd/ios-app/run-tests.sh` for every iOS simulator test run — never `xcodebuild test` directly. The
   script generates the project, picks an available iPhone simulator, disables parallel execution
   and stops a run after 10 minutes.

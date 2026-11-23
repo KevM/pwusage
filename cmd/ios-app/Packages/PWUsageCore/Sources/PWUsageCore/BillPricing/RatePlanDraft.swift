@@ -1,24 +1,39 @@
 import Foundation
-import PWUsageCore
 
 /// How a rate plan's date range ends. There is no default: the owner chooses one.
-enum RatePlanEnd: Equatable, Sendable {
+public enum RatePlanEnd: Equatable, Sendable {
     case ongoing
     case endsOn(Date)
 }
 
-struct RatePlanDraft: Equatable, Sendable {
-    var name: String
-    /// Nil until the owner picks a start date. A new or copied plan never gets one by default.
-    var effectiveFrom: Date?
-    /// Nil until the owner chooses an end date or Ongoing.
-    var end: RatePlanEnd?
-    var timeZone: TimeZone
-    var seasons: [SeasonDraft]
-    /// Names of the site's other rate plans; a plan's name must be new.
-    var takenNames: [String] = []
+public struct RatePlanDraft: Equatable, Sendable {
+    public enum ValidationIssue: Equatable, Sendable {
+        case missingName
+        case duplicateName(String)
+        case missingStartDate
+        case missingEndDate
+        case startTooFarInFuture
+        case endBeforeStart
+        case missingSeasons
+        case invalidSeasonMonths
+        case incompleteYearCoverage
+        case missingSeasonName
+        case schedule(season: String, isWeekday: Bool, issue: SeasonDraft.ScheduleIssue)
+        case invalidBuyRate(season: String)
+        case invalidSellRate(season: String)
+    }
 
-    static func makeBlank(timeZone: TimeZone) -> RatePlanDraft {
+    public var name: String
+    /// Nil until the owner picks a start date. A new or copied plan never gets one by default.
+    public var effectiveFrom: Date?
+    /// Nil until the owner chooses an end date or Ongoing.
+    public var end: RatePlanEnd?
+    public let timeZone: TimeZone
+    public var seasons: [SeasonDraft]
+    /// Names of the site's other rate plans; a plan's name must be new.
+    public var takenNames: [String] = []
+
+    public static func makeBlank(timeZone: TimeZone) -> RatePlanDraft {
         RatePlanDraft(
             name: "",
             effectiveFrom: nil,
@@ -43,7 +58,7 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     /// Copies the plan's rates but never its dates: a copy is a new choice the owner dates.
-    init(copyingFrom period: TariffPeriodDTO, timeZone: TimeZone) {
+    public init(copyingFrom period: TariffPeriodDTO, timeZone: TimeZone) {
         let seasons = period.seasons.isEmpty
             ? [SeasonDraft.makeDefault(name: "All year", fromMonth: 1, toMonth: 12)]
             : period.seasons.map(SeasonDraft.init(from:))
@@ -57,10 +72,10 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     /// Editing keeps the plan's own dates, which the owner already chose.
-    init(editing period: TariffPeriodDTO, timeZone: TimeZone) {
-        let from = RatePlanTimelineFormatting.parseYMD(period.effectiveFrom, in: timeZone)
+    public init(editing period: TariffPeriodDTO, timeZone: TimeZone) {
+        let from = RatePlanCalendarDays.parseYMD(period.effectiveFrom, in: timeZone)
         let end: RatePlanEnd? = if let effectiveTo = period.effectiveTo {
-            RatePlanTimelineFormatting.parseYMD(effectiveTo, in: timeZone).map(RatePlanEnd.endsOn)
+            RatePlanCalendarDays.parseYMD(effectiveTo, in: timeZone).map(RatePlanEnd.endsOn)
         } else {
             .ongoing
         }
@@ -76,7 +91,7 @@ struct RatePlanDraft: Equatable, Sendable {
         )
     }
 
-    mutating func addSeason() {
+    public mutating func addSeason() {
         guard seasons.count < 6,
               let longestIndex = seasons.indices.max(by: {
                   monthSpan(seasons[$0]) < monthSpan(seasons[$1])
@@ -99,7 +114,7 @@ struct RatePlanDraft: Equatable, Sendable {
         relabelGenericSeasonNames()
     }
 
-    mutating func removeSeason(at index: Int) {
+    public mutating func removeSeason(at index: Int) {
         guard seasons.count > 1, seasons.indices.contains(index) else { return }
         let removed = seasons.remove(at: index)
         if index > 0 {
@@ -110,7 +125,7 @@ struct RatePlanDraft: Equatable, Sendable {
         relabelGenericSeasonNames()
     }
 
-    mutating func moveSeasonBoundary(afterIndex index: Int, toStartMonth candidateMonth: Int) {
+    public mutating func moveSeasonBoundary(afterIndex index: Int, toStartMonth candidateMonth: Int) {
         guard seasons.count >= 2, seasons.indices.contains(index) else { return }
         let nextIndex = (index + 1) % seasons.count
         var first = seasons[index]
@@ -140,7 +155,7 @@ struct RatePlanDraft: Equatable, Sendable {
     private static let seasonNameStems = ["All year", "Summer", "Winter", "Spring", "Fall", "Season"]
 
     /// Names the app made up (or the user left at a stock label), as opposed to ones they typed.
-    static func isGenericSeasonName(_ name: String) -> Bool {
+    private static func isGenericSeasonName(_ name: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return seasonNameStems.contains { stem in
             trimmed.caseInsensitiveCompare(stem) == .orderedSame
@@ -151,7 +166,7 @@ struct RatePlanDraft: Equatable, Sendable {
 
     /// Northern-hemisphere guess: Jun–Sep is Summer (the usual time-of-use summer), Oct–May Winter.
     /// With three or more seasons the middle month picks Winter/Spring/Summer/Fall.
-    static func suggestedSeasonName(fromMonth: Int, toMonth: Int, seasonCount: Int) -> String {
+    private static func suggestedSeasonName(fromMonth: Int, toMonth: Int, seasonCount: Int) -> String {
         let length = ((toMonth - fromMonth) % 12 + 12) % 12 + 1
         if seasonCount <= 1 || length == 12 { return "All year" }
         let months = (0 ..< length).map { (fromMonth - 1 + $0) % 12 + 1 }
@@ -187,23 +202,35 @@ struct RatePlanDraft: Equatable, Sendable {
         }
     }
 
-    func validate(today: Date = .now) -> String? {
-        if let nameError = nameProblem { return nameError }
-        if let dateError = validateDates(today: today) { return dateError }
-        if let monthError = validateMonthCoverage() { return monthError }
+    public func validationIssue(today: Date = .now) -> ValidationIssue? {
+        if let nameIssue { return nameIssue }
+        if let issue = validateDates(today: today) { return issue }
+        if let issue = validateMonthCoverage() { return issue }
         for season in seasons {
-            if season.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Every season needs a name."
-            }
-            if let weekdayError = season.validateWeekdaySlots() { return weekdayError }
-            if let weekendError = season.validateWeekendSlots() { return weekendError }
-            if let rateError = season.validateRates() { return rateError }
+            if let issue = validationIssue(in: season) { return issue }
         }
         return nil
     }
 
-    func toWriteRequest() -> TariffPlanWriteRequest? {
-        guard validate() == nil, let dates = chosenDates else { return nil }
+    private func validationIssue(in season: SeasonDraft) -> ValidationIssue? {
+        guard !season.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .missingSeasonName
+        }
+        if let issue = season.validateWeekdaySlots() {
+            return .schedule(season: season.name, isWeekday: true, issue: issue)
+        }
+        if let issue = season.validateWeekendSlots() {
+            return .schedule(season: season.name, isWeekday: false, issue: issue)
+        }
+        return switch season.validateRates() {
+        case .buy: .invalidBuyRate(season: season.name)
+        case .sell: .invalidSellRate(season: season.name)
+        case nil: nil
+        }
+    }
+
+    public func toWriteRequest() -> TariffPlanWriteRequest? {
+        guard validationIssue() == nil, let dates = chosenDates else { return nil }
         let compiledSeasons = seasons.compactMap { $0.toInput() }
         guard compiledSeasons.count == seasons.count else { return nil }
         return TariffPlanWriteRequest(
@@ -215,7 +242,7 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     /// The manual selection to review, once the plan and both dates are valid.
-    func selectionRequest(scope: TariffSelectionScope = .actual) -> TariffSelectionRequest? {
+    public func selectionRequest(scope: TariffSelectionScope = .actual) -> TariffSelectionRequest? {
         guard let write = toWriteRequest() else { return nil }
         return TariffSelectionRequest(
             scope: scope,
@@ -226,12 +253,12 @@ struct RatePlanDraft: Equatable, Sendable {
     }
 
     /// Site-calendar YYYY-MM-DD dates; nil until both the start and the end are chosen.
-    var chosenDates: (from: String, to: String?)? {
+    public var chosenDates: (from: String, to: String?)? {
         guard let effectiveFrom, let end else { return nil }
-        let from = RatePlanTimelineFormatting.formatYMD(effectiveFrom, in: timeZone)
+        let from = RatePlanCalendarDays.formatYMD(effectiveFrom, in: timeZone)
         switch end {
         case .ongoing: return (from, nil)
-        case .endsOn(let date): return (from, RatePlanTimelineFormatting.formatYMD(date, in: timeZone))
+        case .endsOn(let date): return (from, RatePlanCalendarDays.formatYMD(date, in: timeZone))
         }
     }
 
@@ -239,44 +266,44 @@ struct RatePlanDraft: Equatable, Sendable {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Why the name can't be used yet, or nil when it can.
-    var nameProblem: String? {
-        if effectiveName.isEmpty { return "Name this rate plan." }
+    /// The issue with the name, or nil when it can be used.
+    public var nameIssue: ValidationIssue? {
+        if effectiveName.isEmpty { return .missingName }
         let wanted = effectiveName.lowercased()
         if takenNames.contains(where: {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wanted
         }) {
-            return "Another rate plan is already named \"\(effectiveName)\". Choose a different name."
+            return .duplicateName(effectiveName)
         }
         return nil
     }
 
-    private func validateDates(today: Date) -> String? {
-        guard let effectiveFrom else { return "Choose a start date." }
-        guard let end else { return "Choose an end date, or choose Ongoing." }
-        let fromStr = RatePlanTimelineFormatting.formatYMD(effectiveFrom, in: timeZone)
+    private func validateDates(today: Date) -> ValidationIssue? {
+        guard let effectiveFrom else { return .missingStartDate }
+        guard let end else { return .missingEndDate }
+        let fromStr = RatePlanCalendarDays.formatYMD(effectiveFrom, in: timeZone)
         // The server accepts a start up to a year ahead, so an existing future-dated plan stays editable.
-        let latestStart = RatePlanTimelineFormatting.formatYMD(
+        let latestStart = RatePlanCalendarDays.formatYMD(
             today.addingTimeInterval(365 * 86400), in: timeZone
         )
         if fromStr > latestStart {
-            return "Effective start date can be at most a year from today."
+            return .startTooFarInFuture
         }
         if case .endsOn(let effectiveTo) = end {
-            let toStr = RatePlanTimelineFormatting.formatYMD(effectiveTo, in: timeZone)
+            let toStr = RatePlanCalendarDays.formatYMD(effectiveTo, in: timeZone)
             if toStr < fromStr {
-                return "Effective end date must be on or after the start date."
+                return .endBeforeStart
             }
         }
         return nil
     }
 
-    private func validateMonthCoverage() -> String? {
-        guard !seasons.isEmpty else { return "Add at least one season." }
+    private func validateMonthCoverage() -> ValidationIssue? {
+        guard !seasons.isEmpty else { return .missingSeasons }
         var counts = [Int](repeating: 0, count: 12)
         for season in seasons {
             guard (1 ... 12).contains(season.fromMonth), (1 ... 12).contains(season.toMonth) else {
-                return "Invalid season months."
+                return .invalidSeasonMonths
             }
             var month = season.fromMonth
             for _ in 0 ..< 12 {
@@ -286,7 +313,7 @@ struct RatePlanDraft: Equatable, Sendable {
             }
         }
         guard counts.allSatisfy({ $0 == 1 }) else {
-            return "Seasons must cover all 12 calendar months without gaps or overlaps."
+            return .incompleteYearCoverage
         }
         return nil
     }

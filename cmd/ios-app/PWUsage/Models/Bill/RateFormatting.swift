@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum RateInputError: Error, Equatable, Sendable {
     case empty
@@ -17,16 +18,14 @@ enum RateFormatting {
     }
 
     static func parseRate(_ rawText: String) -> Result<Double, RateInputError> {
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failure(.empty) }
-        guard !trimmed.hasPrefix("-"), let value = Double(trimmed), value.isFinite, value >= 0 else {
-            return .failure(.negativeOrInvalid)
+        // Keep the app error type because the pricing field displays its localized description.
+        RateInput.parse(rawText).mapError { error in
+            switch error {
+            case .empty: .empty
+            case .negativeOrInvalid: .negativeOrInvalid
+            case .tooManyDecimalPlaces: .tooManyDecimalPlaces
+            case .exceedsMaximum: .exceedsMaximum
+            }
         }
-        if let dot = trimmed.firstIndex(of: ".") {
-            let fractionCount = trimmed.distance(from: trimmed.index(after: dot), to: trimmed.endIndex)
-            if fractionCount > 5 { return .failure(.tooManyDecimalPlaces) }
-        }
-        if value > 10.0 { return .failure(.exceedsMaximum) }
-        return .success((value * 100_000).rounded() / 100_000)
     }
 }

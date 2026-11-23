@@ -1,6 +1,5 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite("RatePlanDraft validation and editing math")
@@ -13,12 +12,12 @@ struct RatePlanDraftTests {
     ])
     func monthShortcutsUseCivilMonth(day: String, first: String, last: String) throws {
         let zone = try #require(TimeZone(identifier: "Pacific/Auckland"))
-        let selected = try #require(RatePlanTimelineFormatting.parseYMD(day, in: zone))
-        let boundary = RatePlanTimelineFormatting.MonthBoundary.self
+        let selected = try #require(RatePlanCalendarDays.parseYMD(day, in: zone))
+        let boundary = RatePlanCalendarDays.MonthBoundary.self
         let start = try #require(boundary.first.date(inMonthOf: selected, timeZone: zone))
         let end = try #require(boundary.last.date(inMonthOf: selected, timeZone: zone))
-        #expect(RatePlanTimelineFormatting.formatYMD(start, in: zone) == first)
-        #expect(RatePlanTimelineFormatting.formatYMD(end, in: zone) == last)
+        #expect(RatePlanCalendarDays.formatYMD(start, in: zone) == first)
+        #expect(RatePlanCalendarDays.formatYMD(end, in: zone) == last)
     }
 
     @Test("Adding, moving, and removing seasons keeps all 12 months covered without gaps")
@@ -28,29 +27,29 @@ struct RatePlanDraftTests {
         draft.name = "Utility Plan"
         draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600)
         draft.end = .ongoing
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
 
         draft.addSeason()
         #expect(draft.seasons.count == 2)
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
 
         // Wraparound winter (Oct - May) + summer (Jun - Sep)
         draft.seasons[0].fromMonth = 10
         draft.seasons[0].toMonth = 5
         draft.seasons[1].fromMonth = 6
         draft.seasons[1].toMonth = 9
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
 
         // Moving boundary shifts seamlessly without leaving gaps
         draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 5)
         #expect(draft.seasons[0].toMonth == 4)
         #expect(draft.seasons[1].fromMonth == 5)
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
 
         // Removing a season stretches neighbor back to 12 months
         draft.removeSeason(at: 1)
         #expect(draft.seasons.count == 1)
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
     }
 
     @Test("Schedule handles midnight wraparound, minimum 30-min window, and 5-decimal conversion")
@@ -222,34 +221,33 @@ struct RatePlanDraftTests {
             SeasonDraft.makeDefault(name: "B", fromMonth: 5, toMonth: 8),
             SeasonDraft.makeDefault(name: "C", fromMonth: 9, toMonth: 12)
         ]
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
 
         // October is inside season C: the boundary stops at the end of season B instead.
         draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 10)
         #expect(draft.seasons.map(\.fromMonth) == [1, 8, 9])
         #expect(draft.seasons.map(\.toMonth) == [7, 8, 12])
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
 
         // Ordinary moves inside the span still work.
         draft.moveSeasonBoundary(afterIndex: 0, toStartMonth: 4)
         #expect(draft.seasons.map(\.fromMonth) == [1, 4, 9])
-        #expect(draft.validate() == nil)
+        #expect(draft.validationIssue() == nil)
     }
 
     @Test("Copy preserves exact source rate plan name without appending year or copy suffix")
-    func copyPreservesExactPlanName() throws {
-        let timeline = try MobileContractDecoder.make().decode(
-            SiteTariffsTimelineResponse.self,
-            from: Data(TariffSheetTests.fixture.utf8)
+    func copyPreservesExactPlanName() {
+        let source = TariffPeriodDTO(
+            periodId: 1, tariffId: 1, name: "Residential 2025", version: 1, source: .manual,
+            effectiveFrom: "2025-01-01", effectiveTo: "2025-12-31", isCurrentToday: false, updatedBy: nil,
+            seasons: []
         )
-        let source = try #require(timeline.periods.first)
-        let draft = RatePlanDraft(
-            copyingFrom: source,
-            timeZone: TimeZone(identifier: timeline.timezone) ?? .gmt
-        )
+        let draft = RatePlanDraft(copyingFrom: source, timeZone: .gmt)
         #expect(draft.name == source.name)
         #expect(!draft.name.contains("Copy"))
+        #expect(draft.chosenDates == nil)
     }
+
     @Test("A plan that starts in the future stays editable; more than a year ahead is rejected")
     func futureStartWithinAYearIsValid() {
         let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
@@ -258,30 +256,49 @@ struct RatePlanDraftTests {
         draft.end = .ongoing
         let now = Date()
         draft.effectiveFrom = now.addingTimeInterval(30 * 86400)
-        #expect(draft.validate(today: now) == nil)
+        #expect(draft.validationIssue(today: now) == nil)
         draft.effectiveFrom = now.addingTimeInterval(400 * 86400)
-        #expect(draft.validate(today: now) != nil)
+        #expect(draft.validationIssue(today: now) == .startTooFarInFuture)
     }
 
-    @Test("A new plan has no default dates and says which one is missing")
+    @Test("A new plan has no default dates and identifies the missing choice")
     func newPlanNeedsDates() {
         let chicago = TimeZone(identifier: "America/Chicago") ?? .gmt
         var draft = RatePlanDraft.makeBlank(timeZone: chicago)
         draft.name = "Mine"
         #expect(draft.effectiveFrom == nil)
-        #expect(draft.validate() == "Choose a start date.")
+        #expect(draft.validationIssue() == .missingStartDate)
         #expect(draft.toWriteRequest() == nil)
-        draft.effectiveFrom = RatePlanTimelineFormatting.parseYMD("2025-03-01", in: chicago)
-        #expect(draft.validate() == "Choose an end date, or choose Ongoing.")
-        draft.end = .endsOn(RatePlanTimelineFormatting.parseYMD("2025-02-01", in: chicago) ?? .now)
-        #expect(draft.validate() == "Effective end date must be on or after the start date.")
-        draft.end = .endsOn(RatePlanTimelineFormatting.parseYMD("2025-12-31", in: chicago) ?? .now)
+        draft.effectiveFrom = RatePlanCalendarDays.parseYMD("2025-03-01", in: chicago)
+        #expect(draft.validationIssue() == .missingEndDate)
+        draft.end = .endsOn(RatePlanCalendarDays.parseYMD("2025-02-01", in: chicago) ?? .now)
+        #expect(draft.validationIssue() == .endBeforeStart)
+        draft.end = .endsOn(RatePlanCalendarDays.parseYMD("2025-12-31", in: chicago) ?? .now)
         #expect(draft.toWriteRequest()?.effectiveTo == "2025-12-31")
         draft.end = .ongoing
         let request = draft.selectionRequest(scope: .reference)
         #expect(request?.scope == .reference)
         #expect(request?.effectiveFrom == "2025-03-01")
         #expect(request?.effectiveTo == nil)
+    }
+
+    @Test("Reports the first invalid schedule or rate, and ignores inactive weekend windows")
+    func validatesSchedulesAndRates() {
+        var draft = RatePlanDraft.makeBlank(timeZone: .gmt)
+        draft.name = "Utility plan"
+        draft.effectiveFrom = Date(timeIntervalSince1970: 1_767_225_600)
+        draft.end = .ongoing
+        draft.seasons[0].weekendWindows = []
+        #expect(draft.validationIssue() == nil)
+
+        draft.seasons[0].sameScheduleAsWeekdays = false
+        #expect(draft.validationIssue() == .schedule(season: "All year", isWeekday: false, issue: .missingPeriods))
+        draft.seasons[0].weekendWindows = draft.seasons[0].weekdayWindows
+        draft.seasons[0].weekdayWindows[0].buyRateText = "0.123456"
+        draft.seasons[0].weekendWindows[0].sellRateText = "-0.1"
+        #expect(draft.validationIssue() == .invalidBuyRate(season: "All year"))
+        draft.seasons[0].weekdayWindows[0].buyRateText = "0.10"
+        #expect(draft.validationIssue() == .invalidSellRate(season: "All year"))
     }
 
     @Test("Editing keeps the plan's own dates")
