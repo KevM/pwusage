@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Section in Solar System settings showing Past Year and Lifetime savings and a button into Rate Plans.
@@ -29,7 +30,7 @@ struct SolarSystemSavingsSection: View {
             }
             switch state {
             case .ready(let report):
-                readyRows(report)
+                readyRows(year: report.year, lifetime: report.lifetime)
             case .notReady(.noReferencePlan):
                 Text(SavingsPresentation.solarSetupPrompt)
                     .font(.subheadline)
@@ -49,22 +50,22 @@ struct SolarSystemSavingsSection: View {
     }
 
     @ViewBuilder
-    private func readyRows(_ report: SavingsReport) -> some View {
-        if report.year.daysWithData > 0 {
-            periodBlock(title: "Past Year", figures: report.year, alwaysShowCoverage: false)
+    private func readyRows(year: SavingsFigures, lifetime: SavingsFigures) -> some View {
+        if year.daysWithData > 0 {
+            periodBlock(title: "Past Year", figures: year, alwaysShowCoverage: false)
         }
-        if SavingsPresentation.showsCard(report.lifetime) {
+        if SavingsPresentation.showsCard(lifetime) {
             periodBlock(
-                title: historyCoverage.lifetimeTitle(timeZone: timeZone), figures: report.lifetime,
+                title: historyCoverage.lifetimeTitle(timeZone: timeZone), figures: lifetime,
                 alwaysShowCoverage: true, historyCoverage: historyCoverage
             )
         }
-        if report.year.daysWithData == 0, !SavingsPresentation.showsCard(report.lifetime) {
+        if year.daysWithData == 0, !SavingsPresentation.showsCard(lifetime) {
             Text("No savings data for recorded days yet.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-        if !SavingsPresentation.caveats(report.lifetime).contains(where: { $0.id == "fixed" }) {
+        if !SavingsPresentation.caveats(lifetime).contains(where: { $0.id == "fixed" }) {
             planActionButton
         }
     }
@@ -120,36 +121,32 @@ struct SolarSystemSavingsSection: View {
             }
         }
     }
-}
 
-#Preview("Ready") {
-    let year = SavingsFigures(
-        costs: ScenarioCosts(recorded: 500, batteryFixed: 500, solarAlone: 1060, noSolar: 2180),
-        daysWithData: 365,
-        daysInPeriod: 365
-    )
-    let life = SavingsFigures(
-        costs: ScenarioCosts(recorded: 2000, batteryFixed: 2000, solarAlone: 5240, noSolar: 11420),
-        daysWithData: 2914,
-        daysInPeriod: 2950
-    )
-    return List {
-        SolarSystemSavingsSection(
-            state: .ready(SavingsReport(
-                cycle: year,
-                year: year,
-                lifetime: life,
-                cycleStart: .now,
-                solarSinceInstall: life,
-                powerwallSinceInstall: nil,
-                cycles: [],
-                recentCycles: [],
-                batteryStartDay: nil,
-                rateGrowth: .typical
-            )),
+    static var readyPreview: some View {
+        let year = SavingsFigures(
+            costs: ScenarioCosts(recorded: 500, batteryFixed: 500, solarAlone: 1060, noSolar: 2180),
+            daysWithData: 365,
+            daysInPeriod: 365
+        )
+        let life = SavingsFigures(
+            costs: ScenarioCosts(recorded: 2000, batteryFixed: 2000, solarAlone: 5240, noSolar: 11420),
+            daysWithData: 2914,
+            daysInPeriod: 2950
+        )
+        let section = SolarSystemSavingsSection(
+            state: .notReady(.noTimeline),
             currency: "USD",
             hasRatePlans: true,
             onOpenRatePlans: {}
         )
+        return List {
+            Section("Savings") {
+                section.readyRows(year: year, lifetime: life)
+            }
+        }
     }
+}
+
+#Preview("Ready") {
+    SolarSystemSavingsSection.readyPreview
 }

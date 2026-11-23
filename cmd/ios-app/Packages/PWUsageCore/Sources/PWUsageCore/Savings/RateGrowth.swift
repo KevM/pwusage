@@ -1,16 +1,21 @@
 import Foundation
-import PWUsageCore
 
 /// How fast the site's actual rate plans have risen per year, for projecting savings forward.
-struct RateGrowth: Equatable, Sendable {
+public struct RateGrowth: Equatable, Sendable {
     /// Compound yearly rise, from 0 to 10%.
-    let annualRate: Double
-    let isMeasured: Bool
+    public let annualRate: Double
+    public let isMeasured: Bool
     /// YYYY-MM-DD of the first covered day, when measured.
-    let measuredSince: String?
+    public let measuredSince: String?
 
     /// The pace used when the timeline cannot measure a rise.
-    static let typical = RateGrowth(annualRate: 0.03, isMeasured: false, measuredSince: nil)
+    public static let typical = RateGrowth(annualRate: 0.03, isMeasured: false, measuredSince: nil)
+
+    public init(annualRate: Double, isMeasured: Bool, measuredSince: String?) {
+        self.annualRate = annualRate
+        self.isMeasured = isMeasured
+        self.measuredSince = measuredSince
+    }
 
     private static let minimumYears = 2.0
     private static let maximumAnnualRate = 0.10
@@ -45,7 +50,7 @@ struct RateGrowth: Equatable, Sendable {
         return RateGrowth(
             annualRate: min(max(compound, 0), maximumAnnualRate),
             isMeasured: true,
-            measuredSince: RatePlanTimelineFormatting.formatYMD(firstStart, in: actual.siteTimeZone)
+            measuredSince: RatePlanCalendarDays.formatYMD(firstStart, in: actual.siteTimeZone)
         )
     }
 
@@ -57,7 +62,7 @@ struct RateGrowth: Equatable, Sendable {
     ) -> Date? {
         var day = startDay
         if let earliest = actual.earliestEffectiveFrom,
-           let parsed = RatePlanTimelineFormatting.parseYMD(earliest, in: calendar.timeZone) {
+           let parsed = RatePlanCalendarDays.parseYMD(earliest, in: calendar.timeZone) {
             day = max(day, calendar.startOfDay(for: parsed))
         }
         while day < endDay {

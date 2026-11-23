@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// User-facing copy for the Payback section. Pure formatting; views render what these return.
 enum PaybackPresentation {

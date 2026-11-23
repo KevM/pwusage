@@ -1,59 +1,6 @@
 import Foundation
-import PWUsageCore
 
-struct ScenarioCosts: Equatable, Sendable {
-    let recorded: Double
-    let batteryFixed: Double
-    let solarAlone: Double
-    let noSolar: Double
-
-    static let zero = ScenarioCosts(recorded: 0, batteryFixed: 0, solarAlone: 0, noSolar: 0)
-
-    static func + (lhs: ScenarioCosts, rhs: ScenarioCosts) -> ScenarioCosts {
-        ScenarioCosts(
-            recorded: lhs.recorded + rhs.recorded,
-            batteryFixed: lhs.batteryFixed + rhs.batteryFixed,
-            solarAlone: lhs.solarAlone + rhs.solarAlone,
-            noSolar: lhs.noSolar + rhs.noSolar
-        )
-    }
-}
-
-enum SavingsGapCause: Equatable, Sendable {
-    case noFixedRatePlan, noRatePlan, noData
-}
-
-struct SavingsDayRange: Equatable, Sendable {
-    let first: String
-    let last: String
-}
-
-struct SavingsCoverageGap: Equatable, Sendable {
-    let cause: SavingsGapCause
-    let days: Int
-    let ranges: [SavingsDayRange]
-    let fixedRatePlanStart: String?
-}
-
-struct SavingsFigures: Equatable, Sendable {
-    let costs: ScenarioCosts
-    var total: Double { costs.noSolar - costs.recorded }
-    var solar: Double { costs.noSolar - costs.solarAlone }
-    var powerwallAndRatePlan: Double { costs.solarAlone - costs.recorded }
-    var fixedRateSystem: Double { costs.noSolar - costs.batteryFixed }
-    var fixedRateSolarAlone: Double { costs.noSolar - costs.solarAlone }
-    let daysWithData: Int
-    let daysInPeriod: Int
-    var coverageGaps: [SavingsCoverageGap] = []
-    /// Counted days with at least one slot priced on an estimated actual or reference plan.
-    var estimatedDays: Int = 0
-
-    func gap(_ cause: SavingsGapCause) -> SavingsCoverageGap? {
-        coverageGaps.first { $0.cause == cause }
-    }
-}
-
-enum SavingsCalculator {
+public enum SavingsCalculator {
     private struct BucketKey: Hashable {
         let planName: String
         let periodName: String
@@ -129,13 +76,13 @@ enum SavingsCalculator {
         }
     }
 
-    static func compute(
+    public static func compute(
         scenarios: SavingsScenarioDays,
         actual: RatePeriodResolver,
         reference: RatePeriodResolver,
         billingDay: Int,
         now: Date,
-        starts: ComponentStarts = ComponentStarts(solar: nil, powerwall: nil)
+        starts: ComponentStarts = .make(solarDay: nil, powerwallDay: nil, timeZone: .gmt)
     ) -> SavingsReport {
         let timeZone = actual.siteTimeZone
         let currentCycle = BillingCycle.current(billingDay: billingDay, now: now, timeZone: timeZone)
@@ -347,7 +294,7 @@ enum SavingsCalculator {
         var days: [(String, DayStatus?)] = []
         var date = startDay
         while date <= today {
-            let day = RatePlanTimelineFormatting.formatYMD(date, in: calendar.timeZone)
+            let day = RatePlanCalendarDays.formatYMD(date, in: calendar.timeZone)
             days.append((day, statuses[day]))
             guard let next = calendar.date(byAdding: .day, value: 1, to: date) else { break }
             date = calendar.startOfDay(for: next)

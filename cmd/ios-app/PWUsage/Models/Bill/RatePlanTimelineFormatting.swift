@@ -33,20 +33,11 @@ enum RatePlanTimelineFormatting {
     }
 
     static func parseYMD(_ ymd: String, in timeZone: TimeZone) -> Date? {
-        let parts = ymd.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = timeZone
-        let comps = DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12)
-        return cal.date(from: comps)
+        RatePlanCalendarDays.parseYMD(ymd, in: timeZone)
     }
 
     static func formatYMD(_ date: Date, in timeZone: TimeZone = TimeZone(secondsFromGMT: 0) ?? .gmt) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = timeZone
-        let comps = cal.dateComponents([.year, .month, .day], from: date)
-        guard let year = comps.year, let month = comps.month, let day = comps.day else { return "" }
-        return String(format: "%04d-%02d-%02d", year, month, day)
+        RatePlanCalendarDays.formatYMD(date, in: timeZone)
     }
 
     static func displayDate(_ ymd: String) -> String {

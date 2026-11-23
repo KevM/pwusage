@@ -1,37 +1,14 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite("Savings Calculator")
 struct SavingsCalculatorTests {
-    @Test("Cycle recorded cost equals LocalBillBuilder estimatedCost")
-    func cycleRecordedCostEqualsLocalBill() async throws {
+    @Test("Cycle recorded cost matches the server bill fixture")
+    func cycleRecordedCostMatchesServerBill() throws {
         let fixture = try BillPricingFixture.load("single-plan-cycle")
-        let scope = SolarForecastSiteScope(accountScopeID: "test-account", siteID: "site-1")
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("savings-calc-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let store = SolarHistoryStore(directory: folder)
-        let timeZone = try #require(TimeZone(identifier: fixture.timeline.timezone))
-        try await Self.seedStore(store, fixture: fixture, timeZone: timeZone, scope: scope)
-
-        let site = MobileBillResponse.Site(id: "site-1", name: "Home", timezone: fixture.timeline.timezone)
-        let billResult = try await LocalBillBuilder(store: store).build(
-            site: site,
-            billingDay: fixture.billingDay,
-            timeline: fixture.timeline,
-            scope: scope,
-            now: fixture.now
-        )
-        guard case .ready(let bill) = billResult else {
-            Issue.record("Expected ready bill")
-            return
-        }
-        let expectedCost = try #require(bill.currentBill.estimatedCost)
-
-        let cycle = BillingCycle.current(billingDay: fixture.billingDay, now: fixture.now, timeZone: timeZone)
-        let flowDays = try #require(try await store.flowDays(scope: scope, from: cycle.start, to: cycle.end))
+        let expectedCost = try #require(fixture.expected.currentBill.estimatedCost)
+        let flowDays = fixture.days.map { $0.asEnergyFlowDay() }
         let refTimeline = SavingsTestFixtures.withReference(timeline: fixture.timeline, buyRate: 0.14, sellRate: 0.04)
         let actualResolver = try #require(RatePeriodResolver(timeline: fixture.timeline))
         let refResolver = try #require(RatePeriodResolver(referenceOf: refTimeline))
@@ -46,36 +23,6 @@ struct SavingsCalculatorTests {
         )
 
         #expect(abs(report.cycle.costs.recorded - expectedCost) < 1e-6)
-    }
-
-    private static func seedStore(
-        _ store: SolarHistoryStore,
-        fixture: BillPricingFixture,
-        timeZone: TimeZone,
-        scope: SolarForecastSiteScope
-    ) async throws {
-        let historyDays = fixture.days.map { day in
-            MobileSolarHistoryDay(
-                day: day.day,
-                dayStart: day.dayStart,
-                status: .complete,
-                fetchedAt: day.dayStart,
-                solarWh: day.solarWh.map { $0.map(Double.init) },
-                loadWh: day.loadWh.map { $0.map(Double.init) },
-                gridWh: day.gridWh.map { $0.map(Double.init) },
-                batteryWh: Array(repeating: Double?(0), count: day.gridWh.count),
-                batterySoc: Array(repeating: Double?.none, count: day.gridWh.count)
-            )
-        }
-        try await store.merge(
-            MobileSolarHistoryFill(
-                timeZone: timeZone,
-                status: .complete,
-                historyStart: historyDays.first?.day ?? "2026-01-01",
-                days: historyDays
-            ),
-            scope: scope
-        )
     }
 
     @Test("Solar and Powerwall/rate-plan breakdown sums to total savings")

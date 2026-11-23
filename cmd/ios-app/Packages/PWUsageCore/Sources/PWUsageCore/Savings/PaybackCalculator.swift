@@ -1,7 +1,6 @@
 import Foundation
-import PWUsageCore
 
-enum SystemComponent: String, Sendable {
+public enum SystemComponent: String, Sendable {
     case solar
     case powerwall
 
@@ -14,7 +13,7 @@ enum SystemComponent: String, Sendable {
     }
 }
 
-enum BreakEven: Equatable, Sendable {
+public enum BreakEven: Equatable, Sendable {
     /// Site-local first of the month in which the cumulative savings first reached the net cost.
     case paidOff(month: Date)
     /// Site-local first of the month in which the projection first reaches the net cost.
@@ -24,32 +23,66 @@ enum BreakEven: Equatable, Sendable {
     case noCost
 }
 
-struct ComponentPayback: Equatable, Sendable {
-    let component: SystemComponent
-    let netCost: Double
-    let paidToDate: Double
+public struct ComponentPayback: Equatable, Sendable {
+    public let component: SystemComponent
+    public let netCost: Double
+    public let paidToDate: Double
     /// YYYY-MM-DD the component's savings start.
-    let since: String
-    let breakEven: BreakEven
+    public let since: String
+    public let breakEven: BreakEven
+
+    public init(component: SystemComponent, netCost: Double, paidToDate: Double, since: String, breakEven: BreakEven) {
+        self.component = component
+        self.netCost = netCost
+        self.paidToDate = paidToDate
+        self.since = since
+        self.breakEven = breakEven
+    }
 }
 
-struct PaybackAssumptions: Equatable, Sendable {
-    let rateGrowth: RateGrowth
-    let solarDecline: Double
-    let solarDeclineMeasured: Bool
+public struct PaybackAssumptions: Equatable, Sendable {
+    public let rateGrowth: RateGrowth
+    public let solarDecline: Double
+    public let solarDeclineMeasured: Bool
     /// Nil when there is no Powerwall stream.
-    let batteryFadePerYear: Double?
+    public let batteryFadePerYear: Double?
+
+    public init(
+        rateGrowth: RateGrowth,
+        solarDecline: Double,
+        solarDeclineMeasured: Bool,
+        batteryFadePerYear: Double?
+    ) {
+        self.rateGrowth = rateGrowth
+        self.solarDecline = solarDecline
+        self.solarDeclineMeasured = solarDeclineMeasured
+        self.batteryFadePerYear = batteryFadePerYear
+    }
 }
 
-struct PaybackResult: Equatable, Sendable {
-    let components: [ComponentPayback]
+public struct PaybackResult: Equatable, Sendable {
+    public let components: [ComponentPayback]
     /// Both components together. Nil unless both have a stream.
     /// Its `component` is not meaningful; read only its numbers and `since`.
-    let combined: ComponentPayback?
-    let assumptions: PaybackAssumptions
-    let coverage: SavingsFigures
+    public let combined: ComponentPayback?
+    public let assumptions: PaybackAssumptions
+    public let coverage: SavingsFigures
     /// YYYY-MM-DD of the first stored energy day when a component was installed earlier than stored history.
-    var unrecordedBeforeDay: String?
+    public let unrecordedBeforeDay: String?
+
+    public init(
+        components: [ComponentPayback],
+        combined: ComponentPayback?,
+        assumptions: PaybackAssumptions,
+        coverage: SavingsFigures,
+        unrecordedBeforeDay: String? = nil
+    ) {
+        self.components = components
+        self.combined = combined
+        self.assumptions = assumptions
+        self.coverage = coverage
+        self.unrecordedBeforeDay = unrecordedBeforeDay
+    }
 }
 
 /// What the break-even calculation reads: the report, the assumptions and the site's calendar.
@@ -59,25 +92,25 @@ struct PaybackContext {
     let calendar: Calendar
 }
 
-enum PaybackCalculator {
-    static let minimumCountedDays = 300
-    static let horizonYears = 30
+public enum PaybackCalculator {
+    public static let minimumCountedDays = 300
+    public static let horizonYears = 30
     static let cyclesPerYear = 12
     static let horizonCycles = horizonYears * cyclesPerYear
     static let defaultSolarDecline = 0.005
-    static let batteryFadePerYear = 0.03
+    public static let batteryFadePerYear = 0.03
 
     private static let maximumSolarDeclinePercent = 2.0
 
     /// Price less incentives, less the tax credit on what remains after incentives. A nil credit is off.
-    static func netCost(_ cost: SystemCostDTO) -> Double {
+    public static func netCost(_ cost: SystemCostDTO) -> Double {
         let afterIncentives = cost.price - cost.incentives
         let credit = (cost.taxCreditPercent ?? 0) / 100 * max(0, afterIncentives)
         return afterIncentives - credit
     }
 
     /// The pre-filled credit for an install year; nil once the credit has ended.
-    static func defaultTaxCreditPercent(installYear: Int) -> Double? {
+    public static func defaultTaxCreditPercent(installYear: Int) -> Double? {
         switch installYear {
         case ...2019: 30
         case 2020 ... 2021: 26
@@ -98,7 +131,7 @@ enum PaybackCalculator {
 
     /// Payback for each component with a cost and a start day. Nil when no component qualifies.
     /// A Powerwall cost with no install date and no battery flow has no start, so it is left out.
-    static func compute(
+    public static func compute(
         report: SavingsReport,
         costs: SystemCostsDTO,
         change: SolarHealthReport.ChangeOverTime?,
@@ -141,7 +174,7 @@ enum PaybackCalculator {
               earliest.start < calendar.startOfDay(for: firstStoredDay) else {
             return nil
         }
-        return RatePlanTimelineFormatting.formatYMD(firstStoredDay, in: calendar.timeZone)
+        return RatePlanCalendarDays.formatYMD(firstStoredDay, in: calendar.timeZone)
     }
 
     static func calendar(in timeZone: TimeZone) -> Calendar {
@@ -172,7 +205,7 @@ enum PaybackCalculator {
     private static func makeStream(
         _ component: SystemComponent, cost: SystemCostDTO, since: String, calendar: Calendar, now: Date
     ) -> PaybackStream? {
-        guard let noon = RatePlanTimelineFormatting.parseYMD(since, in: calendar.timeZone) else { return nil }
+        guard let noon = RatePlanCalendarDays.parseYMD(since, in: calendar.timeZone) else { return nil }
         let start = calendar.startOfDay(for: noon)
         let ageYears = max(0, now.timeIntervalSince(start)) / 86_400 / 365.25
         return PaybackStream(
