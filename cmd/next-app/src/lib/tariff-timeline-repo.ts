@@ -1657,6 +1657,52 @@ export async function loadRestorationTargets(
   });
 }
 
+/**
+ * Turns the estimated reference rows the followed label laid over [from, before) into owner selections,
+ * so ending the follow keeps the owner's choice for those days. Rows reaching past `before` end the day before.
+ */
+async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId: string, userId: string, from: string, before: string): Promise<void> {
+  const rows = (await client.query<{
+    id: number; tariff_id: number; effective_from: string; effective_to: string | null;
+    urdb_label: string | null; revision_start: string | null; utility_name: string | null; content_hash: string | null;
+  }>(
+    `SELECT p.id, p.tariff_id, p.effective_from::text, p.effective_to::text,
+            u.urdb_label, u.revision_start::text, su.urdb_utility AS utility_name, t.content_hash
+     FROM "TariffReferencePeriod" p
+     JOIN "Tariff" t ON t.id = p.tariff_id
+     LEFT JOIN "SiteUtility" su ON su.site_id = p.site_id
+     LEFT JOIN "TariffUrdbSource" u ON u.tariff_id = p.tariff_id AND u.site_id = p.site_id AND u.role = 'estimated_reference'
+     LEFT JOIN "TariffSelection" s ON s.id = p.selection_id
+     WHERE p.site_id = $1 AND p.source = 'estimated' AND COALESCE(s.choice_kind, 'automatic') <> 'owner'
+       AND p.effective_from >= $2::date AND p.effective_from < $3::date
+     ORDER BY p.effective_from`,
+    [siteId, from, before]
+  )).rows;
+  for (const row of rows) {
+    const to = row.effective_to === null || row.effective_to >= before ? addCalendarDays(before, -1) : row.effective_to;
+    const selectionId = await insertTariffSelectionOnClient(client, {
+      siteId,
+      scope: 'reference',
+      tariffId: Number(row.tariff_id),
+      effectiveFrom: row.effective_from,
+      effectiveTo: to,
+      source: 'estimated',
+      choiceKind: 'owner',
+      candidateKind: 'public',
+      selectedByUserId: userId,
+      urdbLabel: row.urdb_label,
+      utilityName: row.utility_name,
+      revisionStart: row.revision_start,
+      exportRateProvenance: 'published',
+      selectedContentHash: row.content_hash,
+    });
+    await client.query(
+      `UPDATE "TariffReferencePeriod" SET effective_to = $2::date, selection_id = $3, updated_by_user_id = $4 WHERE id = $1`,
+      [row.id, to, selectionId, userId]
+    );
+  }
+}
+
 /** A fixed comparison plan the owner chose for one period of the rate plan history guide. */
 export type FixedComparisonWrite = { from: string; to: string | null } & (
   | { kind: 'public'; revisions: ExpandedRevision[]; label: string }
@@ -1669,12 +1715,18 @@ export type FixedComparisonWrite = { from: string; to: string | null } & (
  * `expectedUtility` ties the write to the utility the caller verified in the same transaction.
  */
 export async function setFollowedReferenceLabelOnClient(client: PoolClient, siteId: string, userId: string, label: string, from: string, expectedUtility: string | null = null): Promise<void> {
+  const previous = (await client.query<{ from: string | null }>(
+    `SELECT urdb_reference_from::text AS from FROM "SiteUtility" WHERE site_id = $1 AND urdb_reference_label IS NOT NULL FOR UPDATE`,
+    [siteId]
+  )).rows[0]?.from ?? null;
   const updated = await client.query(
     `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3::date, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $4, updated_at = now()
      WHERE site_id = $1 AND choice <> 'skipped' AND ($5::text IS NULL OR urdb_utility = $5)`,
     [siteId, label, from, userId, expectedUtility]
   );
   if (!updated.rowCount) throw new UtilityChangedError('Utility changed. Start again.');
+  // Moving the follow later must not hand the days it used to cover back to the utility defaults.
+  if (previous !== null && previous < from) await keepFollowedRangeAsOwnerChoiceOnClient(client, siteId, userId, previous, from);
   const owned = `(p.source <> 'estimated' OR EXISTS (SELECT 1 FROM "TariffSelection" s WHERE s.id = p.selection_id AND s.choice_kind = 'owner'))`;
   await client.query(`DELETE FROM "TariffReferencePeriod" p WHERE p.site_id = $1 AND p.effective_from >= $2::date AND ${owned}`, [siteId, from]);
   await client.query(
@@ -3004,7 +3056,7 @@ export class TariffTimelineRepo {
         assertUsRatePlanEligibility(deriveRatePlanEligibility(siteRow.rate_country ?? null));
       }
       await client.query(`INSERT INTO "SiteUtility" (site_id, urdb_utility, choice, status, updated_by_user_id)
-        VALUES ($1, $2, $3, 'pending', $4) ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`,
+        VALUES ($1, $2, $3, 'pending', $4) ON CONFLICT (site_id) DO UPDATE SET urdb_utility = EXCLUDED.urdb_utility, choice = EXCLUDED.choice, urdb_plan_label = NULL, urdb_reference_label = NULL, urdb_reference_from = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = now()`,
       [siteId, skipped ? null : input.name, skipped ? 'skipped' : 'owner', userId]);
       if (skipped) {
         // Removing estimates needs no OpenEI call, so do it now rather than on the next cron run.
