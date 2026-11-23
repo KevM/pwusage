@@ -13,8 +13,11 @@ net.http_get(url text, params jsonb DEFAULT '{}'::jsonb,
   timeout_milliseconds integer DEFAULT 5000)
 ```
 
-`restore-reserve-trigger` runs `*/15 * * * *` in PostgreSQL pg_cron and queues
-HTTP through pg_net. It is separate from the daily Vercel cron configuration.
+`restore-reserve-trigger` ran `*/15 * * * *` in PostgreSQL pg_cron and queues
+HTTP through pg_net. Since November 2026 it runs `*/5 * * * *`, only while a hold
+is active or a Live Activity needs work, and the route also delivers Live
+Activity updates after the check (see
+[`battery-hold-live-activity-delivery.md`](./battery-hold-live-activity-delivery.md)). It is separate from the daily Vercel cron configuration.
 The generated schedule migration preserves the cadence and existing Vault secret
 lookups, setting `timeout_milliseconds := 65000` explicitly.
 
@@ -38,7 +41,7 @@ and [pg_net request semantics](https://github.com/supabase/pg_net).
 | One site, including claim, history, tokens, restore and telemetry | 10 seconds |
 | History refresh, within site budget | 4 seconds |
 | Failure telemetry / lease cleanup | 1 second each, independently caught |
-| Stop admitting additional work | after 40 seconds; skipped sites remain active |
+| Stop admitting additional work | after 30 seconds (`MONITOR_START_CUTOFF_MS`); skipped sites remain active |
 | Live Activity reconcile (once per run, after the workers: expire, prune rows retired over 24 hours, sync live rows) | 2 seconds, isolated from the site deadlines, never fails the run |
 | Database pool | 3 connections; acquisition 1s; statement 1.5s; lock 1s; query 2s |
 | Route / pg_net caller | 60s / 65s |
@@ -47,13 +50,15 @@ and [pg_net request semantics](https://github.com/supabase/pg_net).
 
 For ten holds, four waves of at most 12 seconds (including both cleanup budgets)
 plus the initial query fit inside the route duration with headroom. The worst
-case is about 2 seconds to load, up to 40 seconds of admission, 12 seconds for
+case is about 2 seconds to load, up to 30 seconds of admission, 12 seconds for
 the last admitted site, and 2 seconds for the Live Activity reconcile: roughly
-56 of the 60 seconds the route allows (65 seconds for pg_net). The run summary
+44 seconds, leaving Live Activity delivery the rest of the route's 55-second
+plan (60 seconds allowed, 65 for pg_net). The run summary
 reports `activitiesSynced`, the number of registrations advanced; `null` means
 the reconcile was deferred (it timed out or failed, and the next run retries).
 The timing test (`battery-hold-monitor-timing.test.ts`) models the full reconcile
-budget, so raising it or adding a second step trips the 60 second guard. This bounds
+budget, so raising it or adding a second step trips the guard that keeps
+delivery's share of the route. This bounds
 attempts under the tested conditions; it does **not** guarantee Tesla restoration
 within 120 seconds or successful upstream responses. Work admission also bounds
 larger queues; inspect skipped counts if the fleet grows beyond the tested size.

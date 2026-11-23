@@ -27,7 +27,7 @@ vi.mock('./battery-hold-service', () => ({
   createSiteTeslaClient: async () => ({}),
   restoreBattery: async () => new Promise(() => {}),
 }));
-import { monitorBatteryHolds } from './battery-hold-monitor-service';
+import { MONITOR_SITE_BUDGET_MS, MONITOR_START_CUTOFF_MS, monitorBatteryHolds } from './battery-hold-monitor-service';
 const realtime = process.env.BATTERY_HOLD_TIMING_REALTIME === '1';
 afterEach(() => vi.useRealTimers());
 it('times ten hung sites, including timer and expired Auto restoration attempts', async () => {
@@ -49,5 +49,6 @@ it('times ten hung sites, including timer and expired Auto restoration attempts'
   console.log(JSON.stringify(metrics));
   if (realtime) await writeFile('/tmp/battery-hold-monitor-timing.json', JSON.stringify(metrics, null, 2));
   expect(state.attempted.size).toBe(10); expect(state.peak).toBe(3); expect(state.active).toBe(0); expect(state.reconciles).toBe(1);
-  expect(result.runtimeMs).toBeLessThan(60000); expect(result.runtimeMs).toBeLessThanOrEqual(120000);
+  // One more site budget, lease release and the reconcile past the cutoff: delivery shares the route's 60 s.
+  expect(result.runtimeMs).toBeLessThanOrEqual(MONITOR_START_CUTOFF_MS + MONITOR_SITE_BUDGET_MS + 4000);
 }, 120000);

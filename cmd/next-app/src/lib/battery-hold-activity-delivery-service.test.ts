@@ -29,7 +29,7 @@ function fakeRepo(claims: ClaimedActivity[]) {
     completeDelivery: vi.fn().mockResolvedValue(true),
     deferDelivery: vi.fn().mockResolvedValue(true),
     disableInvalidToken: vi.fn().mockResolvedValue(true),
-    releaseClaim: vi.fn().mockResolvedValue(true),
+    releaseClaims: vi.fn().mockResolvedValue(0),
   };
 }
 type FakeRepo = ReturnType<typeof fakeRepo>;
@@ -127,7 +127,7 @@ describe('deliverBatteryHoldActivities', () => {
     expect(summary.credentialFailure).toBe('InvalidProviderToken');
     expect(client.send).toHaveBeenCalledTimes(2);
     expect(repo.deferDelivery).toHaveBeenCalledWith(1, expect.any(String), 1, expect.objectContaining({ error: 'InvalidProviderToken' }));
-    expect(repo.releaseClaim).toHaveBeenCalledWith(2, expect.any(String));
+    expect(repo.releaseClaims).toHaveBeenCalledWith([2], expect.any(String));
     expect(repo.completeDelivery).toHaveBeenCalledWith(3, expect.any(String), 1, TOKEN(3));
     expect(logs.some(line => line.includes('credentials rejected') && line.includes('InvalidProviderToken'))).toBe(true);
   });
@@ -168,7 +168,18 @@ describe('deliverBatteryHoldActivities', () => {
     expect(Date.now() - started).toBeLessThan(400);
     expect(client.send.mock.calls.length).toBeLessThan(6);
     expect(summary.released).toBe(6 - client.send.mock.calls.length);
-    expect(repo.releaseClaim).toHaveBeenCalledTimes(summary.released);
+    expect(repo.releaseClaims).toHaveBeenCalledTimes(1);
+    expect(repo.releaseClaims.mock.calls[0][0]).toHaveLength(summary.released);
+  });
+
+  it('releases a whole batch it cannot send in one write, so cleanup time does not grow with the batch', async () => {
+    const repo = fakeRepo(Array.from({ length: 50 }, (_, i) => claimed(i + 1)));
+    const client = fakeClient(() => ({ kind: 'accepted', apnsId: null }));
+    const summary = await deliverBatteryHoldActivities(deps(repo, client, { sendBudgetMs: 0 }));
+    expect(client.send).not.toHaveBeenCalled();
+    expect(summary.released).toBe(50);
+    expect(repo.releaseClaims).toHaveBeenCalledTimes(1);
+    expect(repo.releaseClaims).toHaveBeenCalledWith(Array.from({ length: 50 }, (_, i) => i + 1), expect.any(String));
   });
 
   it('a failed bookkeeping write is logged without the token and does not stop the run', async () => {

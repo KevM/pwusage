@@ -175,7 +175,7 @@ describe('parkBattery', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await parkBattery({ client: client as any, repo: repo as any, siteId: 's', mode: 'auto', now });
     const monitoring = { phase: 'watching', battery_percent: 70.4, home_load_w: 1612, baseline_load_w: 1612,
-      live_at: '2026-10-02T10:00:10.000Z', checked_at: now.toISOString(), next_check_at: '2026-10-02T10:15:00.000Z' };
+      live_at: '2026-10-02T10:00:10.000Z', checked_at: now.toISOString(), next_check_at: '2026-10-02T10:05:00.000Z' };
     expect(repo.recordMonitoring).toHaveBeenCalledWith(1, expect.objectContaining(monitoring));
     expect(res).toMatchObject({ status: 'ok', hold: { id: 1, monitoring } });
   });

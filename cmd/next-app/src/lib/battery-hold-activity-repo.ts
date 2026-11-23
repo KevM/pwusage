@@ -272,11 +272,15 @@ export class BatteryHoldActivityRepo {
     return result.rows[0]?.delivery_state === 'disabled';
   }
 
-  /** Releases an unattempted claim without counting an attempt or backing off. */
-  async releaseClaim(id: number, owner: string): Promise<boolean> {
+  /**
+   * Releases every listed unattempted claim `owner` still holds, in one
+   * statement, without counting an attempt or backing off. Returns the number released.
+   */
+  async releaseClaims(ids: readonly number[], owner: string): Promise<number> {
+    if (!ids.length) return 0;
     const result = await pool.query(`UPDATE "BatteryHoldActivity" SET claim_owner = NULL, claim_expires_at = NULL
-      WHERE id = $1 AND claim_owner = $2::uuid`, [id, owner]);
-    return result.rowCount === 1;
+      WHERE id = ANY($1::bigint[]) AND claim_owner = $2::uuid`, [ids, owner]);
+    return result.rowCount ?? 0;
   }
 
   /** Disables registrations past their display lifetime and clears their tokens. */

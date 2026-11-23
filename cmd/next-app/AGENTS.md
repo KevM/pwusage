@@ -73,8 +73,8 @@ npm run build
   `npx tsx scripts/script-name.ts`. They must load `.env` explicitly (for example with `dotenv`) at
   the very start so CLI runs get real configuration.
 - **Cron jobs**: handlers live under `src/app/api/cron/*`. Most schedules (for example the
-  15-minute battery-hold restore, Live Activity delivery, history archive and gap healing) are
-  Supabase `pg_cron` + `pg_net` jobs created by migrations in `db-migrations/` (search for
+  5-minute Battery Saver check and Live Activity delivery, tariff re-attribution and gap healing)
+  are Supabase `pg_cron` + `pg_net` jobs created by migrations in `db-migrations/` (search for
   `cron.schedule`). `vercel.json` holds only the daily `check-users` cron: the Vercel Hobby plan
   allows daily crons at most, so anything more frequent must be a `pg_cron` job.
 - **User-facing copy**: follow [`docs/voice-and-terms.md`](../../docs/voice-and-terms.md).
