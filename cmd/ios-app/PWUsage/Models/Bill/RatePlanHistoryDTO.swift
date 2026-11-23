@@ -56,15 +56,18 @@ struct RatePlanHistoryPeriod: Encodable, Sendable, Equatable {
     let label: String
     let from: String
     let endDate: String?
+    /// The fixed comparison plan chosen for this period; omitted from the JSON when nil (leave as stored).
+    let fixed: FixedComparisonChoice?
 
-    init(label: String, from: String, to endDate: String?) {
+    init(label: String, from: String, to endDate: String?, fixed: FixedComparisonChoice? = nil) {
         self.label = label
         self.from = from
         self.endDate = endDate
+        self.fixed = fixed
     }
 
     private enum CodingKeys: String, CodingKey {
-        case label, from
+        case label, from, fixed
         case endDate = "to"
     }
 
@@ -73,6 +76,7 @@ struct RatePlanHistoryPeriod: Encodable, Sendable, Equatable {
         try container.encode(label, forKey: .label)
         try container.encode(from, forKey: .from)
         try container.encode(endDate, forKey: .endDate)
+        try container.encodeIfPresent(fixed, forKey: .fixed)
     }
 }
 

@@ -6,6 +6,14 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Fixed comparison plans follow-ups (2026-11-22, branch `claude/fixed-comparison-rate-plans-59321e`)
+
+Spec: [docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md](docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md).
+
+- [ ] **Savings card cost table (next project):** redesign the Bill and Solar System savings cards as a cost table: No Solar / Solar only / Solar + Powerwall, each on the fixed comparison plan and on your rate plan. This was agreed as the next project and kept out of this one. Fold in the old copy "On a fixed rate plan, your system would have…" (`SavingsPresentation.swift`), which should say "fixed comparison plan".
+- [ ] **Moving a follow before the first estimate run:** when the owner moves a followed utility plan to a later start, the earlier range is kept by re-tagging its estimated rows as owner rows. If the estimate job hasn't laid those rows yet, that range falls back to the utility default. Consider expanding the old label over that range instead.
+- [ ] **Caveat scroll target:** `.firstUncovered` scrolls to the oldest plan with any uncovered day, including days before history starts, rather than the days the `noFixedRatePlan` caveat counts.
+
 ## Sync to Tesla follow-ups (2026-11-20, branch `claude/tesla-tou-write-probe`)
 
 Spec: [docs/superpowers/specs/2026-11-19-sync-rate-plan-to-tesla-design.md](docs/superpowers/specs/2026-11-19-sync-rate-plan-to-tesla-design.md). Probe notes: [docs/tesla-tou-write-probe.md](docs/tesla-tou-write-probe.md).

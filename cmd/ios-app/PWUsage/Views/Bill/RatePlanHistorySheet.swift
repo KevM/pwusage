@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The rate plan history guide: one question per screen, walking back from the current plan, then a
@@ -5,21 +6,26 @@ import SwiftUI
 struct RatePlanHistorySheet: View {
     @State private var model: RatePlanHistoryModel
     let teslaPlanName: String?
+    let currency: String
     @Environment(\.dismiss) private var dismiss
 
-    init(model: RatePlanHistoryModel, teslaPlanName: String?) {
+    init(model: RatePlanHistoryModel, teslaPlanName: String?, currency: String) {
         _model = State(initialValue: model)
         self.teslaPlanName = teslaPlanName
+        self.currency = currency
     }
 
     init(
         teslaPlanName: String?,
+        currency: String,
+        referencePeriods: [TariffPeriodDTO],
         load: @escaping () async throws -> RatePlanHistoryDTO,
         save: @escaping ([RatePlanHistoryPeriod]) async throws -> Void
     ) {
         self.init(
-            model: RatePlanHistoryModel(loadHistory: load, saveHistory: save),
-            teslaPlanName: teslaPlanName
+            model: RatePlanHistoryModel(referencePeriods: referencePeriods, loadHistory: load, saveHistory: save),
+            teslaPlanName: teslaPlanName,
+            currency: currency
         )
     }
 
@@ -53,7 +59,7 @@ struct RatePlanHistorySheet: View {
         case .failed(let message):
             failedView(message)
         case .ready(let flow):
-            RatePlanHistoryStepView(flow: flow, model: model, teslaPlanName: teslaPlanName)
+            RatePlanHistoryStepView(flow: flow, model: model, teslaPlanName: teslaPlanName, currency: currency)
         }
     }
 

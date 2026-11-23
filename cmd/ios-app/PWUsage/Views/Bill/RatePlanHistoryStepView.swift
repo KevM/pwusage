@@ -6,6 +6,7 @@ struct RatePlanHistoryStepView: View {
     let flow: RatePlanHistoryFlow
     let model: RatePlanHistoryModel
     let teslaPlanName: String?
+    let currency: String
 
     var body: some View {
         content.id(String(describing: flow.step))
@@ -27,6 +28,7 @@ struct RatePlanHistoryStepView: View {
             RatePlanHistoryReviewView(
                 flow: flow,
                 model: model,
+                currency: currency,
                 teslaRow: RatePlanHistoryPresentation.teslaRow(history: flow.history, teslaPlanName: teslaPlanName)
             )
         }

@@ -27,16 +27,6 @@ protocol MobileTariffDataAPI: Sendable {
     ) async throws -> SiteTariffsTimelineResponse
     func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse
-    func createReferenceRatePlan(
-        siteID: String,
-        body: TariffPlanWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse
-    func updateReferenceRatePlan(
-        siteID: String,
-        periodID: Int,
-        body: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse
-    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
     func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse
     func siteRateCountry(siteID: String) async throws -> SiteRateCountryDTO
     func setSiteRateCountry(
@@ -86,25 +76,6 @@ extension MobileTariffDataAPI {
 
     func fetchTariffTimeline(siteID: String, knownETag: String?) async throws -> TimelineFetch {
         .changed(try await fetchTariffTimeline(siteID: siteID), etag: nil)
-    }
-
-    func createReferenceRatePlan(
-        siteID _: String,
-        body _: TariffPlanWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func updateReferenceRatePlan(
-        siteID _: String,
-        periodID _: Int,
-        body _: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func deleteReferenceRatePlan(siteID _: String, periodID _: Int) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
     }
 
     func siteRateCountry(siteID _: String) async throws -> SiteRateCountryDTO {

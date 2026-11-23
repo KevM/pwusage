@@ -89,7 +89,10 @@ enum RatePlanReviewPresentation {
     }
 
     static func intervalHeadline(_ interval: TariffReviewAffectedInterval) -> String {
-        switch interval.kind {
+        if interval.after == nil, interval.kind != .restoreUnavailable {
+            return "No fixed comparison plan for these dates"
+        }
+        return switch interval.kind {
         case .fillGap: "Adds a plan where there was none"
         case .replace: "Replaces \(interval.before?.name ?? "the current plan")"
         case .restore: "Restores the saved Tesla plan"

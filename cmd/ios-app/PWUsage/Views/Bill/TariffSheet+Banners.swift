@@ -83,6 +83,31 @@ extension TariffSheet {
         if let refreshed = try? await actions.refreshFromTesla() { timeline = refreshed }
     }
 
+    var rateHistorySheet: some View {
+        RatePlanHistorySheet(
+            // Opens from the loaded timeline (the Find button lives on it), so its reference periods are there.
+            teslaPlanName: timeline?.teslaSync.latestTariffName, currency: timeline?.currency ?? "USD",
+            referencePeriods: timeline?.referencePeriods ?? [],
+            load: { try await actions.loadRateHistory() },
+            save: { timeline = try await actions.saveRateHistory($0) }
+        )
+    }
+
+    /// The fixed comparison plan rows beneath a rate plan; Change needs the server's reviewed selection.
+    @ViewBuilder
+    func comparisonRows(for period: TariffPeriodDTO, in data: SiteTariffsTimelineResponse) -> some View {
+        FixedComparisonRowsView(
+            rows: FixedComparisonPairing.rows(
+                for: (period.effectiveFrom, period.effectiveTo), references: data.referencePeriods
+            ),
+            currency: data.currency,
+            onChangeRow: data.supportsRatePlanSelection ? { activeModal = .fixedComparison($0) } : nil
+        )
+        .padding(12)
+        .background(SectionTheme.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.top, -6)
+    }
+
     /// An applied change returns the new timeline and offers Sync to Tesla when it covers today.
     func selectionApplied(_ response: TariffSelectionCommitResponse, _ request: TariffSelectionRequest) {
         timeline = response.timeline

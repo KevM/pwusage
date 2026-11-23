@@ -86,11 +86,12 @@
     @MainActor
     private func previewStep(_ flow: RatePlanHistoryFlow) -> some View {
         let model = RatePlanHistoryModel(
+            referencePeriods: [],
             loadHistory: { RatePlanHistoryPreviewFlows.history },
             saveHistory: { _ in }
         )
         return NavigationStack {
-            RatePlanHistoryStepView(flow: flow, model: model, teslaPlanName: "CGS NM (edited)")
+            RatePlanHistoryStepView(flow: flow, model: model, teslaPlanName: "CGS NM (edited)", currency: "USD")
                 .navigationTitle(RatePlanHistoryPresentation.navigationTitle(flow))
                 .navigationBarTitleDisplayMode(.inline)
         }
@@ -99,6 +100,8 @@
     #Preview("Sheet, loading from demo") {
         RatePlanHistorySheet(
             teslaPlanName: "CGS NM (edited)",
+            currency: "USD",
+            referencePeriods: [],
             load: { RatePlanHistoryPreviewFlows.history },
             save: { _ in }
         )

@@ -18,9 +18,11 @@ import { STORED_TARIFF_CANDIDATES_SQL } from './importer/stored-tariff-backfill'
 import { TariffRepo } from './tariff-repo';
 import {
   recomputeIsCurrentTariff,
+  setFollowedReferenceLabelOnClient,
   TariffSelectionConflictError,
   TariffTimelineRepo,
   UtilityChangedError,
+  type FixedComparisonWrite,
 } from './tariff-timeline-repo';
 import {
   commitTariffSelection,
@@ -795,6 +797,63 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(queued.rows).toEqual([{ status: 'pending' }]);
   });
 
+  describe('unavailable followed comparison plan', () => {
+    const referenceRows = async (siteId: string) => (await local.database.query<{ effective_from: string; effective_to: string | null; source: string }>(
+      `SELECT effective_from::text, effective_to::text, source FROM "TariffReferencePeriod" WHERE site_id = $1 ORDER BY effective_from`, [siteId])).rows;
+    async function seeded(siteId: string) {
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
+      await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
+      const base = { ...chainApi([flatRate('picked', '2025-01-01', 0.2)]), defaultRates: async () => [flatRate('default', '2024-01-01', 0.15)] };
+      await runUrdbEstimatesForSite(siteId, base, new Date('2026-11-16T12:00:00Z'));
+      expect((await referenceRows(siteId)).some(row => row.source === 'estimated' && row.effective_to === null)).toBe(true);
+      return base;
+    }
+
+    it('lets the followed range go uncovered without rolling back the refresh', async () => {
+      const siteId = 's-followed-unavailable';
+      const base = await seeded(siteId);
+      await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'gone', urdb_reference_from = '2025-06-01', status = 'pending' WHERE site_id = $1`, [siteId]);
+      const rates = [flatRate('older', '2024-06-01', 0.18), flatRate('picked', '2025-01-01', 0.2, 'older')];
+      const api: UrdbApi = { ...base, ...chainApi(rates), rateByLabel: async label => label === 'gone' ? null : rates.find(rate => rate.label === label) ?? null, defaultRates: base.defaultRates };
+
+      const result = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+
+      expect(result.status).toBe('ready');
+      const reference = await referenceRows(siteId);
+      expect(reference.length).toBeGreaterThan(0);
+      expect(reference.every(row => row.effective_to !== null && row.effective_to < '2025-06-01')).toBe(true);
+      expect(reference[0].effective_from).toBe('2024-01-01');
+      // The actual-plan estimate in the same run was applied: the picked plan now walks back to its predecessor.
+      expect((await actualSpans(siteId)).map(row => [row.urdb_label, row.effective_from, row.effective_to])).toEqual([['older', '2024-06-01', '2024-12-31'], ['picked', '2025-01-01', null]]);
+    });
+
+    it('follows the label that already supplies the default from partway through', async () => {
+      const siteId = 's-followed-default';
+      const base = await seeded(siteId);
+      await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'default', urdb_reference_from = '2025-03-01', status = 'pending' WHERE site_id = $1`, [siteId]);
+      const defaultRate = flatRate('default', '2024-01-01', 0.15);
+      const api: UrdbApi = { ...base, rateByLabel: async label => label === 'default' ? defaultRate : base.rateByLabel(label) };
+
+      const result = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+
+      expect(result.status).toBe('ready');
+      const reference = await referenceRows(siteId);
+      expect(reference.map(row => [row.effective_from, row.effective_to])).toEqual([['2024-01-01', null]]);
+      const sources = await local.database.query(`SELECT urdb_label FROM "TariffUrdbSource" WHERE site_id = $1 AND role = 'estimated_reference'`, [siteId]);
+      expect(sources.rows).toEqual([{ urdb_label: 'default' }]);
+    });
+
+    it('still rejects removing reference days when no plan is followed', async () => {
+      const siteId = 's-unfollowed-removal';
+      const base = await seeded(siteId);
+      await local.database.query(`UPDATE "SiteUtility" SET status = 'pending' WHERE site_id = $1`, [siteId]);
+      const api: UrdbApi = { ...base, defaultRates: async () => [flatRate('default', '2026-01-01', 0.15)] };
+
+      await expect(runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'))).rejects.toThrow('URDB refresh would remove previously covered days');
+      expect((await referenceRows(siteId)).some(row => row.effective_from < '2026-01-01')).toBe(true);
+    });
+  });
+
   /** Two estimated revisions of one public plan, converted one after the other by dates-only edits. */
   const convertEstimateChain = async (siteId: string, name: string) => {
     await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
@@ -1289,6 +1348,625 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
       await repo.deleteManualPeriod(siteId, edited.periodId, 'u1');
 
       expect((await spans(siteId)).map(row => [row.source, row.effective_from, row.effective_to])).toEqual([['tesla', '2023-11-14', null]]);
+    });
+
+    describe('fixed comparison plans', () => {
+      type RefRow = { source: string; effective_from: string; effective_to: string | null; name: string; choice_kind: string | null; scope: string | null; buy: string };
+      const references = async (siteId: string) => (await local.database.query<RefRow>(
+        `SELECT p.source, p.effective_from::text, p.effective_to::text, t.name, s.choice_kind, s.scope,
+                (SELECT min(sp.buy_rate)::text FROM "TariffSeason" sp WHERE sp.tariff_id = t.id) AS buy
+         FROM "TariffReferencePeriod" p JOIN "Tariff" t ON t.id = p.tariff_id LEFT JOIN "TariffSelection" s ON s.id = p.selection_id
+         WHERE p.site_id = $1 ORDER BY p.effective_from`, [siteId])).rows;
+      const followed = async (siteId: string) => (await local.database.query<{ label: string | null; from: string | null }>(
+        `SELECT urdb_reference_label AS label, urdb_reference_from::text AS from FROM "SiteUtility" WHERE site_id = $1`, [siteId])).rows[0];
+      const publicFixed = (label: string, from: string, to: string | null, buy = 0.12): FixedComparisonWrite =>
+        ({ kind: 'public', from, to, label, revisions: [revision(label, from, to, `Fixed ${label}`, buy)] });
+      const manualFixed = (from: string, to: string | null, buyRate = 0.18): FixedComparisonWrite =>
+        ({ kind: 'manual', from, to, name: 'My fixed plan', buyRate, sellRate: 0.02 });
+
+      it('writesClosedFixedAsOwnerReference', async () => {
+        const siteId = 's-fixed-closed';
+        await harrisonSite(siteId);
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], null,
+          [publicFixed('fx', '2024-01-01', '2024-12-31')]);
+        const owner = (await references(siteId)).filter(row => row.choice_kind === 'owner');
+        expect(owner.map(row => [row.effective_from, row.effective_to, row.scope, row.name])).toEqual([['2024-01-01', '2024-12-31', 'reference', 'Fixed fx']]);
+      });
+
+      it('openFixedLabelSetsFollowedLabel', async () => {
+        const siteId = 's-fixed-open-label';
+        await harrisonSite(siteId, 'none');
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], 'a-open',
+          [publicFixed('fx', '2024-01-01', null)]);
+        expect(await followed(siteId)).toEqual({ label: 'fx', from: '2024-01-01' });
+        expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toEqual([]);
+      });
+
+      it('followingALabelClearsOwnerReferenceOverTheOpenRange', async () => {
+        const siteId = 's-fixed-open-clears';
+        await harrisonSite(siteId, 'none');
+        const repo = new TariffTimelineRepo();
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], 'a-open',
+          [manualFixed('2023-11-14', null)]);
+        expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toHaveLength(1);
+        const client = await local.database.connect();
+        try {
+          await client.query('BEGIN');
+          await setFollowedReferenceLabelOnClient(client, siteId, 'u1', 'fx', '2025-01-01');
+          await client.query('COMMIT');
+        } finally { client.release(); }
+        expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2023-11-14', '2024-12-31']]);
+        expect(await followed(siteId)).toEqual({ label: 'fx', from: '2025-01-01' });
+      });
+
+      it('openFixedManualIsOwnerOpenEnded', async () => {
+        const siteId = 's-fixed-open-manual';
+        await harrisonSite(siteId, 'none');
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], 'a-open',
+          [manualFixed('2024-01-01', null, 0.21)]);
+        const owner = (await references(siteId)).filter(row => row.choice_kind === 'owner');
+        expect(owner.map(row => [row.effective_from, row.effective_to, Number(row.buy)])).toEqual([['2024-01-01', null, 0.21]]);
+        expect((await followed(siteId)).label).toBeNull();
+      });
+
+      it('guideFollowMovingLaterKeepsTheEarlierFollowedRange', async () => {
+        const siteId = 's-fixed-guide-moves';
+        await harrisonSite(siteId, 'none');
+        const api = chainApi([flatRate('fx-2024', '2024-01-01', 0.12), flatRate('fx-2025', '2025-01-01', 0.13, 'fx-2024'), flatRate('fy-2025', '2025-01-01', 0.2)]);
+        const repo = new TariffTimelineRepo();
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], 'a-open', [publicFixed('fx-2024', '2024-01-01', null)]);
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('b', '2025-01-01', '2025-06-30')], 'b-open', [publicFixed('fy-2025', '2025-01-01', null)]);
+        expect(await followed(siteId)).toEqual({ label: 'fy-2025', from: '2025-01-01' });
+        expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to, row.name])).toEqual([['2024-01-01', '2024-12-31', 'Plan fx-2024']]);
+      });
+
+      it('guideFollowStartingBeforeTheLabelsOldestRevisionStaysCoveredByTheFollowedPlan', async () => {
+        const siteId = 's-fixed-guide-early';
+        await harrisonSite(siteId, 'none');
+        const defaults = [flatRate('default', '2023-01-01', 0.15)];
+        const api = { ...chainApi([flatRate('fx-2024', '2024-01-01', 0.12)]), defaultRates: async () => defaults };
+        const repo = new TariffTimelineRepo();
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect((await references(siteId)).some(row => row.name === 'Plan default' && row.effective_from <= '2023-12-01')).toBe(true);
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2023-12-01', '2024-12-31')], 'a-open', [publicFixed('fx-2024', '2023-12-01', null)]);
+        expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2023-12-01' });
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect((await followed(siteId)).label).toBe('fx-2024');
+        const estimated = (await references(siteId)).filter(row => row.source === 'estimated');
+        expect(estimated.find(row => row.name === 'Plan fx-2024')).toMatchObject({ effective_from: '2023-12-01', effective_to: null });
+        expect(estimated.filter(row => row.name === 'Plan default').every(row => (row.effective_to ?? '9') < '2023-12-01')).toBe(true);
+      });
+
+      it('changingTheUtilityClearsTheFollowedComparisonPlan', async () => {
+        const siteId = 's-fixed-utility-change';
+        await harrisonSite(siteId, 'none');
+        await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'fx', urdb_reference_from = '2025-01-01' WHERE site_id = $1`, [siteId]);
+        await new TariffTimelineRepo().setSiteUtility(siteId, 'u1', { name: 'Some Other Utility' });
+        expect(await followed(siteId)).toEqual({ label: null, from: null });
+        await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'fx', urdb_reference_from = '2025-01-01' WHERE site_id = $1`, [siteId]);
+        await new TariffTimelineRepo().setSiteUtility(siteId, 'u1', { skipped: true });
+        expect(await followed(siteId)).toEqual({ label: null, from: null });
+      });
+
+      it('openManualFromBeforeTheFollowedRangeClearsTheFollowedLabel', async () => {
+        const siteId = 's-fixed-manual-clears-label';
+        await harrisonSite(siteId, 'none');
+        await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'old', urdb_reference_from = '2025-01-01' WHERE site_id = $1`, [siteId]);
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], 'a-open',
+          [manualFixed('2024-06-01', null)]);
+        expect(await followed(siteId)).toEqual({ label: null, from: null });
+      });
+
+      it('queues a refresh when the guide clears a followed plan', async () => {
+        const siteId = 's-fixed-guide-clears-refresh';
+        await harrisonSite(siteId);
+        await local.database.query(
+          `UPDATE "SiteUtility" SET urdb_reference_label = 'old', urdb_reference_from = '2025-01-01',
+           status = 'ready', attempt_count = 3, next_check_at = '2026-11-20' WHERE site_id = $1`,
+          [siteId]
+        );
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [
+          revision('a', '2024-01-01', '2024-12-31'),
+        ], null, [manualFixed('2024-01-01', null)]);
+
+        expect(await followed(siteId)).toEqual({ label: null, from: null });
+        const status = await local.database.query(`SELECT status, attempt_count, next_check_at FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+        expect(status.rows).toEqual([{ status: 'pending', attempt_count: 0, next_check_at: null }]);
+      });
+
+      it('absentFixedKeepsOwnerReferences', async () => {
+        const siteId = 's-fixed-absent';
+        await harrisonSite(siteId);
+        const repo = new TariffTimelineRepo();
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-06-30')], null, [manualFixed('2024-01-01', '2024-06-30')]);
+        const owned = `SELECT id, tariff_id, effective_from::text, effective_to::text, source, selection_id FROM "TariffReferencePeriod" WHERE site_id = $1 AND source <> 'estimated' ORDER BY id`;
+        const before = await local.database.query(owned, [siteId]);
+        expect(before.rows).toHaveLength(1);
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('b', '2024-07-01', '2024-12-31')], null);
+        expect((await local.database.query(owned, [siteId])).rows).toEqual(before.rows);
+      });
+
+      it('savesWithUncoveredFixedRange', async () => {
+        const siteId = 's-fixed-uncovered';
+        await harrisonSite(siteId);
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], null);
+        expect((await spans(siteId)).filter(row => row.source === 'manual')).toHaveLength(1);
+        expect(await references(siteId)).toEqual([]);
+      });
+
+      it('openGuideFollowPreservesCoverageAcrossEstimateRefreshWhenAMiddleRevisionIsUnreadable', async () => {
+        const siteId = 's-fixed-guide-unreadable-middle';
+        await harrisonSite(siteId, 'none');
+        const r2023 = flatRate('fx-2023', '2023-01-01', 0.12);
+        const r2024Broken = { ...flatRate('fx-2024', '2024-01-01', 0.15, 'fx-2023'), energyweekdayschedule: undefined };
+        const r2025 = flatRate('fx-2025', '2025-01-01', 0.18, 'fx-2024');
+        const chain = [r2023, r2024Broken, r2025];
+        const api: UrdbApi = {
+          ...chainApi(chain),
+          ratesEffectiveOn: async () => [r2025],
+          defaultRates: async () => [r2025],
+        };
+        const { expandFollowedHistoryPeriod } = await import('./urdb/history-expand');
+        const revisions = await expandFollowedHistoryPeriod(
+          { label: 'fx-2025', from: '2023-06-01' },
+          { api, utilityName: UTILITY, timeZone: 'America/Chicago', today: '2026-11-16', convert: { medianMonthlyKwh: null, fallbackSellRate: 0 } }
+        );
+        const repo = new TariffTimelineRepo();
+        const saved = await repo.saveRatePlanHistory(
+          siteId, 'u1', UTILITY,
+          [revision('a', '2023-06-01', '2024-12-31')], 'a-open',
+          [{ kind: 'public', from: '2023-06-01', to: null, label: 'fx-2025', revisions }]
+        );
+        expect(saved.referencePeriods?.map(row => [row.effectiveFrom, row.effectiveTo, row.urdbLabel])).toEqual([
+          ['2023-06-01', '2023-12-31', 'fx-2023'],
+          ['2025-01-01', null, 'fx-2025'],
+        ]);
+        const refreshed = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect(refreshed.status).toBe('ready');
+        const after = await repo.getTimeline(siteId, 'u1');
+        expect(after.referencePeriods?.map(row => [row.effectiveFrom, row.effectiveTo, row.urdbLabel])).toEqual([
+          ['2023-06-01', '2023-12-31', 'fx-2023'],
+          ['2025-01-01', null, 'fx-2025'],
+        ]);
+      });
+
+      it('openGuideFollowSavesTheActualPlanExportRateAndKeepsItAcrossEstimateRefresh', async () => {
+        const siteId = 's-fixed-guide-actual-export';
+        await harrisonSite(siteId, 'none');
+        const actualPlan = { ...flatRate('act-2024', '2024-01-01', 0.2), energyratestructure: [[{ rate: 0.2, sell: 0.05 }]] };
+        const fixedPlan = flatRate('fx-2024', '2024-01-01', 0.12);
+        const api: UrdbApi = { ...chainApi([actualPlan, fixedPlan]), ratesEffectiveOn: async () => [actualPlan, fixedPlan], defaultRates: async () => [fixedPlan] };
+        const { expandHistoryPeriod, expandFollowedHistoryPeriod, actualSellFallbackAt } = await import('./urdb/history-expand');
+        const ctx = { api, utilityName: UTILITY, timeZone: 'America/Chicago', today: '2026-11-16', convert: { medianMonthlyKwh: null, fallbackSellRate: 0 } };
+        const actual = await expandHistoryPeriod({ label: 'act-2024', from: '2024-01-01', to: null }, ctx);
+        const revisions = await expandFollowedHistoryPeriod({ label: 'fx-2024', from: '2024-01-01' }, { ...ctx, sellRateForDate: actualSellFallbackAt(actual, 0) });
+        const repo = new TariffTimelineRepo();
+        const sells = (timeline: { referencePeriods?: Array<{ seasons: TariffSeasonInput[] }> }) => timeline.referencePeriods?.map(row => row.seasons[0].weekdayPeriods[0].sellRate);
+        const saved = await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [], 'act-2024', [{ kind: 'public', from: '2024-01-01', to: null, label: 'fx-2024', revisions }]);
+        expect(sells(saved)).toEqual([0.05]);
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect(sells(await repo.getTimeline(siteId, 'u1'))).toEqual([0.05]);
+      });
+
+      describe('editor choice of a utility plan', () => {
+        const rates = [flatRate('fx-2024', '2024-01-01', 0.12), flatRate('fx-2025', '2025-01-01', 0.13, 'fx-2024')];
+        const api = chainApi(rates);
+        const deps = { now: () => new Date('2026-11-16T18:00:00Z'), urdb: api, monthlyUsage: async () => 600 };
+        const choose = async (siteId: string, label: string, effectiveFrom: string, effectiveTo: string | null, kind: 'public' | 'manual' = 'public') => {
+          const request = {
+            scope: 'reference' as const,
+            candidate: kind === 'public' ? { kind: 'public' as const, label } : { kind: 'manual' as const, name: `Manual ${effectiveFrom}`, seasons: seasons(0.4) },
+            effectiveFrom,
+            effectiveTo,
+          };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const commit = await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, deps);
+          return { preview, commit };
+        };
+        const laid = async (siteId: string) => (await local.database.query<{ label: string | null; from: string; to: string | null }>(
+          `SELECT u.urdb_label AS label, p.effective_from::text AS from, p.effective_to::text AS to
+           FROM "TariffReferencePeriod" p JOIN "TariffUrdbSource" u ON u.tariff_id = p.tariff_id AND u.role = 'estimated_reference'
+           WHERE p.site_id = $1 ORDER BY p.effective_from`, [siteId])).rows;
+
+        it('openPublicChoiceFollowsThePlan', async () => {
+          const siteId = 's-editor-follow';
+          await harrisonSite(siteId, 'none');
+          const { preview } = await choose(siteId, 'fx-2024', '2024-01-01', null);
+          expect(preview.affectedIntervals.map(item => [
+            item.effectiveFrom, item.effectiveTo, item.after?.urdbLabel, item.after?.seasons[0].weekdayPeriods[0].buyRate,
+          ])).toEqual([
+            ['2024-01-01', '2024-12-31', 'fx-2024', 0.12],
+            ['2025-01-01', null, 'fx-2025', 0.13],
+          ]);
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2024-01-01' });
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toEqual([]);
+          const pending = await local.database.query(`SELECT status FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+          expect(pending.rows[0].status).toBe('pending');
+          await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+          expect(await laid(siteId)).toEqual([
+            { label: 'fx-2024', from: '2024-01-01', to: '2024-12-31' },
+            { label: 'fx-2025', from: '2025-01-01', to: null },
+          ]);
+        });
+
+        it('returns reviewed follow rates immediately in place of prior defaults', async () => {
+          const siteId = 's-editor-follow-immediate';
+          await harrisonSite(siteId, 'none');
+          await runUrdbEstimatesForSite(siteId, { ...api, defaultRates: async () => [flatRate('default', '2023-01-01', 0.17)] }, deps.now());
+
+          const { commit } = await choose(siteId, 'fx-2024', '2024-01-01', null);
+          expect(commit.timeline.referencePeriods?.map(row => [
+            row.effectiveFrom, row.effectiveTo, row.urdbLabel, row.seasons[0].weekdayPeriods[0].buyRate,
+          ])).toEqual([
+            ['2023-01-01', '2023-12-31', 'default', 0.17],
+            ['2024-01-01', '2024-12-31', 'fx-2024', 0.12],
+            ['2025-01-01', null, 'fx-2025', 0.13],
+          ]);
+        });
+
+        it('reviews and keeps the corresponding actual export price for each followed revision', async () => {
+          const siteId = 's-editor-follow-export';
+          await harrisonSite(siteId, 'none');
+          const repo = new TariffTimelineRepo();
+          const manualSeasons = (sellRate: number) => seasons(0.4).map(season => ({
+            ...season,
+            weekdayPeriods: season.weekdayPeriods.map(window => ({ ...window, sellRate })),
+            weekendPeriods: season.weekendPeriods.map(window => ({ ...window, sellRate })),
+          }));
+          await repo.createManualPeriod(siteId, 'u1', {
+            name: 'Actual Early 2024', effectiveFrom: '2024-01-01', effectiveTo: '2024-06-30', seasons: manualSeasons(0.03),
+          });
+          await repo.createManualPeriod(siteId, 'u1', {
+            name: 'Actual Late 2024', effectiveFrom: '2024-07-01', effectiveTo: '2024-12-31', seasons: manualSeasons(0.05),
+          });
+          await repo.createManualPeriod(siteId, 'u1', {
+            name: 'Actual 2025', effectiveFrom: '2025-01-01', effectiveTo: null, seasons: manualSeasons(0.08),
+          });
+          const defaultsApi = { ...api, defaultRates: async () => [rates[0]] };
+          const exportDeps = { ...deps, urdb: defaultsApi };
+          await runUrdbEstimatesForSite(siteId, defaultsApi, deps.now());
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-07-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, exportDeps);
+          const sell = (plan: { seasons: TariffSeasonInput[] } | null) => plan?.seasons[0].weekdayPeriods[0].sellRate;
+          expect(preview.affectedIntervals.map(row => [row.effectiveFrom, sell(row.after)])).toEqual([
+            ['2024-07-01', 0.05],
+            ['2025-01-01', 0.08],
+          ]);
+
+          const commit = await commitTariffSelection(siteId, 'u1', {
+            ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false,
+          }, exportDeps);
+          const priceByLabel = (timeline: typeof commit.timeline) =>
+            timeline.referencePeriods?.map(row => [row.urdbLabel, sell(row)]);
+          const expected = [['fx-2024', 0.03], ['fx-2024', 0.05], ['fx-2025', 0.08]];
+          expect(priceByLabel(commit.timeline)).toEqual(expected);
+          await runUrdbEstimatesForSite(siteId, defaultsApi, deps.now());
+          expect(priceByLabel(await repo.getTimeline(siteId, 'u1'))).toEqual(expected);
+        });
+
+        it('moving an unapplied follow later does not save the old utility default as an owner choice', async () => {
+          const siteId = 's-editor-follow-unapplied';
+          await harrisonSite(siteId, 'none');
+          await runUrdbEstimatesForSite(siteId, { ...api, defaultRates: async () => [flatRate('default', '2023-01-01', 0.17)] }, deps.now());
+          await local.database.query(
+            `UPDATE "SiteUtility" SET urdb_reference_label = 'fx-2024', urdb_reference_from = '2024-01-01',
+             status = 'pending' WHERE site_id = $1`, [siteId]
+          );
+
+          await choose(siteId, 'fx-2025', '2025-01-01', null);
+
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toEqual([]);
+        });
+
+        it('requires a fresh follow review if a known successor price changed', async () => {
+          const siteId = 's-editor-follow-new-prices';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const changedApi = chainApi([rates[0], flatRate('fx-2025', '2025-01-01', 0.23, 'fx-2024')]);
+
+          await expect(commitTariffSelection(siteId, 'u1', {
+            ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false,
+          }, { ...deps, urdb: changedApi })).rejects.toThrow(TariffSelectionConflictError);
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+
+        it('refuses bill verification on a followed comparison', async () => {
+          const siteId = 's-editor-follow-verification';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+
+          await expect(commitTariffSelection(siteId, 'u1', {
+            ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: true,
+          }, deps)).rejects.toThrow('Bill verification is unavailable when following a utility plan.');
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+
+        it('keeps disjoint spans of the same followed revision across estimate refreshes', async () => {
+          const siteId = 's-editor-follow-disjoint';
+          await harrisonSite(siteId, 'none');
+          const earlier = flatRate('earlier-default', '2023-01-01', 0.12);
+          const intervening = flatRate('intervening-default', '2024-01-01', 0.15);
+          const disjointApi = { ...chainApi([earlier, intervening]), defaultRates: async () => [earlier, intervening] };
+          const disjointDeps = { ...deps, urdb: disjointApi };
+          const sources = async () => (await local.database.query<{ tariff_id: number; label: string; from: string; to: string | null }>(
+            `SELECT tariff_id, urdb_label AS label, start_date::text AS from, end_date::text AS to
+             FROM "TariffUrdbSource" WHERE site_id = $1 AND role = 'estimated_reference' AND is_current_estimate
+             ORDER BY start_date`, [siteId])).rows;
+
+          await runUrdbEstimatesForSite(siteId, disjointApi, deps.now());
+          const original = await sources();
+          expect(original.map(row => row.label)).toEqual(['earlier-default', 'intervening-default']);
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: earlier.label }, effectiveFrom: '2025-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, disjointDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, disjointDeps);
+
+          await runUrdbEstimatesForSite(siteId, disjointApi, deps.now());
+          expect(await laid(siteId)).toEqual([
+            { label: earlier.label, from: '2023-01-01', to: '2023-12-31' },
+            { label: intervening.label, from: '2024-01-01', to: '2024-12-31' },
+            { label: earlier.label, from: '2025-01-01', to: null },
+          ]);
+          const refreshed = await sources();
+          expect(refreshed[0]).toEqual(original[0]);
+          expect(refreshed[2].tariff_id).not.toBe(refreshed[0].tariff_id);
+
+          await runUrdbEstimatesForSite(siteId, disjointApi, deps.now());
+          expect(await sources()).toEqual(refreshed);
+        });
+
+        it('retryingTheSameFollowIsUnchangedButStillChecksTheUtility', async () => {
+          const siteId = 's-editor-follow-retry';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const commitRequest = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
+          await commitTariffSelection(siteId, 'u1', commitRequest, deps);
+          expect((await commitTariffSelection(siteId, 'u1', commitRequest, deps)).unchanged).toBe(true);
+          // The same follow is also an unchanged retry after estimates lay rows.
+          await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+          expect((await commitTariffSelection(siteId, 'u1', commitRequest, deps)).unchanged).toBe(true);
+          // A utility change between the pre-lock read and the locked commit is refused even for a matching follow.
+          await expect(new TariffTimelineRepo().commitReviewedSelection(siteId, {
+            userId: 'u1',
+            commit: commitRequest,
+            publicRate: { rate: rates[0], preLockUtilityName: 'Some Other Utility', medianMonthlyKwh: null },
+            resolvePublicPlan: () => { throw new Error('unreachable'); },
+            now: new Date('2026-11-16T18:00:00Z'),
+          })).rejects.toThrow(UtilityChangedError);
+        });
+
+        it('retryingAFollowAfterAnOwnerOverrideAppearedIsAConflict', async () => {
+          const siteId = 's-editor-follow-stale-override';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, deps);
+          await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+          const stale = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
+          await choose(siteId, 'x', '2024-03-01', '2024-04-30', 'manual');
+          await expect(commitTariffSelection(siteId, 'u1', stale, deps)).rejects.toThrow(TariffSelectionConflictError);
+        });
+
+        it('openPublicChoiceDropsOwnerReferenceRowsFromItsStart', async () => {
+          const siteId = 's-editor-follow-replaces';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'x', '2023-11-14', '2024-06-30', 'manual');
+          await choose(siteId, 'x', '2024-09-01', null, 'manual');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2023-11-14', '2024-06-30'], ['2024-09-01', '2024-12-31']]);
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('closedPublicChoiceDoesNotFollow', async () => {
+          const siteId = 's-editor-closed';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2024-01-01', '2024-12-31');
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2024-01-01', '2024-12-31']]);
+        });
+
+        it('closedPublicChoiceExpandsAcrossThePlanRevisions', async () => {
+          const siteId = 's-editor-closed-expands';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-06-01', effectiveTo: '2025-06-30' };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const buyOf = (plan: { seasons: TariffSeasonInput[] } | null) => plan?.seasons[0].weekdayPeriods[0].buyRate;
+          expect(preview.affectedIntervals.map(item => [item.effectiveFrom, item.effectiveTo, item.after?.urdbLabel, buyOf(item.after)])).toEqual([
+            ['2024-06-01', '2024-12-31', 'fx-2024', 0.12],
+            ['2025-01-01', '2025-06-30', 'fx-2025', 0.13],
+          ]);
+          const commit = await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, deps);
+          expect(commit.selectionIds).toHaveLength(2);
+          const owner = (await references(siteId)).filter(row => row.choice_kind === 'owner');
+          expect(owner.map(row => [row.effective_from, row.effective_to, row.scope, row.name, Number(row.buy)])).toEqual([
+            ['2024-06-01', '2024-12-31', 'reference', 'Plan fx-2024', 0.12],
+            ['2025-01-01', '2025-06-30', 'reference', 'Plan fx-2025', 0.13],
+          ]);
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+
+        it('records and retries multiple closed revisions as one reviewed commit', async () => {
+          const siteId = 's-editor-closed-retry';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-06-01', effectiveTo: '2025-06-30' };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const reviewed = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: true };
+          const first = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+
+          const retry = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+          expect(retry).toMatchObject({ selectionIds: first.selectionIds, tariffIds: first.tariffIds, unchanged: true });
+          const stamps = await local.database.query(`SELECT s.timeline_revision::text AS site_revision,
+            array_agg(t.timeline_revision::text ORDER BY t.id) AS selection_revisions
+            FROM "Site" s JOIN "TariffSelection" t ON t.site_id = s.id
+            WHERE s.id = $1 GROUP BY s.timeline_revision`, [siteId]);
+          expect(stamps.rows).toEqual([{ site_revision: '1', selection_revisions: ['1', '1'] }]);
+        });
+
+        it('retries a closed revision batch even if an identical selection was already present', async () => {
+          const siteId = 's-editor-closed-retry-partial';
+          await harrisonSite(siteId, 'none');
+          const preExisting = await choose(siteId, 'fx-2024', '2024-06-01', '2024-12-31');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-06-01', effectiveTo: '2025-06-30' };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const reviewed = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
+          const first = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+          expect(first.selectionIds[0]).toEqual(preExisting.commit.selectionIds[0]);
+
+          const retry = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+          expect(retry).toMatchObject({ selectionIds: first.selectionIds, tariffIds: first.tariffIds, unchanged: true });
+
+          await choose(siteId, 'x', '2026-01-01', null, 'manual');
+          await expect(commitTariffSelection(siteId, 'u1', reviewed, deps)).rejects.toThrow(TariffSelectionConflictError);
+        });
+
+        it.each([
+          { change: 'label', label: 'fx-2025', from: '2025-01-01' },
+          { change: 'start date', label: 'fx-2024', from: '2025-02-01' },
+        ])('rejects a stale review when only the followed $change changed', async ({ change, label, from }) => {
+          const siteId = `s-editor-stale-${change.replace(' ', '-')}`;
+          await harrisonSite(siteId, 'none');
+          const first = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2025-01-01', effectiveTo: null };
+          const second = { ...first, candidate: { ...first.candidate, label }, effectiveFrom: from };
+          await runUrdbEstimatesForSite(siteId, { ...api, defaultRates: async () => [rates[0]] }, deps.now());
+          // Start with a follow so the first review changes only the field under test.
+          await choose(siteId, label, from, null);
+          const before = await references(siteId);
+          expect(before.length).toBeGreaterThan(0);
+          expect(before.every(row => row.source === 'estimated')).toBe(true);
+
+          const secondReview = await previewTariffSelection(siteId, 'u1', second, deps);
+          // Isolate the followed setting from the visible estimates, which the editor now writes on Apply.
+          await local.database.query(
+            `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3 WHERE site_id = $1`,
+            [siteId, first.candidate.label, first.effectiveFrom]
+          );
+
+          expect(await references(siteId)).toEqual(before);
+          await expect(commitTariffSelection(siteId, 'u1', { ...second, expectedReviewHash: secondReview.reviewHash, verifiedAgainstBill: false }, deps))
+            .rejects.toThrow(TariffSelectionConflictError);
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('movingTheFollowLaterKeepsTheEarlierFollowedRangeAsOwnerRows', async () => {
+          const siteId = 's-editor-follow-moves';
+          await harrisonSite(siteId, 'none');
+          const moveRates = [...rates, flatRate('fy-2025', '2025-01-01', 0.2)];
+          const moveApi = chainApi(moveRates);
+          const moveDeps = { ...deps, urdb: moveApi };
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const first = await previewTariffSelection(siteId, 'u1', request, moveDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: first.reviewHash, verifiedAgainstBill: false }, moveDeps);
+          await runUrdbEstimatesForSite(siteId, moveApi, new Date('2026-11-16T18:00:00Z'));
+          const move = { ...request, candidate: { kind: 'public' as const, label: 'fy-2025' }, effectiveFrom: '2025-01-01' };
+          const second = await previewTariffSelection(siteId, 'u1', move, moveDeps);
+          await commitTariffSelection(siteId, 'u1', { ...move, expectedReviewHash: second.reviewHash, verifiedAgainstBill: false }, moveDeps);
+          expect(await followed(siteId)).toEqual({ label: 'fy-2025', from: '2025-01-01' });
+          const owner = () => references(siteId).then(rows => rows.filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to, row.name]));
+          expect(await owner()).toEqual([['2024-01-01', '2024-12-31', 'Plan fx-2024']]);
+          await runUrdbEstimatesForSite(siteId, moveApi, new Date('2026-11-16T18:00:00Z'));
+          expect((await references(siteId)).map(row => [row.effective_from, row.effective_to, row.name, row.choice_kind])).toEqual([
+            ['2024-01-01', '2024-12-31', 'Plan fx-2024', 'owner'],
+            ['2025-01-01', null, 'Plan fy-2025', null],
+          ]);
+        });
+
+        it('movingTheFollowLaterKeepsAFollowedPeriodThatStraddlesItsStart', async () => {
+          const siteId = 's-editor-follow-straddle';
+          await harrisonSite(siteId, 'none');
+          const day = new Date('2026-11-16T18:00:00Z');
+          const firstApi = { ...chainApi([flatRate('fy-2026', '2026-01-01', 0.2)]), defaultRates: async () => [flatRate('d', '2023-01-01', 0.12)] };
+          await runUrdbEstimatesForSite(siteId, firstApi, day);
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'd' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const firstDeps = { ...deps, urdb: { ...firstApi, rateByLabel: async (label: string) => label === 'd' ? flatRate('d', '2023-01-01', 0.12) : firstApi.rateByLabel(label) } };
+          const first = await previewTariffSelection(siteId, 'u1', request, firstDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: first.reviewHash, verifiedAgainstBill: false }, firstDeps);
+          await runUrdbEstimatesForSite(siteId, firstDeps.urdb, day);
+          // The followed D merges with the default D into one period that starts before the follow.
+          expect((await references(siteId)).map(row => [row.name, row.effective_from, row.effective_to])).toEqual([['Plan d', '2023-01-01', null]]);
+          const move = { ...request, candidate: { kind: 'public' as const, label: 'fy-2026' }, effectiveFrom: '2026-01-01' };
+          const nextApi = { ...firstDeps.urdb, defaultRates: async () => [flatRate('d', '2023-01-01', 0.12), flatRate('e', '2025-01-01', 0.3, 'd')] };
+          const nextDeps = { ...deps, urdb: nextApi };
+          const second = await previewTariffSelection(siteId, 'u1', move, nextDeps);
+          await commitTariffSelection(siteId, 'u1', { ...move, expectedReviewHash: second.reviewHash, verifiedAgainstBill: false }, nextDeps);
+          await runUrdbEstimatesForSite(siteId, nextApi, day);
+          const rows = (await references(siteId)).map(row => [row.name, row.effective_from, row.effective_to, row.choice_kind]);
+          expect(rows.filter(row => row[0] === 'Plan d' && row[3] === 'owner')).toEqual([['Plan d', '2024-01-01', '2025-12-31', 'owner']]);
+          expect(rows.some(row => row[0] === 'Plan e' && (row[1] as string) < '2026-01-01')).toBe(false);
+          expect(rows.filter(row => row[3] !== 'owner' && row[0] === 'Plan d').every(row => (row[2] as string) <= '2023-12-31')).toBe(true);
+        });
+
+        it('laterOpenManualChoiceStartingOnOrBeforeTheFollowedRangeClearsTheLabel', async () => {
+          const siteId = 's-editor-clears-manual';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          await choose(siteId, 'fx-2024', '2024-06-01', null, 'manual');
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+
+        it('closedRangeEntirelyBeforeFollowedRangeKeepsTheFollow', async () => {
+          const siteId = 's-editor-closed-keeps';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          await choose(siteId, 'fx-2024', '2024-01-01', '2024-06-30');
+          await choose(siteId, 'x', '2024-07-01', '2024-12-31', 'manual');
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('closedRangeOverlappingFollowedRangeKeepsTheFollow', async () => {
+          const siteId = 's-editor-closed-overlap';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          await choose(siteId, 'x', '2024-06-01', '2025-03-31', 'manual');
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('openTimeOfUsePickFromBeforeTheFollowedRangeClearsTheFollowAndKeepsAnOwnerRow', async () => {
+          const siteId = 's-editor-tou';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          const tou = flatRate('tou-1', '2024-01-01', 0.1);
+          tou.energyratestructure = [[{ rate: 0.1 }], [{ rate: 0.3 }]];
+          tou.energyweekdayschedule = Array.from({ length: 12 }, () => [...Array(12).fill(0), ...Array(12).fill(1)]);
+          const touDeps = { ...deps, urdb: chainApi([...rates, tou]) };
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'tou-1' }, effectiveFrom: '2024-06-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, touDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, touDeps);
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2024-06-01', null]]);
+        });
+
+        it('aChoiceStartingAfterTheFollowedRangeKeepsTheLabel', async () => {
+          const siteId = 's-editor-keeps-label';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2024-01-01', null);
+          await choose(siteId, 'fx-2024', '2024-03-01', '2024-04-30', 'manual');
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2024-01-01' });
+        });
+
+        it('followingRefusesAChangedUtility', async () => {
+          const siteId = 's-editor-utility-changed';
+          await harrisonSite(siteId, 'none');
+          const client = await local.database.connect();
+          try {
+            await client.query('BEGIN');
+            await expect(setFollowedReferenceLabelOnClient(client, siteId, 'u1', 'fx-2024', '2024-01-01', { expectedUtility: 'Some Other Utility' })).rejects.toThrow(UtilityChangedError);
+          } finally { await client.query('ROLLBACK'); client.release(); }
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+      });
+
+      it('aFailingFixedWriteRollsBackTheActualRows', async () => {
+        const siteId = 's-fixed-rollback';
+        await harrisonSite(siteId);
+        await expect(new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2024-01-01', '2024-12-31')], null,
+          [manualFixed('2024-01-01', '2024-12-31', 99)])).rejects.toThrow(TariffValidationError);
+        expect((await spans(siteId)).map(row => row.source)).toEqual(['tesla']);
+        expect(await ownerHistory(siteId)).toEqual([]);
+        expect(await references(siteId)).toEqual([]);
+      });
     });
   });
 
@@ -1829,7 +2507,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           scope: 'reference',
           candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
           effectiveFrom: '2025-01-01',
-          effectiveTo: null,
+          effectiveTo: '2025-06-30',
         },
         { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
       );
@@ -1840,7 +2518,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           scope: 'reference',
           candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
           effectiveFrom: '2025-01-01',
-          effectiveTo: null,
+          effectiveTo: '2025-06-30',
           expectedReviewHash: refPreview.reviewHash,
           verifiedAgainstBill: false,
         },

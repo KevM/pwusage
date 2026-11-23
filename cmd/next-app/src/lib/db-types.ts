@@ -72,6 +72,8 @@ export interface SiteUtilityRow {
   urdb_utility: string | null;
   choice: 'auto' | 'owner' | 'skipped';
   urdb_plan_label: string | null;
+  urdb_reference_label: string | null;
+  urdb_reference_from: string | null;
   status: SiteUtilityStatus;
   attempt_count: number;
   last_error: string | null;

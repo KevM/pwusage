@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ratesEffectiveOn: vi.fn(), defaultRates: vi.fn(),
   getSiteUtilityContext: vi.fn(), getRatePlanHistoryInputs: vi.fn(),
   isCrossOriginRequest: vi.fn(), rateByLabel: vi.fn(), saveRatePlanHistory: vi.fn(),
+  deadline: vi.fn((_ms: number, action: () => Promise<unknown>) => action()),
 }));
 vi.mock('@/lib/request-security', () => ({ isCrossOriginRequest: mocks.isCrossOriginRequest }));
 vi.mock('@/lib/urdb/estimate-job', async importOriginal => ({
@@ -18,7 +19,7 @@ vi.mock('@/lib/urdb/estimate-job', async importOriginal => ({
 vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: mocks.getCurrentUser, verifySiteAccess: mocks.verifySiteAccess }));
 vi.mock('@/lib/io-deadline', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/io-deadline')>(),
-  withIoDeadline: (_ms: number, action: () => Promise<unknown>) => action(),
+  withIoDeadline: mocks.deadline,
 }));
 vi.mock('@/lib/observability', () => ({
   observeRoute: (_name: string, handler: (request: NextRequest, context: unknown) => Promise<Response>) => handler,
@@ -205,6 +206,115 @@ describe('PUT /api/site/[id]/utility/history', () => {
     expect(openLabel).toBe(OPTION_B);
     // The open period's closed revisions stay saved, so days before its oldest URDB revision keep their prices.
     expect(revisions.map((r: { from: string; to: string | null }) => [r.from, r.to])).toEqual([['2024-01-01', '2024-12-31'], ['2025-01-01', '2025-05-31']]);
+  });
+
+  describe('fixed comparison plans', () => {
+    const closed = { from: '2025-06-01', to: '2026-04-27' };
+    const save = (fixed: unknown) => PUT(put({ periods: [{ label: OPTION_B, ...closed, ...(fixed === undefined ? {} : { fixed }) }] }), context);
+    it('passesALabelThroughExpanded', async () => {
+      expect((await save({ label: OPTION_B })).status).toBe(200);
+      const [, , , , , fixed] = mocks.saveRatePlanHistory.mock.calls[0];
+      expect(fixed).toHaveLength(1);
+      expect(fixed[0]).toMatchObject({ kind: 'public', from: closed.from, to: closed.to, label: OPTION_B });
+      expect(fixed[0].revisions.length).toBeGreaterThan(0);
+      expect(fixed[0].revisions[0]).toMatchObject({ from: closed.from });
+    });
+    it('expandsPeriodsAndFixedUnderOneDeadline', async () => {
+      mocks.deadline.mockClear();
+      expect((await save({ label: OPTION_B })).status).toBe(200);
+      expect(mocks.deadline).toHaveBeenCalledTimes(1);
+    });
+    it('passesAManualPlan', async () => {
+      expect((await save({ name: 'Mine', buyRate: 0.2, sellRate: 0.03 })).status).toBe(200);
+      expect(mocks.saveRatePlanHistory.mock.calls[0][5]).toEqual([{ kind: 'manual', ...closed, name: 'Mine', buyRate: 0.2, sellRate: 0.03 }]);
+    });
+    it('missingSellRateIsZero', async () => {
+      expect((await save({ name: 'Mine', buyRate: 0.2 })).status).toBe(200);
+      expect(mocks.saveRatePlanHistory.mock.calls[0][5][0]).toMatchObject({ sellRate: 0 });
+    });
+    it('rejectsABadBuyRate', async () => {
+      for (const buyRate of [0, -1, '0.2', null, Number.NaN]) {
+        const response = await save({ name: 'Mine', buyRate });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Enter a price per kWh.' });
+      }
+      expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+    });
+    it('rejectsUnknownKeys', async () => {
+      for (const fixed of [{ label: OPTION_B, extra: 1 }, { name: 'Mine', buyRate: 0.2, extra: 1 }, { label: OPTION_B, name: 'Mine' }, {}, 'x', null]) {
+        const response = await save(fixed);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Invalid request body.' });
+      }
+      expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+    });
+    it('aPeriodWithoutFixedWritesNone', async () => {
+      expect((await save(undefined)).status).toBe(200);
+      expect(mocks.saveRatePlanHistory.mock.calls[0][5]).toEqual([]);
+    });
+    describe('open period', () => {
+      const openSave = (label: string) => {
+        mocks.getRatePlanHistoryInputs.mockResolvedValueOnce({ window: { ...window, fillThrough: null }, tesla: null });
+        return PUT(put({ periods: [{ label: OPTION_B, from: '2025-06-01', to: null, fixed: { label } }] }), context);
+      };
+      it('rejectsAFollowedLabelThatIsNotAFixedPlan', async () => {
+        const response = await openSave(OPTION_B);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Choose a fixed rate plan.' });
+        expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+      });
+      it('followsAFixedLabel', async () => {
+        const fixed = { ...y2025[0], label: 'flat-1', energyratestructure: [[{ rate: 0.12 }]], energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)), energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)) };
+        mocks.rateByLabel.mockImplementation(async (label: string) => [fixed, ...optionBChain, ...y2025].find(rate => rate.label === label) ?? null);
+        expect((await openSave('flat-1')).status).toBe(200);
+        expect(mocks.saveRatePlanHistory.mock.calls[0][5][0]).toMatchObject({ kind: 'public', to: null, label: 'flat-1' });
+      });
+      it('skipsUnreadableMiddleRevisionsWhenFollowingAnOpenFixedLabel', async () => {
+        const makeFixed = (label: string, startdate: number, rate: number, supersedes?: string) => ({
+          ...y2025[0],
+          label,
+          startdate,
+          ...(supersedes ? { supersedes } : {}),
+          energyratestructure: [[{ rate }]],
+          energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+          energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+        });
+        const r2023 = makeFixed('fx-2023', Date.UTC(2023, 0, 1) / 1000, 0.12);
+        const r2024Broken = { ...makeFixed('fx-2024', Date.UTC(2024, 0, 1) / 1000, 0.15, 'fx-2023'), energyweekdayschedule: undefined };
+        const r2025 = makeFixed('fx-2025', Date.UTC(2025, 0, 1) / 1000, 0.18, 'fx-2024');
+        mocks.rateByLabel.mockImplementation(async (label: string) => [r2023, r2024Broken, r2025, ...optionBChain, ...y2025].find(rate => rate.label === label) ?? null);
+        mocks.getRatePlanHistoryInputs.mockResolvedValueOnce({ window: { ...window, fillThrough: null }, tesla: null });
+        const response = await PUT(put({ periods: [{ label: OPTION_B, from: '2023-06-01', to: null, fixed: { label: 'fx-2025' } }] }), context);
+        expect(response.status).toBe(200);
+        const [, , , , , fixed] = mocks.saveRatePlanHistory.mock.calls[0];
+        expect(fixed[0].revisions.map((r: { label: string; from: string; to: string | null }) => [r.label, r.from, r.to])).toEqual([
+          ['fx-2023', '2023-06-01', '2023-12-31'],
+          ['fx-2025', '2025-01-01', null],
+        ]);
+      });
+    });
+    it('resolvesFixedExportRatesFromTheActualPlansBeingSaved', async () => {
+      const flat = (label: string, name: string, tier: Record<string, number>) => ({
+        ...y2025[0], label, name, startdate: Date.UTC(2023, 0, 1) / 1000, dgrules: undefined,
+        energyratestructure: [[tier]],
+        energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+        energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+      });
+      const actual = flat('act-1', 'Actual public', { rate: 0.2, sell: 0.05 });
+      const comparison = flat('fx-1', 'Fixed comparison', { rate: 0.12 });
+      mocks.ratesEffectiveOn.mockResolvedValue([actual, comparison]);
+      mocks.rateByLabel.mockImplementation(async (label: string) => [actual, comparison].find(rate => rate.label === label) ?? null);
+      mocks.getRatePlanHistoryInputs.mockResolvedValueOnce({ window: { ...window, fillThrough: null }, tesla: null });
+      const response = await PUT(put({ periods: [{ label: 'act-1', from: '2024-01-01', to: null, fixed: { label: 'fx-1' } }] }), context);
+      expect(response.status).toBe(200);
+      const [, , , , , fixed] = mocks.saveRatePlanHistory.mock.calls[0];
+      const sells = fixed[0].revisions.map((revision: { seasons: Array<{ weekdayPeriods: Array<{ sellRate: number }> }> }) => revision.seasons[0].weekdayPeriods[0].sellRate);
+      expect(sells).toEqual([0.05]);
+    });
+    it('rejectsAFixedLabelFromAnotherUtility', async () => {
+      mocks.rateByLabel.mockResolvedValue({ ...y2025[0], utility: 'Madison Gas & Electric Co' });
+      expect((await save({ label: OPTION_B })).status).toBe(400);
+    });
   });
 
   it('gates GET and PUT /utility/history for outside-US and unknown sites with zero OpenEI calls', async () => {

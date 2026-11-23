@@ -6,10 +6,10 @@ import Testing
 struct RatePlanHistoryFlowTests {
     // MARK: - Fixtures (Harrison: We Energies, history 2023-11-14, Tesla from 2026-04-28)
 
-    private static let timeOfUseName = "Residential Time-of-Use Rg 2"
-    private static let fixedName = "Residential Rg 1"
+    static let timeOfUseName = "Residential Time-of-Use Rg 2"
+    static let fixedName = "Residential Rg 1"
 
-    private static func windows(_ year: Int) -> [RatePlanPeakWindowDTO] {
+    static func windows(_ year: Int) -> [RatePlanPeakWindowDTO] {
         [
             RatePlanPeakWindowDTO(label: "Rg 2 Option A \(year)", fromHour: 7, toHour: 19),
             RatePlanPeakWindowDTO(label: "Rg 2 Option B \(year)", fromHour: 8, toHour: 20),
@@ -17,7 +17,7 @@ struct RatePlanHistoryFlowTests {
         ]
     }
 
-    private static func timeOfUse(_ year: Int, closest: Bool = true) -> RatePlanHistoryPlanDTO {
+    static func timeOfUse(_ year: Int, closest: Bool = true) -> RatePlanHistoryPlanDTO {
         RatePlanHistoryPlanDTO(
             name: timeOfUseName, startDate: "\(year)-01-01", kind: .timeOfUse, isDefault: false,
             closest: closest, lowRate: 0.1, highRate: 0.3, peakWindows: windows(year),
@@ -25,7 +25,7 @@ struct RatePlanHistoryFlowTests {
         )
     }
 
-    private static func fixed(_ year: Int, name: String = fixedName, isDefault: Bool = true) -> RatePlanHistoryPlanDTO {
+    static func fixed(_ year: Int, name: String = fixedName, isDefault: Bool = true) -> RatePlanHistoryPlanDTO {
         RatePlanHistoryPlanDTO(
             name: name, startDate: "\(year)-01-01", kind: .fixed, isDefault: isDefault,
             closest: false, lowRate: 0.18, highRate: 0.18, peakWindows: [],
@@ -33,7 +33,7 @@ struct RatePlanHistoryFlowTests {
         )
     }
 
-    private static func year(_ year: Int, _ plans: [RatePlanHistoryPlanDTO]? = nil) -> RatePlanHistoryYearDTO {
+    static func year(_ year: Int, _ plans: [RatePlanHistoryPlanDTO]? = nil) -> RatePlanHistoryYearDTO {
         RatePlanHistoryYearDTO(
             year: year,
             askDate: year == 2023 ? "2023-11-14" : "\(year)-07-01",
@@ -41,7 +41,7 @@ struct RatePlanHistoryFlowTests {
         )
     }
 
-    private static func harrison(
+    static func harrison(
         current: [RatePlanHistoryPlanDTO]? = nil,
         years: [RatePlanHistoryYearDTO]? = nil,
         fillThrough: String? = "2026-04-27",
@@ -57,12 +57,12 @@ struct RatePlanHistoryFlowTests {
         )
     }
 
-    private static func optionB(_ year: Int) -> RatePlanPeakWindowDTO {
+    static func optionB(_ year: Int) -> RatePlanPeakWindowDTO {
         windows(year)[1]
     }
 
     /// Picks Time of Use, Option B, as the current plan.
-    private static func onOptionB(_ history: RatePlanHistoryDTO = harrison()) -> RatePlanHistoryFlow {
+    static func onOptionB(_ history: RatePlanHistoryDTO = harrison()) -> RatePlanHistoryFlow {
         var flow = RatePlanHistoryFlow(history: history, hasTeslaPlan: true)
         flow.chooseKind(.timeOfUse)
         flow.choosePeakWindow(optionB(2026))
@@ -125,7 +125,7 @@ struct RatePlanHistoryFlowTests {
         #expect(flow.spans[0].windowLabel == "Rg 2 Option B 2026")
         flow.answerSinceStart(true)
         #expect(flow.step == .review)
-        #expect(flow.periods() == [
+        #expect(flow.periods().map(\.withoutFixed) == [
             RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
         ])
     }
@@ -148,7 +148,7 @@ struct RatePlanHistoryFlowTests {
         #expect(flow.spans.map(\.endDate) == ["2026-04-27", "2024-12-31"])
         flow.answerSinceStart(true)
         #expect(flow.step == .review)
-        #expect(flow.periods() == [
+        #expect(flow.periods().map(\.withoutFixed) == [
             RatePlanHistoryPeriod(label: "Residential Rg 1 2024", from: "2023-11-14", to: "2024-12-31"),
             RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2025-01-01", to: "2026-04-27")
         ])
@@ -168,7 +168,7 @@ struct RatePlanHistoryFlowTests {
         #expect(flow.step == .peakHours(year: 2024))
         flow.choosePeakWindow(Self.windows(2024)[0])
         flow.answerSinceStart(true)
-        #expect(flow.periods() == [
+        #expect(flow.periods().map(\.withoutFixed) == [
             RatePlanHistoryPeriod(label: "Rg 2 Option A 2024", from: "2023-11-14", to: "2024-05-31"),
             RatePlanHistoryPeriod(label: "Residential Rg 1 2024", from: "2024-06-01", to: "2024-12-31"),
             RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2025-01-01", to: "2026-04-27")
@@ -195,7 +195,7 @@ struct RatePlanHistoryFlowTests {
         flow.chooseKind(.fixed)
         #expect(flow.switchMonths().first == "2026-11")
         flow.answerSinceStart(true)
-        #expect(flow.periods() == [
+        #expect(flow.periods().map(\.withoutFixed) == [
             RatePlanHistoryPeriod(label: "Residential Rg 1 2026", from: "2023-11-14", to: nil)
         ])
     }
@@ -232,7 +232,7 @@ struct RatePlanHistoryFlowTests {
         flow.stillNotSure()
         #expect(flow.step == .review)
         #expect(flow.spans.map(\.assumed) == [true])
-        #expect(flow.periods() == [
+        #expect(flow.periods().map(\.withoutFixed) == [
             RatePlanHistoryPeriod(label: "Rg 2 Option B 2026", from: "2023-11-14", to: "2026-04-27")
         ])
     }

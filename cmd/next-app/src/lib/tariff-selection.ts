@@ -57,6 +57,9 @@ export interface RestorationTargetSpanInput {
   plan: TariffReviewPlanSnapshot;
 }
 
+export type CandidateRevision = Pick<ExistingTimelineSpanInput, 'effectiveFrom' | 'effectiveTo' | 'plan'>;
+export type FollowedReferencePlan = { label: string | null; from: string | null };
+
 export type ConversionInputsRecord = Record<string, string | number | boolean | null>;
 
 export interface TariffSelectionReviewInput {
@@ -69,6 +72,8 @@ export interface TariffSelectionReviewInput {
   existingSpans: ExistingTimelineSpanInput[];
   /** Resolved candidate plan for 'public', 'manual', or single-original 'restore_tesla'. */
   candidatePlan?: TariffReviewPlanSnapshot | null;
+  candidateRevisions?: CandidateRevision[];
+  followedReference?: FollowedReferencePlan;
   /** Interval-scoped saved Tesla originals when `request.candidate.kind === 'restore_tesla'`. */
   restorationTargets?: RestorationTargetSpanInput[];
   /** Optional site eligibility state folded into `reviewHash`. */
@@ -96,6 +101,7 @@ export interface TariffSelectionReviewHashInput {
   holidaysUseWeekendSchedule: boolean;
   eligibility: string | null;
   conversionInputs: ConversionInputsRecord | null;
+  followedReference?: FollowedReferencePlan;
   recalculatesHistory: boolean;
   recalculationRange: { fromDate: string; toDate: string | null } | null;
   candidatePlan: TariffReviewPlanSnapshot | null;
@@ -266,6 +272,16 @@ export function validateTariffSelectionRequest(
   }
 
   return { scope, candidate, effectiveFrom, effectiveTo };
+}
+
+/** An open-ended utility plan chosen for the comparison means "this plan": its later revisions are followed. */
+export function followsUtilityPlan(request: { scope: TariffSelectionScope; candidate: { kind: string }; effectiveTo: string | null }): boolean {
+  return request.scope === 'reference' && request.candidate.kind === 'public' && request.effectiveTo === null;
+}
+
+/** An open-ended owner choice starting on or before the followed range replaces the follow; closed ranges never do (owner rows outrank estimates). */
+export function supersedesFollowedLabel(effectiveFrom: string, effectiveTo: string | null, followedFrom: string | null): boolean {
+  return effectiveTo === null && followedFrom !== null && effectiveFrom <= followedFrom;
 }
 
 export function validateTariffSelectionCommit(
@@ -617,7 +633,8 @@ function canonicalizePlanSnapshot(plan: TariffReviewPlanSnapshot | null): Tariff
 
 /**
  * Deterministic SHA-256 fingerprint covering the canonical request, candidate content,
- * affected intervals, outside periods, restoration provenance, conversion inputs, and eligibility.
+ * affected intervals, outside periods, restoration provenance, conversion inputs, eligibility,
+ * and the followed plan for reference selections.
  */
 export function computeTariffSelectionReviewHash(input: TariffSelectionReviewHashInput): string {
   const canonicalPayload = canonicalizeValue({
@@ -646,6 +663,7 @@ export function computeTariffSelectionReviewHash(input: TariffSelectionReviewHas
     holidaysUseWeekendSchedule: input.holidaysUseWeekendSchedule,
     eligibility: input.eligibility,
     conversionInputs: input.conversionInputs,
+    followedReference: input.followedReference,
     recalculatesHistory: input.recalculatesHistory,
     recalculationRange: input.recalculationRange,
     candidatePlan: canonicalizePlanSnapshot(input.candidatePlan),
@@ -838,7 +856,7 @@ function computeRecalculation(
 
 /**
  * Pure review builder shared by preview and commit. Validates explicit effective dates,
- * splits the requested range at every existing-plan and restoration-original boundary,
+ * splits the requested range at existing-plan, candidate revision, and restoration-original boundaries,
  * aligns season and weekday/weekend time rows on buy and sell rates, identifies unchanged
  * outside periods, captures restoration provenance, and computes a deterministic reviewHash.
  */
@@ -907,10 +925,10 @@ export function buildTariffSelectionPreview(
   }
   unchangedOutsidePeriods.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 
-  // Partition [effectiveFrom, effectiveTo] at every existing-plan and restoration-target boundary.
   const segmentStarts = collectBoundaryStarts(effectiveFrom, effectiveTo, [
     ...sortedExisting,
     ...resolvedRestorationTargets,
+    ...(input.candidateRevisions ?? []),
   ]);
 
   const affectedIntervals: TariffReviewAffectedInterval[] = [];
@@ -919,9 +937,8 @@ export function buildTariffSelectionPreview(
   const unavailableRanges: Array<{ effectiveFrom: string; effectiveTo: string | null; reason: string }> = [];
   const collectedNotes: TariffApproximationNote[] = [];
 
-  if (input.candidatePlan) {
-    collectedNotes.push(...input.candidatePlan.approximationNotes);
-  }
+  const candidatePlans = input.candidateRevisions?.map(revision => revision.plan) ?? (input.candidatePlan ? [input.candidatePlan] : []);
+  collectedNotes.push(...candidatePlans.flatMap(plan => plan.approximationNotes));
 
   for (let i = 0; i < segmentStarts.length; i++) {
     const segFrom = segmentStarts[i];
@@ -962,7 +979,9 @@ export function buildTariffSelectionPreview(
         });
       }
     } else {
-      afterPlan = input.candidatePlan as TariffReviewPlanSnapshot;
+      afterPlan = input.candidateRevisions
+        ? input.candidateRevisions.find(span => spanContainsDate(span.effectiveFrom, span.effectiveTo, segFrom))?.plan ?? null
+        : input.candidatePlan ?? null;
       kind = existingMatch ? 'replace' : 'fill_gap';
       const preserved = buildPreservedOriginalForSpan(existingMatch, segFrom, segTo);
       if (preserved) {
@@ -1022,6 +1041,7 @@ export function buildTariffSelectionPreview(
     holidaysUseWeekendSchedule,
     eligibility: input.eligibility ?? null,
     conversionInputs: input.conversionInputs ?? null,
+    followedReference: scope === 'reference' ? input.followedReference ?? { label: null, from: null } : undefined,
     recalculatesHistory,
     recalculationRange,
     candidatePlan: resolvedCandidatePlan,
@@ -1062,7 +1082,7 @@ export function buildTariffSelectionPreview(
       hasSellRateChanges,
       hasRateChanges: hasBuyRateChanges || hasSellRateChanges,
       hasPeriodNameChanges,
-      fillsGap: affectedIntervals.some(i => i.kind === 'fill_gap'),
+      fillsGap: affectedIntervals.some(i => i.kind === 'fill_gap' && i.after !== null),
       replacesExistingPlan: affectedIntervals.some(i => i.kind === 'replace' || i.kind === 'restore'),
     },
   };

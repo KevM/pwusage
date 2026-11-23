@@ -2,115 +2,46 @@ import PWUsageCore
 import SwiftUI
 
 struct FixedRatePlanActions: Sendable {
-    var save: @MainActor (TariffPlanWriteRequest, TariffPeriodDTO?) async -> String?
-    var delete: (@MainActor (Int) async -> String?)?
-    var updateDates: (@MainActor (Int, TariffPlanPatchRequest) async throws -> Void)?
     var selection: RatePlanSelectionActions?
+    /// The guide's staging: the form hands back a manual choice instead of reviewing it.
+    var stage: (@MainActor (FixedComparisonChoice) -> Void)?
     var onApplied: @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void = { _, _ in }
     var onDismiss: (@MainActor () -> Void)?
-
-    @MainActor static func live(
-        _ coordinator: DashboardCoordinator,
-        onDismiss: (@MainActor () -> Void)? = nil
-    ) -> Self {
-        Self(
-            save: { request, editing in
-                await coordinator.saveFixedRatePlan(request, editing: editing)
-            },
-            delete: { periodID in
-                await coordinator.removeFixedRatePlan(periodID: periodID)
-            },
-            updateDates: { periodID, patch in
-                let timeline = try await coordinator.updateReferenceRatePlan(periodID: periodID, body: patch)
-                await coordinator.refreshSavings(timeline: timeline)
-            },
-            selection: coordinator.savingsTimeline?.supportsRatePlanSelection == true
-                ? TariffTimelineActions.live(coordinator).selection
-                : nil,
-            onDismiss: onDismiss
-        )
-    }
+    /// Cancel returns to the picker that led here instead of closing everything.
+    var onBack: (@MainActor () -> Void)?
 }
 
-/// Sheet for adding or editing the flat-rate reference plan used to compute savings.
+/// Enter rates myself for one fixed comparison row: a flat price per kWh for exactly the row's dates,
+/// which are fixed and not editable here. In Rate Plans it continues to the server's review; in the
+/// history guide it stages the choice.
 struct FixedRatePlanForm: View {
-    let existing: TariffPeriodDTO?
-    let defaultStartDate: String?
-    let suggestedStartDate: String?
-    /// How far back an estimated plan's unbroken run of revisions reaches; see
-    /// `RateEstimatesPresentation.fixedPlanEstimateCoverageNote`.
-    let estimateCoverageNote: String?
-    let timeZone: TimeZone
+    let range: (from: String, to: String?)
     let currency: String
     let actions: FixedRatePlanActions
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name: String
-    @State private var buyRateText: String
-    @State private var sellRateText: String
-    @State private var startsOn: Date
-    @State private var operation: Operation?
-    @State private var errorMessage: String?
+    @State private var name = ""
+    @State private var buyRateText = ""
+    @State private var sellRateText = FixedRatePlanDraft.formatRate(0)
     @State private var path: [Route] = []
     @State private var review: RatePlanReviewModel?
-    @State private var isEditingDates = false
 
-    /// The write in flight; Save and Delete never run together.
-    private enum Operation { case saving, deleting }
     private enum Route: Hashable { case review }
-
-    init(
-        existing: TariffPeriodDTO? = nil,
-        defaultStartDate: String? = nil,
-        suggestedStartDate: String? = nil,
-        estimateCoverageNote: String? = nil,
-        timeZone: TimeZone,
-        currency: String,
-        actions: FixedRatePlanActions
-    ) {
-        self.existing = existing
-        self.defaultStartDate = defaultStartDate
-        self.suggestedStartDate = suggestedStartDate
-        self.estimateCoverageNote = estimateCoverageNote
-        self.timeZone = timeZone
-        self.currency = currency
-        self.actions = actions
-
-        let window = existing?.seasons.first?.weekdayPeriods.first
-        _name = State(initialValue: existing?.name ?? "Fixed Rate Plan")
-        _buyRateText = State(initialValue: window.map { FixedRatePlanDraft.formatRate($0.buyRate) } ?? "")
-        _sellRateText = State(
-            initialValue: window.map { FixedRatePlanDraft.formatRate($0.sellRate) } ?? FixedRatePlanDraft.formatRate(0)
-        )
-        _startsOn = State(
-            initialValue: Self.parseDate(existing?.effectiveFrom ?? defaultStartDate, timeZone: timeZone) ?? Date()
-        )
-    }
 
     var body: some View {
         NavigationStack(path: $path) {
             Form {
                 detailsSection
                 ratesSection
-                if actions.selection != nil {
+                if actions.selection != nil, !stagesChoice {
                     Section {
                         Text("Next, you’ll review exactly what changes before anything is saved.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                }
-                if let existing, existing.source != .estimated, actions.delete != nil {
-                    deleteSection(periodID: existing.periodId)
-                }
             }
-            .navigationTitle(existing == nil ? "Add Fixed Rate Plan" : "Edit Fixed Rate Plan")
+            .navigationTitle(FixedComparisonPresentation.pickerTitle)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Route.self) { route in
                 switch route {
@@ -125,29 +56,17 @@ struct FixedRatePlanForm: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { close() }
-                        .disabled(operation != nil)
+                    Button("Cancel") { if let onBack = actions.onBack { onBack() } else { close() } }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if actions.selection != nil {
+                    if stagesChoice {
+                        Button(FixedComparisonPresentation.useRatesTitle) { stageChoice() }
+                            .fontWeight(.semibold)
+                            .disabled(!canSave)
+                    } else {
                         Button("Review") { startReview() }
                             .fontWeight(.semibold)
-                            .disabled(!canSave || operation != nil)
-                    } else {
-                        ToolbarBusyButton(
-                            title: "Save", busyTitle: "Saving",
-                            isBusy: operation == .saving, isEnabled: canSave && operation == nil
-                        ) {
-                            Task { await submit() }
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $isEditingDates) {
-                if let existing, let updateDates = actions.updateDates {
-                    EffectiveDatesSheet(period: existing) { periodID, patch in
-                        try await updateDates(periodID, patch)
-                        close()
+                            .disabled(!canSave || actions.selection == nil)
                     }
                 }
             }
@@ -156,38 +75,9 @@ struct FixedRatePlanForm: View {
 
     private var detailsSection: some View {
         Section {
-            if existing?.source == .estimated {
-                Text("Estimated")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.orange)
-                if let estimateCoverageNote {
-                    Text(estimateCoverageNote)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            TextField("Plan name", text: $name)
+            TextField(FixedRatePlanDraft.normalizedName(""), text: $name)
                 .textInputAutocapitalization(.words)
-            RatePlanDateField(
-                title: "Starts on", date: $startsOn,
-                boundary: suggestedStartDate == nil ? .first : nil, timeZone: timeZone
-            )
-            if let suggestedStartDate,
-               let date = Self.parseDate(suggestedStartDate, timeZone: timeZone),
-               RatePlanTimelineFormatting.formatYMD(startsOn, in: timeZone) != suggestedStartDate {
-                Button("Start on \(RatePlanTimelineFormatting.displayDate(suggestedStartDate))") { startsOn = date }
-            }
-            if let editRangeProblem {
-                Label(editRangeProblem, systemImage: "exclamationmark.circle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-            if existing != nil, actions.selection != nil, actions.updateDates != nil {
-                Button("Edit Dates", systemImage: "calendar") {
-                    isEditingDates = true
-                }
-                .disabled(operation != nil)
-            }
+            LabeledContent("Dates", value: RatePlanTimelineFormatting.displayRange(from: range.from, to: range.to))
         } footer: {
             Text("This is the flat rate you would pay without solar or your current rate plan.")
         }
@@ -214,17 +104,6 @@ struct FixedRatePlanForm: View {
         }
     }
 
-    private func deleteSection(periodID: Int) -> some View {
-        Section {
-            Button(role: .destructive) {
-                Task { await deletePlan(periodID: periodID) }
-            } label: {
-                BusyRowLabel(isBusy: operation == .deleting) { Text("Delete Fixed Rate Plan") }
-            }
-            .disabled(operation != nil)
-        }
-    }
-
     private var parsedBuyRate: Double? {
         FixedRatePlanDraft.parseRate(buyRateText)
     }
@@ -235,17 +114,21 @@ struct FixedRatePlanForm: View {
         return FixedRatePlanDraft.parseRate(trimmed)
     }
 
-    private var editRangeProblem: String? {
-        FixedRatePlanDraft.editRangeProblem(
-            existing: existing,
-            startsOn: startsOn,
-            timeZone: timeZone,
-            usesSelection: actions.selection != nil
-        )
+    private var stagesChoice: Bool {
+        actions.stage != nil
     }
 
     private var canSave: Bool {
-        parsedBuyRate != nil && parsedSellRate != nil && editRangeProblem == nil
+        parsedBuyRate != nil && parsedSellRate != nil
+    }
+
+    private func stageChoice() {
+        guard canSave, let stage = actions.stage, let buyRate = parsedBuyRate, let sellRate = parsedSellRate else {
+            return
+        }
+        ManualLayoutKeyboard.dismiss()
+        stage(.manual(name: FixedRatePlanDraft.normalizedName(name), buyRate: buyRate, sellRate: sellRate))
+        close()
     }
 
     private func startReview() {
@@ -255,55 +138,13 @@ struct FixedRatePlanForm: View {
               let sellRate = parsedSellRate else { return }
         ManualLayoutKeyboard.dismiss()
         let request = FixedRatePlanDraft.makeSelectionRequest(
-            name: name,
-            buyRate: buyRate,
-            sellRate: sellRate,
-            startsOn: startsOn,
-            effectiveTo: existing?.effectiveTo,
-            timeZone: timeZone
+            name: name, buyRate: buyRate, sellRate: sellRate, range: range
         )
         if review?.request != request {
             review = RatePlanReviewModel(request: request, actions: selection)
         }
         if path.last != .review {
             path.append(.review)
-        }
-    }
-
-    private func submit() async {
-        guard let buyRate = parsedBuyRate, let sellRate = parsedSellRate else { return }
-        // Resign the text field before sheet dismissal starts: letting UIKit call endEditing
-        // inside dismissViewControllerAnimated can trigger a UISheetPresentationController
-        // keyboard-frame layout loop in SwiftUI's AttributeGraph.
-        ManualLayoutKeyboard.dismiss()
-        operation = .saving
-        errorMessage = nil
-        let request = FixedRatePlanDraft.makeWriteRequest(
-            name: name,
-            buyRate: buyRate,
-            sellRate: sellRate,
-            startsOn: startsOn,
-            timeZone: timeZone
-        )
-        let error = await actions.save(request, existing)
-        operation = nil
-        if let error {
-            errorMessage = error
-        } else {
-            close()
-        }
-    }
-
-    private func deletePlan(periodID: Int) async {
-        guard let onDelete = actions.delete else { return }
-        operation = .deleting
-        errorMessage = nil
-        let error = await onDelete(periodID)
-        operation = nil
-        if let error {
-            errorMessage = error
-        } else {
-            close()
         }
     }
 
@@ -314,21 +155,8 @@ struct FixedRatePlanForm: View {
             dismiss()
         }
     }
-
-    private static func parseDate(_ raw: String?, timeZone: TimeZone) -> Date? {
-        guard let raw else { return nil }
-        let parts = raw.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
-    }
 }
 
 #Preview {
-    FixedRatePlanForm(
-        timeZone: TimeZone(identifier: "America/Los_Angeles") ?? .current,
-        currency: "USD",
-        actions: FixedRatePlanActions(save: { _, _ in nil })
-    )
+    FixedRatePlanForm(range: ("2026-01-01", "2026-03-31"), currency: "USD", actions: FixedRatePlanActions())
 }

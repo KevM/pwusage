@@ -98,6 +98,28 @@ enum SavingsPresentation {
         )
     }
 
+    /// The one savings button that opens Rate Plans, where fixed comparison plans are added and changed.
+    struct RatePlansEntry: Equatable, Sendable {
+        let title: String
+        /// Opens the editor straight into adding the first plan.
+        let startsAdding: Bool
+    }
+
+    /// `hasRatePlans` is nil until the timeline loads: the button then names neither add nor edit and
+    /// never opens straight into adding a plan.
+    static func ratePlansEntry(hasRatePlans: Bool?) -> RatePlansEntry {
+        switch hasRatePlans {
+        case .none: RatePlansEntry(title: "Rate Plans", startsAdding: false)
+        case .some(true): RatePlansEntry(title: "Edit Rate Plans", startsAdding: false)
+        case .some(false): RatePlansEntry(title: "Add Rate Plans", startsAdding: true)
+        }
+    }
+
+    static let billSetupPrompt = "Add your rate plans to see what your solar and Powerwall saved "
+        + "compared with a fixed plan."
+    static let solarSetupPrompt = "Add your rate plans to see how much your solar and Powerwall saved "
+        + "over the past year and lifetime."
+
     static func showsCard(_ figures: SavingsFigures) -> Bool {
         figures.daysWithData > 0 || !caveats(figures).isEmpty
     }
@@ -106,17 +128,14 @@ enum SavingsPresentation {
         var result: [SavingsCaveat] = []
         if let gap = figures.gap(.noFixedRatePlan) {
             let text: String
-            let suggestedStart: String?
             if let start = gap.fixedRatePlanStart {
-                text = "Your fixed rate plan starts \(RatePlanTimelineFormatting.displayDate(start)), "
+                text = "Your fixed comparison plan starts \(RatePlanTimelineFormatting.displayDate(start)), "
                     + "so earlier days aren’t counted."
-                suggestedStart = gap.ranges.first?.first
             } else {
-                text = "We don’t have your fixed rate plan for \(dayRangesText(gap.ranges, days: gap.days)), "
-                    + "so those days aren’t counted."
-                suggestedStart = nil
+                text = "We don’t have your fixed comparison plan for "
+                    + "\(dayRangesText(gap.ranges, days: gap.days)), so those days aren’t counted."
             }
-            result.append(SavingsCaveat(text: text, action: .editFixedRatePlan(suggestedStart: suggestedStart)))
+            result.append(SavingsCaveat(text: text, action: .openRatePlans))
         }
         if let gap = figures.gap(.noRatePlan) {
             let text = "We don’t have your rate plan for \(dayRangesText(gap.ranges, days: gap.days)), "
@@ -154,7 +173,8 @@ enum SavingsPresentation {
 
 struct SavingsCaveat: Equatable, Sendable, Identifiable {
     enum Action: Equatable, Sendable {
-        case editFixedRatePlan(suggestedStart: String?)
+        /// Opens Rate Plans, where the fixed comparison plans sit under each rate plan.
+        case openRatePlans
         case fixRatePlans
     }
 
@@ -163,20 +183,20 @@ struct SavingsCaveat: Equatable, Sendable, Identifiable {
 
     var actionTitle: String {
         switch action {
-        case .editFixedRatePlan: "Edit Fixed Rate Plan"
+        case .openRatePlans: SavingsPresentation.ratePlansEntry(hasRatePlans: true).title
         case .fixRatePlans: "Fix Rate Plans"
         }
     }
 
     var id: String {
         switch action {
-        case .editFixedRatePlan: "fixed"
+        case .openRatePlans: "fixed"
         case .fixRatePlans: "ratePlan"
         }
     }
 }
 
-/// Builds API payloads for a single-rate-all-day reference rate plan.
+/// Builds the selection request for a single-rate-all-day fixed comparison plan.
 enum FixedRatePlanDraft {
     static func formatRate(_ rate: Double, locale: Locale = .current) -> String {
         rate.formatted(.number.locale(locale).grouping(.never).precision(.fractionLength(0 ... 4)))
@@ -191,68 +211,28 @@ enum FixedRatePlanDraft {
         return value
     }
 
-    static func makeWriteRequest(
-        name: String,
-        buyRate: Double,
-        sellRate: Double,
-        startsOn: Date,
-        timeZone: TimeZone
-    ) -> TariffPlanWriteRequest {
-        TariffPlanWriteRequest(
-            name: normalizedName(name),
-            effectiveFrom: formatDate(startsOn, timeZone: timeZone),
-            effectiveTo: nil,
-            seasons: makeSeasons(buyRate: buyRate, sellRate: sellRate)
-        )
-    }
-
-    static func makePatchRequest(_ request: TariffPlanWriteRequest) -> TariffPlanPatchRequest {
-        TariffPlanPatchRequest(
-            name: request.name,
-            effectiveFrom: request.effectiveFrom,
-            effectiveTo: .unchanged,
-            seasons: request.seasons
-        )
-    }
-
-    static func editRangeProblem(
-        existing: TariffPeriodDTO?,
-        startsOn: Date,
-        timeZone: TimeZone,
-        usesSelection: Bool
-    ) -> String? {
-        guard usesSelection, let existing else { return nil }
-        return formatDate(startsOn, timeZone: timeZone) > existing.effectiveFrom
-            ? RatePlanEditorState.shortenedEditMessage
-            : nil
-    }
-
+    /// A manual comparison for exactly `range`, as the guide and editor's locked-dates form send it.
     static func makeSelectionRequest(
         name: String,
         buyRate: Double,
         sellRate: Double,
-        startsOn: Date,
-        effectiveTo: String? = nil,
-        timeZone: TimeZone
+        range: (from: String, to: String?)
     ) -> TariffSelectionRequest {
-        let write = makeWriteRequest(
-            name: name,
-            buyRate: buyRate,
-            sellRate: sellRate,
-            startsOn: startsOn,
-            timeZone: timeZone
-        )
-        return TariffSelectionRequest(
+        TariffSelectionRequest(
             scope: .reference,
-            candidate: .manual(name: write.name, seasons: write.seasons),
-            effectiveFrom: write.effectiveFrom,
-            effectiveTo: effectiveTo
+            candidate: .manual(
+                name: normalizedName(name),
+                seasons: makeSeasons(buyRate: buyRate, sellRate: sellRate)
+            ),
+            effectiveFrom: range.from,
+            effectiveTo: range.to
         )
     }
 
-    private static func normalizedName(_ raw: String) -> String {
+    /// The name as saved: trimmed, `Fixed comparison plan` when blank.
+    static func normalizedName(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Fixed Rate Plan" : trimmed
+        return trimmed.isEmpty ? "Fixed comparison plan" : trimmed
     }
 
     private static func makeSeasons(
@@ -279,15 +259,5 @@ enum FixedRatePlanDraft {
                 toDay: 31
             )
         ]
-    }
-
-    private static func formatDate(_ date: Date, timeZone: TimeZone) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        let year = components.year ?? 2026
-        let month = components.month ?? 1
-        let day = components.day ?? 1
-        return String(format: "%04d-%02d-%02d", year, month, day)
     }
 }

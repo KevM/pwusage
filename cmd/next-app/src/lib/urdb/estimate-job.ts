@@ -8,20 +8,22 @@ import { checkIoDeadline } from '../io-deadline';
 import { logEvent } from '../observability';
 import { enqueueReattributionOnClient } from '../tariff-reattribution-queue';
 import {
+  actualSellRateForDate,
   applyEstimatesOnClient,
+  averageSell,
   bumpSiteTimelineRevisionOnClient,
   clearUnprotectedUrdbSourcesOnClient,
   hydrateTariffs,
   insertTariffGraph,
   loadExistingSpans,
-  pickActivePeriodForDate,
+  upsertUrdbEstimateSourceOnClient,
 } from '../tariff-timeline-repo';
 import { addCalendarDays, compileSeasonsToParsedTariff, isProtectedSpan, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
 import { buildDefaultTariff, parseTariffContent, tariffContentHash, type ParsedTariff } from '../importer/tariff-parser';
 import type { TariffV2 } from '../tesla-client';
 import { layoutTimeline } from '../tariff-estimates';
 import * as client from './client';
-import { urdbRateToSeasons } from './convert';
+import { isFixedRate, urdbRateToSeasons } from './convert';
 import { anchorStart, newerRevision, pickTeslaMatch, referenceSpans, urdbStartDate, walkSupersedes, type RevisionSpan } from './match';
 import { normalizeUtilityName, resolveUtility } from './utility-lookup';
 import { deriveRatePlanEligibility, US_ELIGIBLE_COUNTRY_LIST } from '../rate-plan-eligibility';
@@ -35,6 +37,43 @@ type Converted = { span: RevisionSpan; seasons: TariffSeasonInput[]; name: strin
 type PlanBackfill = { tariffId: number; name: string | null; code: string | null };
 type Preview = { planBackfill: PlanBackfill | null; matchOutcomes: Array<'matched' | 'no_match' | 'unconvertible' | 'no_utility'>; fallbackTariffIds: number[]; ownerPicked: boolean; status: SiteUtilityStatus; utilityName: string | null; anchors: Anchor[]; actual: Converted[]; reference: Converted[]; changed: Array<{ from: string; to: string | null }> };
 const MAX_REVISIONS = 80;
+// The owner's followed fixed plan owns the comparison from `followedFrom`; the utility defaults keep the days before it.
+export function referenceDesiredSpans(
+  defaults: RevisionSpan[],
+  followed: RevisionSpan[],
+  followedFrom: string | null,
+  canMerge: (before: RevisionSpan, after: RevisionSpan) => boolean = () => true
+): RevisionSpan[] {
+  if (!followedFrom) return defaults;
+  const before = defaults
+    .filter(span => span.effectiveFrom < followedFrom)
+    .map(span => span.effectiveTo === null || span.effectiveTo >= followedFrom ? { ...span, effectiveTo: addCalendarDays(followedFrom, -1) } : span);
+  const from = followed
+    .filter(span => span.effectiveTo === null || span.effectiveTo >= followedFrom)
+    .map(span => span.effectiveFrom < followedFrom ? { ...span, effectiveFrom: followedFrom } : span);
+  // The owner's range may start before the label's oldest known revision; that revision applies back to it.
+  const oldest = from.reduce<number>((best, span, index) => best < 0 || span.effectiveFrom < from[best].effectiveFrom ? index : best, -1);
+  if (oldest >= 0 && from[oldest].effectiveFrom > followedFrom) from[oldest] = { ...from[oldest], effectiveFrom: followedFrom };
+  // Keep a single continuous span when the default and followed plan share a revision at the boundary.
+  return [...before, ...from].reduce<RevisionSpan[]>((merged, span) => {
+    const last = merged.at(-1);
+    if (last && last.rate.label === span.rate.label && last.effectiveTo !== null && addCalendarDays(last.effectiveTo, 1) === span.effectiveFrom && canMerge(last, span)) merged[merged.length - 1] = { ...last, effectiveTo: span.effectiveTo };
+    else merged.push(span);
+    return merged;
+  }, []);
+}
+/** Loads the fixed revisions that the estimate refresh can lay for an open comparison choice. */
+export async function followedFixedRevisions(
+  chosen: UrdbRate,
+  inEffect: UrdbRate[],
+  fetchByLabel: UrdbApi['rateByLabel'],
+  timeZone: string
+): Promise<RevisionSpan[]> {
+  const newest = await newerRevision(chosen, inEffect, fetchByLabel) ?? chosen;
+  const revisions = await walkSupersedes(newest, fetchByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone });
+  return revisions.filter(span => isFixedRate(span.rate));
+}
+
 // URDB lists some utilities under an alias ("We energies") whose rates it files under another name
 // ("Wisconsin Electric Power Co"), so accept the names of the rates URDB lists for the stored utility.
 export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: string, inEffect: UrdbRate[]): boolean {
@@ -45,7 +84,9 @@ export function ownerPlanMatchesUtility(selected: UrdbRate | null, utilityName: 
 async function snapshot(siteId: string): Promise<Snapshot> {
   const site = (await pool.query<Snapshot['site']>(`SELECT s.id, s.utility, s.json ->> 'utility' AS grid_utility, COALESCE(s.timezone, 'UTC') AS timezone, s.rate_country, s.json -> 'tariff_content_v2' AS tariff_content, s.json ->> 'site_name' AS site_name, (SELECT min(day_start AT TIME ZONE COALESCE(s.timezone, 'UTC'))::date::text FROM "EnergyDayArchive" WHERE site_id = s.id) AS history_start FROM "Site" s WHERE s.id = $1`, [siteId])).rows[0];
   if (!site) throw new Error('Site not found');
-  const utility = (await pool.query<SiteUtilityRow>('SELECT * FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
+  // pg returns date columns as Date objects, so read the reference day as text under its own alias.
+  const utilityRow = (await pool.query<SiteUtilityRow & { urdb_reference_from_text: string | null }>('SELECT *, urdb_reference_from::text AS urdb_reference_from_text FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
+  const utility: SiteUtilityRow | undefined = utilityRow && { ...utilityRow, urdb_reference_from: utilityRow.urdb_reference_from_text };
   const connection = await pool.connect();
   try {
     const spans = await loadExistingSpans(connection, siteId);
@@ -55,10 +96,6 @@ async function snapshot(siteId: string): Promise<Snapshot> {
     const sources = (await connection.query<Snapshot['sources'][number]>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1`, [siteId])).rows;
     return { site, utility, spans, tariffs: versions.flatMap(version => { const tariff = map.get(Number(version.id)); return tariff ? [{ ...tariff, updated: version.updated }] : []; }), allTariffs: [...map.values()], sources };
   } finally { connection.release(); }
-}
-export function averageSell(tariff: Tariff | undefined): number {
-  const rates = tariff?.seasons?.flatMap(season => season.schedules?.map(schedule => schedule.sell_rate ?? season.sell_rate) ?? [season.sell_rate]) ?? [];
-  return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
 }
 // Rows stored before content hashes existed hash their hydrated graph; nulls there are absent fields in a parse.
 function storedTariffHash(tariff: Tariff): string {
@@ -136,6 +173,13 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   let actualSpans = start ? await walkSupersedes(start, api.rateByLabel, { endBefore: null, maxSteps: MAX_REVISIONS, timeZone: site.timezone }) : [];
   if (site.history_start) actualSpans = actualSpans.filter(span => span.effectiveTo === null || span.effectiveTo >= site.history_start!).map(span => ({ ...span, effectiveFrom: span.effectiveFrom < site.history_start! ? site.history_start! : span.effectiveFrom }));
   const defaults = referenceSpans(await api.defaultRates(utilityName), site.timezone).slice(-MAX_REVISIONS);
+  // Follow the owner's chosen fixed plan through the revisions that replaced it, like the Tesla plan chain.
+  // The followed range stays uncovered when the plan cannot be fetched: never lay the defaults over the owner's choice.
+  let followed: RevisionSpan[] = [];
+  if (utility?.urdb_reference_label && utility.urdb_reference_from) {
+    const chosen = await api.rateByLabel(utility.urdb_reference_label);
+    if (chosen) followed = await followedFixedRevisions(chosen, await ratesToday(), api.rateByLabel, site.timezone);
+  }
   const usage = await monthlyUsage(site.id, site.timezone, now);
   function convert(span: RevisionSpan, role: Converted['role'], sell: number): Converted | null {
     const result = urdbRateToSeasons(span.rate, { medianMonthlyKwh: usage, fallbackSellRate: sell });
@@ -147,10 +191,14 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   // Stop at an unconvertible revision so the chain does not imply prices beyond it.
   const actual: Converted[] = [];
   for (const span of [...actualSpans].reverse()) { const value = convert(span, 'estimated_actual', averageSell(tariffs[startIndex] ?? tariffs[0])); if (!value) break; actual.unshift(value); }
+  const sellRates = new Map(allTariffs.map(tariff => [tariff.id, averageSell(tariff)]));
   const desired = actual.map((value, index) => {
-    const hash = tariffContentHash(compileSeasonsToParsedTariff(value.name, value.seasons));
+    const parsed = compileSeasonsToParsedTariff(value.name, value.seasons);
+    const hash = tariffContentHash(parsed);
     const previous = sources.find(source => source.role === value.role && source.urdb_label === value.span.rate.label && source.content_hash === hash);
-    return { tariffId: previous ? Number(previous.tariff_id) : -1 - index, effectiveFrom: value.span.effectiveFrom, effectiveTo: value.span.effectiveTo };
+    const tariffId = previous ? Number(previous.tariff_id) : -1 - index;
+    sellRates.set(tariffId, averageSell(parsed));
+    return { tariffId, effectiveFrom: value.span.effectiveFrom, effectiveTo: value.span.effectiveTo };
   });
   const ownerPicked = !tariffs.length && !!start && !!utility?.urdb_plan_label;
   const previewSpans = ownerPicked ? spans.flatMap(row => {
@@ -172,15 +220,18 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     ...previewSpans.filter(row => !layout.deleteIds.includes(row.id)).map(row => ({ ...row, periodId: row.id })),
     ...layout.inserts.map((row, index) => ({ ...row, periodId: -1 - index })),
   ];
-  const reference = defaults.flatMap(span => {
-    const covering = pickActivePeriodForDate(projected, span.effectiveFrom);
-    let sell = averageSell(allTariffs.find(tariff => tariff.id === covering?.tariffId));
-    if (covering && covering.tariffId < 0) {
-      const estimate = actual[-1 - covering.tariffId];
-      const schedules = estimate ? compileSeasonsToParsedTariff(estimate.name, estimate.seasons).seasons.flatMap(season => season.schedules) : [];
-      if (schedules.length) sell = schedules.reduce((sum, schedule) => sum + schedule.sell_rate, 0) / schedules.length;
-    }
-    const result = convert(span, 'estimated_reference', sell);
+  const referenceSellRate = (span: RevisionSpan) => actualSellRateForDate(projected, sellRates, span.effectiveFrom) ?? 0;
+  const followedFrom = utility?.urdb_reference_label ? utility.urdb_reference_from : null;
+  const referencePlan = referenceDesiredSpans(defaults, followed, followedFrom, (before, after) => {
+    const beforeSell = referenceSellRate(before);
+    const afterSell = referenceSellRate(after);
+    if (beforeSell === afterSell) return true;
+    const beforePlan = convert(before, 'estimated_reference', beforeSell);
+    const afterPlan = convert(after, 'estimated_reference', afterSell);
+    return beforePlan !== null && afterPlan !== null && JSON.stringify(beforePlan.seasons) === JSON.stringify(afterPlan.seasons);
+  });
+  const reference = referencePlan.flatMap(span => {
+    const result = convert(span, 'estimated_reference', referenceSellRate(span));
     return result ? [result] : [];
   });
   const changed = layout.changed;
@@ -231,7 +282,11 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
           [siteId]
         )
       ).rows[0];
-      const current = await write.query<{ claim: string; choice: string }>('SELECT updated_at::text AS claim, choice FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE', [siteId]);
+      const current = await write.query<{ claim: string; choice: string; followed_label: string | null; followed_from: string | null }>(
+        `SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label,
+                urdb_reference_from::text AS followed_from FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE`,
+        [siteId]
+      );
       if (current.rows[0]?.claim !== claim) { await write.query('ROLLBACK'); return { status: 'pending', changedDays: 0 }; }
       checkIoDeadline();
       const writeEligibility = deriveRatePlanEligibility(lockedSite?.rate_country ?? null);
@@ -250,7 +305,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
               changed: [],
               matchOutcomes: [],
             };
-      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference', 'owner_selection')`, [siteId]);
+      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference', 'owner_selection')`, [siteId]);
       await clearUnprotectedUrdbSourcesOnClient(write, siteId);
       if (effectivePreview.planBackfill) {
         await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [effectivePreview.planBackfill.tariffId, siteId, effectivePreview.planBackfill.name, effectivePreview.planBackfill.code]);
@@ -258,12 +313,31 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       for (const anchor of effectivePreview.anchors) {
         await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start, is_current_estimate) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, start_source = EXCLUDED.start_source, newer_urdb_label = EXCLUDED.newer_urdb_label, newer_urdb_name = EXCLUDED.newer_urdb_name, newer_urdb_start = EXCLUDED.newer_urdb_start, is_current_estimate = TRUE`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
       }
-      for (const item of [...effectivePreview.actual, ...effectivePreview.reference]) {
+      const estimates = [...effectivePreview.actual, ...effectivePreview.reference];
+      const reusedTariffIds = new Set<number>();
+      for (const item of estimates) {
         const parsed = compileSeasonsToParsedTariff(item.name, item.seasons);
         const hash = tariffContentHash(parsed);
-        const previous = old.rows.find(row => row.role === item.role && row.urdb_label === item.span.rate.label && row.content_hash === hash);
+        const matching = old.rows.filter(row => row.role === item.role && row.urdb_label === item.span.rate.label
+          && row.content_hash === hash && !reusedTariffIds.has(Number(row.tariff_id)));
+        // A tariff ID can store only one source span. Reserve matching starts for their own spans
+        // so a default revision can keep its identity even when it also reappears as a followed plan.
+        const previous = matching.find(row => row.start_date === item.span.effectiveFrom)
+          ?? matching.find(row => !estimates.some(estimate => estimate.role === row.role
+            && estimate.span.rate.label === row.urdb_label && estimate.span.effectiveFrom === row.start_date));
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start, is_current_estimate) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, start_source = EXCLUDED.start_source, revision_start = EXCLUDED.revision_start, is_current_estimate = TRUE`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
+        reusedTariffIds.add(tariffId);
+        const { followed_label, followed_from } = current.rows[0];
+        const suppliedByFollow = item.role === 'estimated_reference' && followed_from !== null
+          && (item.span.effectiveTo === null || item.span.effectiveTo >= followed_from);
+        await upsertUrdbEstimateSourceOnClient(write, siteId, tariffId, {
+          role: item.role,
+          label: item.span.rate.label,
+          effectiveFrom: item.span.effectiveFrom,
+          effectiveTo: item.span.effectiveTo,
+          revisionStart: urdbStartDate(item.span.rate),
+          followedReferenceLabel: suppliedByFollow ? followed_label : null,
+        });
       }
       const today = siteLocalDateString(now, lockedSite?.timezone ?? 'UTC');
       const skipCoverageCheck = current.rows[0].choice === 'skipped' || writeEligibility !== 'us';
@@ -294,7 +368,16 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       const { changed } = await applyEstimatesOnClient(write, siteId, today);
       if (beforeCoverage.length) {
         const afterCoverage = (await write.query<{ effective_from: string; effective_to: string | null; kind: string }>(`SELECT effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;
-        for (const before of beforeCoverage) {
+        // An owner-followed plan that cannot be fetched intentionally leaves [from, ∞) uncovered: estimated
+        // reference days there may go. Owner rows, actual days and reference days before `from` stay guarded.
+        const followedFrom = current.rows[0].followed_label ? current.rows[0].followed_from : null;
+        const guarded = beforeCoverage.flatMap(before => {
+          if (!followedFrom || before.kind !== 'reference' || before.source !== 'estimated') return [before];
+          if (before.effective_from >= followedFrom) return [];
+          const last = addCalendarDays(followedFrom, -1);
+          return [before.effective_to === null || before.effective_to > last ? { ...before, effective_to: last } : before];
+        });
+        for (const before of guarded) {
           let cursor = before.effective_from;
           const following = afterCoverage.filter(row => row.kind === before.kind).sort((a, b) => a.effective_from.localeCompare(b.effective_from));
           let covered = false;

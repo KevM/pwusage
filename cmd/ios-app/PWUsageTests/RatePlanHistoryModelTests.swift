@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 @MainActor
@@ -22,8 +23,9 @@ private final class HistoryStub {
         )
     }
 
-    func model() -> RatePlanHistoryModel {
+    func model(referencePeriods: [TariffPeriodDTO] = []) -> RatePlanHistoryModel {
         RatePlanHistoryModel(
+            referencePeriods: referencePeriods,
             loadHistory: { [self] in
                 if loadsUntilCancelled { try await Task.sleep(for: .seconds(60)) }
                 if let loadFailure { throw loadFailure }
@@ -42,6 +44,21 @@ private struct StubFailure: Error {}
 @MainActor
 @Suite("Rate plan history model")
 struct RatePlanHistoryModelTests {
+    @Test func passesTheStoredReferencePeriodsToTheFlow() async {
+        let stub = HistoryStub()
+        let reference = TariffPeriodDTO(
+            periodId: 1, tariffId: 10, name: "Stored", version: 1, source: .estimated,
+            effectiveFrom: "2023-01-01", effectiveTo: nil, isCurrentToday: true, updatedBy: nil, seasons: []
+        )
+        let model = stub.model(referencePeriods: [reference])
+        await model.load()
+        guard case let .ready(flow) = model.state else {
+            Issue.record("not ready")
+            return
+        }
+        #expect(flow.referencePeriods == [reference])
+    }
+
     @Test func loadsHistory() async {
         let stub = HistoryStub()
         let model = stub.model()

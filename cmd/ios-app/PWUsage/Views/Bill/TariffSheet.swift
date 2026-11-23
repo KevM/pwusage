@@ -6,6 +6,8 @@ struct TariffSheet: View {
     let actions: TariffTimelineActions
     /// Opened from Bill's setup card: start on the add-plan form.
     var startsAddingPlan = false
+    /// Which plan to scroll to once the timeline loads.
+    var scrollTarget: RatePlansScrollTarget?
 
     @Environment(\.scenePhase) private var scenePhase
     @State var timeline: SiteTariffsTimelineResponse?
@@ -82,21 +84,23 @@ struct TariffSheet: View {
     }
 
     private func timelineScrollView(_ data: SiteTariffsTimelineResponse) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                headerBannerSection(data)
-                timelinePeriodsSection(data)
-                TariffSheetFooterButtons(
-                    onAddPlan: { activeModal = .editor(.add) },
-                    onAiHandoff: { activeModal = .aiHandoff }
-                )
+        RatePlanScrollReader(target: scrollTarget?.periodID(in: data)) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    headerBannerSection(data)
+                    timelinePeriodsSection(data)
+                    TariffSheetFooterButtons(
+                        onAddPlan: { activeModal = .editor(.add) },
+                        onAiHandoff: { activeModal = .aiHandoff }
+                    )
+                }
+                .padding(16)
+                .frame(maxWidth: SectionTheme.maxContentWidth)
+                .frame(maxWidth: .infinity)
             }
-            .padding(16)
-            .frame(maxWidth: SectionTheme.maxContentWidth)
-            .frame(maxWidth: .infinity)
+            .background { SectionTheme.bill.screenBackground }
+            .refreshable { await performLoad(showSpinner: false) }
         }
-        .background { SectionTheme.bill.screenBackground }
-        .refreshable { await performLoad(showSpinner: false) }
     }
 
     @ViewBuilder
@@ -174,6 +178,8 @@ struct TariffSheet: View {
                     onRestoreTesla: RatePlanSourcePresentation.canRestoreTesla(period, in: data)
                         ? { activeModal = .restore(period) } : nil
                 )
+                .id(period.periodId)
+                comparisonRows(for: period, in: data)
             }
         }
     }
@@ -197,6 +203,8 @@ struct TariffSheet: View {
             )
         case .aiHandoff:
             RatePlanAiHandoffSheet(actions: actions.aiHandoff) { timeline = $0 }
+        case .fixedComparison(let row):
+            FixedComparisonChangeFlow(row: row, timeline: timeline, actions: actions, onApplied: selectionApplied)
         case .teslaSync:
             TeslaSyncSheet(actions: actions.teslaSync, currency: timeline?.currency ?? "USD") { timeline = $0 }
         case .editor(let mode):
@@ -221,14 +229,6 @@ struct TariffSheet: View {
     private func historyOfferStart(_ data: SiteTariffsTimelineResponse) -> String? {
         guard !historyOfferDismissals.isDismissed(siteID: site.id) else { return nil }
         return data.estimates?.historyGuide?.historyStart
-    }
-
-    private var rateHistorySheet: some View {
-        RatePlanHistorySheet(
-            teslaPlanName: timeline?.teslaSync.latestTariffName,
-            load: { try await actions.loadRateHistory() },
-            save: { timeline = try await actions.saveRateHistory($0) }
-        )
     }
 
     private func openStartingAddFormIfNeeded(_ timelineLoaded: Bool) {

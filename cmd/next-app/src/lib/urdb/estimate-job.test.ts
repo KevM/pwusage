@@ -19,7 +19,12 @@ vi.mock('../site-repo', () => ({
   },
 }));
 
-import { ownerPlanMatchesUtility, runUrdbEstimatesCron, runUrdbEstimatesForSite, type UrdbApi } from './estimate-job';
+vi.mock('../energy-repo-factory', () => ({
+  createEnergyRepo: () => ({ getCycleAggregates: async () => [] }),
+}));
+
+import { ownerPlanMatchesUtility, previewUrdbEstimatesForSite, referenceDesiredSpans, runUrdbEstimatesCron, runUrdbEstimatesForSite, type UrdbApi } from './estimate-job';
+import type { RevisionSpan } from './match';
 import type { UrdbRate } from './types';
 import effective from './__fixtures__/we-energies-effective-2026-04-28.json';
 import chain from './__fixtures__/we-energies-option-a-chain.json';
@@ -46,8 +51,8 @@ describe('estimate-job', () => {
         if (sql.includes('RETURNING updated_at::text AS claim')) {
           return { rows: [{ claim: '2026-11-17T00:00:00Z' }], rowCount: 1 };
         }
-        if (sql.includes('SELECT updated_at::text AS claim, choice FROM "SiteUtility"')) {
-          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto' }], rowCount: 1 };
+        if (sql.includes('SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label')) {
+          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto', followed_label: null, followed_from: null }], rowCount: 1 };
         }
         if (sql.includes('SELECT timezone FROM "Site"')) {
           return { rows: [{ timezone: 'America/Chicago' }], rowCount: 1 };
@@ -136,8 +141,8 @@ describe('estimate-job', () => {
           if (sql.includes('RETURNING updated_at::text AS claim')) {
             return { rows: [{ claim: '2026-11-17T00:00:00Z' }], rowCount: 1 };
           }
-          if (sql.includes('SELECT updated_at::text AS claim, choice FROM "SiteUtility"')) {
-            return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: scenario.choice }], rowCount: 1 };
+          if (sql.includes('SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label')) {
+            return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: scenario.choice, followed_label: null, followed_from: null }], rowCount: 1 };
           }
           return { rows: [], rowCount: 0 };
         }),
@@ -204,8 +209,8 @@ describe('estimate-job', () => {
         if (sql.includes('RETURNING updated_at::text AS claim')) {
           return { rows: [{ claim: '2026-11-17T00:00:00Z' }], rowCount: 1 };
         }
-        if (sql.includes('SELECT updated_at::text AS claim, choice FROM "SiteUtility"')) {
-          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto' }], rowCount: 1 };
+        if (sql.includes('SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label')) {
+          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto', followed_label: null, followed_from: null }], rowCount: 1 };
         }
         if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) {
           return {
@@ -323,5 +328,95 @@ describe('ownerPlanMatchesUtility', () => {
     expect(ownerPlanMatchesUtility({ ...picked, utility: 'Pacific Gas & Electric Co' }, 'We energies', inEffect)).toBe(false);
     expect(ownerPlanMatchesUtility(picked, 'We energies', [])).toBe(false);
     expect(ownerPlanMatchesUtility(null, 'We energies', inEffect)).toBe(false);
+  });
+});
+
+const flatSchedule = Array.from({ length: 12 }, () => Array(24).fill(0) as number[]);
+function fixedRate(label: string, start: string, buy: number, supersedes?: string): UrdbRate {
+  return { label, name: `Plan ${label}`, utility: 'Test Utility', startdate: Date.parse(`${start}T00:00:00Z`) / 1000, supersedes, dgrules: 'Net Metering', energyweekdayschedule: flatSchedule, energyweekendschedule: flatSchedule, energyratestructure: [[{ rate: buy }]] };
+}
+function span(label: string, from: string, to: string | null): RevisionSpan {
+  return { rate: fixedRate(label, from, 0.2), effectiveFrom: from, effectiveTo: to };
+}
+
+describe('referenceDesiredSpans', () => {
+  it('ends the defaults the day before the followed plan starts and clips the followed plan to start on that day', () => {
+    const result = referenceDesiredSpans(
+      [span('A', '2023-01-01', '2024-12-31'), span('B', '2025-01-01', null)],
+      [span('X', '2024-06-01', null)],
+      '2024-06-01',
+    );
+    expect(result.map(item => [item.rate.label, item.effectiveFrom, item.effectiveTo])).toEqual([
+      ['A', '2023-01-01', '2024-05-31'],
+      ['X', '2024-06-01', null],
+    ]);
+  });
+  it('merges a followed revision that already supplies the defaults into one span', () => {
+    const result = referenceDesiredSpans(
+      [span('A', '2024-01-01', null)],
+      [span('A', '2024-01-01', null)],
+      '2025-03-01',
+    );
+    expect(result.map(item => [item.rate.label, item.effectiveFrom, item.effectiveTo])).toEqual([['A', '2024-01-01', null]]);
+  });
+  it('extends the oldest followed revision back to the followed start when it begins later', () => {
+    const result = referenceDesiredSpans(
+      [span('A', '2023-01-01', null)],
+      [span('X1', '2024-01-01', '2024-12-31'), span('X2', '2025-01-01', null)],
+      '2023-03-01',
+    );
+    expect(result.map(item => [item.rate.label, item.effectiveFrom, item.effectiveTo])).toEqual([
+      ['A', '2023-01-01', '2023-02-28'],
+      ['X1', '2023-03-01', '2024-12-31'],
+      ['X2', '2025-01-01', null],
+    ]);
+  });
+});
+
+describe('estimate job followed comparison plan', () => {
+  function previewSnapshot(reference: { label: string | null; from: string | null }): void {
+    dbMocks.queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM "Site" s')) {
+        return { rows: [{ id: 's1', utility: 'Test Utility', grid_utility: null, timezone: 'America/Chicago', rate_country: 'US', tariff_content: null, site_name: 'Home', history_start: null }], rowCount: 1 };
+      }
+      if (sql.includes('FROM "SiteUtility"')) {
+        return { rows: [{ site_id: 's1', urdb_utility: 'Test Utility', choice: 'owner', urdb_plan_label: null, status: 'pending', urdb_reference_label: reference.label, urdb_reference_from_text: reference.from }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    dbMocks.connectMock.mockResolvedValue({ query: vi.fn(async () => ({ rows: [], rowCount: 0 })), release: vi.fn() });
+  }
+  const x1 = fixedRate('X1', '2025-01-01', 0.21);
+  const x2 = fixedRate('X2', '2026-01-01', 0.25, 'X1');
+  const defaultsOnly: UrdbRate[] = [fixedRate('D1', '2023-01-01', 0.18), fixedRate('D2', '2025-06-01', 0.19, 'D1')];
+  const api: UrdbApi = {
+    utilityNames: async () => ['Test Utility'],
+    ratesEffectiveOn: async () => [x2],
+    rateByLabel: async (label: string) => ({ X1: x1, X2: x2 })[label] ?? null,
+    defaultRates: async () => defaultsOnly,
+  };
+  const now = new Date('2026-11-17T12:00:00Z');
+
+  it('followsNewRevisionOfChosenLabel', async () => {
+    previewSnapshot({ label: 'X1', from: '2025-03-01' });
+    const preview = await previewUrdbEstimatesForSite('s1', api, now);
+    const followed = preview.reference.filter(item => item.span.effectiveFrom >= '2025-03-01');
+    expect(followed.map(item => item.span.rate.label)).toEqual(['X1', 'X2']);
+    expect(followed.every(item => item.role === 'estimated_reference')).toBe(true);
+    expect(followed[0].span.effectiveFrom).toBe('2025-03-01');
+    expect(preview.reference.some(item => item.span.rate.label === 'D2')).toBe(false);
+  });
+
+  it('leaves the followed range uncovered when the chosen plan cannot be fetched', async () => {
+    previewSnapshot({ label: 'GONE', from: '2025-03-01' });
+    const preview = await previewUrdbEstimatesForSite('s1', { ...api, rateByLabel: async () => null }, now);
+    expect(preview.reference.map(item => item.span.rate.label)).toEqual(['D1']);
+    expect(preview.reference[0].span.effectiveTo).toBe('2025-02-28');
+  });
+
+  it('keeps the utility defaults when no plan is followed', async () => {
+    previewSnapshot({ label: null, from: null });
+    const preview = await previewUrdbEstimatesForSite('s1', api, now);
+    expect(preview.reference.map(item => item.span.rate.label)).toEqual(['D1', 'D2']);
   });
 });

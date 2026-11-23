@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { expandHistoryPeriod, HistoryPeriodError } from './history-expand';
+import { expandFollowedHistoryPeriod, expandHistoryPeriod, HistoryPeriodError } from './history-expand';
 import { memoisedApi } from './memoised-api';
 import type { UrdbRate } from './types';
 import type { UrdbApi } from './estimate-job';
@@ -76,5 +76,30 @@ describe('expandHistoryPeriod', () => {
     await expandHistoryPeriod({ label: OPTION_B, from: '2018-01-01', to: '2023-11-13' }, ctx(memo));
     const labels = rateByLabel.mock.calls.map(call => call[0]);
     expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+describe('expandFollowedHistoryPeriod', () => {
+  const flat = (label: string, startdate: number, rate: number, supersedes?: string): UrdbRate => ({
+    label,
+    name: `Fixed ${label}`,
+    utility: UTILITY,
+    startdate,
+    ...(supersedes ? { supersedes } : {}),
+    energyratestructure: [[{ rate }]],
+    energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+    energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+  });
+
+  it('dropsUnreadableMiddleRevisionsLikeTheEstimateRefresh', async () => {
+    const r2023 = flat('fx-2023', Date.UTC(2023, 0, 1) / 1000, 0.12);
+    const r2024Broken: UrdbRate = { ...flat('fx-2024', Date.UTC(2024, 0, 1) / 1000, 0.15, 'fx-2023'), energyweekdayschedule: undefined };
+    const r2025 = flat('fx-2025', Date.UTC(2025, 0, 1) / 1000, 0.18, 'fx-2024');
+    const { api } = fake({ 'fx-2023': r2023, 'fx-2024': r2024Broken, 'fx-2025': r2025 });
+    const result = await expandFollowedHistoryPeriod({ label: 'fx-2025', from: '2023-01-01' }, ctx(api));
+    expect(result.map(r => [r.label, r.from, r.to])).toEqual([
+      ['fx-2023', '2023-01-01', '2023-12-31'],
+      ['fx-2025', '2025-01-01', null],
+    ]);
   });
 });

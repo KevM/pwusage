@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension DemoFixtures {
     static let demoUtilityName = "Demo Electric"
@@ -41,6 +42,64 @@ extension DemoFixtures {
                 )
             }
         )
+    }
+
+    /// A flat all-day plan, the shape every fixed comparison plan has.
+    static func flatSeasons(buy: Double, sell: Double) -> [TariffSeasonInput] {
+        let window = demoWindow(.offPeak, startHour: 0, endHour: 24, buy: buy, sell: sell)
+        return [TariffSeasonInput(
+            name: "All Year", fromMonth: 1, toMonth: 12, weekdayPeriods: [window], weekendPeriods: [window],
+            fromDay: 1, toDay: 31
+        )]
+    }
+
+    /// The utility's plans in effect on `effectiveDate`, which Change on a comparison row offers.
+    static func publicPlans(effectiveDate: String) -> PublicUtilityPlansResponse {
+        let peak = demoWindow(.onPeak, startHour: 16, endHour: 21, buy: 0.32, sell: 0.04)
+        let offPeak = demoWindow(.offPeak, startHour: 21, endHour: 16, buy: 0.11, sell: 0.03)
+        let timeOfUse = TariffSeasonInput(
+            name: "All Year", fromMonth: 1, toMonth: 12, weekdayPeriods: [peak, offPeak],
+            weekendPeriods: [demoWindow(.offPeak, startHour: 0, endHour: 24, buy: 0.11, sell: 0.03)]
+        )
+        return PublicUtilityPlansResponse(
+            utilityName: demoUtilityName,
+            effectiveDate: effectiveDate,
+            currency: "USD",
+            plans: [
+                UtilityPlanDTO(
+                    label: "demo-fixed", name: "Residential Standard", startDate: effectiveDate,
+                    utilityName: demoUtilityName, kind: .fixed, isDefault: true, currency: "USD",
+                    seasons: flatSeasons(buy: 0.18, sell: 0)
+                ),
+                UtilityPlanDTO(
+                    label: "demo-fixed-low-income", name: "Residential Care", startDate: effectiveDate,
+                    utilityName: demoUtilityName, kind: .fixed, isDefault: false, currency: "USD",
+                    seasons: flatSeasons(buy: 0.14, sell: 0)
+                ),
+                UtilityPlanDTO(
+                    label: "demo-tou", name: "Residential Time of Use", startDate: effectiveDate,
+                    utilityName: demoUtilityName, kind: .timeOfUse, isDefault: false, currency: "USD",
+                    seasons: [timeOfUse]
+                )
+            ]
+        )
+    }
+
+    /// Fixed comparison periods that cross a rate plan boundary: the first covers the end of the
+    /// earlier rate plan and the start of the current one, and a mid-plan revision starts the second,
+    /// so the current plan shows two comparison rows.
+    static func demoReferencePeriods() -> [TariffPeriodDTO] {
+        func period(id: Int, from: String, to: String?, buy: Double) -> TariffPeriodDTO {
+            TariffPeriodDTO(
+                periodId: id, tariffId: id * 10, name: "Residential Standard", version: 1, source: .estimated,
+                effectiveFrom: from, effectiveTo: to, isCurrentToday: to == nil, updatedBy: nil,
+                seasons: flatSeasons(buy: buy, sell: 0), startSource: .urdb
+            )
+        }
+        return [
+            period(id: 11, from: "2025-01-01", to: "2026-03-31", buy: 0.17),
+            period(id: 12, from: "2026-04-01", to: nil, buy: 0.18)
+        ]
     }
 
     static var demoCalendar: Calendar {
