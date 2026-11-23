@@ -1,4 +1,5 @@
 import AppIntents
+import PWUsageCore
 import SwiftUI
 import WidgetKit
 

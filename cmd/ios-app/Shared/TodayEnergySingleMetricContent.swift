@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 struct TodayEnergySingleMetricContent: View {
