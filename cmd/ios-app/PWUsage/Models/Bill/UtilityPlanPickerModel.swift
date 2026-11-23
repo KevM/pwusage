@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// The plans on the chosen utility's residential schedule, and the owner's pick among them.
 @MainActor

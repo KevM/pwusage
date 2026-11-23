@@ -31,7 +31,9 @@ extension PWUsageAPITests {
             return (try Self.fillResponse(request, status: 200), Data(json.utf8))
         }
         let result = try await api.commitTeslaSync(siteID: "site-1", fingerprint: "fp-1")
-        #expect(result == TeslaSyncResultDTO(outcome: "rejected", message: "Battery mode is locked", timeline: nil))
+        #expect(result.outcome == "rejected")
+        #expect(result.message == "Battery mode is locked")
+        #expect(result.timeline == nil)
         #expect(body?["fingerprint"] as? String == "fp-1")
     }
 }

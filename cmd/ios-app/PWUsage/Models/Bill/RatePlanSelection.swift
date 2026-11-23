@@ -1,15 +1,6 @@
 import Foundation
 import PWUsageCore
 
-/// Where a plan's export (sell) rates came from.
-enum ExportRateProvenance: String, Codable, Equatable, Sendable {
-    case published
-    case netMetering = "net_metering"
-    case inherited
-    case manual
-    case tesla
-}
-
 struct TariffSelectionCommitResponse: Decodable, Equatable, Sendable {
     let selectionIds: [Int]
     let tariffIds: [Int]

@@ -287,34 +287,42 @@ struct TeslaSyncCopyTests {
     }
 
     @Test("A raised buy rate reads as raised to the export rate, with the period name and currency")
-    func raisedToSellLine() {
-        let adjustment = TeslaSyncAdjustmentDTO(
-            season: "All year", period: .onPeak, side: "buy", from: 0.2, stored: 0.25, reason: "raised_to_sell"
-        )
+    func raisedToSellLine() throws {
+        let adjustment = try decodeAdjustment("""
+        {"season":"All year","period":"ON_PEAK","side":"buy",
+         "from":0.2,"to":0.25,"reason":"raised_to_sell"}
+        """)
         #expect(TeslaSyncCopy.adjustmentLine(adjustment, currency: "USD")
             == "Tesla will store Peak buy as $0.25 (raised to match the $0.25 export rate).")
     }
 
     @Test("A negative buy rate reads as zero, named by its buy side")
-    func negativeBuyLine() {
-        let adjustment = TeslaSyncAdjustmentDTO(
-            season: "Winter", period: .offPeak, side: "buy", from: -0.02, stored: 0, reason: "negative_to_zero"
-        )
+    func negativeBuyLine() throws {
+        let adjustment = try decodeAdjustment("""
+        {"season":"Winter","period":"OFF_PEAK","side":"buy",
+         "from":-0.02,"to":0,"reason":"negative_to_zero"}
+        """)
         #expect(TeslaSyncCopy.adjustmentLine(adjustment, currency: "USD")
             == "Tesla will store Off-Peak buy as $0.00 (negative prices become zero).")
     }
 
     @Test("A negative export rate reads as zero, named export, with a five-decimal rate kept")
-    func negativeSellLine() {
-        let adjustment = TeslaSyncAdjustmentDTO(
-            season: "Winter", period: .superOffPeak, side: "sell", from: -0.00001, stored: 0, reason: "negative_to_zero"
-        )
+    func negativeSellLine() throws {
+        let adjustment = try decodeAdjustment("""
+        {"season":"Winter","period":"SUPER_OFF_PEAK","side":"sell",
+         "from":-0.00001,"to":0,"reason":"negative_to_zero"}
+        """)
         #expect(TeslaSyncCopy.adjustmentLine(adjustment, currency: "USD")
             == "Tesla will store Super Off-Peak export as $0.00 (negative prices become zero).")
-        let precise = TeslaSyncAdjustmentDTO(
-            season: "Winter", period: .partialPeak, side: "buy", from: 0.1, stored: 0.12345, reason: "raised_to_sell"
-        )
+        let precise = try decodeAdjustment("""
+        {"season":"Winter","period":"PARTIAL_PEAK","side":"buy",
+         "from":0.1,"to":0.12345,"reason":"raised_to_sell"}
+        """)
         #expect(TeslaSyncCopy.adjustmentLine(precise, currency: "USD")
             == "Tesla will store Mid-Peak buy as $0.12345 (raised to match the $0.12345 export rate).")
+    }
+
+    private func decodeAdjustment(_ json: String) throws -> TeslaSyncAdjustmentDTO {
+        try JSONDecoder().decode(TeslaSyncAdjustmentDTO.self, from: Data(json.utf8))
     }
 }

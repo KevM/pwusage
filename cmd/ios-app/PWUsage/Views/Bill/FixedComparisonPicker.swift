@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The fixed plans a row's Change offers, plus Enter rates myself. Fed by the utility's plans in the
