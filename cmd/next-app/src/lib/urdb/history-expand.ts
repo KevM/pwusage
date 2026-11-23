@@ -1,6 +1,6 @@
 import type { TariffSeasonInput } from '../tariff-contract';
-import { urdbRateToSeasons, type ConvertContext } from './convert';
-import type { UrdbApi } from './estimate-job';
+import { isFixedRate, urdbRateToSeasons, type ConvertContext } from './convert';
+import { followedFixedRevisions, referenceDesiredSpans, type UrdbApi } from './estimate-job';
 import { newerRevision, urdbStartDate, walkSupersedes } from './match';
 import type { UrdbRate } from './types';
 import { normalizeUtilityName } from './utility-lookup';
@@ -10,8 +10,9 @@ export interface ExpandedRevision { label: string; revisionStart: string; from: 
 // The message is owner-facing.
 export class HistoryPeriodError extends Error {}
 const MAX_WALK_STEPS = 40;
+type ExpandContext = { api: Pick<UrdbApi, 'ratesEffectiveOn' | 'rateByLabel'>; utilityName: string; timeZone: string; today: string; convert: ConvertContext };
 
-export async function expandHistoryPeriod(period: HistoryPeriodInput, ctx: { api: Pick<UrdbApi, 'ratesEffectiveOn' | 'rateByLabel'>; utilityName: string; timeZone: string; today: string; convert: ConvertContext }): Promise<Array<ExpandedRevision & { pricingRate: UrdbRate }>> {
+export async function expandHistoryPeriod(period: HistoryPeriodInput, ctx: ExpandContext): Promise<Array<ExpandedRevision & { pricingRate: UrdbRate }>> {
   const fetchByLabel = (label: string) => ctx.api.rateByLabel(label);
   const [chosen, inEffect] = await Promise.all([fetchByLabel(period.label), ctx.api.ratesEffectiveOn(ctx.utilityName, period.to ?? ctx.today, ctx.timeZone)]);
   // URDB lists some utilities under an alias ("We energies") whose rates are filed under another name.
@@ -36,4 +37,33 @@ export async function expandHistoryPeriod(period: HistoryPeriodInput, ctx: { api
   });
   if (revisions.some(revision => !revision)) throw new HistoryPeriodError(`We couldn’t read the rates for ${chosen.name}. Add this rate plan in Rate Plans.`);
   return revisions.filter(revision => revision !== null);
+}
+
+/**
+ * Expands an open-ended fixed comparison choice using the same revision policy as `runUrdbEstimatesForSite`:
+ * only convertible fixed revisions are kept, with no price borrowing across unreadable filings, so the initial
+ * save lays the exact spans the background refresh will maintain.
+ */
+export async function expandFollowedHistoryPeriod(period: { label: string; from: string }, ctx: ExpandContext): Promise<ExpandedRevision[]> {
+  const fetchByLabel = (label: string) => ctx.api.rateByLabel(label);
+  const [chosen, inEffect] = await Promise.all([fetchByLabel(period.label), ctx.api.ratesEffectiveOn(ctx.utilityName, ctx.today, ctx.timeZone)]);
+  const utilityNames = new Set([ctx.utilityName, ...inEffect.map(rate => rate.utility)].map(normalizeUtilityName));
+  if (!chosen || !utilityNames.has(normalizeUtilityName(chosen.utility))) throw new HistoryPeriodError('That rate plan isn’t listed for your utility.');
+  if (!isFixedRate(chosen)) throw new HistoryPeriodError('Choose a fixed rate plan.');
+  const followed = await followedFixedRevisions(chosen, inEffect, fetchByLabel, ctx.timeZone);
+  const spans = referenceDesiredSpans([], followed, period.from);
+  const revisions = spans.flatMap(span => {
+    const converted = urdbRateToSeasons(span.rate, ctx.convert);
+    if (!converted.ok) return [];
+    return [{
+      label: span.rate.label,
+      revisionStart: urdbStartDate(span.rate) ?? span.effectiveFrom,
+      from: span.effectiveFrom,
+      to: span.effectiveTo,
+      name: converted.name,
+      seasons: converted.seasons,
+    }];
+  });
+  if (!revisions.length) throw new HistoryPeriodError(`We couldn’t read the rates for ${chosen.name}. Add this rate plan in Rate Plans.`);
+  return revisions;
 }

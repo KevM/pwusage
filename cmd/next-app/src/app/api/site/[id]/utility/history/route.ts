@@ -12,11 +12,10 @@ import { jsonWithETag } from '@/lib/tariff-etag';
 import { siteLocalDateString, TariffValidationError } from '@/lib/tariff-timeline';
 import { averageSell, type FixedComparisonWrite, TariffNotFoundError, TariffTimelineRepo, UtilityChangedError } from '@/lib/tariff-timeline-repo';
 import * as urdb from '@/lib/urdb/client';
-import { isFixedRate } from '@/lib/urdb/convert';
 import { monthlyUsage } from '@/lib/urdb/estimate-job';
 import { memoisedApi } from '@/lib/urdb/memoised-api';
 import { buildRatePlanHistory, mapWithConcurrency } from '@/lib/urdb/history-candidates';
-import { expandHistoryPeriod, HistoryPeriodError, type HistoryPeriodInput } from '@/lib/urdb/history-expand';
+import { expandFollowedHistoryPeriod, expandHistoryPeriod, HistoryPeriodError, type HistoryPeriodInput } from '@/lib/urdb/history-expand';
 import { startPendingEstimates } from '@/lib/urdb/start-estimates';
 
 export const dynamic = 'force-dynamic';
@@ -141,12 +140,10 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
         fixed: await mapWithConcurrency(fixedPeriods, 4, async (period): Promise<FixedComparisonWrite> => {
           const { fixed: choice, from, to } = period;
           if ('name' in choice) return { kind: 'manual', from, to, name: choice.name, buyRate: choice.buyRate, sellRate: choice.sellRate };
-          const revisions = await expandHistoryPeriod({ label: choice.label, from, to }, expandCtx);
-          // An open choice is followed through the plan's later revisions, which only a fixed plan can be.
-          if (to === null) {
-            const chosen = await api.rateByLabel(choice.label);
-            if (!chosen || !isFixedRate(chosen)) throw new HistoryPeriodError('Choose a fixed rate plan.');
-          }
+          // An open choice is followed through the plan's later revisions using the same fixed-revision policy as the estimate refresh.
+          const revisions = to === null
+            ? await expandFollowedHistoryPeriod({ label: choice.label, from }, expandCtx)
+            : await expandHistoryPeriod({ label: choice.label, from, to }, expandCtx);
           return { kind: 'public', from, to, label: choice.label, revisions };
         }),
       }));

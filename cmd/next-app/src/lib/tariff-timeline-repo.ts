@@ -1854,6 +1854,7 @@ export async function setFollowedReferenceLabelOnClient(
   );
 
   await truncateComparisonEstimatesOnClient(client, siteId, from);
+  const reusedTariffIds = new Set<number>();
   for (const revision of options.revisions ?? []) {
     const parsed = compileSeasonsToParsedTariff(revision.name, revision.seasons);
     const hash = tariffContentHash(parsed);
@@ -1861,10 +1862,11 @@ export async function setFollowedReferenceLabelOnClient(
       `SELECT u.tariff_id FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id
        WHERE u.site_id = $1 AND u.role = 'estimated_reference' AND u.urdb_label = $2
          AND u.start_date = $3::date AND t.content_hash = $4
-       ORDER BY u.tariff_id DESC LIMIT 1`,
+       ORDER BY u.tariff_id DESC`,
       [siteId, revision.label, revision.from, hash]
-    )).rows[0];
-    const tariffId = existing?.tariff_id ?? await insertTariffGraph(client, siteId, parsed, 'estimated', null, false, hash);
+    )).rows.find(row => !reusedTariffIds.has(Number(row.tariff_id)));
+    const tariffId = existing ? Number(existing.tariff_id) : await insertTariffGraph(client, siteId, parsed, 'estimated', null, false, hash);
+    reusedTariffIds.add(tariffId);
     await upsertUrdbEstimateSourceOnClient(client, siteId, tariffId, {
       role: 'estimated_reference',
       label: revision.label,

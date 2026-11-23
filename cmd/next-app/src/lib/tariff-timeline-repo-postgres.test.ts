@@ -1495,6 +1495,42 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         expect(await references(siteId)).toEqual([]);
       });
 
+      it('openGuideFollowPreservesCoverageAcrossEstimateRefreshWhenAMiddleRevisionIsUnreadable', async () => {
+        const siteId = 's-fixed-guide-unreadable-middle';
+        await harrisonSite(siteId, 'none');
+        const r2023 = flatRate('fx-2023', '2023-01-01', 0.12);
+        const r2024Broken = { ...flatRate('fx-2024', '2024-01-01', 0.15, 'fx-2023'), energyweekdayschedule: undefined };
+        const r2025 = flatRate('fx-2025', '2025-01-01', 0.18, 'fx-2024');
+        const chain = [r2023, r2024Broken, r2025];
+        const api: UrdbApi = {
+          ...chainApi(chain),
+          ratesEffectiveOn: async () => [r2025],
+          defaultRates: async () => [r2025],
+        };
+        const { expandFollowedHistoryPeriod } = await import('./urdb/history-expand');
+        const revisions = await expandFollowedHistoryPeriod(
+          { label: 'fx-2025', from: '2023-06-01' },
+          { api, utilityName: UTILITY, timeZone: 'America/Chicago', today: '2026-11-16', convert: { medianMonthlyKwh: null, fallbackSellRate: 0 } }
+        );
+        const repo = new TariffTimelineRepo();
+        const saved = await repo.saveRatePlanHistory(
+          siteId, 'u1', UTILITY,
+          [revision('a', '2023-06-01', '2024-12-31')], 'a-open',
+          [{ kind: 'public', from: '2023-06-01', to: null, label: 'fx-2025', revisions }]
+        );
+        expect(saved.referencePeriods?.map(row => [row.effectiveFrom, row.effectiveTo, row.urdbLabel])).toEqual([
+          ['2023-06-01', '2023-12-31', 'fx-2023'],
+          ['2025-01-01', null, 'fx-2025'],
+        ]);
+        const refreshed = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect(refreshed.status).toBe('ready');
+        const after = await repo.getTimeline(siteId, 'u1');
+        expect(after.referencePeriods?.map(row => [row.effectiveFrom, row.effectiveTo, row.urdbLabel])).toEqual([
+          ['2023-06-01', '2023-12-31', 'fx-2023'],
+          ['2025-01-01', null, 'fx-2025'],
+        ]);
+      });
+
       describe('editor choice of a utility plan', () => {
         const rates = [flatRate('fx-2024', '2024-01-01', 0.12), flatRate('fx-2025', '2025-01-01', 0.13, 'fx-2024')];
         const api = chainApi(rates);

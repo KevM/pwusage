@@ -269,6 +269,29 @@ describe('PUT /api/site/[id]/utility/history', () => {
         expect((await openSave('flat-1')).status).toBe(200);
         expect(mocks.saveRatePlanHistory.mock.calls[0][5][0]).toMatchObject({ kind: 'public', to: null, label: 'flat-1' });
       });
+      it('skipsUnreadableMiddleRevisionsWhenFollowingAnOpenFixedLabel', async () => {
+        const makeFixed = (label: string, startdate: number, rate: number, supersedes?: string) => ({
+          ...y2025[0],
+          label,
+          startdate,
+          ...(supersedes ? { supersedes } : {}),
+          energyratestructure: [[{ rate }]],
+          energyweekdayschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+          energyweekendschedule: Array.from({ length: 12 }, () => Array(24).fill(0)),
+        });
+        const r2023 = makeFixed('fx-2023', Date.UTC(2023, 0, 1) / 1000, 0.12);
+        const r2024Broken = { ...makeFixed('fx-2024', Date.UTC(2024, 0, 1) / 1000, 0.15, 'fx-2023'), energyweekdayschedule: undefined };
+        const r2025 = makeFixed('fx-2025', Date.UTC(2025, 0, 1) / 1000, 0.18, 'fx-2024');
+        mocks.rateByLabel.mockImplementation(async (label: string) => [r2023, r2024Broken, r2025, ...optionBChain, ...y2025].find(rate => rate.label === label) ?? null);
+        mocks.getRatePlanHistoryInputs.mockResolvedValueOnce({ window: { ...window, fillThrough: null }, tesla: null });
+        const response = await PUT(put({ periods: [{ label: OPTION_B, from: '2023-06-01', to: null, fixed: { label: 'fx-2025' } }] }), context);
+        expect(response.status).toBe(200);
+        const [, , , , , fixed] = mocks.saveRatePlanHistory.mock.calls[0];
+        expect(fixed[0].revisions.map((r: { label: string; from: string; to: string | null }) => [r.label, r.from, r.to])).toEqual([
+          ['fx-2023', '2023-06-01', '2023-12-31'],
+          ['fx-2025', '2025-01-01', null],
+        ]);
+      });
     });
     it('rejectsAFixedLabelFromAnotherUtility', async () => {
       mocks.rateByLabel.mockResolvedValue({ ...y2025[0], utility: 'Madison Gas & Electric Co' });
