@@ -1,5 +1,4 @@
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite("Rate Plans scroll target")
