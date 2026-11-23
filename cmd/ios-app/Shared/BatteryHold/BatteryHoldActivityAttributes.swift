@@ -105,9 +105,9 @@ struct BatteryHoldActivityContentState: Codable, Hashable {
 
     /// How long past a due check the server's `stale-date` waits before a state is out of date.
     static let staleGrace: TimeInterval = 10 * 60
-    /// The server checks every hold on a 15-minute boundary, so a first check
-    /// is due within this long of any activity starting.
-    static let firstCheckInterval: TimeInterval = 15 * 60
+    /// The server checks every active hold on a 5-minute boundary, so a first
+    /// check is due within this long of any activity starting.
+    static let firstCheckInterval: TimeInterval = 5 * 60
 
     /// When a non-final state should be treated as out of date: ten minutes
     /// past the next scheduled check, as the server's `stale-date` does.
