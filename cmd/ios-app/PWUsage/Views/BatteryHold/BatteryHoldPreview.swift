@@ -1,4 +1,5 @@
 #if DEBUG
+    import PWUsageCore
     import SwiftUI
 
     struct BatteryHoldPreview: View {

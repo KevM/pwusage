@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The signed-in root: one tab per `AppTab`, a sidebar on iPad and a

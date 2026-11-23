@@ -1,17 +1,16 @@
 import Foundation
-import PWUsageCore
 
-struct MobileSite: Codable, Equatable, Identifiable {
-    let id: String
-    let name: String
-    let utility: String
+public struct MobileSite: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let utility: String
     /// Day of the month the utility bill starts.
-    let billingDay: Int
+    public let billingDay: Int
     /// False while the day is still the server default and nobody has chosen it. A server that
     /// predates the field decodes as confirmed, so the app never asks for something it cannot save.
-    let billingDayConfirmed: Bool
+    public let billingDayConfirmed: Bool
 
-    init(id: String, name: String, utility: String, billingDay: Int = 1, billingDayConfirmed: Bool = true) {
+    public init(id: String, name: String, utility: String, billingDay: Int = 1, billingDayConfirmed: Bool = true) {
         self.id = id
         self.name = name
         self.utility = utility
@@ -19,7 +18,7 @@ struct MobileSite: Codable, Equatable, Identifiable {
         self.billingDayConfirmed = billingDayConfirmed
     }
 
-    init(from decoder: any Decoder) throws {
+    public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
@@ -29,45 +28,64 @@ struct MobileSite: Codable, Equatable, Identifiable {
     }
 
     /// The same site once a person has chosen `day`.
-    func settingBillingDay(_ day: Int) -> MobileSite {
+    public func settingBillingDay(_ day: Int) -> MobileSite {
         MobileSite(id: id, name: name, utility: utility, billingDay: day, billingDayConfirmed: true)
     }
 }
 
-struct MobileBillResponse: Codable, Equatable {
-    let version: Int
-    let site: Site
-    let currentBill: Bill
-    let loadTiming: LoadTiming?
-    let tariffReattribution: ReattributionStatusDTO?
-    let sources: Sources
-    var outlook: BillOutlookHistory?
-    let revision: String?
+public struct MobileBillResponse: Codable, Equatable, Sendable {
+    public let version: Int
+    public let site: Site
+    public let currentBill: Bill
+    public let loadTiming: LoadTiming?
+    public let tariffReattribution: ReattributionStatusDTO?
+    public let sources: Sources
+    public var outlook: BillOutlookHistory?
+    public let revision: String?
 
-    struct Site: Codable, Equatable {
-        let id: String
-        let name: String
-        let timezone: String
+    public struct Site: Codable, Equatable, Sendable {
+        public let id: String
+        public let name: String
+        public let timezone: String
+
+        public init(id: String, name: String, timezone: String) {
+            self.id = id
+            self.name = name
+            self.timezone = timezone
+        }
     }
 
-    struct Bill: Codable, Equatable {
-        let estimatedCost: Double?
-        let currency: String
-        let cycleStart: Date
-        let cycleEnd: Date
-        let periods: [Period]
+    public struct Bill: Codable, Equatable, Sendable {
+        public let estimatedCost: Double?
+        public let currency: String
+        public let cycleStart: Date
+        public let cycleEnd: Date
+        public let periods: [Period]
 
-        var hasFiniteAmounts: Bool {
+        public init(estimatedCost: Double?, currency: String, cycleStart: Date, cycleEnd: Date, periods: [Period]) {
+            self.estimatedCost = estimatedCost
+            self.currency = currency
+            self.cycleStart = cycleStart
+            self.cycleEnd = cycleEnd
+            self.periods = periods
+        }
+
+        public var hasFiniteAmounts: Bool {
             (estimatedCost?.isFinite ?? true) && periods.allSatisfy(\.hasFiniteAmounts)
         }
     }
 
-    struct Sources: Codable, Equatable {
-        let calculatedAt: Date
-        let energyDataThrough: Date?
+    public struct Sources: Codable, Equatable, Sendable {
+        public let calculatedAt: Date
+        public let energyDataThrough: Date?
+
+        public init(calculatedAt: Date, energyDataThrough: Date?) {
+            self.calculatedAt = calculatedAt
+            self.energyDataThrough = energyDataThrough
+        }
     }
 
-    enum ContractError: Error, Equatable {
+    public enum ContractError: Error, Equatable, Sendable {
         case unsupportedVersion(Int)
         case siteMismatch(expected: String, actual: String)
         case invalidAmount
@@ -77,7 +95,7 @@ struct MobileBillResponse: Codable, Equatable {
         case version, site, currentBill, loadTiming, tariffReattribution, sources, outlook, revision
     }
 
-    init(
+    public init(
         version: Int,
         site: Site,
         currentBill: Bill,
@@ -97,7 +115,7 @@ struct MobileBillResponse: Codable, Equatable {
         self.revision = revision
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .version)
         guard version == 1 else { throw ContractError.unsupportedVersion(version) }
@@ -116,7 +134,7 @@ struct MobileBillResponse: Codable, Equatable {
     }
 
     /// Finiteness only, as for `MobileLiveResponse.validating`: negative rates are real.
-    func validating(siteID: String) throws -> Self {
+    public func validating(siteID: String) throws -> Self {
         guard site.id == siteID else {
             throw ContractError.siteMismatch(expected: siteID, actual: site.id)
         }
@@ -127,8 +145,8 @@ struct MobileBillResponse: Codable, Equatable {
     }
 }
 
-struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
-    static let maximumAge: TimeInterval = 24 * 60 * 60
+public struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
+    public static let maximumAge: TimeInterval = 24 * 60 * 60
 
     /// `asOf` is stamped by the *server* and compared against the *device* clock, so a
     /// device whose clock is *behind* the server sees it in the future even though the
@@ -139,50 +157,90 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
     /// device clock reject every response forever and blame the server for it.
     /// This is NOT the live contract's rule — `stateOfChargeMaximumAge` is about a
     /// suspect *reading* and requires `age >= 0`, which is stricter, not comparable.
-    static let maximumNegativeAgeSkew: TimeInterval = 60 * 60
+    public static let maximumNegativeAgeSkew: TimeInterval = 60 * 60
 
-    let version: Int
-    let site: Site
-    let units: Units
-    let asOf: Date
-    let availability: Availability
-    let unavailableReason: String?
-    let usableDayCount: Int
-    let historyStart: Date
-    let historyEnd: Date
-    let slots: [Slot]
+    public let version: Int
+    public let site: Site
+    public let units: Units
+    public let asOf: Date
+    public let availability: Availability
+    public let unavailableReason: String?
+    public let usableDayCount: Int
+    public let historyStart: Date
+    public let historyEnd: Date
+    public let slots: [Slot]
 
-    struct Site: Decodable, Equatable, Sendable {
-        let id: String
-        let timezone: String
+    public init(
+        version: Int, site: Site, units: Units, asOf: Date, availability: Availability,
+        unavailableReason: String?, usableDayCount: Int, historyStart: Date, historyEnd: Date, slots: [Slot]
+    ) {
+        self.version = version
+        self.site = site
+        self.units = units
+        self.asOf = asOf
+        self.availability = availability
+        self.unavailableReason = unavailableReason
+        self.usableDayCount = usableDayCount
+        self.historyStart = historyStart
+        self.historyEnd = historyEnd
+        self.slots = slots
     }
 
-    struct Units: Decodable, Equatable, Sendable {
-        let power: String
-        let localMinute: String
+    public struct Site: Decodable, Equatable, Sendable {
+        public let id: String
+        public let timezone: String
+
+        public init(id: String, timezone: String) {
+            self.id = id
+            self.timezone = timezone
+        }
     }
 
-    enum Availability: String, Decodable, Equatable, Sendable {
+    public struct Units: Decodable, Equatable, Sendable {
+        public let power: String
+        public let localMinute: String
+
+        public init(power: String, localMinute: String) {
+            self.power = power
+            self.localMinute = localMinute
+        }
+    }
+
+    public enum Availability: String, Decodable, Equatable, Sendable {
         case available
         case unavailable
     }
 
-    struct Slot: Decodable, Equatable, Sendable {
-        let localMinute: Int
-        let homeKw: Double?
-        let batteryNetChargeKw: Double?
-        let sampleCount: Int
-        let coverage: Double
+    public struct Slot: Decodable, Equatable, Sendable {
+        public let localMinute: Int
+        public let homeKw: Double?
+        public let batteryNetChargeKw: Double?
+        public let sampleCount: Int
+        public let coverage: Double
         /// Grid history over the last 28 days (export positive). Absent from
         /// older servers, which leaves the projection bounded by the forecast.
-        var gridNetExportKw: Double?
+        public var gridNetExportKw: Double?
         /// The 1-in-4 "dull day" grid net export for the cautious projection.
-        var cautiousGridNetExportKw: Double?
+        public var cautiousGridNetExportKw: Double?
         /// Median solar; not used by the projection yet.
-        var solarKw: Double?
+        public var solarKw: Double?
+
+        public init(
+            localMinute: Int, homeKw: Double?, batteryNetChargeKw: Double?, sampleCount: Int, coverage: Double,
+            gridNetExportKw: Double? = nil, cautiousGridNetExportKw: Double? = nil, solarKw: Double? = nil
+        ) {
+            self.localMinute = localMinute
+            self.homeKw = homeKw
+            self.batteryNetChargeKw = batteryNetChargeKw
+            self.sampleCount = sampleCount
+            self.coverage = coverage
+            self.gridNetExportKw = gridNetExportKw
+            self.cautiousGridNetExportKw = cautiousGridNetExportKw
+            self.solarKw = solarKw
+        }
     }
 
-    enum ContractError: Error, Equatable {
+    public enum ContractError: Error, Equatable, Sendable {
         case unsupportedVersion(Int)
         case siteMismatch(expected: String, actual: String)
         /// `asOf` read against this device's clock falls outside the age window.
@@ -192,7 +250,7 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
         case invalidSource
     }
 
-    func validating(siteID: String, now: Date) throws -> Self {
+    public func validating(siteID: String, now: Date) throws -> Self {
         let sourceAge = now.timeIntervalSince(asOf)
         guard version == 1 else { throw ContractError.unsupportedVersion(version) }
         guard site.id == siteID else { throw ContractError.siteMismatch(expected: siteID, actual: site.id) }
@@ -233,7 +291,7 @@ struct MobileLoadPlanningContextResponse: Decodable, Equatable, Sendable {
         return self
     }
 
-    var estimatorContext: LoadTimingForecastEstimator.PlanningContext? {
+    public var estimatorContext: LoadTimingForecastEstimator.PlanningContext? {
         guard availability == .available else { return nil }
         return LoadTimingForecastEstimator.PlanningContext(
             timeZone: site.timezone,

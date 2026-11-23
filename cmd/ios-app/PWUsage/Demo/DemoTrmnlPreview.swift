@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Builds a TRMNL preview document for Cedar House using the real TRMNL framework
 /// stylesheet (`plugins.css`) and the same `TrmnlRenderer` markup structure used on

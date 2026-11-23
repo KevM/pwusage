@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Home hides readings older than 15 minutes on arrival and waits for fresh ones.

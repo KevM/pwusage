@@ -1,5 +1,6 @@
 import Foundation
 import os
+import PWUsageCore
 
 /// Starts, registers, reconciles and ends battery hold Live Activities.
 ///
