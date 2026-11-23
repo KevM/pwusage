@@ -59,7 +59,9 @@ enum DemoSession {
                     forecastService: forecastService,
                     history: solar.history, records: solar.records,
                     ratePlanTimelines: solar.ratePlanTimelines,
-                    runner: runner
+                    runner: runner,
+                    // The bill stays the demo's scripted one; flow history still syncs for savings.
+                    billPricingMode: .shadow
                 )
             },
             cache: cache,

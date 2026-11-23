@@ -50,6 +50,30 @@ struct DemoRatePlansTests {
         #expect(applied.timeline.supportsRatePlanSelection)
     }
 
+    @Test("Demo savings reach ready with flow history, so the Bill card shows Edit Rate Plans")
+    func demoSavingsAreReady() async throws {
+        defer { DemoSession.tearDown(suiteName: suiteName) }
+        let coordinator = try await demoCoordinator()
+        // Flow history syncs in the background; refreshing again after it lands is what the app does.
+        func isReady() -> Bool {
+            if case .ready = coordinator.savingsModel.state { return true }
+            return false
+        }
+        var attempts = 0
+        while attempts < 50, !isReady() {
+            attempts += 1
+            try await Task.sleep(for: .milliseconds(100))
+            await coordinator.refreshSavings()
+        }
+        guard case .ready(let report) = coordinator.savingsModel.state else {
+            Issue.record("Demo savings must reach ready, got \(coordinator.savingsModel.state)")
+            return
+        }
+        #expect(SavingsPresentation.showsCard(report.cycle))
+        let timeline = try #require(coordinator.savingsTimeline)
+        #expect(SavingsPresentation.ratePlansEntry(hasRatePlans: !timeline.periods.isEmpty).title == "Edit Rate Plans")
+    }
+
     @Test("Demo reference periods span two plans and split at a mid-plan revision")
     func demoComparisonSplitsAtRevision() throws {
         let timeline = DemoFixtures.tariffs(asOf: .now)

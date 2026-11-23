@@ -32,7 +32,14 @@ struct DemoAPITests {
         let context = try await api.fetchLoadPlanningContext(siteID: DemoFixtures.site.id)
         _ = try context.validating(siteID: DemoFixtures.site.id, now: clock.now)
         let history = try await api.fetchSolarHistory(siteID: DemoFixtures.site.id, from: "", changedSince: nil)
-        #expect(history == .enabled(timeZone: DemoFixtures.timeZone, days: [], nextFrom: nil))
+        guard case .enabled(let zone, let days, let nextFrom) = history else {
+            Issue.record("Demo solar history must be enabled")
+            return
+        }
+        #expect(zone == DemoFixtures.timeZone)
+        #expect(nextFrom == nil)
+        #expect(!days.isEmpty)
+        #expect(days.last?.status == .open)
     }
 
     /// Minute timelines render with the minute's start, so a source inside the

@@ -5,7 +5,7 @@ import PWUsageCore
 /// nothing stored. The battery hold is simulated so the one interactive action
 /// behaves like the real one, and ends with the demo.
 @MainActor
-final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTariffDataAPI {
+final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTariffDataAPI, MobileSolarHistoryDataAPI {
     /// How long one source instant serves before the next fetch moves it up to
     /// the clock. Long enough that a refresh's fetches agree, short enough that
     /// a long session stays inside the balance freshness windows.
@@ -234,7 +234,11 @@ final class DemoAPI: PWUsageApplicationAPI, MobileBatteryHoldDataAPI, MobileTari
     func fetchSolarHistory(
         siteID: String, from: String, changedSince: Date?
     ) async throws -> MobileSolarHistoryResponse {
-        .enabled(timeZone: DemoFixtures.timeZone, days: [], nextFrom: nil)
+        .enabled(
+            timeZone: DemoFixtures.timeZone,
+            days: DemoFixtures.solarHistoryDays(from: from, asOf: now()),
+            nextFrom: nil
+        )
     }
 
     func fetchBatteryHold(siteID: String) async throws -> BatteryHoldResponse {

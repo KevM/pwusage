@@ -63,11 +63,11 @@ enum DemoFixtures {
     private static let offPeakKwhPerDay = 8.0
 
     /// Whole seconds: a fractional source instant can serialize into the future.
-    private static func source(_ asOf: Date) -> Date {
+    static func source(_ asOf: Date) -> Date {
         Date(timeIntervalSince1970: floor(asOf.timeIntervalSince1970))
     }
 
-    private static var calendar: Calendar {
+    static var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         return calendar
@@ -124,7 +124,7 @@ enum DemoFixtures {
         return formatter.string(from: date)
     }
 
-    private static func localDateText(_ date: Date) -> String {
+    static func localDateText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = timeZone
