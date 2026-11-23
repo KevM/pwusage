@@ -153,6 +153,7 @@ targets:
     sources:
       - path: PWUsageTests
       - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Support/RatePlanResponseFixture.swift
+      - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Support/SmartShiftFixtures.swift
       - path: Packages/PWUsageCore/Tests/PWUsageCoreTests/Fixtures/BillPricing/single-plan-cycle.json
         buildPhase: resources
     info:

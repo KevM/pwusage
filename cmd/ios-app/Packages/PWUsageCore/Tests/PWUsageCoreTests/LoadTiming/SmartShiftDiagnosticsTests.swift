@@ -1,11 +1,15 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 struct SmartShiftDiagnosticsTests {
     typealias Estimator = LoadTimingForecastEstimator
-    typealias Fixtures = SmartShiftPresentationTests
+    typealias Fixtures = SmartShiftFixtures
+
+    /// The app owns the note's copy; these tests only need it to be present.
+    static func unusableNote(_ reason: Estimator.UnavailableReason) -> String {
+        "Forecast unusable: \(reason.rawValue)"
+    }
 
     static let intervals = (0 ..< 96).map { index in
         SolarForecastInterval(periodStart: Fixtures.at(Double(index) / 2),
@@ -33,11 +37,11 @@ struct SmartShiftDiagnosticsTests {
         let now = harrison.now
         let car = harrison.car
         let source = balanceSourceTime ?? now
-        let evaluation = SmartShiftPresentation.evaluate(
+        let evaluation = SmartShiftEvaluator.evaluate(
             profile: car,
             inputs: .init(now: now, timing: timing, forecast: forecast, intervals: intervals, context: context,
                           balanceSourceTime: source, billingCycleEnd: Fixtures.at(48),
-                          currencyCode: "USD", timeZone: "UTC"))
+                          currencyCode: "USD", timeZone: "UTC"), unusableNote: Self.unusableNote)
         let diagnostics = SmartShiftDiagnostics(
             siteId: "site-42", app: .init(version: "1.2", build: "34"), job: car, now: now, balanceSourceTime: source,
             billingCycleEnd: Fixtures.at(48), currencyCode: "USD", timeZone: "UTC", timing: timing,
@@ -142,11 +146,11 @@ struct SmartShiftDiagnosticsTests {
         timing = LoadTiming(hasTariff: false, hasCycleData: true, activeIsCheapest: false, periods: timing.periods,
                             pricingPeriods: timing.pricingPeriods, tariffTimeline: timing.tariffTimeline,
                             nextCheaper: nil, nextCheaperPhrase: nil, nextStartPhraseByKey: [:])
-        let evaluation = SmartShiftPresentation.evaluate(
+        let evaluation = SmartShiftEvaluator.evaluate(
             profile: car,
             inputs: .init(now: now, timing: timing, forecast: .none, intervals: nil, context: nil,
                           balanceSourceTime: now, billingCycleEnd: Fixtures.at(48),
-                          currencyCode: "USD", timeZone: "UTC"))
+                          currencyCode: "USD", timeZone: "UTC"), unusableNote: Self.unusableNote)
         let diagnostics = SmartShiftDiagnostics(
             siteId: "site-42", app: nil, job: car, now: now, balanceSourceTime: now, billingCycleEnd: Fixtures.at(48),
             currencyCode: "USD", timeZone: "UTC", timing: timing, evaluation: evaluation, intervals: nil, context: nil,

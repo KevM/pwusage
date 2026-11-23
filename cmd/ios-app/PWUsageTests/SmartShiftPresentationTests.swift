@@ -6,11 +6,10 @@ import Testing
 struct SmartShiftPresentationTests {
     typealias Estimator = LoadTimingForecastEstimator
 
-    /// Local midnight in UTC; `start` in the estimator tests is 08:00 on this day.
-    static let day0 = Date(timeIntervalSince1970: 1_800_000_000 - 8 * 3600)
-    static func at(_ hours: Double) -> Date { day0.addingTimeInterval(hours * 3600) }
-    static let now = at(8.5)
-    static let horizonEnd = at(48)
+    static let day0 = SmartShiftFixtures.day0
+    static func at(_ hours: Double) -> Date { SmartShiftFixtures.at(hours) }
+    static let now = SmartShiftFixtures.now
+    static let horizonEnd = SmartShiftFixtures.horizonEnd
 
     static let car = LoadProfile(id: "car", name: "Charge the car", kind: .car, energyKwh: 0, durationHours: 0,
                                  carSettings: CarLoadSettings(capacityKwh: 60, initialStateOfCharge: 20,
@@ -129,23 +128,6 @@ struct TariffSpan {
     }
 }
 
-/// One tariff span with its rates, in hours from `at(0)`.
-struct RateSpan {
-    let start: Double
-    let end: Double
-    let key: String
-    let buy: Double
-    let sell: Double
-
-    init(_ start: Double, _ end: Double, _ key: String, _ buy: Double, _ sell: Double) {
-        self.start = start
-        self.end = end
-        self.key = key
-        self.buy = buy
-        self.sell = sell
-    }
-}
-
 /// A lane's six balances for a bill-date fixture.
 struct BankValues {
     let start: Double
@@ -177,12 +159,4 @@ struct StartCosts {
     let costNow: Double
     let recommendedCost: Double
     let savings: Double
-}
-
-/// Harrison's tariff, its comparison, and the clock they were priced at.
-struct HarrisonSunday {
-    let timing: LoadTiming
-    let comparison: LoadTimingForecastEstimator.Comparison
-    let now: Date
-    let car: LoadProfile
 }

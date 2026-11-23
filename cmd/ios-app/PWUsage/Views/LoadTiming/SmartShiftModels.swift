@@ -1,17 +1,6 @@
 import Foundation
 import PWUsageCore
 
-enum ForecastAvailability: Equatable {
-    /// This site doesn't use the automatic forecast, so there is none to add.
-    case none
-    case loading
-    /// Connected, but the forecast comparison can't run; carries a one-sentence reason.
-    case unusable(String)
-    /// Automatic setup is unavailable; the note opens solar forecast settings.
-    case automaticUnavailable(String)
-    case ready
-}
-
 enum SmartShiftChoiceID: Equatable, Hashable { case recommended, now }
 
 struct SmartShiftChoice: Equatable {
@@ -115,14 +104,6 @@ struct SmartShiftScreen: Equatable {
     }
 
     let content: Content
-}
-
-/// The comparison the card shows, and what the forecast layer contributed to it.
-struct SmartShiftEvaluation: Equatable {
-    let result: LoadTimingForecastEstimator.Result
-    let forecast: ForecastAvailability
-    /// The projection that priced `result`; `nil` when none could run.
-    var projection: LoadTimingForecastEstimator.Projection.Kind?
 }
 
 /// Every Smart Shift sentence and display decision, kept out of the views so it can be tested.
