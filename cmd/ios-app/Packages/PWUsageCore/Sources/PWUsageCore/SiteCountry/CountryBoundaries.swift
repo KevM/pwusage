@@ -3,7 +3,7 @@ import Foundation
 /// Country outlines bundled with the app, so a site's country is found on the device and its
 /// coordinates never leave the phone. Built from Natural Earth's public-domain 1:50m Admin 0
 /// countries by `cmd/ios-app/make-country-boundaries.py`, which documents the file format.
-struct CountryBoundaries: Sendable {
+public struct CountryBoundaries: Sendable {
     struct Point: Equatable, Sendable {
         let longitude: Double
         let latitude: Double
@@ -41,7 +41,7 @@ struct CountryBoundaries: Sendable {
         let box: Box
     }
 
-    enum LoadError: Error, Equatable {
+    public enum LoadError: Error, Equatable, Sendable {
         case missingResource
         case malformed
     }
@@ -52,7 +52,7 @@ struct CountryBoundaries: Sendable {
         self.countries = countries
     }
 
-    init(data: Data) throws {
+    public init(data: Data) throws {
         var reader = BoundaryReader(data: data)
         guard try reader.bytes(4) == Array("PWCB".utf8), try reader.uint8() == 1 else {
             throw LoadError.malformed
@@ -75,7 +75,7 @@ struct CountryBoundaries: Sendable {
         self.countries = countries
     }
 
-    static func bundled(in bundle: Bundle = .main) throws -> Self {
+    public static func bundled(in bundle: Bundle = .main) throws -> Self {
         guard let url = bundle.url(forResource: "country-boundaries", withExtension: "bin") else {
             throw LoadError.missingResource
         }

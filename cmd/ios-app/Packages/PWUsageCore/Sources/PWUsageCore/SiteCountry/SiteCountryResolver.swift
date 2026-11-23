@@ -1,8 +1,7 @@
 import Foundation
-import PWUsageCore
 
 /// What the saved home location says about a site's country.
-enum SiteCountryInference: Equatable, Sendable {
+public enum SiteCountryInference: Equatable, Sendable {
     case resolved(countryCode: String)
     /// Within the border margin of another country: the owner must choose. Nearest first.
     case nearBorder(candidates: [String])
@@ -13,7 +12,7 @@ enum SiteCountryInference: Equatable, Sendable {
 }
 
 /// What to tell PWUsage about the site's country after an inference.
-enum SiteRateCountryAction: Equatable, Sendable {
+public enum SiteRateCountryAction: Equatable, Sendable {
     case keep
     /// Report this inferred country (or clear a stale inference with nil), source `solar_location`.
     case report(countryCode: String?)
@@ -21,19 +20,23 @@ enum SiteRateCountryAction: Equatable, Sendable {
 
 /// Finds a site's country on the device from its saved, rounded home location. Only the
 /// resulting country code is sent to PWUsage; the coordinates stay on the phone.
-struct SiteCountryResolver: Sendable {
+public struct SiteCountryResolver: Sendable {
     /// Saved locations are rounded to about 1 km and 1:50m outlines can sit a few kilometers
     /// off the true border, so anything this close to another country is uncertain.
-    static let borderMarginKilometers = 5.0
+    public static let borderMarginKilometers = 5.0
     /// Marks Natural Earth areas with no ISO code; a site there is unresolved.
-    static let unknownTerritory = "--"
+    public static let unknownTerritory = "--"
 
     /// Loaded once, off the main actor, on first use.
-    static let bundled: SiteCountryResolver? = (try? CountryBoundaries.bundled()).map(Self.init)
+    public static let bundled: SiteCountryResolver? = (try? CountryBoundaries.bundled()).map(Self.init)
 
-    let boundaries: CountryBoundaries
+    public let boundaries: CountryBoundaries
 
-    func inference(for location: SolarHomeLocation?) -> SiteCountryInference {
+    public init(boundaries: CountryBoundaries) {
+        self.boundaries = boundaries
+    }
+
+    public func inference(for location: SolarHomeLocation?) -> SiteCountryInference {
         guard let location, location.isValid else { return .noLocation }
         let point = CountryBoundaries.Point(longitude: location.longitude, latitude: location.latitude)
         let nearby = boundaries.countries(within: Self.borderMarginKilometers, of: point)
@@ -54,7 +57,7 @@ struct SiteCountryResolver: Sendable {
     /// An owner's choice is never overwritten; an older server (no stored country) is left alone.
     /// A missing location keeps the stored inference, since it may just not have synced yet, but a
     /// saved location that no longer resolves clears it back to unknown rather than leaving it stale.
-    static func action(stored: SiteRateCountryDTO?, inference: SiteCountryInference) -> SiteRateCountryAction {
+    public static func action(stored: SiteRateCountryDTO?, inference: SiteCountryInference) -> SiteRateCountryAction {
         guard let stored, stored.source != .owner else { return .keep }
         switch inference {
         case .resolved(let code):
@@ -67,7 +70,7 @@ struct SiteCountryResolver: Sendable {
     }
 
     /// Whether the app should ask the owner for the site's country.
-    static func needsOwnerChoice(stored: SiteRateCountryDTO?, inference: SiteCountryInference) -> Bool {
+    public static func needsOwnerChoice(stored: SiteRateCountryDTO?, inference: SiteCountryInference) -> Bool {
         guard let stored, stored.source != .owner, stored.eligibility == .unknown else { return false }
         if case .resolved = inference { return false }
         return true

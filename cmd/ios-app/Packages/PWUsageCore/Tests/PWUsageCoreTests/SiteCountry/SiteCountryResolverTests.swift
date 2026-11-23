@@ -1,12 +1,11 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite("Site country from the saved home location")
 struct SiteCountryResolverTests {
     private static func inference(_ latitude: Double, _ longitude: Double) throws -> SiteCountryInference {
-        let resolver = try #require(SiteCountryResolver.bundled, "The bundled country outlines load")
+        let resolver = try #require(CountryBoundariesFixture.resolver, "The bundled country outlines load")
         return resolver.inference(for: SolarHomeLocation(latitude: latitude, longitude: longitude, source: .device))
     }
 
@@ -52,7 +51,7 @@ struct SiteCountryResolverTests {
     func unresolved() throws {
         #expect(try Self.inference(30, -40) == .unresolved)
         #expect(try Self.inference(42.66, 21.17) == .unresolved, "Pristina, Kosovo has no ISO 3166 code")
-        let resolver = try #require(SiteCountryResolver.bundled)
+        let resolver = try #require(CountryBoundariesFixture.resolver)
         #expect(resolver.inference(for: nil) == .noLocation)
         #expect(resolver.inference(for: SolarHomeLocation(latitude: 120, longitude: 0, source: .device)) == .noLocation)
     }
