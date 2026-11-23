@@ -179,6 +179,22 @@ struct RatePlanHistoryFixedComparisonTests {
         #expect(flow.periods().map(\.fixed) == [nil])
     }
 
+    @Test func aSpanStartingInTheTrustedYearStagesTheCurrentDefaultFixedPlan() throws {
+        // The server never lists the current (trusted) year in `years`; its plans are `current`.
+        let base = RatePlanHistoryFlowTests.harrison()
+        let history = RatePlanHistoryDTO(
+            utilityName: base.utilityName, historyStart: "2026-01-05", fillThrough: base.fillThrough,
+            teslaShape: base.teslaShape, current: base.current, years: []
+        )
+        let flow = Self.reviewed(references: [], history: history)
+        let expected = FixedComparisonChoice.publicPlan(
+            label: "Residential Rg 1 2026", name: "Residential Rg 1", buyRate: 0.18
+        )
+        #expect(flow.spans.first?.from == "2026-01-05")
+        #expect(flow.stagedFixed(forSpanAt: 0) == expected)
+        #expect(flow.periods().map(\.fixed) == [expected])
+    }
+
     @Test func sameLabelSpansWithDifferentComparisonsStaySeparateAndKeepTheOwnersChoice() {
         let timeOfUse = RatePlanHistoryFlowTests.timeOfUse(2026)
         let years = [

@@ -51,8 +51,11 @@ extension RatePlanHistoryFlow {
 
     private func fallbackFixedPlan(startingIn day: String) -> FixedComparisonChoice? {
         let year = Int(day.prefix(4))
-        // Only the year covering the start: a year with no plans stages nothing, never today's plans.
-        let listed = history.years.first { $0.year == year }?.plans ?? []
+        // Only the year covering the start. A year the server lists with no plans stages nothing; a year
+        // it does not list is the current (trusted) year, whose plans are `history.current`.
+        let listed = history.years.first { $0.year == year }?.plans ?? (
+            history.years.contains { $0.year == year } ? [] : history.current
+        )
         let fixedPlans = listed.filter { $0.kind == .fixed && $0.fixedLabel != nil }
         guard let plan = fixedPlans.first(where: \.isDefault) ?? fixedPlans.first, let label = plan.fixedLabel else {
             return nil
