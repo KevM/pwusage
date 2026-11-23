@@ -28,6 +28,8 @@
 - A file belongs to the feature whose screen or lifecycle consumes it.
 - Cross-target code lives in `Shared`.
 - `Models` holds value types only.
+- `PWUsageCore/SolarLayout` holds each site's layout record and merges a record from another device (last
+  writer wins per field). The app owns its storage and CloudKit sync.
 - `PWUsageCore/LoadTiming` chooses Smart Shift's projection (forecast, history or flat) and records and replays a
   pass as diagnostics JSON. The app supplies the forecast note's copy.
 - `State` holds app coordinators, stores, and actors. The portable rate plan timeline cache lives in

@@ -1,8 +1,8 @@
 import Foundation
-import PWUsageCore
 
-enum SolarLayoutCloudMerge {
-    static func merge(local: SolarLayoutRecord?, remote: SolarLayoutRecord) -> SolarLayoutRecord {
+/// Merges a site's layout record from another device into this one's.
+public enum SolarLayoutCloudMerge {
+    public static func merge(local: SolarLayoutRecord?, remote: SolarLayoutRecord) -> SolarLayoutRecord {
         let winningLoc = winningLocation(local: local, remote: remote)
         let localCand = validateResult(candidate(for: local), for: winningLoc.location)
         let remoteCand = validateResult(candidate(for: remote), for: winningLoc.location)

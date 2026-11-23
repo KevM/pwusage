@@ -10,28 +10,6 @@ struct ManualSolarLayoutTests {
     private let locA = SolarHomeLocation(latitude: 37.77, longitude: -122.41, source: .device)
     private let locB = SolarHomeLocation(latitude: 40.71, longitude: -74.00, source: .device)
 
-    // MARK: - Record
-
-    @Test("A record stored before manual layouts decodes with no manual layout")
-    func legacyRecordDecodes() throws {
-        let legacy = """
-        {"location":{"latitude":37.77,"longitude":-122.41,"source":"device"},"locationSetAt":100}
-        """
-        let record = try JSONDecoder().decode(SolarLayoutRecord.self, from: Data(legacy.utf8))
-        #expect(record.location == locA)
-        #expect(record.manualLayout == nil)
-        #expect(record.manualSetAt == nil)
-    }
-
-    @Test("A manual layout survives a JSON round trip")
-    func jsonRoundTrip() throws {
-        let record = SolarLayoutRecord(
-            location: locA, locationSetAt: Date(timeIntervalSince1970: 1),
-            manualLayout: Self.layout(), manualSetAt: Date(timeIntervalSince1970: 5))
-        let decoded = try JSONDecoder().decode(SolarLayoutRecord.self, from: JSONEncoder().encode(record))
-        #expect(decoded == record)
-    }
-
     // MARK: - CloudKit
 
     @Test("CloudKit round-trips three systems and eight faces")
@@ -67,57 +45,6 @@ struct ManualSolarLayoutTests {
         let parsed = try #require(SolarLayoutCloudRecordSerializer.parseRecord(ckRecord))
         #expect(parsed.record.manualLayout == nil)
         #expect(parsed.record.manualSetAt == nil)
-    }
-
-    // MARK: - Merge
-
-    @Test("The later manualSetAt wins in either direction")
-    func laterManualSetAtWins() {
-        let older = Self.layout(label: "older")
-        let newer = Self.layout(label: "newer")
-        let local = SolarLayoutRecord(location: locA, manualLayout: older, manualSetAt: Date(timeIntervalSince1970: 1))
-        let remote = SolarLayoutRecord(location: locA, manualLayout: newer, manualSetAt: Date(timeIntervalSince1970: 2))
-        #expect(SolarLayoutCloudMerge.merge(local: local, remote: remote).manualLayout == newer)
-        #expect(SolarLayoutCloudMerge.merge(local: remote, remote: local).manualLayout == newer)
-    }
-
-    @Test("A dated clear beats an older layout, and a newer layout beats an older clear")
-    func clearIsLastWriterWins() {
-        let layout = Self.layout()
-        let entered = SolarLayoutRecord(
-            location: locA, manualLayout: layout, manualSetAt: Date(timeIntervalSince1970: 1))
-        let cleared = SolarLayoutRecord(location: locA, manualLayout: nil, manualSetAt: Date(timeIntervalSince1970: 2))
-        let merged = SolarLayoutCloudMerge.merge(local: entered, remote: cleared)
-        #expect(merged.manualLayout == nil)
-        #expect(merged.manualSetAt == Date(timeIntervalSince1970: 2))
-
-        let reentered = SolarLayoutRecord(
-            location: locA, manualLayout: layout, manualSetAt: Date(timeIntervalSince1970: 3))
-        #expect(SolarLayoutCloudMerge.merge(local: reentered, remote: cleared).manualLayout == layout)
-    }
-
-    @Test("A dated layout beats a record that never set one")
-    func datedBeatsUndated() {
-        let layout = Self.layout()
-        let entered = SolarLayoutRecord(
-            location: locA, manualLayout: layout, manualSetAt: Date(timeIntervalSince1970: 1))
-        let untouched = SolarLayoutRecord(location: locA)
-        #expect(SolarLayoutCloudMerge.merge(local: untouched, remote: entered).manualLayout == layout)
-        #expect(SolarLayoutCloudMerge.merge(local: entered, remote: untouched).manualLayout == layout)
-        #expect(SolarLayoutCloudMerge.merge(local: nil, remote: entered).manualLayout == layout)
-        #expect(SolarLayoutCloudMerge.merge(local: untouched, remote: untouched).manualLayout == nil)
-    }
-
-    @Test("The manual layout is independent of which location wins")
-    func manualLayoutIgnoresLocationWinner() {
-        let layout = Self.layout()
-        let local = SolarLayoutRecord(
-            location: locA, locationSetAt: Date(timeIntervalSince1970: 1),
-            manualLayout: layout, manualSetAt: Date(timeIntervalSince1970: 1))
-        let remote = SolarLayoutRecord(location: locB, locationSetAt: Date(timeIntervalSince1970: 9))
-        let merged = SolarLayoutCloudMerge.merge(local: local, remote: remote)
-        #expect(merged.location == locB)
-        #expect(merged.manualLayout == layout)
     }
 
     // MARK: - Store
@@ -186,34 +113,7 @@ struct ManualSolarLayoutTests {
 
     /// Three systems and eight faces: an original south install, a two-face addition and an east/west garage.
     static func layout(label: String = "Original 2016 install") -> ManualSolarLayout {
-        ManualSolarLayout(systems: [
-            ManualSolarSystem(
-                label: label, installDate: Date(timeIntervalSince1970: 1_450_000_000), inverterAcKw: 7.6,
-                faces: [
-                    face("South roof", 14, 285, azimuth: 180, tilt: 22),
-                    face("West roof", 6, 285, azimuth: 270, tilt: 22),
-                    face("Porch", 2, 285, azimuth: nil, tilt: nil)
-                ]),
-            ManualSolarSystem(
-                label: "2023 addition", installDate: Date(timeIntervalSince1970: 1_680_000_000), inverterAcKw: nil,
-                faces: [
-                    face("South roof", 8, 410, azimuth: 180, tilt: 22),
-                    face(nil, 4, 410, azimuth: 90, tilt: 22)
-                ]),
-            ManualSolarSystem(
-                label: nil, installDate: nil, inverterAcKw: nil,
-                faces: [
-                    face("Garage east", 5, 400, azimuth: 90, tilt: 15),
-                    face("Garage west", 5, 400, azimuth: 270, tilt: 15),
-                    face("Shed", 1, 400, azimuth: 180, tilt: 10)
-                ])
-        ])
-    }
-
-    private static func face(
-        _ label: String?, _ panels: Int, _ watts: Double, azimuth: Double?, tilt: Double?
-    ) -> ManualSolarFace {
-        ManualSolarFace(label: label, panelCount: panels, panelWatts: watts, azimuthDegrees: azimuth, tiltDegrees: tilt)
+        ManualSolarLayoutFixtures.layout(label: label)
     }
 
     private static func emptyResult(_ status: DetectedSolarLayout.Status) -> DetectedSolarLayout {
