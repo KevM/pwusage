@@ -4,7 +4,7 @@ import SwiftUI
 struct SolarSystemSavingsSection: View {
     let state: SavingsState
     let currency: String
-    let hasRatePlans: Bool
+    let hasRatePlans: Bool?
     let onOpenRatePlans: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
     /// The estimate setup step still needed; its rows stay here even when the Home accessory is dismissed.

@@ -6,6 +6,8 @@ struct TariffSheet: View {
     let actions: TariffTimelineActions
     /// Opened from Bill's setup card: start on the add-plan form.
     var startsAddingPlan = false
+    /// Which plan to scroll to once the timeline loads.
+    var scrollTarget: RatePlansScrollTarget?
 
     @Environment(\.scenePhase) private var scenePhase
     @State var timeline: SiteTariffsTimelineResponse?
@@ -82,21 +84,23 @@ struct TariffSheet: View {
     }
 
     private func timelineScrollView(_ data: SiteTariffsTimelineResponse) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                headerBannerSection(data)
-                timelinePeriodsSection(data)
-                TariffSheetFooterButtons(
-                    onAddPlan: { activeModal = .editor(.add) },
-                    onAiHandoff: { activeModal = .aiHandoff }
-                )
+        RatePlanScrollReader(target: scrollTarget?.periodID(in: data)) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    headerBannerSection(data)
+                    timelinePeriodsSection(data)
+                    TariffSheetFooterButtons(
+                        onAddPlan: { activeModal = .editor(.add) },
+                        onAiHandoff: { activeModal = .aiHandoff }
+                    )
+                }
+                .padding(16)
+                .frame(maxWidth: SectionTheme.maxContentWidth)
+                .frame(maxWidth: .infinity)
             }
-            .padding(16)
-            .frame(maxWidth: SectionTheme.maxContentWidth)
-            .frame(maxWidth: .infinity)
+            .background { SectionTheme.bill.screenBackground }
+            .refreshable { await performLoad(showSpinner: false) }
         }
-        .background { SectionTheme.bill.screenBackground }
-        .refreshable { await performLoad(showSpinner: false) }
     }
 
     @ViewBuilder
@@ -174,6 +178,7 @@ struct TariffSheet: View {
                     onRestoreTesla: RatePlanSourcePresentation.canRestoreTesla(period, in: data)
                         ? { activeModal = .restore(period) } : nil
                 )
+                .id(period.periodId)
                 comparisonRows(for: period, in: data)
             }
         }

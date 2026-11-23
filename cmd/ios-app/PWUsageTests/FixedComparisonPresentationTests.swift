@@ -218,7 +218,7 @@ struct FixedComparisonPresentationTests {
         )
         #expect(open.effectiveTo == nil)
         if case let .manual(name, seasons) = open.candidate {
-            #expect(name == "Fixed Rate Plan")
+            #expect(name == "Fixed comparison plan")
             #expect(seasons.first?.weekdayPeriods.first?.buyRate == 0.2)
         } else {
             Issue.record("expected a manual candidate")

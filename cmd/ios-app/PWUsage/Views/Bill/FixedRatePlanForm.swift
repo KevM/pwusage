@@ -18,7 +18,7 @@ struct FixedRatePlanForm: View {
     let actions: FixedRatePlanActions
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name = "Fixed Rate Plan"
+    @State private var name = FixedRatePlanDraft.normalizedName("")
     @State private var buyRateText = ""
     @State private var sellRateText = FixedRatePlanDraft.formatRate(0)
     @State private var path: [Route] = []

@@ -94,7 +94,7 @@ struct SavingsPresentationTests {
         )
         #expect(blank.effectiveTo == nil)
         if case .manual(let blankName, _) = blank.candidate {
-            #expect(blankName == "Fixed Rate Plan")
+            #expect(blankName == "Fixed comparison plan")
         }
     }
 
@@ -133,6 +133,10 @@ struct SavingsPresentationTests {
         let some = SavingsPresentation.ratePlansEntry(hasRatePlans: true)
         #expect(some.title == "Edit Rate Plans")
         #expect(!some.startsAdding)
+        // Until the timeline loads, neither claim is made and adding is not assumed.
+        let unloaded = SavingsPresentation.ratePlansEntry(hasRatePlans: nil)
+        #expect(unloaded.title == "Rate Plans")
+        #expect(!unloaded.startsAdding)
     }
 
     @Test("Setup prompts talk about rate plans, not a fixed rate plan")

@@ -89,8 +89,10 @@ struct SolarSystemView: View {
                     currency: currency,
                     onSave: { request in await coordinator.saveSystemCosts(request) }
                 )
-            case let .ratePlans(startsAdding):
-                RatePlansSheet(site: site, actions: .live(coordinator), startsAddingPlan: startsAdding)
+            case let .ratePlans(startsAdding, scrollTarget):
+                RatePlansSheet(
+                    site: site, actions: .live(coordinator), startsAddingPlan: startsAdding, scrollTarget: scrollTarget
+                )
             case .rateEstimates(let prompt):
                 RateEstimatesSetupSheet(
                     prompt: prompt,
@@ -108,7 +110,7 @@ struct SolarSystemView: View {
     }
 
     private var currency: String {
-        coordinator.bill.response?.currentBill.currency ?? "USD"
+        coordinator.savingsTimeline?.currency ?? coordinator.bill.response?.currentBill.currency ?? "USD"
     }
 
     /// The Powerwall's first day of battery flow, from the savings report.
@@ -181,7 +183,8 @@ struct SolarSystemView: View {
         }
     }
 
-    private var hasRatePlans: Bool { !(coordinator.savingsTimeline?.periods.isEmpty ?? true) }
+    /// Nil until the rate plan timeline loads.
+    private var hasRatePlans: Bool? { coordinator.savingsTimeline.map { !$0.periods.isEmpty } }
 
     private var savingsSection: some View {
         SolarSystemSavingsSection(
@@ -189,9 +192,8 @@ struct SolarSystemView: View {
             currency: currency,
             hasRatePlans: hasRatePlans,
             onOpenRatePlans: {
-                savingsSheet = .ratePlans(
-                    startsAdding: SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).startsAdding
-                )
+                let entry = SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans)
+                savingsSheet = .ratePlans(startsAdding: entry.startsAdding, scrollTo: entry.startsAdding ? nil : .today)
             },
             onCaveatAction: routeCaveat,
             estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
@@ -223,7 +225,8 @@ struct SolarSystemView: View {
 
     private func routeCaveat(_ action: SavingsCaveat.Action) {
         switch action {
-        case .openRatePlans, .fixRatePlans: savingsSheet = .ratePlans(startsAdding: false)
+        case .openRatePlans: savingsSheet = .ratePlans(startsAdding: false, scrollTo: .firstUncovered)
+        case .fixRatePlans: savingsSheet = .ratePlans(startsAdding: false, scrollTo: nil)
         }
     }
 
@@ -362,7 +365,7 @@ struct SolarSystemView: View {
 }
 
 private enum SolarSavingsSheet: Identifiable {
-    case ratePlans(startsAdding: Bool)
+    case ratePlans(startsAdding: Bool, scrollTo: RatePlansScrollTarget?)
     case rateEstimates(RateEstimatesPrompt)
     case systemCosts
 

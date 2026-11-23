@@ -105,8 +105,14 @@ enum SavingsPresentation {
         let startsAdding: Bool
     }
 
-    static func ratePlansEntry(hasRatePlans: Bool) -> RatePlansEntry {
-        RatePlansEntry(title: hasRatePlans ? "Edit Rate Plans" : "Add Rate Plans", startsAdding: !hasRatePlans)
+    /// `hasRatePlans` is nil until the timeline loads: the button then names neither add nor edit and
+    /// never opens straight into adding a plan.
+    static func ratePlansEntry(hasRatePlans: Bool?) -> RatePlansEntry {
+        switch hasRatePlans {
+        case .none: RatePlansEntry(title: "Rate Plans", startsAdding: false)
+        case .some(true): RatePlansEntry(title: "Edit Rate Plans", startsAdding: false)
+        case .some(false): RatePlansEntry(title: "Add Rate Plans", startsAdding: true)
+        }
     }
 
     static let billSetupPrompt = "Add your rate plans to see what your solar and Powerwall saved "
@@ -223,10 +229,10 @@ enum FixedRatePlanDraft {
         )
     }
 
-    /// The name as saved: trimmed, `Fixed Rate Plan` when blank.
+    /// The name as saved: trimmed, `Fixed comparison plan` when blank.
     static func normalizedName(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Fixed Rate Plan" : trimmed
+        return trimmed.isEmpty ? "Fixed comparison plan" : trimmed
     }
 
     private static func makeSeasons(

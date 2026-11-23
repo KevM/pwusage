@@ -5,7 +5,7 @@ struct BillSavingsCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let state: SavingsState
     let currency: String
-    let hasRatePlans: Bool
+    let hasRatePlans: Bool?
     let onOpenRatePlans: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
 
