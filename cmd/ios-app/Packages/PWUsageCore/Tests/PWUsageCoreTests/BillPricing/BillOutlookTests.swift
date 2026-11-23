@@ -1,8 +1,8 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
+@Suite("Bill Outlook")
 struct BillOutlookTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     func bucket(_ kwh: Double, buy: Double = 0.3) -> BillOutlookBucket {
@@ -57,8 +57,9 @@ struct BillOutlookTests {
     }
     @Test func matchesCanonicalServerPricingFixtures() throws {
         struct Fixture: Decodable { let name: String; let buckets: [BillOutlookBucket]; let expectedCost: Double }
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("../../next-app/src/lib/test-support/bill-outlook-fixtures.json")
+        // Use the same fixture as the server pricing tests.
+        let fixturePath = "../../../../../../next-app/src/lib/test-support/bill-outlook-fixtures.json"
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(fixturePath)
         let fixtures = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: url))
         for fixture in fixtures {
             #expect(abs(BillOutlook.cost(fixture.buckets) - fixture.expectedCost) < 0.0000001, "\(fixture.name)")

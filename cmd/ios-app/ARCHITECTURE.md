@@ -13,7 +13,8 @@
 - `PWUsageWidgets/` — Widget extension.
 - `Packages/PWUsageCore/` — Local Swift Package with pure-Foundation domains tested natively on macOS
   (`SolarLayout`, `SolarHealth`, `SolarForecast`, `BillPricing`, `LoadTiming`, `Savings`, `SharedModels`).
-  App, UI, widget, and store orchestration lives in `PWUsage`.
+  `BillPricing` includes Bill Outlook projections and shift calculations. App, UI, widget, and store
+  orchestration lives in `PWUsage`.
 - `PWUsageTests/<Feature>/` — Feature tests; `PWUsageTests/Support/` holds shared doubles/clocks.
 
 ## File naming
