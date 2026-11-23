@@ -1538,6 +1538,18 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           })).rejects.toThrow(UtilityChangedError);
         });
 
+        it('retryingAFollowAfterAnOwnerOverrideAppearedIsAConflict', async () => {
+          const siteId = 's-editor-follow-stale-override';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, deps);
+          await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+          const stale = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
+          await choose(siteId, 'x', '2024-03-01', '2024-04-30', 'manual');
+          await expect(commitTariffSelection(siteId, 'u1', stale, deps)).rejects.toThrow(TariffSelectionConflictError);
+        });
+
         it('openPublicChoiceDropsOwnerReferenceRowsFromItsStart', async () => {
           const siteId = 's-editor-follow-replaces';
           await harrisonSite(siteId, 'none');

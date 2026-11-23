@@ -4283,8 +4283,16 @@ export class TariffTimelineRepo {
       });
 
       if (currentPreview.reviewHash !== commit.expectedReviewHash) {
+        // A retry is only the same follow when no owner reference row still overlaps it; reselecting would have cleared those.
         const alreadyFollowing = followsUtilityPlan(commit) && commit.candidate.kind === 'public'
-          && utilityRow?.urdb_reference_label === commit.candidate.label && utilityRow.urdb_reference_from === commit.effectiveFrom;
+          && utilityRow?.urdb_reference_label === commit.candidate.label && utilityRow.urdb_reference_from === commit.effectiveFrom
+          && !(await client.query(
+            `SELECT 1 FROM "TariffReferencePeriod" p
+             WHERE p.site_id = $1 AND (p.effective_to IS NULL OR p.effective_to >= $2::date)
+               AND (p.source <> 'estimated' OR EXISTS (SELECT 1 FROM "TariffSelection" s WHERE s.id = p.selection_id AND s.choice_kind = 'owner'))
+             LIMIT 1`,
+            [siteId, commit.effectiveFrom]
+          )).rowCount;
         const retryResult = alreadyFollowing
           ? { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: true, reattributionRange: null }
           : await findIdempotentRetryOnClient(
