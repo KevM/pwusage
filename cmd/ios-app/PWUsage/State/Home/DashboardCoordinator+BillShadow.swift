@@ -112,7 +112,7 @@ extension DashboardCoordinator {
               generation == siteGeneration,
               canRequestAccountData,
               !Task.isCancelled else { return }
-        let fingerprint = LocalBillBuilder.timelineFingerprint(timeline)
+        let fingerprint = BillPricing.timelineFingerprint(timeline)
         guard lastLocalTimelineFingerprint[scope.siteID] != fingerprint else { return }
         let site = resolveLocalSite(siteID: scope.siteID, timezone: timeline.timezone)
         let builder = LocalBillBuilder(store: history)
@@ -149,7 +149,7 @@ extension DashboardCoordinator {
         )) ?? .notReady(.flowsMissing)
         guard case .ready(let localResponse) = result else { return false }
         guard generation == siteGeneration, canRequestAccountData, !Task.isCancelled else { return true }
-        lastLocalTimelineFingerprint[siteID] = LocalBillBuilder.timelineFingerprint(timeline)
+        lastLocalTimelineFingerprint[siteID] = BillPricing.timelineFingerprint(timeline)
         publishBillResponse(localResponse)
         return true
     }
@@ -212,7 +212,7 @@ extension DashboardCoordinator {
         let flowDays = try? await history.flowDays(scope: scope, from: cycle.start, to: cycle.end)
         let oldestMissing = try? await history.oldestDayMissingFlows(scope: scope)
         let localThrough = flowDays.flatMap {
-            LocalBillBuilder.lastNonNilSlotInstant(in: $0, cycleStart: cycle.start, cycleEnd: cycle.end)
+            LocalBillAssembly.lastNonNilSlotInstant(in: $0, cycleStart: cycle.start, cycleEnd: cycle.end)
         }
         let isBehindServer = if let expectedThrough {
             localThrough.map { $0 < expectedThrough } ?? true

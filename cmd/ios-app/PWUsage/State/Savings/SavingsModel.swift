@@ -143,7 +143,7 @@ final class SavingsModel {
 
     private func computeInBackground(_ request: ComputeRequest) async -> (CacheKey, SavingsReport)? {
         let siteZone = TimeZone(identifier: request.timeline.timezone) ?? .current
-        let timelineFingerprint = LocalBillBuilder.timelineFingerprint(request.timeline)
+        let timelineFingerprint = BillPricing.timelineFingerprint(request.timeline)
         let siteLocalDate = SolarHistoryStore.dayString(request.now, timeZone: siteZone)
         let existingCacheKey = lastCacheKey
         let hasReadyState = if case .ready = state { true } else { false }

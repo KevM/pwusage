@@ -30,6 +30,8 @@
 - `Models` holds value types only.
 - `State` holds app coordinators, stores, and actors. The portable rate plan timeline cache lives in
   `PWUsageCore/BillPricing`. The app handles API revalidation and session cleanup.
+- `PWUsageCore/BillPricing` assembles local bills from energy flows. The app’s `LocalBillBuilder` reads the
+  history store and wraps the result in the mobile bill response.
 - A declaration belongs in one place; access-level changes are only to promote `private`/`fileprivate` to `internal` for cross-file extensions.
 
 ## Dynamic entry points (retained)
