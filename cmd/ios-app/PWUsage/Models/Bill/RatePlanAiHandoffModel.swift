@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 struct RatePlanAiHandoffActions: Sendable {
     var exportMarkdown: @MainActor () async throws -> TariffAiHandoffExportResponse

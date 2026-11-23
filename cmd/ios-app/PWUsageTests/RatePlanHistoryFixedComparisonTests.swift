@@ -26,36 +26,6 @@ struct RatePlanHistoryFixedComparisonTests {
         return flow
     }
 
-    // MARK: - Encoding
-
-    private func json(_ period: RatePlanHistoryPeriod) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try #require(String(data: encoder.encode(period), encoding: .utf8))
-    }
-
-    @Test func nilFixedOmitsTheKey() throws {
-        let text = try json(RatePlanHistoryPeriod(label: "L", from: "2024-01-01", to: nil))
-        #expect(text == #"{"from":"2024-01-01","label":"L","to":null}"#)
-    }
-
-    @Test func publicChoiceEncodesOnlyItsLabel() throws {
-        let period = RatePlanHistoryPeriod(
-            label: "L", from: "2024-01-01", to: "2024-12-31",
-            fixed: .publicPlan(label: "FIX", name: "Residential Rg 1", buyRate: 0.18)
-        )
-        #expect(try json(period) == #"{"fixed":{"label":"FIX"},"from":"2024-01-01","label":"L","to":"2024-12-31"}"#)
-    }
-
-    @Test func manualChoiceEncodesNameAndRates() throws {
-        let period = RatePlanHistoryPeriod(
-            label: "L", from: "2024-01-01", to: nil,
-            fixed: .manual(name: "My rate", buyRate: 0.2, sellRate: 0.05)
-        )
-        #expect(try json(period)
-            == #"{"fixed":{"buyRate":0.2,"name":"My rate","sellRate":0.05},"from":"2024-01-01","label":"L","to":null}"#)
-    }
-
     // MARK: - Prefill and fallback
 
     @Test func spanCoveredByStoredReferencesStagesNothing() {

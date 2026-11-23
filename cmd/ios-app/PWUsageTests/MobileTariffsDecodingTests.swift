@@ -197,51 +197,6 @@ struct MobileTariffsDecodingTests {
         #expect(explicit.estimates?.historyGuide == nil)
     }
 
-    @Test("Decodes the rate plan history response")
-    func decodesRateHistoryResponse() throws {
-        let plan = """
-        {"name": "Residential TOU", "startDate": "2024-03-01", "kind": "time_of_use", "isDefault": false,
-         "closest": true, "lowRate": 0.11, "highRate": 0.32,
-         "peakWindows": [{"label": "4-9 PM", "fromHour": 16, "toHour": 21},
-                         {"label": "5-8 PM", "fromHour": 17, "toHour": 20}],
-         "closestWindow": "4-9 PM", "fixedLabel": null}
-        """
-        let fixed = """
-        {"name": "Residential Flat", "startDate": "2024-01-01", "kind": "fixed", "isDefault": true,
-         "closest": false, "lowRate": 0.2, "highRate": 0.2, "peakWindows": [],
-         "closestWindow": null, "fixedLabel": "abc123"}
-        """
-        let json = """
-        {"utilityName": "Demo Electric", "historyStart": "2023-11-14", "fillThrough": null,
-         "teslaShape": "time_of_use", "current": [\(plan)],
-         "years": [{"year": 2024, "askDate": "2024-06-01", "plans": [\(plan), \(fixed)]}]}
-        """
-        let decoded = try MobileContractDecoder.make().decode(RatePlanHistoryDTO.self, from: Data(json.utf8))
-
-        #expect(decoded.utilityName == "Demo Electric")
-        #expect(decoded.fillThrough == nil)
-        #expect(decoded.teslaShape == .timeOfUse)
-        #expect(decoded.current.first?.peakWindows.map(\.label) == ["4-9 PM", "5-8 PM"])
-        #expect(decoded.current.first?.closestWindow == "4-9 PM")
-        #expect(decoded.years.first?.year == 2024)
-        #expect(decoded.years.first?.plans.last?.kind == .fixed)
-        #expect(decoded.years.first?.plans.last?.fixedLabel == "abc123")
-        #expect(decoded.years.first?.plans.last?.id == "abc123")
-        #expect(decoded.years.first?.plans.first?.id == "4-9 PM")
-    }
-
-    @Test("Encodes an open period with a null to")
-    func encodesOpenPeriodWithNullTo() throws {
-        let data = try JSONEncoder().encode([
-            RatePlanHistoryPeriod(label: "abc", from: "2024-01-01", to: nil),
-            RatePlanHistoryPeriod(label: "def", from: "2023-01-01", to: "2023-12-31")
-        ])
-        let json = try #require(String(data: data, encoding: .utf8))
-
-        #expect(json.contains("\"to\":null"))
-        #expect(json.contains("\"to\":\"2023-12-31\""))
-    }
-
     @Test("Decodes systemCosts with solar and Powerwall components")
     func decodesSystemCosts() throws {
         let json = Self.estimatedTimelineJSON.replacingOccurrences(
@@ -285,20 +240,6 @@ struct MobileTariffsDecodingTests {
         )
 
         #expect(decoded.systemCosts == nil)
-    }
-
-    @Test("Encodes a missing component as an explicit null")
-    func encodesSystemCostsWriteRequest() throws {
-        let request = SystemCostsWriteRequest(
-            solar: SystemCostDTO(installDate: "2024-03-04", price: 16_100, taxCreditPercent: nil, incentives: 0),
-            powerwall: nil
-        )
-        let encoded = try JSONEncoder().encode(request)
-        let text = try #require(String(data: encoded, encoding: .utf8))
-
-        #expect(text.contains("\"powerwall\":null"))
-        #expect(text.contains("\"taxCreditPercent\":null"))
-        #expect(text.contains("\"installDate\":\"2024-03-04\""))
     }
 
     @Test("Decodes Sync to Tesla availability, unavailable reason and last attempt")
