@@ -1,13 +1,16 @@
 import Foundation
-import PWUsageCore
 
 /// Which provider a site uses. All requests evaluate the automatic provider.
-struct SolarForecastSelectionPolicy: Sendable {
-    var automaticProviderID: SolarForecastProviderID? = .openMeteo
+public struct SolarForecastSelectionPolicy: Sendable {
+    public var automaticProviderID: SolarForecastProviderID? = .openMeteo
+
+    public init(automaticProviderID: SolarForecastProviderID? = .openMeteo) {
+        self.automaticProviderID = automaticProviderID
+    }
 }
 
 /// The protocol for forecast service operations.
-protocol SolarForecastServing: Actor {
+public protocol SolarForecastServing: Actor {
     nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? { get }
     nonisolated func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor?
     func publication(
@@ -21,7 +24,7 @@ protocol SolarForecastServing: Actor {
 }
 
 extension SolarForecastServing {
-    func publication(
+    public func publication(
         for request: SolarForecastRequest,
         actuals: [MobileSolarActualsHour]? = nil
     ) async -> SolarForecastPublication? {
@@ -30,15 +33,15 @@ extension SolarForecastServing {
 }
 
 /// The single place forecasts are selected, refreshed, recorded and published.
-actor SolarForecastService: SolarForecastServing {
+public actor SolarForecastService: SolarForecastServing {
     private let providers: [any SolarForecastProviding]
     private let policy: SolarForecastSelectionPolicy
-    nonisolated let history: SolarForecastHistory
+    nonisolated public let history: SolarForecastHistory
     private let clock: any SolarForecastClock
     private var generation = 0
     private var accountScopeID: String?
 
-    init(
+    public init(
         providers: [any SolarForecastProviding],
         policy: SolarForecastSelectionPolicy = SolarForecastSelectionPolicy(),
         history: SolarForecastHistory = .shared,
@@ -50,29 +53,29 @@ actor SolarForecastService: SolarForecastServing {
         self.clock = clock
     }
 
-    nonisolated func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor? {
+    nonisolated public func descriptor(for id: SolarForecastProviderID) -> SolarForecastProviderDescriptor? {
         providers.first { $0.descriptor.id == id }?.descriptor
     }
 
-    func selectedProviderID(for request: SolarForecastRequest) async -> SolarForecastProviderID? {
+    public func selectedProviderID(for request: SolarForecastRequest) async -> SolarForecastProviderID? {
         await select(request)?.provider.descriptor.id
     }
 
-    nonisolated var automaticDescriptor: SolarForecastProviderDescriptor? {
+    nonisolated public var automaticDescriptor: SolarForecastProviderDescriptor? {
         policy.automaticProviderID.flatMap { descriptor(for: $0) }
     }
 
     /// Refreshes the selected provider and publishes its batch if it is fresh enough and
     /// covers the request, corrected once when measured `actuals` are given. `nil` means use
     /// history. History always receives the raw batch.
-    func publication(
+    public func publication(
         for request: SolarForecastRequest,
         actuals: [MobileSolarActualsHour]? = nil
     ) async -> SolarForecastPublication? {
         await publicationAttempt(for: request, actuals: actuals).publication
     }
 
-    func publicationAttempt(
+    public func publicationAttempt(
         for request: SolarForecastRequest,
         actuals: [MobileSolarActualsHour]? = nil
     ) async -> SolarForecastPublicationAttempt {
@@ -146,7 +149,7 @@ actor SolarForecastService: SolarForecastServing {
         return (applied, summary)
     }
 
-    func activateAccountScope(_ accountScopeID: String?) async {
+    public func activateAccountScope(_ accountScopeID: String?) async {
         if accountScopeID != self.accountScopeID { generation += 1 }
         self.accountScopeID = accountScopeID
         for provider in providers { await provider.activateAccountScope(accountScopeID) }
@@ -154,7 +157,7 @@ actor SolarForecastService: SolarForecastServing {
 
     /// Fences in-flight work, then clears every provider's account data and history.
     /// Every step runs; the first error is rethrown.
-    func clearAccountData() async throws {
+    public func clearAccountData() async throws {
         generation += 1
         var firstError: (any Error)?
         for provider in providers {

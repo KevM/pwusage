@@ -1,12 +1,11 @@
 import Foundation
-import PWUsageCore
 
 /// Open-Meteo for the server-detected layout. Owns transport, conversion and the
 /// device-wide request ledger; caching is the shared automatic-provider cache.
-actor OpenMeteoProvider: SolarForecastProviding {
-    nonisolated let descriptor = OpenMeteoProvider.sourceDescriptor
+public actor OpenMeteoProvider: SolarForecastProviding {
+    nonisolated public let descriptor = OpenMeteoProvider.sourceDescriptor
 
-    nonisolated static let sourceDescriptor = SolarForecastProviderDescriptor(
+    nonisolated public static let sourceDescriptor = SolarForecastProviderDescriptor(
         id: .openMeteo,
         displayName: "Open-Meteo",
         attribution: "Forecast by Open-Meteo.",
@@ -18,7 +17,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
         attributionURL: URL(string: "https://open-meteo.com/")
     )
 
-    static let requestLedger = SolarForecastRequestLedger(
+    public static let requestLedger = SolarForecastRequestLedger(
         file: ProtectedSolarForecastFile(name: "open-meteo-ledger.json", backgroundAccessible: true)
     )
 
@@ -39,7 +38,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
     /// Identity-free count useful for validating that callers share work without sharing cancellation.
     var activeRefreshWaiterCount: Int { inFlight.values.reduce(0) { $0 + $1.waiters.count } }
 
-    init(
+    public init(
         client: OpenMeteoClient = OpenMeteoClient(),
         ledger: SolarForecastRequestLedger = OpenMeteoProvider.requestLedger,
         cache: SolarForecastAutomaticCache = .shared,
@@ -51,7 +50,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
         self.clock = clock
     }
 
-    func configuration(for request: SolarForecastRequest) async -> SolarForecastConfiguration {
+    public func configuration(for request: SolarForecastRequest) async -> SolarForecastConfiguration {
         guard let location = request.location, location.isValid, let layout = request.layout,
               (1 ... 3).contains(layout.planes.count), layout.planes.allSatisfy(\.isValid) else {
             return SolarForecastConfiguration(readiness: .notConfigured, fingerprint: "", cacheRevision: "")
@@ -71,7 +70,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
         )
     }
 
-    func refresh(_ request: SolarForecastRequest) async -> SolarForecastProviderResult {
+    public func refresh(_ request: SolarForecastRequest) async -> SolarForecastProviderResult {
         let startedGeneration = generation
         let configuration = await configuration(for: request)
         guard startedGeneration == generation, !Task.isCancelled else { return Self.cancelled }
@@ -155,7 +154,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
         }
     }
 
-    func cachedForecast(for request: SolarForecastRequest) async -> SolarForecastRawBatch? {
+    public func cachedForecast(for request: SolarForecastRequest) async -> SolarForecastRawBatch? {
         let configuration = await configuration(for: request)
         guard configuration.readiness == .ready else { return nil }
         return await cache.batch(
@@ -165,7 +164,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
         )
     }
 
-    func activateAccountScope(_ accountScopeID: String?) async {
+    public func activateAccountScope(_ accountScopeID: String?) async {
         guard accountScopeID != self.accountScopeID else { return }
         self.accountScopeID = accountScopeID
         generation += 1
@@ -174,7 +173,7 @@ actor OpenMeteoProvider: SolarForecastProviding {
     }
 
     /// Clears cached forecasts. The request ledger is device-wide and deliberately kept.
-    func clearAccountData() async throws {
+    public func clearAccountData() async throws {
         generation += 1
         cancelAllFetches()
         revisions.removeAll()

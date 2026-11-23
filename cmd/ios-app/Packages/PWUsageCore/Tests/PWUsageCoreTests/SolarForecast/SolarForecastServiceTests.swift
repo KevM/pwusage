@@ -1,6 +1,5 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite("Solar forecast service selection and publication")
@@ -109,12 +108,11 @@ struct SolarForecastServiceTests {
         #expect(past[noon] == expected * 1000)
     }
 
-    @Test("Session cleanup clears service history")
-    func sessionCleanup() async throws {
+    @Test("Clearing account data clears service history and keeps device ledger")
+    func clearAccountDataKeepsLedger() async throws {
         let setup = Self.setup()
         _ = try #require(await setup.service.publication(for: Fixture.request(now: Self.now)))
-        let cleanup = SolarSessionCleanup(service: setup.service)
-        try await cleanup.signOut()
+        try await setup.service.clearAccountData()
         #expect(await setup.automatic.provider.cachedForecast(for: Fixture.request(now: Self.now)) == nil)
         let refused = await setup.automatic.provider.refresh(Fixture.request(now: Self.now, manual: true))
         #expect(refused.outcome == .refreshed, "Cleanup keeps the device ledger, which still has room")

@@ -1,13 +1,17 @@
 import Foundation
-import PWUsageCore
 
-struct SolarForecastRequestLedgerState: Codable, Equatable, Sendable {
+public struct SolarForecastRequestLedgerState: Codable, Equatable, Sendable {
     /// Start times of every request sent in the last hour, failures included.
-    var requests: [Date] = []
-    var deferredUntil: Date?
+    public var requests: [Date] = []
+    public var deferredUntil: Date?
+
+    public init(requests: [Date] = [], deferredUntil: Date? = nil) {
+        self.requests = requests
+        self.deferredUntil = deferredUntil
+    }
 }
 
-enum SolarForecastRequestReservation: Equatable, Sendable {
+public enum SolarForecastRequestReservation: Equatable, Sendable {
     case granted
     case deferred(until: Date)
     case exhausted
@@ -17,16 +21,16 @@ enum SolarForecastRequestReservation: Equatable, Sendable {
 
 /// A device-wide solar forecast request budget: every site and account on this phone shares
 /// it, and it survives relaunch and sign-out. Reservations are saved before anything is sent.
-actor SolarForecastRequestLedger {
-    static let requestsPerHour = 6
-    static let window: TimeInterval = 60 * 60
+public actor SolarForecastRequestLedger {
+    public static let requestsPerHour = 6
+    public static let window: TimeInterval = 60 * 60
 
     private let file: any SolarForecastFileStoring<SolarForecastRequestLedgerState>
     private let clock: any SolarForecastClock
     private var state = SolarForecastRequestLedgerState()
     private var loaded = false
 
-    init(
+    public init(
         file: any SolarForecastFileStoring<SolarForecastRequestLedgerState>,
         clock: any SolarForecastClock = SystemSolarForecastClock()
     ) {
@@ -35,7 +39,7 @@ actor SolarForecastRequestLedger {
     }
 
     /// Reserves `count` requests at once, or none.
-    func reserve(_ count: Int) async -> SolarForecastRequestReservation {
+    public func reserve(_ count: Int) async -> SolarForecastRequestReservation {
         guard await loadIfNeeded() else { return .storageFailed }
         let now = clock.now()
         if let until = state.deferredUntil, until > now { return .deferred(until: until) }
@@ -55,7 +59,7 @@ actor SolarForecastRequestLedger {
     }
 
     /// Never shortens an existing deferral.
-    func recordDeferral(until date: Date) async {
+    public func recordDeferral(until date: Date) async {
         _ = await loadIfNeeded()
         state.deferredUntil = max(state.deferredUntil ?? date, date)
         try? await file.save(state)

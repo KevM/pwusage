@@ -1,19 +1,27 @@
 import Foundation
-import PWUsageCore
 
-struct SolarForecastAutomaticCacheState: Codable, Equatable, Sendable {
-    struct Entry: Codable, Equatable, Sendable {
-        let scope: SolarForecastSiteScope
-        let batch: SolarForecastRawBatch
+public struct SolarForecastAutomaticCacheState: Codable, Equatable, Sendable {
+    public struct Entry: Codable, Equatable, Sendable {
+        public let scope: SolarForecastSiteScope
+        public let batch: SolarForecastRawBatch
+
+        public init(scope: SolarForecastSiteScope, batch: SolarForecastRawBatch) {
+            self.scope = scope
+            self.batch = batch
+        }
     }
 
-    var entries: [Entry] = []
+    public var entries: [Entry] = []
+
+    public init(entries: [Entry] = []) {
+        self.entries = entries
+    }
 }
 
 /// Raw batches for automatic providers, keyed by site, provider and cache revision. Shared by
 /// every automatic adapter; each keeps its own transport and quota rules.
-actor SolarForecastAutomaticCache {
-    static let shared = SolarForecastAutomaticCache(
+public actor SolarForecastAutomaticCache {
+    public static let shared = SolarForecastAutomaticCache(
         file: ProtectedSolarForecastFile(name: "automatic.json", backgroundAccessible: true)
     )
 
@@ -22,11 +30,11 @@ actor SolarForecastAutomaticCache {
     private var loaded = false
     private var generation = 0
 
-    init(file: any SolarForecastFileStoring<SolarForecastAutomaticCacheState>) {
+    public init(file: any SolarForecastFileStoring<SolarForecastAutomaticCacheState>) {
         self.file = file
     }
 
-    func batch(
+    public func batch(
         scope: SolarForecastSiteScope,
         providerID: SolarForecastProviderID,
         cacheRevision: String
@@ -40,7 +48,7 @@ actor SolarForecastAutomaticCache {
     }
 
     /// Replaces the site's batch from this provider. A failed write keeps it in memory.
-    func store(_ batch: SolarForecastRawBatch, scope: SolarForecastSiteScope) async {
+    public func store(_ batch: SolarForecastRawBatch, scope: SolarForecastSiteScope) async {
         let started = generation
         await loadIfNeeded()
         guard started == generation else { return }
@@ -49,7 +57,7 @@ actor SolarForecastAutomaticCache {
         try? await file.save(state)
     }
 
-    func clearAccountData() async throws {
+    public func clearAccountData() async throws {
         // Invalidate callers suspended in load before they can append or save old data.
         generation += 1
         loaded = true

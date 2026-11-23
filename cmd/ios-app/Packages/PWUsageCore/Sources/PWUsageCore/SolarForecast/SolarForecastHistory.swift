@@ -1,16 +1,22 @@
 import Foundation
-import PWUsageCore
 
 /// History is partitioned by account, site, provider and semantic configuration, so a changed
 /// layout or Solcast selection starts from identity correction instead of mixing forecasts.
-struct SolarForecastHistoryIdentity: Hashable, Codable, Sendable {
-    let accountScopeID: String
-    let siteID: String
-    let providerID: SolarForecastProviderID
-    let fingerprint: String
+public struct SolarForecastHistoryIdentity: Hashable, Codable, Sendable {
+    public let accountScopeID: String
+    public let siteID: String
+    public let providerID: SolarForecastProviderID
+    public let fingerprint: String
+
+    public init(accountScopeID: String, siteID: String, providerID: SolarForecastProviderID, fingerprint: String) {
+        self.accountScopeID = accountScopeID
+        self.siteID = siteID
+        self.providerID = providerID
+        self.fingerprint = fingerprint
+    }
 }
 
-enum SolarForecastTrainingCohort: Sendable, CaseIterable {
+public enum SolarForecastTrainingCohort: Sendable, CaseIterable {
     /// Fetched on the target's site-local date, before the target hour began.
     case sameDay
     /// Fetched on the site-local date before the target's.
@@ -18,28 +24,39 @@ enum SolarForecastTrainingCohort: Sendable, CaseIterable {
 }
 
 /// One raw fetch, integrated to the UTC hours it fully covers.
-struct SolarForecastHistoryEntry: Codable, Equatable, Sendable {
-    let identity: SolarForecastHistoryIdentity
-    let fetchedAt: Date
-    let hours: [HourEnergy]
+public struct SolarForecastHistoryEntry: Codable, Equatable, Sendable {
+    public let identity: SolarForecastHistoryIdentity
+    public let fetchedAt: Date
+    public let hours: [HourEnergy]
 
-    struct HourEnergy: Codable, Equatable, Sendable {
-        let hourStart: Date
-        let energyWh: Double
+    public struct HourEnergy: Codable, Equatable, Sendable {
+        public let hourStart: Date
+        public let energyWh: Double
+
+        public init(hourStart: Date, energyWh: Double) {
+            self.hourStart = hourStart
+            self.energyWh = energyWh
+        }
+    }
+
+    public init(identity: SolarForecastHistoryIdentity, fetchedAt: Date, hours: [HourEnergy]) {
+        self.identity = identity
+        self.fetchedAt = fetchedAt
+        self.hours = hours
     }
 }
 
-protocol SolarForecastRawHistoryRecording: Sendable {
+public protocol SolarForecastRawHistoryRecording: Sendable {
     func record(identity: SolarForecastHistoryIdentity, intervals: [SolarForecastInterval], fetchedAt: Date) async
 }
 
 /// Raw forecasts kept for 15 days so correction can compare them with what was produced.
 /// Every fetch is kept, so a later same-day update never replaces day-ahead training.
-actor SolarForecastHistory: SolarForecastRawHistoryRecording {
-    static let shared = SolarForecastHistory(
+public actor SolarForecastHistory: SolarForecastRawHistoryRecording {
+    public static let shared = SolarForecastHistory(
         file: ProtectedSolarForecastFile(name: "history.json", backgroundAccessible: true)
     )
-    static let retention: TimeInterval = 15 * 24 * 60 * 60
+    public static let retention: TimeInterval = 15 * 24 * 60 * 60
 
     private let file: any SolarForecastFileStoring<[SolarForecastHistoryEntry]>
     private let clock: any SolarForecastClock
@@ -47,7 +64,7 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
     private var loaded = false
     private var generation = 0
 
-    init(
+    public init(
         file: any SolarForecastFileStoring<[SolarForecastHistoryEntry]>,
         clock: any SolarForecastClock = SystemSolarForecastClock()
     ) {
@@ -56,7 +73,11 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
     }
 
     /// Best effort: a write failure keeps the entry in memory and never fails the caller.
-    func record(identity: SolarForecastHistoryIdentity, intervals: [SolarForecastInterval], fetchedAt: Date) async {
+    public func record(
+        identity: SolarForecastHistoryIdentity,
+        intervals: [SolarForecastInterval],
+        fetchedAt: Date
+    ) async {
         let started = generation
         await loadIfNeeded()
         guard started == generation else { return }
@@ -70,7 +91,7 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
 
     /// UTC-hour Wh in [from, to) for one configuration and cohort; hours without a matching
     /// fetch are absent, never filled from another cohort or configuration.
-    func pastForecast(
+    public func pastForecast(
         identity: SolarForecastHistoryIdentity,
         cohort: SolarForecastTrainingCohort,
         from: Date,
@@ -102,7 +123,7 @@ actor SolarForecastHistory: SolarForecastRawHistoryRecording {
         return result
     }
 
-    func clearAccountData() async throws {
+    public func clearAccountData() async throws {
         // Invalidate callers suspended in load before they can append or save old data.
         generation += 1
         loaded = true

@@ -1,8 +1,7 @@
 import Foundation
-import PWUsageCore
 
 /// One JSON value on disk. Injected so tests run without the file system.
-protocol SolarForecastFileStoring<Value>: Sendable {
+public protocol SolarForecastFileStoring<Value>: Sendable {
     associatedtype Value: Codable & Sendable
     func load() async throws -> Value?
     func save(_ value: Value) async throws
@@ -11,12 +10,12 @@ protocol SolarForecastFileStoring<Value>: Sendable {
 /// Backup-excluded forecast metadata. Ordinary files require an unlocked device;
 /// explicitly background-accessible files use a separate directory available after the
 /// first unlock. Credentials and the Solcast store retain their existing protection.
-actor ProtectedSolarForecastFile<Value: Codable & Sendable>: SolarForecastFileStoring {
-    let fileURL: URL
+public actor ProtectedSolarForecastFile<Value: Codable & Sendable>: SolarForecastFileStoring {
+    public let fileURL: URL
     private let backgroundAccessible: Bool
     private let legacyFileURL: URL?
 
-    init(name: String, backgroundAccessible: Bool = false, fileManager: FileManager = .default) {
+    public init(name: String, backgroundAccessible: Bool = false, fileManager: FileManager = .default) {
         self.backgroundAccessible = backgroundAccessible
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
@@ -27,22 +26,27 @@ actor ProtectedSolarForecastFile<Value: Codable & Sendable>: SolarForecastFileSt
             .appendingPathComponent(name, isDirectory: false)
     }
 
-    func load() throws -> Value? {
+    public func load() throws -> Value? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         return try JSONDecoder().decode(Value.self, from: Data(contentsOf: fileURL))
     }
 
-    func save(_ value: Value) throws {
+    public func save(_ value: Value) throws {
         let manager = FileManager.default
         var directory = fileURL.deletingLastPathComponent()
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var excluded = URLResourceValues()
         excluded.isExcludedFromBackup = true
         try directory.setResourceValues(excluded)
-        let protection: FileProtectionType = backgroundAccessible ? .completeUntilFirstUserAuthentication : .complete
-        try manager.setAttributes([.protectionKey: protection], ofItemAtPath: directory.path)
-        let options: Data.WritingOptions = backgroundAccessible
-            ? [.atomic, .completeFileProtectionUntilFirstUserAuthentication] : [.atomic, .completeFileProtection]
+        #if os(iOS)
+            let protection: FileProtectionType = backgroundAccessible
+                ? .completeUntilFirstUserAuthentication : .complete
+            try manager.setAttributes([.protectionKey: protection], ofItemAtPath: directory.path)
+            let options: Data.WritingOptions = backgroundAccessible
+                ? [.atomic, .completeFileProtectionUntilFirstUserAuthentication] : [.atomic, .completeFileProtection]
+        #else
+            let options: Data.WritingOptions = [.atomic]
+        #endif
         try JSONEncoder().encode(value).write(to: fileURL, options: options)
         var file = fileURL
         try file.setResourceValues(excluded)
@@ -56,10 +60,12 @@ actor ProtectedSolarForecastFile<Value: Codable & Sendable>: SolarForecastFileSt
 }
 
 /// A value kept only in memory, for sessions that must leave nothing on disk (the demo).
-actor MemorySolarForecastFile<Value: Codable & Sendable>: SolarForecastFileStoring {
+public actor MemorySolarForecastFile<Value: Codable & Sendable>: SolarForecastFileStoring {
     private var value: Value?
 
-    func load() -> Value? { value }
+    public init() {}
 
-    func save(_ newValue: Value) { value = newValue }
+    public func load() -> Value? { value }
+
+    public func save(_ newValue: Value) { value = newValue }
 }
