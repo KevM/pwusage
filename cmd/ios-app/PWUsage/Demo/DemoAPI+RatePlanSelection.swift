@@ -25,38 +25,19 @@ extension DemoAPI {
         let covered = existing.contains { Self.overlaps($0, request.effectiveFrom, request.effectiveTo) }
         let candidate = Self.snapshot(name: chosen.name, seasons: chosen.seasons, label: chosen.label)
         let before = existing.first { Self.overlaps($0, request.effectiveFrom, request.effectiveTo) }
+        let interval = TariffReviewAffectedInterval(
+            selection: request,
+            kind: covered ? .replace : .fillGap,
+            before: before.map { Self.snapshot(name: $0.name, seasons: $0.seasons, label: nil) },
+            after: candidate,
+            hasBuyRateChanges: true
+        )
         return TariffSelectionPreviewResponse(
             reviewHash: Self.reviewHash(for: request),
-            siteId: siteID,
-            scope: request.scope,
-            effectiveFrom: request.effectiveFrom,
-            effectiveTo: request.effectiveTo,
-            currency: timeline.currency,
-            unit: "kWh",
-            timezone: timeline.timezone,
-            holidaysUseWeekendSchedule: false,
-            recalculatesHistory: false,
-            recalculatesFromHistoryStart: false,
-            recalculationRange: nil,
-            affectsPowerwallPlan: false,
-            candidatePlan: candidate,
-            affectedIntervals: [TariffReviewAffectedInterval(
-                effectiveFrom: request.effectiveFrom, effectiveTo: request.effectiveTo,
-                kind: covered ? .replace : .fillGap,
-                before: before.map { Self.snapshot(name: $0.name, seasons: $0.seasons, label: nil) },
-                beforeIsFallback: false, after: candidate, seasons: [],
-                hasBuyRateChanges: true, hasSellRateChanges: false, hasRateChanges: true,
-                hasPeriodNameChanges: before?.name != chosen.name, restoration: .notApplicable
-            )],
-            unchangedOutsidePeriods: [],
-            restoration: TariffReviewRestorationSummary(
-                preservedOriginals: [], restoredOriginals: [], unavailableRanges: [], canApplyRestoration: false
-            ),
-            approximationNotes: [],
-            summary: TariffReviewSummary(
-                hasBuyRateChanges: true, hasSellRateChanges: false, hasRateChanges: true,
-                hasPeriodNameChanges: before?.name != chosen.name, fillsGap: !covered, replacesExistingPlan: covered
-            )
+            siteID: siteID,
+            timeline: timeline,
+            selection: request,
+            affectedInterval: interval
         )
     }
 
@@ -93,7 +74,7 @@ extension DemoAPI {
         demoTimeline = next
         return TariffSelectionCommitResponse(
             selectionIds: [nextPeriodID], tariffIds: [created.tariffId], createdNewTariffVersion: true,
-            unchanged: false, reattributionRange: nil, timeline: next
+            unchanged: false, timeline: next
         )
     }
 
@@ -130,10 +111,8 @@ extension DemoAPI {
         label: String?
     ) -> TariffReviewPlanSnapshot {
         TariffReviewPlanSnapshot(
-            tariffId: nil, version: nil, periodId: nil, selectionId: nil, name: name,
-            utilityName: DemoFixtures.demoUtilityName, source: .manual, choiceKind: .owner, urdbLabel: label,
-            revisionStart: nil, contentHash: nil, exportRateProvenance: .published,
-            holidaysUseWeekendSchedule: false, seasons: seasons, approximationNotes: [], verification: nil
+            name: name, utilityName: DemoFixtures.demoUtilityName, source: .manual,
+            choiceKind: .owner, urdbLabel: label, exportRateProvenance: .published, seasons: seasons
         )
     }
 

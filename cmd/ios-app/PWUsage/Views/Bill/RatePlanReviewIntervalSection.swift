@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// One stretch of dates the change affects: the plan before and after, then usage and production

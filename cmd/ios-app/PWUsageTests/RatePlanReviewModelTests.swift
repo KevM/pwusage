@@ -11,7 +11,7 @@ struct RatePlanReviewModelTests {
         canRestore: Bool = true,
         fromHistoryStart: Bool = false
     ) throws -> TariffSelectionPreviewResponse {
-        let json = MobileTariffsDecodingTests.previewJSON
+        let json = RatePlanResponseFixture.previewJSON
             .replacingOccurrences(of: "\"hash-1\"", with: "\"\(hash)\"")
             .replacingOccurrences(of: "\"canApplyRestoration\": true", with: "\"canApplyRestoration\": \(canRestore)")
             .replacingOccurrences(

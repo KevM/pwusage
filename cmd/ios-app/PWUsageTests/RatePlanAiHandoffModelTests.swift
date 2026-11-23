@@ -1,63 +1,14 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 @MainActor
 struct RatePlanAiHandoffModelTests {
-    private static func makePreview(
-        hash: String = "hash-1",
-        hasChanges: Bool = true
-    ) -> TariffAiHandoffPreviewResponse {
-        let singlePreview = TariffSelectionPreviewResponse(
-            reviewHash: "sub-1",
-            siteId: "site-1",
-            scope: .actual,
-            effectiveFrom: "2024-01-01",
-            effectiveTo: nil,
-            currency: "USD",
-            unit: "kWh",
-            timezone: "America/Chicago",
-            holidaysUseWeekendSchedule: true,
-            recalculatesHistory: true,
-            recalculatesFromHistoryStart: false,
-            recalculationRange: TariffReviewDateRange(fromDate: "2024-01-01", toDate: nil),
-            affectsPowerwallPlan: false,
-            candidatePlan: nil,
-            affectedIntervals: [],
-            unchangedOutsidePeriods: [],
-            restoration: TariffReviewRestorationSummary(
-                preservedOriginals: [],
-                restoredOriginals: [],
-                unavailableRanges: [],
-                canApplyRestoration: false
-            ),
-            approximationNotes: [],
-            summary: TariffReviewSummary(
-                hasBuyRateChanges: true,
-                hasSellRateChanges: false,
-                hasRateChanges: true,
-                hasPeriodNameChanges: false,
-                fillsGap: false,
-                replacesExistingPlan: true
-            )
-        )
-        return TariffAiHandoffPreviewResponse(
-            reviewHash: hash,
-            siteId: "site-1",
-            currency: "USD",
-            unit: "kWh",
-            timezone: "America/Chicago",
-            notes: ["Checked summer peak rates."],
-            sources: ["User-provided utility bill (2026-08)"],
-            unchangedActualCount: 0,
-            unchangedReferenceCount: 0,
-            actualPreviews: hasChanges ? [singlePreview] : [],
-            referencePreviews: [],
-            recalculatesHistory: hasChanges,
-            recalculatesFromHistoryStart: false,
-            recalculationRange: hasChanges ? TariffReviewDateRange(fromDate: "2024-01-01", toDate: nil) : nil,
-            affectsPowerwallPlan: false
-        )
+    private static func makePreview(hash: String = "hash-1") throws -> TariffAiHandoffPreviewResponse {
+        let json = RatePlanResponseFixture.batchPreviewJSON
+            .replacingOccurrences(of: "batch-hash-1", with: hash)
+        return try MobileContractDecoder.make().decode(TariffAiHandoffPreviewResponse.self, from: Data(json.utf8))
     }
 
     @Test("Extracts JSON from surrounding Markdown and prose before previewing")
@@ -68,7 +19,7 @@ struct RatePlanAiHandoffModelTests {
                 exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
                 preview: { input in
                     sentRawInput = input
-                    return Self.makePreview()
+                    return try Self.makePreview()
                 },
                 commit: { _ in throw PWUsageAPIError.invalidResponse }
             )
@@ -94,7 +45,7 @@ struct RatePlanAiHandoffModelTests {
         let model = RatePlanAiHandoffModel(
             actions: RatePlanAiHandoffActions(
                 exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
-                preview: { _ in Self.makePreview() },
+                preview: { _ in try Self.makePreview() },
                 commit: { _ in throw PWUsageAPIError.invalidResponse }
             )
         )
@@ -115,7 +66,7 @@ struct RatePlanAiHandoffModelTests {
         let model = RatePlanAiHandoffModel(
             actions: RatePlanAiHandoffActions(
                 exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
-                preview: { _ in Self.makePreview() },
+                preview: { _ in try Self.makePreview() },
                 commit: { _ in throw PWUsageAPIError.invalidResponse }
             )
         )
@@ -137,12 +88,12 @@ struct RatePlanAiHandoffModelTests {
     }
 
     @Test("Stale review 409 replaces preview and clears both acknowledgement and verification")
-    func staleReviewReplacesPreviewAndClearsToggles() async {
-        let freshPreview = Self.makePreview(hash: "hash-fresh")
+    func staleReviewReplacesPreviewAndClearsToggles() async throws {
+        let freshPreview = try Self.makePreview(hash: "hash-fresh")
         let model = RatePlanAiHandoffModel(
             actions: RatePlanAiHandoffActions(
                 exportMarkdown: { TariffAiHandoffExportResponse(markdown: "# Prompt", filename: "check.md") },
-                preview: { _ in Self.makePreview(hash: "hash-initial") },
+                preview: { _ in try Self.makePreview(hash: "hash-initial") },
                 commit: { _ in throw RatePlanSelectionError.aiHandoffReviewStale(freshPreview) }
             )
         )
@@ -183,7 +134,7 @@ struct RatePlanAiHandoffModelTests {
                     await MainActor.run {
                         box.model?.rawInput = #"{"schema":"pwusage-rate-plan-handoff/v1","notes":["newer"]}"#
                     }
-                    return Self.makePreview(hash: "stale-hash")
+                    return try Self.makePreview(hash: "stale-hash")
                 },
                 commit: { _ in throw PWUsageAPIError.invalidResponse }
             )
