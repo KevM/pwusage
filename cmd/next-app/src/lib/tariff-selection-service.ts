@@ -149,6 +149,7 @@ export function convertUrdbRateWithProvenance(
     medianMonthlyKwh: number | null;
     fallbackSellRate: number;
     hasTeslaSellFallback: boolean;
+    hasActualSellFallback?: boolean;
   }
 ): PublicRateConversionResult {
   try {
@@ -220,6 +221,12 @@ export function convertUrdbRateWithProvenance(
       message:
         'Export rates match grid rates under Net Metering rules because separate export prices were not published.',
     });
+  } else if (ctx.hasActualSellFallback) {
+    exportRateProvenance = 'inherited';
+    approximationNotes.push({
+      kind: 'other',
+      message: 'Export rates use the rate from your rate plan because the utility did not publish separate export prices for this comparison.',
+    });
   } else if (ctx.hasTeslaSellFallback) {
     exportRateProvenance = 'inherited';
     approximationNotes.push({
@@ -261,6 +268,7 @@ function buildResolvedPublicPlan(ctx: {
   medianMonthlyKwh: number | null;
   fallbackSellRate: number;
   hasTeslaSellFallback: boolean;
+  hasActualSellFallback?: boolean;
 }): ResolvedPublicCandidatePlan {
   const conversion = convertUrdbRateWithProvenance(ctx.rate, ctx);
   if (!conversion.ok) {
@@ -290,6 +298,7 @@ function buildResolvedPublicPlan(ctx: {
     medianMonthlyKwh: ctx.medianMonthlyKwh,
     fallbackSellRate: round5(ctx.fallbackSellRate),
     hasTeslaSellFallback: ctx.hasTeslaSellFallback,
+    ...(ctx.hasActualSellFallback !== undefined ? { hasActualSellFallback: ctx.hasActualSellFallback } : {}),
     siteCurrency: ctx.siteCurrency,
   };
 
@@ -585,6 +594,9 @@ export async function previewTariffSelection(
     scope: validatedRequest.scope,
     viewerUserId,
     request: validatedRequest,
+    comparisonRevisionStarts: validatedRequest.effectiveTo === null
+      ? preparedPublic?.revisions?.map(revision => revision.effectiveFrom)
+      : undefined,
   });
 
   if (validatedRequest.candidate.kind === 'manual' && snapshot.manualNameTaken) {
@@ -606,7 +618,7 @@ export async function previewTariffSelection(
       todaySiteLocal: today,
       fallbackSellRate: snapshot.fallbackSellRate,
       hasTeslaSellFallback: snapshot.hasTeslaSellFallback,
-    });
+    }, snapshot.comparisonSellRates);
     candidatePlan = plans.candidate.plan;
     conversionInputs = plans.candidate.conversionInputs;
     candidateRevisions = plans.revisions;

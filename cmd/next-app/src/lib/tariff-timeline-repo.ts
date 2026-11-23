@@ -224,6 +224,37 @@ export function pickActivePeriodForDate<
   );
 }
 
+type ActualSellRatePeriod = { tariffId: number; periodId: number; effectiveFrom: string; effectiveTo: string | null };
+
+export function actualSellRateForDate(
+  periods: ActualSellRatePeriod[],
+  sellRates: ReadonlyMap<number, number>,
+  date: string
+): number | null {
+  const period = pickActivePeriodForDate(periods, date);
+  return period ? sellRates.get(period.tariffId) ?? null : null;
+}
+
+export function averageSell(tariff: Pick<Tariff, 'seasons'> | ParsedTariff | undefined): number {
+  const rates = tariff?.seasons?.flatMap(
+    season => season.schedules?.map(schedule => schedule.sell_rate ?? season.sell_rate) ?? [season.sell_rate]
+  ) ?? [];
+  return rates.length ? rates.reduce((total, rate) => total + rate, 0) / rates.length : 0;
+}
+
+async function loadComparisonSellRatesOnClient(
+  queryable: Pick<PoolClient, 'query'>,
+  siteId: string,
+  dates: string[]
+): Promise<ReadonlyMap<string, number | null>> {
+  if (dates.length === 0) return new Map();
+  const spans = await loadExistingSpans(queryable, siteId);
+  const tariffs = await hydrateTariffs(queryable, [...new Set(spans.map(span => span.tariffId))]);
+  const periods = spans.map(span => ({ ...span, periodId: span.id }));
+  const sellRates = new Map([...tariffs].map(([id, tariff]) => [id, averageSell(tariff)]));
+  return new Map(dates.map(date => [date, actualSellRateForDate(periods, sellRates, date)]));
+}
+
 function resolveVerifiedSummary(
   r: Pick<
     PeriodQueryRow,
@@ -2241,11 +2272,13 @@ export interface SiteUtilityContextResult {
 export interface SitePublicConversionContext {
   fallbackSellRate: number;
   hasTeslaSellFallback: boolean;
+  hasActualSellFallback?: boolean;
 }
 
 export interface SelectionTimelineSnapshot {
   fallbackSellRate: number;
   hasTeslaSellFallback: boolean;
+  comparisonSellRates?: ReadonlyMap<string, number | null>;
   existingSpans: ExistingTimelineSpanInput[];
   restorationTargets: RestorationTargetSpanInput[];
   manualNameTaken: boolean;
@@ -2288,11 +2321,16 @@ type ResolvedPublicRevision = CandidateRevision & Pick<ResolvedPublicCandidatePl
 export function resolvePublicSelectionPlans(
   selection: PreparedPublicSelection,
   resolve: ResolvePublicPlan,
-  context: PublicSelectionConversionContext
+  context: PublicSelectionConversionContext,
+  comparisonSellRates?: ReadonlyMap<string, number | null>
 ): { candidate: ResolvedPublicRevision; revisions?: ResolvedPublicRevision[] } {
   const resolveRevision = ({ rate, effectiveFrom, effectiveTo, label, revisionStart }: Omit<PreparedPublicRevision, 'revisionStart'> & { revisionStart?: string }): ResolvedPublicRevision => {
+    const actualSellRate = comparisonSellRates?.get(effectiveFrom) ?? null;
+    const fallback = comparisonSellRates
+      ? { fallbackSellRate: actualSellRate ?? 0, hasTeslaSellFallback: false, hasActualSellFallback: actualSellRate !== null }
+      : context;
     const { candidatePlan, applyCandidate, conversionInputs } = resolve({
-      ...context, rate, effectiveFrom, effectiveTo, medianMonthlyKwh: selection.medianMonthlyKwh,
+      ...context, ...fallback, rate, effectiveFrom, effectiveTo, medianMonthlyKwh: selection.medianMonthlyKwh,
     });
     // The guide can borrow prices from another revision when a filing is unreadable.
     // Keep the covered revision's identity even when its prices come from a different filing.
@@ -2378,11 +2416,7 @@ export async function loadSiteSellFallbackOnClient(
   if (!tariff) {
     return { fallbackSellRate: 0, hasTeslaSellFallback: false };
   }
-  const rates = tariff.seasons?.flatMap(
-    season => season.schedules?.map(sch => sch.sell_rate ?? season.sell_rate) ?? [season.sell_rate]
-  ) ?? [];
-  const rawAvg = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
-  const fallbackSellRate = Math.round(rawAvg * 100_000) / 100_000;
+  const fallbackSellRate = Math.round(averageSell(tariff) * 100_000) / 100_000;
   return {
     fallbackSellRate: Object.is(fallbackSellRate, -0) ? 0 : fallbackSellRate,
     hasTeslaSellFallback: true,
@@ -3141,8 +3175,9 @@ export class TariffTimelineRepo {
     scope: TariffSelectionScope;
     viewerUserId: string | null;
     request: TariffSelectionRequest;
+    comparisonRevisionStarts?: string[];
   }): Promise<SelectionTimelineSnapshot> {
-    const { siteId, scope, viewerUserId, request } = params;
+    const { siteId, scope, viewerUserId, request, comparisonRevisionStarts } = params;
     const existingSpans = await loadScopeSelectionSpans(pool, siteId, scope, viewerUserId);
     const restorationTargets = request.candidate.kind === 'restore_tesla'
       ? await loadRestorationTargets(
@@ -3154,9 +3189,12 @@ export class TariffTimelineRepo {
           request.effectiveTo
         )
       : [];
-    const fallback = request.candidate.kind === 'public'
+    const fallback = request.candidate.kind === 'public' && !comparisonRevisionStarts
       ? await loadSiteSellFallbackOnClient(pool, siteId, request.effectiveFrom)
       : { fallbackSellRate: 0, hasTeslaSellFallback: false };
+    const comparisonSellRates = comparisonRevisionStarts
+      ? await loadComparisonSellRatesOnClient(pool, siteId, comparisonRevisionStarts)
+      : undefined;
 
     let manualNameTaken = false;
     if (request.candidate.kind === 'manual' && scope === 'actual') {
@@ -3183,6 +3221,7 @@ export class TariffTimelineRepo {
     return {
       fallbackSellRate: fallback.fallbackSellRate,
       hasTeslaSellFallback: fallback.hasTeslaSellFallback,
+      comparisonSellRates,
       existingSpans,
       restorationTargets,
       manualNameTaken,
@@ -4367,7 +4406,12 @@ export class TariffTimelineRepo {
             `Public utility rate plans are billed in USD and cannot be applied to a site in ${currency.trim().toUpperCase()}.`
           );
         }
-        const fallback = await loadSiteSellFallbackOnClient(client, siteId, commit.effectiveFrom);
+        const comparisonSellRates = commit.effectiveTo === null && publicRate.revisions
+          ? await loadComparisonSellRatesOnClient(client, siteId, publicRate.revisions.map(revision => revision.effectiveFrom))
+          : undefined;
+        const fallback = comparisonSellRates
+          ? { fallbackSellRate: 0, hasTeslaSellFallback: false }
+          : await loadSiteSellFallbackOnClient(client, siteId, commit.effectiveFrom);
         const plans = resolvePublicSelectionPlans(publicRate, resolvePublicPlan, {
           siteCurrency: currency,
           utilityName,
@@ -4376,7 +4420,7 @@ export class TariffTimelineRepo {
           todaySiteLocal: today,
           fallbackSellRate: fallback.fallbackSellRate,
           hasTeslaSellFallback: fallback.hasTeslaSellFallback,
-        });
+        }, comparisonSellRates);
         candidatePlan = plans.candidate.plan;
         applyCandidate = plans.candidate.applyCandidate;
         conversionInputs = plans.candidate.conversionInputs;

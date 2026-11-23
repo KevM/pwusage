@@ -1551,6 +1551,46 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           ]);
         });
 
+        it('reviews and keeps the corresponding actual export price for each followed revision', async () => {
+          const siteId = 's-editor-follow-export';
+          await harrisonSite(siteId, 'none');
+          const repo = new TariffTimelineRepo();
+          const manualSeasons = (sellRate: number) => seasons(0.4).map(season => ({
+            ...season,
+            weekdayPeriods: season.weekdayPeriods.map(window => ({ ...window, sellRate })),
+            weekendPeriods: season.weekendPeriods.map(window => ({ ...window, sellRate })),
+          }));
+          await repo.createManualPeriod(siteId, 'u1', {
+            name: 'Actual Early 2024', effectiveFrom: '2024-01-01', effectiveTo: '2024-06-30', seasons: manualSeasons(0.03),
+          });
+          await repo.createManualPeriod(siteId, 'u1', {
+            name: 'Actual Late 2024', effectiveFrom: '2024-07-01', effectiveTo: '2024-12-31', seasons: manualSeasons(0.05),
+          });
+          await repo.createManualPeriod(siteId, 'u1', {
+            name: 'Actual 2025', effectiveFrom: '2025-01-01', effectiveTo: null, seasons: manualSeasons(0.08),
+          });
+          const defaultsApi = { ...api, defaultRates: async () => [rates[0]] };
+          const exportDeps = { ...deps, urdb: defaultsApi };
+          await runUrdbEstimatesForSite(siteId, defaultsApi, deps.now());
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-07-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, exportDeps);
+          const sell = (plan: { seasons: TariffSeasonInput[] } | null) => plan?.seasons[0].weekdayPeriods[0].sellRate;
+          expect(preview.affectedIntervals.map(row => [row.effectiveFrom, sell(row.after)])).toEqual([
+            ['2024-07-01', 0.05],
+            ['2025-01-01', 0.08],
+          ]);
+
+          const commit = await commitTariffSelection(siteId, 'u1', {
+            ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false,
+          }, exportDeps);
+          const priceByLabel = (timeline: typeof commit.timeline) =>
+            timeline.referencePeriods?.map(row => [row.urdbLabel, sell(row)]);
+          const expected = [['fx-2024', 0.03], ['fx-2024', 0.05], ['fx-2025', 0.08]];
+          expect(priceByLabel(commit.timeline)).toEqual(expected);
+          await runUrdbEstimatesForSite(siteId, defaultsApi, deps.now());
+          expect(priceByLabel(await repo.getTimeline(siteId, 'u1'))).toEqual(expected);
+        });
+
         it('moving an unapplied follow later does not save the old utility default as an owner choice', async () => {
           const siteId = 's-editor-follow-unapplied';
           await harrisonSite(siteId, 'none');

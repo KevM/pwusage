@@ -8,13 +8,14 @@ import { checkIoDeadline } from '../io-deadline';
 import { logEvent } from '../observability';
 import { enqueueReattributionOnClient } from '../tariff-reattribution-queue';
 import {
+  actualSellRateForDate,
   applyEstimatesOnClient,
+  averageSell,
   bumpSiteTimelineRevisionOnClient,
   clearUnprotectedUrdbSourcesOnClient,
   hydrateTariffs,
   insertTariffGraph,
   loadExistingSpans,
-  pickActivePeriodForDate,
   upsertUrdbEstimateSourceOnClient,
 } from '../tariff-timeline-repo';
 import { addCalendarDays, compileSeasonsToParsedTariff, isProtectedSpan, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
@@ -37,7 +38,12 @@ type PlanBackfill = { tariffId: number; name: string | null; code: string | null
 type Preview = { planBackfill: PlanBackfill | null; matchOutcomes: Array<'matched' | 'no_match' | 'unconvertible' | 'no_utility'>; fallbackTariffIds: number[]; ownerPicked: boolean; status: SiteUtilityStatus; utilityName: string | null; anchors: Anchor[]; actual: Converted[]; reference: Converted[]; changed: Array<{ from: string; to: string | null }> };
 const MAX_REVISIONS = 80;
 // The owner's followed fixed plan owns the comparison from `followedFrom`; the utility defaults keep the days before it.
-export function referenceDesiredSpans(defaults: RevisionSpan[], followed: RevisionSpan[], followedFrom: string | null): RevisionSpan[] {
+export function referenceDesiredSpans(
+  defaults: RevisionSpan[],
+  followed: RevisionSpan[],
+  followedFrom: string | null,
+  canMerge: (before: RevisionSpan, after: RevisionSpan) => boolean = () => true
+): RevisionSpan[] {
   if (!followedFrom) return defaults;
   const before = defaults
     .filter(span => span.effectiveFrom < followedFrom)
@@ -51,7 +57,7 @@ export function referenceDesiredSpans(defaults: RevisionSpan[], followed: Revisi
   // Keep a single continuous span when the default and followed plan share a revision at the boundary.
   return [...before, ...from].reduce<RevisionSpan[]>((merged, span) => {
     const last = merged.at(-1);
-    if (last && last.rate.label === span.rate.label && last.effectiveTo !== null && addCalendarDays(last.effectiveTo, 1) === span.effectiveFrom) merged[merged.length - 1] = { ...last, effectiveTo: span.effectiveTo };
+    if (last && last.rate.label === span.rate.label && last.effectiveTo !== null && addCalendarDays(last.effectiveTo, 1) === span.effectiveFrom && canMerge(last, span)) merged[merged.length - 1] = { ...last, effectiveTo: span.effectiveTo };
     else merged.push(span);
     return merged;
   }, []);
@@ -90,10 +96,6 @@ async function snapshot(siteId: string): Promise<Snapshot> {
     const sources = (await connection.query<Snapshot['sources'][number]>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1`, [siteId])).rows;
     return { site, utility, spans, tariffs: versions.flatMap(version => { const tariff = map.get(Number(version.id)); return tariff ? [{ ...tariff, updated: version.updated }] : []; }), allTariffs: [...map.values()], sources };
   } finally { connection.release(); }
-}
-export function averageSell(tariff: Tariff | undefined): number {
-  const rates = tariff?.seasons?.flatMap(season => season.schedules?.map(schedule => schedule.sell_rate ?? season.sell_rate) ?? [season.sell_rate]) ?? [];
-  return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
 }
 // Rows stored before content hashes existed hash their hydrated graph; nulls there are absent fields in a parse.
 function storedTariffHash(tariff: Tariff): string {
@@ -173,11 +175,10 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   const defaults = referenceSpans(await api.defaultRates(utilityName), site.timezone).slice(-MAX_REVISIONS);
   // Follow the owner's chosen fixed plan through the revisions that replaced it, like the Tesla plan chain.
   // The followed range stays uncovered when the plan cannot be fetched: never lay the defaults over the owner's choice.
-  let referencePlan = defaults;
+  let followed: RevisionSpan[] = [];
   if (utility?.urdb_reference_label && utility.urdb_reference_from) {
     const chosen = await api.rateByLabel(utility.urdb_reference_label);
-    const followed = chosen ? await followedFixedRevisions(chosen, await ratesToday(), api.rateByLabel, site.timezone) : [];
-    referencePlan = referenceDesiredSpans(defaults, followed, utility.urdb_reference_from);
+    if (chosen) followed = await followedFixedRevisions(chosen, await ratesToday(), api.rateByLabel, site.timezone);
   }
   const usage = await monthlyUsage(site.id, site.timezone, now);
   function convert(span: RevisionSpan, role: Converted['role'], sell: number): Converted | null {
@@ -190,10 +191,14 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
   // Stop at an unconvertible revision so the chain does not imply prices beyond it.
   const actual: Converted[] = [];
   for (const span of [...actualSpans].reverse()) { const value = convert(span, 'estimated_actual', averageSell(tariffs[startIndex] ?? tariffs[0])); if (!value) break; actual.unshift(value); }
+  const sellRates = new Map(allTariffs.map(tariff => [tariff.id, averageSell(tariff)]));
   const desired = actual.map((value, index) => {
-    const hash = tariffContentHash(compileSeasonsToParsedTariff(value.name, value.seasons));
+    const parsed = compileSeasonsToParsedTariff(value.name, value.seasons);
+    const hash = tariffContentHash(parsed);
     const previous = sources.find(source => source.role === value.role && source.urdb_label === value.span.rate.label && source.content_hash === hash);
-    return { tariffId: previous ? Number(previous.tariff_id) : -1 - index, effectiveFrom: value.span.effectiveFrom, effectiveTo: value.span.effectiveTo };
+    const tariffId = previous ? Number(previous.tariff_id) : -1 - index;
+    sellRates.set(tariffId, averageSell(parsed));
+    return { tariffId, effectiveFrom: value.span.effectiveFrom, effectiveTo: value.span.effectiveTo };
   });
   const ownerPicked = !tariffs.length && !!start && !!utility?.urdb_plan_label;
   const previewSpans = ownerPicked ? spans.flatMap(row => {
@@ -215,15 +220,18 @@ async function buildPreview(snapshotData: Snapshot, api: UrdbApi, now: Date): Pr
     ...previewSpans.filter(row => !layout.deleteIds.includes(row.id)).map(row => ({ ...row, periodId: row.id })),
     ...layout.inserts.map((row, index) => ({ ...row, periodId: -1 - index })),
   ];
+  const referenceSellRate = (span: RevisionSpan) => actualSellRateForDate(projected, sellRates, span.effectiveFrom) ?? 0;
+  const followedFrom = utility?.urdb_reference_label ? utility.urdb_reference_from : null;
+  const referencePlan = referenceDesiredSpans(defaults, followed, followedFrom, (before, after) => {
+    const beforeSell = referenceSellRate(before);
+    const afterSell = referenceSellRate(after);
+    if (beforeSell === afterSell) return true;
+    const beforePlan = convert(before, 'estimated_reference', beforeSell);
+    const afterPlan = convert(after, 'estimated_reference', afterSell);
+    return beforePlan !== null && afterPlan !== null && JSON.stringify(beforePlan.seasons) === JSON.stringify(afterPlan.seasons);
+  });
   const reference = referencePlan.flatMap(span => {
-    const covering = pickActivePeriodForDate(projected, span.effectiveFrom);
-    let sell = averageSell(allTariffs.find(tariff => tariff.id === covering?.tariffId));
-    if (covering && covering.tariffId < 0) {
-      const estimate = actual[-1 - covering.tariffId];
-      const schedules = estimate ? compileSeasonsToParsedTariff(estimate.name, estimate.seasons).seasons.flatMap(season => season.schedules) : [];
-      if (schedules.length) sell = schedules.reduce((sum, schedule) => sum + schedule.sell_rate, 0) / schedules.length;
-    }
-    const result = convert(span, 'estimated_reference', sell);
+    const result = convert(span, 'estimated_reference', referenceSellRate(span));
     return result ? [result] : [];
   });
   const changed = layout.changed;
