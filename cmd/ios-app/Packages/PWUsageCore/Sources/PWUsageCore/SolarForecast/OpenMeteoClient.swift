@@ -1,7 +1,6 @@
 import Foundation
-import PWUsageCore
 
-protocol OpenMeteoTransport: Sendable {
+public protocol OpenMeteoTransport: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
 }
 
@@ -28,15 +27,15 @@ private struct URLSessionOpenMeteoTransport: OpenMeteoTransport {
 }
 
 /// Downloads weather only. Panel geometry and production history stay on the phone.
-struct OpenMeteoClient: Sendable {
+public struct OpenMeteoClient: Sendable {
     private static let archiveHost = "archive-api.open-meteo.com"
-    static let host = "api.open-meteo.com"
-    static let defaultDeferral: TimeInterval = 3600
+    public static let host = "api.open-meteo.com"
+    public static let defaultDeferral: TimeInterval = 3600
     private let transport: any OpenMeteoTransport
     private let clock: any SolarForecastClock
     private let timeout: TimeInterval
 
-    init(
+    public init(
         transport: (any OpenMeteoTransport)? = nil,
         timeout: TimeInterval = 15,
         clock: any SolarForecastClock = SystemSolarForecastClock()
@@ -46,14 +45,14 @@ struct OpenMeteoClient: Sendable {
         self.clock = clock
     }
 
-    func forecast(location: SolarHomeLocation) async throws -> OpenMeteoWeather {
+    public func forecast(location: SolarHomeLocation) async throws -> OpenMeteoWeather {
         guard location.isValid, let url = Self.url(location: location) else {
             throw OpenMeteoClientError.invalidResponse
         }
         return try await response(OpenMeteoWeather.self, from: url)
     }
 
-    func weatherHistory(
+    public func weatherHistory(
         location: SolarHomeLocation, timeZone: TimeZone, days: ClosedRange<String>
     ) async throws -> SolarHealthWeather {
         var url = URLComponents()
@@ -98,7 +97,7 @@ struct OpenMeteoClient: Sendable {
         }
     }
 
-    static func url(location: SolarHomeLocation) -> URL? {
+    public static func url(location: SolarHomeLocation) -> URL? {
         var url = URLComponents()
         url.scheme = "https"
         url.host = host

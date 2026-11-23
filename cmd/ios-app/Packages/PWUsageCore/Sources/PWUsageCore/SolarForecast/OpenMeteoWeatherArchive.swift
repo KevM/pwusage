@@ -1,5 +1,4 @@
 import Foundation
-import PWUsageCore
 
 private struct OpenMeteoArchiveDaily: Decodable {
     let time: [String]
@@ -13,16 +12,16 @@ private struct OpenMeteoArchiveDaily: Decodable {
     }
 }
 
-struct OpenMeteoWeatherArchive: Decodable {
+public struct OpenMeteoWeatherArchive: Decodable {
     private let daily: OpenMeteoArchiveDaily
-    let units: [String: String]
+    public let units: [String: String]
 
     enum CodingKeys: String, CodingKey {
         case daily
         case units = "daily_units"
     }
 
-    func weather(in days: ClosedRange<String>, timeZone: TimeZone) throws -> SolarHealthWeather {
+    public func weather(in days: ClosedRange<String>, timeZone: TimeZone) throws -> SolarHealthWeather {
         guard units["rain_sum"] == "mm", units["snowfall_sum"] == "cm",
               daily.time.count == daily.rain.count, daily.time.count == daily.snow.count,
               let elapsed = SiteLocalDays.days(from: days.lowerBound, to: days.upperBound, timeZone: timeZone),

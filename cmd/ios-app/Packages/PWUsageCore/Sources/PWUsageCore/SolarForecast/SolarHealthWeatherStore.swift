@@ -1,23 +1,22 @@
 import Foundation
 import OSLog
-import PWUsageCore
 
 /// Local, per-site ERA5 archive. A failed fetch leaves any previously saved days usable.
-actor SolarHealthWeatherStore {
-    static let shared = SolarHealthWeatherStore()
+public actor SolarHealthWeatherStore {
+    public static let shared = SolarHealthWeatherStore()
 
-    struct Place: Codable, Equatable, Sendable {
-        let latitude: Double
-        let longitude: Double
-        let timeZone: TimeZone
+    public struct Place: Codable, Equatable, Sendable {
+        public let latitude: Double
+        public let longitude: Double
+        public let timeZone: TimeZone
 
-        init(location: SolarHomeLocation, timeZone: TimeZone) {
+        public init(location: SolarHomeLocation, timeZone: TimeZone) {
             latitude = location.rounded.latitude
             longitude = location.rounded.longitude
             self.timeZone = timeZone
         }
 
-        var location: SolarHomeLocation {
+        public var location: SolarHomeLocation {
             SolarHomeLocation(latitude: latitude, longitude: longitude, source: .device)
         }
     }
@@ -50,11 +49,11 @@ actor SolarHealthWeatherStore {
     private let logger = Logger(subsystem: "rodeo.fm.pwusage", category: "SolarHealthWeather")
     private var retryAt: Date?
 
-    init(client: OpenMeteoClient = OpenMeteoClient()) {
+    public init(client: OpenMeteoClient = OpenMeteoClient()) {
         self.client = client
     }
 
-    func weather(
+    public func weather(
         scope: SolarForecastSiteScope, cache: SolarHealthCache, place: Place,
         samples: ClosedRange<Date>, now: Date
     ) async throws -> SolarHealthWeather {
@@ -128,8 +127,12 @@ actor SolarHealthWeatherStore {
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try directory.setResourceValues(values)
-            try JSONEncoder().encode(snapshot).write(
-                to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            #if os(iOS)
+                let writeOptions: Data.WritingOptions = [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            #else
+                let writeOptions: Data.WritingOptions = [.atomic]
+            #endif
+            try JSONEncoder().encode(snapshot).write(to: file, options: writeOptions)
         } catch {
             logger.debug("Could not save weather history: \(error.localizedDescription, privacy: .private)")
         }

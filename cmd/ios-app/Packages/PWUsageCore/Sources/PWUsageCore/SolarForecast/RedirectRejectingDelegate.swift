@@ -1,7 +1,11 @@
 import Foundation
 
-final class RedirectRejectingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(
+public final class RedirectRejectingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    override public init() {
+        super.init()
+    }
+
+    public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
