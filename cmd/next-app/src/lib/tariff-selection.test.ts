@@ -1196,10 +1196,12 @@ describe('following a utility plan chosen for the current rate plan', () => {
     expect(followsUtilityPlan({ scope: 'actual', candidate: publicCandidate, effectiveTo: null })).toBe(false);
   });
 
-  it('supersedes a followed label only for a choice starting on or before it', () => {
-    expect(supersedesFollowedLabel('2025-01-01', '2025-01-01')).toBe(true);
-    expect(supersedesFollowedLabel('2024-06-01', '2025-01-01')).toBe(true);
-    expect(supersedesFollowedLabel('2025-01-02', '2025-01-01')).toBe(false);
-    expect(supersedesFollowedLabel('2024-06-01', null)).toBe(false);
+  it('supersedes a followed label only for an open-ended choice starting on or before it', () => {
+    expect(supersedesFollowedLabel('2025-01-01', null, '2025-01-01')).toBe(true);
+    expect(supersedesFollowedLabel('2024-06-01', null, '2025-01-01')).toBe(true);
+    expect(supersedesFollowedLabel('2025-01-02', null, '2025-01-01')).toBe(false);
+    expect(supersedesFollowedLabel('2024-06-01', null, null)).toBe(false);
+    expect(supersedesFollowedLabel('2023-01-01', '2023-12-31', '2025-01-01')).toBe(false);
+    expect(supersedesFollowedLabel('2024-06-01', '2025-06-30', '2025-01-01')).toBe(false);
   });
 });

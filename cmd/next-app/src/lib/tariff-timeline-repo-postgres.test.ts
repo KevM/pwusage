@@ -1435,15 +1435,44 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2024-01-01', '2024-12-31']]);
         });
 
-        it('laterManualOrClosedChoiceStartingOnOrBeforeTheFollowedRangeClearsTheLabel', async () => {
-          for (const [suffix, to, kind] of [['manual', null, 'manual'], ['closed', '2024-12-31', 'public']] as const) {
-            const siteId = `s-editor-clears-${suffix}`;
-            await harrisonSite(siteId, 'none');
-            await choose(siteId, 'fx-2024', '2025-01-01', null);
-            expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
-            await choose(siteId, 'fx-2024', '2024-06-01', to, kind);
-            expect(await followed(siteId)).toEqual({ label: null, from: null });
-          }
+        it('laterOpenManualChoiceStartingOnOrBeforeTheFollowedRangeClearsTheLabel', async () => {
+          const siteId = 's-editor-clears-manual';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          await choose(siteId, 'fx-2024', '2024-06-01', null, 'manual');
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+
+        it('closedRangeEntirelyBeforeFollowedRangeKeepsTheFollow', async () => {
+          const siteId = 's-editor-closed-keeps';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          await choose(siteId, 'fx-2024', '2024-01-01', '2024-06-30');
+          await choose(siteId, 'x', '2024-07-01', '2024-12-31', 'manual');
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('closedRangeOverlappingFollowedRangeKeepsTheFollow', async () => {
+          const siteId = 's-editor-closed-overlap';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          await choose(siteId, 'x', '2024-06-01', '2025-03-31', 'manual');
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('openTimeOfUsePickFromBeforeTheFollowedRangeClearsTheFollowAndKeepsAnOwnerRow', async () => {
+          const siteId = 's-editor-tou';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          const tou = flatRate('tou-1', '2024-01-01', 0.1);
+          tou.energyratestructure = [[{ rate: 0.1 }], [{ rate: 0.3 }]];
+          tou.energyweekdayschedule = Array.from({ length: 12 }, () => [...Array(12).fill(0), ...Array(12).fill(1)]);
+          const touDeps = { ...deps, urdb: chainApi([...rates, tou]) };
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'tou-1' }, effectiveFrom: '2024-06-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, touDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, touDeps);
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2024-06-01', null]]);
         });
 
         it('aChoiceStartingAfterTheFollowedRangeKeepsTheLabel', async () => {

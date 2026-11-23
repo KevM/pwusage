@@ -4251,8 +4251,8 @@ export class TariffTimelineRepo {
           reviewHash: commit.expectedReviewHash,
         });
         if (commit.scope === 'reference') {
-          // An owner choice starting on or before the followed range supersedes "follow this plan".
-          if (supersedesFollowedLabel(commit.effectiveFrom, utilityRow?.urdb_reference_from ?? null)) {
+          // An open-ended owner choice starting on or before the followed range supersedes "follow this plan".
+          if (supersedesFollowedLabel(commit.effectiveFrom, commit.effectiveTo, utilityRow?.urdb_reference_from ?? null)) {
             await client.query(
               `UPDATE "SiteUtility" SET urdb_reference_label = NULL, urdb_reference_from = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_at = now() WHERE site_id = $1`,
               [siteId]

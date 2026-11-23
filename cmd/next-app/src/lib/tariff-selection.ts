@@ -273,9 +273,9 @@ export function followsUtilityPlan(request: { scope: TariffSelectionScope; candi
   return request.scope === 'reference' && request.candidate.kind === 'public' && request.effectiveTo === null;
 }
 
-/** Any other comparison choice starting on or before the followed range replaces the follow. */
-export function supersedesFollowedLabel(effectiveFrom: string, followedFrom: string | null): boolean {
-  return followedFrom !== null && effectiveFrom <= followedFrom;
+/** An open-ended owner choice starting on or before the followed range replaces the follow; closed ranges never do (owner rows outrank estimates). */
+export function supersedesFollowedLabel(effectiveFrom: string, effectiveTo: string | null, followedFrom: string | null): boolean {
+  return effectiveTo === null && followedFrom !== null && effectiveFrom <= followedFrom;
 }
 
 export function validateTariffSelectionCommit(
