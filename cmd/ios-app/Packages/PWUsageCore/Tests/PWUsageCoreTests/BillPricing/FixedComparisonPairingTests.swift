@@ -71,6 +71,29 @@ struct FixedComparisonPairingTests {
         #expect(rows.map(\.from) == ["2024-01-01", "2024-07-01"])
     }
 
+    @Test
+    func gapAcrossYearBoundaryUsesNeighbouringDays() {
+        let ref = Self.ref(1, from: "2025-01-02", through: nil)
+        let rows = FixedComparisonPairing.rows(for: (from: "2024-12-30", to: "2025-06-30"), references: [ref])
+        #expect(rows == [
+            FixedComparisonRow(from: "2024-12-30", to: "2025-01-01", reference: nil),
+            FixedComparisonRow(from: "2025-01-02", to: "2025-06-30", reference: ref)
+        ])
+        let early = Self.ref(2, from: "2023-01-01", through: "2024-12-31")
+        let after = FixedComparisonPairing.rows(for: (from: "2024-01-01", to: "2025-03-31"), references: [early])
+        #expect(after.last == FixedComparisonRow(from: "2025-01-01", to: "2025-03-31", reference: nil))
+    }
+
+    @Test
+    func openPlanYieldsOpenTrailingGapAfterReferencesEnd() {
+        let ref = Self.ref(1, from: "2023-01-01", through: "2024-06-30")
+        let rows = FixedComparisonPairing.rows(for: (from: "2024-01-01", to: nil), references: [ref])
+        #expect(rows == [
+            FixedComparisonRow(from: "2024-01-01", to: "2024-06-30", reference: ref),
+            FixedComparisonRow(from: "2024-07-01", to: nil, reference: nil)
+        ])
+    }
+
     private static func ref(_ id: Int, from: String, through: String?) -> TariffPeriodDTO {
         TariffPeriodDTO(
             periodId: id,

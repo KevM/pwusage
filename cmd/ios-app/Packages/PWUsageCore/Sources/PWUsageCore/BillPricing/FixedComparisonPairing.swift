@@ -70,6 +70,6 @@ public enum FixedComparisonPairing {
               let moved = calendar.date(byAdding: .day, value: days, to: date) else { return nil }
         let result = calendar.dateComponents([.year, .month, .day], from: moved)
         guard let year = result.year, let month = result.month, let dayOfMonth = result.day else { return nil }
-        return String(format: "%04d-%02d-%02d", year, month, dayOfMonth)
+        return String(format: "%04ld-%02ld-%02ld", year, month, dayOfMonth)
     }
 }
