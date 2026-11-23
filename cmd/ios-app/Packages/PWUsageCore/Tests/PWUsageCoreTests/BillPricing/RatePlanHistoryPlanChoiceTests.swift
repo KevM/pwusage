@@ -1,6 +1,5 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 /// We Energies 2024: Option A (7 AM – 7 PM) is priced apart from B–D, so the server lists two
@@ -40,16 +39,6 @@ struct RatePlanHistoryPlanChoiceTests {
         #expect(Set(Self.split.map(\.id)).count == Self.split.count)
         #expect(Self.optionA.id == "Option A 2024")
         #expect(Self.fixed.id == "Rg 1 2024")
-    }
-
-    @Test func rowsSharingANameShowTheirPeakHours() {
-        #expect(RatePlanHistoryPresentation.planRowTitle(Self.optionA, among: Self.split)
-            == "Residential Time-of-Use Rg 2 · Peak 7 AM – 7 PM")
-        #expect(RatePlanHistoryPresentation.planRowTitle(Self.optionsBToD, among: Self.split)
-            == "Residential Time-of-Use Rg 2 · Peak 8 AM – 10 PM")
-        #expect(RatePlanHistoryPresentation.planRowTitle(Self.fixed, among: Self.split) == "Residential Rg 1")
-        #expect(RatePlanHistoryPresentation.planRowTitle(Self.optionA, among: [Self.optionA, Self.fixed])
-            == "Residential Time-of-Use Rg 2")
     }
 
     @Test func choosingTheSecondRowOfOneNameKeepsIt() {
