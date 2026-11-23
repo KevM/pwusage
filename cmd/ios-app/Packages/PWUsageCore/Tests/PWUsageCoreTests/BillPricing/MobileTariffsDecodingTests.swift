@@ -1,6 +1,5 @@
 import Foundation
-@testable import PWUsage
-import PWUsageCore
+@testable import PWUsageCore
 import Testing
 
 @Suite("Mobile Tariffs Decoding")
@@ -113,7 +112,7 @@ struct MobileTariffsDecodingTests {
     func decodesTimelineWithoutReferenceFields() throws {
         let decoded = try MobileContractDecoder.make().decode(
             SiteTariffsTimelineResponse.self,
-            from: Data(TariffSheetTests.fixture.utf8)
+            from: Data(TariffTimelineFixture.json.utf8)
         )
         #expect(decoded.referencePeriods.isEmpty)
         #expect(decoded.battery == nil)
@@ -159,7 +158,7 @@ struct MobileTariffsDecodingTests {
     func decodesTimelineWithoutEstimates() throws {
         let decoded = try MobileContractDecoder.make().decode(
             SiteTariffsTimelineResponse.self,
-            from: Data(TariffSheetTests.fixture.utf8)
+            from: Data(TariffTimelineFixture.json.utf8)
         )
 
         #expect(decoded.estimates == nil)
@@ -236,7 +235,7 @@ struct MobileTariffsDecodingTests {
     func decodesTimelineWithoutSystemCosts() throws {
         let decoded = try MobileContractDecoder.make().decode(
             SiteTariffsTimelineResponse.self,
-            from: Data(TariffSheetTests.fixture.utf8)
+            from: Data(TariffTimelineFixture.json.utf8)
         )
 
         #expect(decoded.systemCosts == nil)

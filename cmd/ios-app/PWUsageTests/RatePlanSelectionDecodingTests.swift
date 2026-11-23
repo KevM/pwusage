@@ -3,7 +3,8 @@ import Foundation
 import PWUsageCore
 import Testing
 
-extension MobileTariffsDecodingTests {
+@Suite("Rate plan selection decoding")
+struct RatePlanSelectionDecodingTests {
     private static func timelineJSON(
         extraTimeline: String = "",
         extraPeriod: String = "",
