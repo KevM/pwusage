@@ -1,9 +1,10 @@
+import PWUsageCore
 import SwiftUI
 
 struct RatePlanDateField: View {
     let title: LocalizedStringKey
     @Binding var date: Date
-    let boundary: RatePlanTimelineFormatting.MonthBoundary?
+    let boundary: RatePlanCalendarDays.MonthBoundary?
     var timeZone = Calendar.current.timeZone
 
     private var calendar: Calendar {
@@ -23,7 +24,7 @@ struct RatePlanDateField: View {
     }
 
     private func shortcutTitle(
-        for boundary: RatePlanTimelineFormatting.MonthBoundary, target: Date
+        for boundary: RatePlanCalendarDays.MonthBoundary, target: Date
     ) -> LocalizedStringKey {
         let day = RatePlanTimelineFormatting.formatYMD(target, in: timeZone)
         let formatted = RatePlanTimelineFormatting.displayDate(day)

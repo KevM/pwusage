@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// Start and end rows with no default. Opening a calendar doesn't choose a date: the owner taps
@@ -61,7 +62,7 @@ struct RatePlanDateChoiceSection: View {
 struct OptionalRatePlanDateField: View {
     let title: LocalizedStringKey
     @Binding var date: Date?
-    let boundary: RatePlanTimelineFormatting.MonthBoundary?
+    let boundary: RatePlanCalendarDays.MonthBoundary?
     let timeZone: TimeZone
     @State private var isChoosing = false
     @State private var candidate = Date()

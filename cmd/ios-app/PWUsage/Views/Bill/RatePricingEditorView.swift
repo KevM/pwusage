@@ -89,7 +89,7 @@ struct RatePricingEditorView: View {
         }
         .emphasisProminentButton()
         .controlSize(.large)
-        .disabled(currentSeason?.validateRates() != nil)
+        .disabled(currentSeason?.hasValidRates == false)
         .padding(16)
         .background(SectionTheme.secondaryGroupedBackground)
     }
