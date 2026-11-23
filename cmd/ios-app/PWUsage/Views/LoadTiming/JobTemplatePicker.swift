@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The list shown by "Add a Job"; choosing a template opens the editor on its draft.

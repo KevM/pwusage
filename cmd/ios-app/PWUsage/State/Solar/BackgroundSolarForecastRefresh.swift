@@ -1,6 +1,7 @@
 import BackgroundTasks
 import Foundation
 import OSLog
+import PWUsageCore
 
 /// iOS chooses actual execution time. This request is only an opportunity to refresh;
 /// recommendations still enforce the provider's normal cache age and coverage checks.

@@ -1,3 +1,5 @@
+import PWUsageCore
+
 // Every retroactive conformance this type has, in one place. Each protocol is
 // declared next to the type that consumes it, which is why these used to be one
 // line each in three files.

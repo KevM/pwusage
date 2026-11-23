@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum LoadTimingPresentation {
     struct RecommendationMessage: Equatable {

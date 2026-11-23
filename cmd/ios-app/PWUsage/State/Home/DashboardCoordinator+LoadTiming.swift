@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PWUsageCore
 
 extension DashboardCoordinator {
     /// Handles the retained Smart Shift tab's foreground callback.

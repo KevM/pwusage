@@ -1,4 +1,5 @@
 @testable import PWUsage
+import PWUsageCore
 import Testing
 
 /// Swiping the job editor away used to discard edits silently. The editor now

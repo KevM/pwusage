@@ -1,6 +1,7 @@
 import BackgroundTasks
 import Combine
 import OSLog
+import PWUsageCore
 import SwiftUI
 import UIKit
 import WidgetKit

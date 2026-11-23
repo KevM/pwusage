@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The About page. Pushed from Settings, so it has no stack or Done button of

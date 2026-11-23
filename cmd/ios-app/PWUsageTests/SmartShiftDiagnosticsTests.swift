@@ -108,7 +108,7 @@ struct SmartShiftDiagnosticsTests {
             lastRefresh: .failed(.transient), unavailableCause: .requestFailed,
             connection: .ready, state: .failedWithBasic, unavailableReason: nil
         )
-        #expect(forecast.lastRefreshResult == "failed(PWUsage.SolarForecastFailureCategory.transient)")
+        #expect(forecast.lastRefreshResult == "failed(PWUsageCore.SolarForecastFailureCategory.transient)")
         #expect(forecast.fetchedAt == nil)
         #expect(forecast.intervalCount == 0)
         #expect(forecast.hasCautiousPowerKw == false)
