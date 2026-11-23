@@ -174,7 +174,8 @@ native sheet at standard and accessibility text sizes without contacting Tesla.
 Live Tesla commands still require a device check against a deployed server.
 
 Automatic holds show the last cron evaluation, estimated power above starting
-home usage, usage reading time, and a countdown to the next quarter-hour check.
+home usage, usage reading time, and a countdown to the next check (the server
+checks every 5 minutes and sends `next_check_at`).
 Overdue checks and stale readings are shown explicitly. Monitoring is optional
 for compatibility with older servers. Deploy the battery_hold_monitoring
 migration and updated restore-reserve route before checking this status on beta;

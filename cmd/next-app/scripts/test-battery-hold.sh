@@ -17,6 +17,6 @@ LC_ALL=C "$hold_pg_bin/pg_ctl" -D "$hold_socket/data" -l "$hold_socket/server.lo
 hold_started=true
 export BATTERY_HOLD_TEST_SOCKET="$hold_socket"
 npm test -- --run src/lib/battery-hold-postgres.test.ts src/lib/battery-hold-activity-postgres.test.ts \
-  src/lib/battery-hold-activity-delivery-postgres.test.ts src/lib/battery-hold-activity-test-db.test.ts src/lib/account-deletion-postgres.test.ts \
+  src/lib/battery-hold-activity-delivery-postgres.test.ts src/lib/battery-hold-cron-postgres.test.ts src/lib/battery-hold-activity-test-db.test.ts src/lib/account-deletion-postgres.test.ts \
   src/lib/tariff-timeline-repo-postgres.test.ts src/lib/tariff-selection-audit-postgres.test.ts \
   src/lib/tesla-tariff-sync-repo-postgres.test.ts src/lib/tesla-tariff-sync-postgres.test.ts "$@"
