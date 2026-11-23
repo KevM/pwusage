@@ -7,10 +7,12 @@ import type {
   TariffSeasonInput,
   TariffSelectionCommitResponse,
   TariffSelectionPreviewResponse,
+  TariffSelectionScope,
 } from './tariff-contract';
 import { tariffContentHash } from './importer/tariff-parser';
 import {
   buildTariffSelectionPreview,
+  type CandidateRevision,
   type ConversionInputsRecord,
   validateTariffSelectionCommit,
   validateTariffSelectionRequest,
@@ -23,7 +25,9 @@ import {
   validateTariffPlanInput,
 } from './tariff-timeline';
 import {
+  type PreparedPublicSelection,
   type ResolvedPublicCandidatePlan,
+  resolvePublicSelectionPlans,
   TariffNotFoundError,
   TariffTimelineRepo,
   UtilityChangedError,
@@ -32,6 +36,7 @@ import * as urdbClient from './urdb/client';
 import { isFixedRate, urdbRateToSeasons } from './urdb/convert';
 import { monthlyUsage as defaultMonthlyUsage, ownerPlanMatchesUtility, type UrdbApi } from './urdb/estimate-job';
 import { memoisedApi } from './urdb/memoised-api';
+import { expandHistoryPeriod, HistoryPeriodError } from './urdb/history-expand';
 import { urdbStartDate } from './urdb/match';
 import {
   assertUsRatePlanEligibility,
@@ -438,6 +443,7 @@ export async function listPublicUtilityPlansForSite(
 
 async function preparePublicRateOutsideLock(params: {
   siteId: string;
+  scope: TariffSelectionScope;
   eligibility: RatePlanEligibility;
   utilityName: string | null;
   utilityChoice: 'auto' | 'owner' | 'skipped' | null;
@@ -450,7 +456,7 @@ async function preparePublicRateOutsideLock(params: {
   now: Date;
   urdb: Pick<UrdbApi, 'ratesEffectiveOn' | 'rateByLabel'>;
   monthlyUsage: (siteId: string, timezone: string, now: Date) => Promise<number | null>;
-}): Promise<{ rate: UrdbRate; preLockUtilityName: string; medianMonthlyKwh: number | null }> {
+}): Promise<PreparedPublicSelection> {
   assertUsRatePlanEligibility(params.eligibility);
   if (!params.utilityName || params.utilityChoice === 'skipped') {
     throw new UtilityChangedError('Choose a utility first.');
@@ -484,10 +490,38 @@ async function preparePublicRateOutsideLock(params: {
     throw new TariffValidationError(check.reason);
   }
 
+  let revisions: PreparedPublicSelection['revisions'];
+  if (params.scope === 'reference' && params.effectiveTo !== null) {
+    try {
+      const expanded = await expandHistoryPeriod(
+        { label: params.label, from: params.effectiveFrom, to: params.effectiveTo },
+        {
+          api: params.urdb,
+          utilityName: params.utilityName,
+          timeZone: params.timezone,
+          today: params.todaySiteLocal,
+          convert: { medianMonthlyKwh, fallbackSellRate: 0 },
+        }
+      );
+      if (!expanded.length) throw new TariffValidationError('That public rate plan has no prices for this range.');
+      revisions = expanded.map(({ from, to, label, revisionStart, pricingRate }) => ({
+        effectiveFrom: from,
+        effectiveTo: to,
+        rate: pricingRate,
+        label,
+        revisionStart,
+      }));
+    } catch (error) {
+      if (error instanceof HistoryPeriodError) throw new TariffValidationError(error.message);
+      throw error;
+    }
+  }
+
   return {
     rate,
     preLockUtilityName: params.utilityName,
     medianMonthlyKwh,
+    revisions,
   };
 }
 
@@ -516,6 +550,7 @@ export async function previewTariffSelection(
   const preparedPublic = validatedRequest.candidate.kind === 'public'
     ? await preparePublicRateOutsideLock({
         siteId,
+        scope: validatedRequest.scope,
         eligibility,
         utilityName: site.name,
         utilityChoice: site.choice ?? null,
@@ -546,21 +581,21 @@ export async function previewTariffSelection(
 
   let candidatePlan: TariffReviewPlanSnapshot | null = null;
   let conversionInputs: ConversionInputsRecord | undefined;
+  let candidateRevisions: CandidateRevision[] | undefined;
 
   if (validatedRequest.candidate.kind === 'public' && preparedPublic) {
-    const resolved = buildResolvedPublicPlan({
-      rate: preparedPublic.rate,
+    const plans = resolvePublicSelectionPlans(preparedPublic, buildResolvedPublicPlan, {
       siteCurrency,
       utilityName: preparedPublic.preLockUtilityName,
       effectiveFrom: validatedRequest.effectiveFrom,
       effectiveTo: validatedRequest.effectiveTo,
       todaySiteLocal: today,
-      medianMonthlyKwh: preparedPublic.medianMonthlyKwh,
       fallbackSellRate: snapshot.fallbackSellRate,
       hasTeslaSellFallback: snapshot.hasTeslaSellFallback,
     });
-    candidatePlan = resolved.candidatePlan;
-    conversionInputs = resolved.conversionInputs;
+    candidatePlan = plans[0].plan;
+    conversionInputs = plans[0].conversionInputs;
+    candidateRevisions = preparedPublic.revisions ? plans : undefined;
   } else if (validatedRequest.candidate.kind === 'manual') {
     candidatePlan = buildManualCandidateSnapshot(
       validatedRequest.candidate.name,
@@ -577,6 +612,8 @@ export async function previewTariffSelection(
     request: validatedRequest,
     existingSpans: snapshot.existingSpans,
     candidatePlan,
+    candidateRevisions,
+    followedReference: site.followedReference,
     restorationTargets: snapshot.restorationTargets,
     eligibility,
     conversionInputs,
@@ -608,6 +645,7 @@ export async function commitTariffSelection(
   const publicRate = commit.candidate.kind === 'public'
     ? await preparePublicRateOutsideLock({
         siteId,
+        scope: commit.scope,
         eligibility,
         utilityName: site.name,
         utilityChoice: site.choice ?? null,

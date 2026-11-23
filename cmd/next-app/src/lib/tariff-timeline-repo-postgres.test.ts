@@ -1525,7 +1525,8 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           const preview = await previewTariffSelection(siteId, 'u1', request, deps);
           const commitRequest = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
           await commitTariffSelection(siteId, 'u1', commitRequest, deps);
-          // Once the estimate run lays rows the stale hash mismatches; the same follow is an unchanged retry.
+          expect((await commitTariffSelection(siteId, 'u1', commitRequest, deps)).unchanged).toBe(true);
+          // The same follow is also an unchanged retry after estimates lay rows.
           await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
           expect((await commitTariffSelection(siteId, 'u1', commitRequest, deps)).unchanged).toBe(true);
           // A utility change between the pre-lock read and the locked commit is refused even for a matching follow.
@@ -1566,6 +1567,51 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           await choose(siteId, 'fx-2024', '2024-01-01', '2024-12-31');
           expect(await followed(siteId)).toEqual({ label: null, from: null });
           expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2024-01-01', '2024-12-31']]);
+        });
+
+        it('closedPublicChoiceExpandsAcrossThePlanRevisions', async () => {
+          const siteId = 's-editor-closed-expands';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-06-01', effectiveTo: '2025-06-30' };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const buyOf = (plan: { seasons: TariffSeasonInput[] } | null) => plan?.seasons[0].weekdayPeriods[0].buyRate;
+          expect(preview.affectedIntervals.map(item => [item.effectiveFrom, item.effectiveTo, item.after?.urdbLabel, buyOf(item.after)])).toEqual([
+            ['2024-06-01', '2024-12-31', 'fx-2024', 0.12],
+            ['2025-01-01', '2025-06-30', 'fx-2025', 0.13],
+          ]);
+          const commit = await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, deps);
+          expect(commit.selectionIds).toHaveLength(2);
+          const owner = (await references(siteId)).filter(row => row.choice_kind === 'owner');
+          expect(owner.map(row => [row.effective_from, row.effective_to, row.scope, row.name, Number(row.buy)])).toEqual([
+            ['2024-06-01', '2024-12-31', 'reference', 'Plan fx-2024', 0.12],
+            ['2025-01-01', '2025-06-30', 'reference', 'Plan fx-2025', 0.13],
+          ]);
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+
+        it.each([
+          { change: 'label', label: 'fx-2025', from: '2025-01-01' },
+          { change: 'start date', label: 'fx-2024', from: '2025-02-01' },
+        ])('rejects a stale follow review with a different $change before estimates run', async ({ change, label, from }) => {
+          const siteId = `s-editor-stale-${change.replace(' ', '-')}`;
+          await harrisonSite(siteId, 'none');
+          const first = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2025-01-01', effectiveTo: null };
+          const second = { ...first, candidate: { ...first.candidate, label }, effectiveFrom: from };
+          await runUrdbEstimatesForSite(siteId, { ...api, defaultRates: async () => [rates[0]] }, deps.now());
+          // Start with a follow so the first review changes only the field under test.
+          await choose(siteId, label, from, null);
+          const before = await references(siteId);
+          expect(before.length).toBeGreaterThan(0);
+          expect(before.every(row => row.source === 'estimated')).toBe(true);
+
+          const firstReview = await previewTariffSelection(siteId, 'u1', first, deps);
+          const secondReview = await previewTariffSelection(siteId, 'u1', second, deps);
+          await commitTariffSelection(siteId, 'u1', { ...first, expectedReviewHash: firstReview.reviewHash, verifiedAgainstBill: false }, deps);
+
+          expect(await references(siteId)).toEqual(before);
+          await expect(commitTariffSelection(siteId, 'u1', { ...second, expectedReviewHash: secondReview.reviewHash, verifiedAgainstBill: false }, deps))
+            .rejects.toThrow(TariffSelectionConflictError);
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
         });
 
         it('movingTheFollowLaterKeepsTheEarlierFollowedRangeAsOwnerRows', async () => {

@@ -35,7 +35,9 @@ import {
   buildTariffSelectionPreview,
   followsUtilityPlan,
   supersedesFollowedLabel,
+  type CandidateRevision,
   type ConversionInputsRecord,
+  type FollowedReferencePlan,
   type ExistingTimelineSpanInput,
   type RestorationTargetSpanInput,
 } from './tariff-selection';
@@ -2134,6 +2136,7 @@ export interface SiteUtilityContextResult {
   timezone: string;
   currency?: string;
   choice?: 'auto' | 'owner' | 'skipped' | null;
+  followedReference?: FollowedReferencePlan;
   rateCountry?: string | null;
   rateCountrySource?: RateCountrySource | null;
   rateCountryUpdatedAt?: string | null;
@@ -2159,25 +2162,68 @@ export interface ResolvedPublicCandidatePlan {
   conversionInputs: ConversionInputsRecord;
 }
 
+type PreparedPublicRevision = Pick<CandidateRevision, 'effectiveFrom' | 'effectiveTo'> & {
+  rate: UrdbRate;
+  label: string;
+  revisionStart: string;
+};
+
+export interface PreparedPublicSelection {
+  rate: UrdbRate;
+  preLockUtilityName: string;
+  medianMonthlyKwh: number | null;
+  revisions?: PreparedPublicRevision[];
+}
+
+type PublicSelectionConversionContext = SitePublicConversionContext & {
+  siteCurrency: string;
+  utilityName: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  todaySiteLocal: string;
+};
+
+type ResolvePublicPlan = (ctx: PublicSelectionConversionContext & {
+  rate: UrdbRate;
+  medianMonthlyKwh: number | null;
+}) => ResolvedPublicCandidatePlan;
+
+type ResolvedPublicRevision = CandidateRevision & Pick<ResolvedPublicCandidatePlan, 'applyCandidate' | 'conversionInputs'>;
+
+export function resolvePublicSelectionPlans(
+  selection: PreparedPublicSelection,
+  resolve: ResolvePublicPlan,
+  context: PublicSelectionConversionContext
+): ResolvedPublicRevision[] {
+  const intervals = selection.revisions ?? [{
+    effectiveFrom: context.effectiveFrom,
+    effectiveTo: context.effectiveTo,
+    rate: selection.rate,
+    label: selection.rate.label,
+    revisionStart: undefined,
+  }];
+  return intervals.map(({ rate, effectiveFrom, effectiveTo, label, revisionStart }) => {
+    const { candidatePlan, applyCandidate, conversionInputs } = resolve({
+      ...context, rate, effectiveFrom, effectiveTo, medianMonthlyKwh: selection.medianMonthlyKwh,
+    });
+    // The guide can borrow prices from another revision when a filing is unreadable.
+    // Keep the covered revision's identity even when its prices come from a different filing.
+    const identity = { urdbLabel: label, ...(revisionStart !== undefined ? { revisionStart } : {}) };
+    return {
+      effectiveFrom,
+      effectiveTo,
+      plan: { ...candidatePlan, ...identity },
+      applyCandidate: { ...applyCandidate, ...identity },
+      conversionInputs,
+    };
+  });
+}
+
 export interface CommitReviewedSelectionInput {
   userId: string;
   commit: TariffSelectionCommit;
-  publicRate?: {
-    rate: UrdbRate;
-    preLockUtilityName: string;
-    medianMonthlyKwh: number | null;
-  };
-  resolvePublicPlan: (ctx: {
-    rate: UrdbRate;
-    siteCurrency: string;
-    utilityName: string;
-    effectiveFrom: string;
-    effectiveTo: string | null;
-    todaySiteLocal: string;
-    medianMonthlyKwh: number | null;
-    fallbackSellRate: number;
-    hasTeslaSellFallback: boolean;
-  }) => ResolvedPublicCandidatePlan;
+  publicRate?: PreparedPublicSelection;
+  resolvePublicPlan: ResolvePublicPlan;
   deriveEligibility?: (ctx: {
     rateCountry: string | null;
   }) => RatePlanEligibility;
@@ -2789,6 +2835,8 @@ export class TariffTimelineRepo {
       timezone: string;
       currency: string;
       choice: 'auto' | 'owner' | 'skipped' | null;
+      urdb_reference_label: string | null;
+      urdb_reference_from: string | null;
       rate_country: string | null;
       rate_country_source: RateCountrySource | null;
       rate_country_updated_at: Date | string | null;
@@ -2797,6 +2845,8 @@ export class TariffTimelineRepo {
               s.timezone,
               COALESCE(s.json -> 'tariff_content_v2' ->> 'currency', s.json ->> 'currency', 'USD') AS currency,
               u.choice,
+              u.urdb_reference_label,
+              u.urdb_reference_from::text AS urdb_reference_from,
               s.rate_country,
               s.rate_country_source,
               s.rate_country_updated_at
@@ -2813,6 +2863,7 @@ export class TariffTimelineRepo {
       timezone: row.timezone,
       currency: row.currency,
       choice: row.choice,
+      followedReference: { label: row.urdb_reference_label ?? null, from: row.urdb_reference_from ?? null },
       rateCountry,
       rateCountrySource: row.rate_country_source ?? null,
       rateCountryUpdatedAt: toIsoOrNull(row.rate_country_updated_at),
@@ -4201,6 +4252,7 @@ export class TariffTimelineRepo {
       let candidatePlan: TariffReviewPlanSnapshot | null = null;
       let applyCandidate: ApplyTariffSelectionCandidate;
       let conversionInputs: ConversionInputsRecord | undefined;
+      let revisions: ResolvedPublicRevision[] | undefined;
 
       if (commit.candidate.kind === 'public') {
         if (!utilityName || utilityChoice === 'skipped') {
@@ -4215,20 +4267,19 @@ export class TariffTimelineRepo {
           );
         }
         const fallback = await loadSiteSellFallbackOnClient(client, siteId, commit.effectiveFrom);
-        const resolved = resolvePublicPlan({
-          rate: publicRate.rate,
+        const plans = resolvePublicSelectionPlans(publicRate, resolvePublicPlan, {
           siteCurrency: currency,
           utilityName,
           effectiveFrom: commit.effectiveFrom,
           effectiveTo: commit.effectiveTo,
           todaySiteLocal: today,
-          medianMonthlyKwh: publicRate.medianMonthlyKwh,
           fallbackSellRate: fallback.fallbackSellRate,
           hasTeslaSellFallback: fallback.hasTeslaSellFallback,
         });
-        candidatePlan = resolved.candidatePlan;
-        applyCandidate = resolved.applyCandidate;
-        conversionInputs = resolved.conversionInputs;
+        candidatePlan = plans[0].plan;
+        applyCandidate = plans[0].applyCandidate;
+        conversionInputs = plans[0].conversionInputs;
+        revisions = publicRate.revisions ? plans : undefined;
       } else if (commit.candidate.kind === 'manual') {
         const parsed = compileSeasonsToParsedTariff(commit.candidate.name, commit.candidate.seasons);
         const contentHash = tariffContentHash(parsed);
@@ -4277,14 +4328,17 @@ export class TariffTimelineRepo {
         },
         existingSpans,
         candidatePlan,
+        candidateRevisions: revisions,
+        followedReference: { label: utilityRow?.urdb_reference_label ?? null, from: utilityRow?.urdb_reference_from ?? null },
         restorationTargets,
         eligibility,
         conversionInputs,
       });
 
+      const follow = followsUtilityPlan(commit) && publicRate && isFixedRate(publicRate.rate);
       if (currentPreview.reviewHash !== commit.expectedReviewHash) {
         // A retry is only the same follow when no owner reference row still overlaps it; reselecting would have cleared those.
-        const alreadyFollowing = followsUtilityPlan(commit) && commit.candidate.kind === 'public'
+        const alreadyFollowing = follow && commit.candidate.kind === 'public'
           && utilityRow?.urdb_reference_label === commit.candidate.label && utilityRow.urdb_reference_from === commit.effectiveFrom
           && !(await client.query(
             `SELECT 1 FROM "TariffReferencePeriod" p
@@ -4295,7 +4349,7 @@ export class TariffTimelineRepo {
           )).rowCount;
         const retryResult = alreadyFollowing
           ? { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: true, reattributionRange: null }
-          : await findIdempotentRetryOnClient(
+          : follow || (revisions && revisions.length > 1) ? null : await findIdempotentRetryOnClient(
             client,
             siteId,
             userId,
@@ -4308,10 +4362,30 @@ export class TariffTimelineRepo {
           throw new TariffSelectionConflictError(siteId, currentPreview);
         }
         result = retryResult;
-      } else if (followsUtilityPlan(commit) && commit.candidate.kind === 'public' && publicRate && isFixedRate(publicRate.rate)) {
+      } else if (follow && commit.candidate.kind === 'public') {
         // The open-ended range follows the chosen plan: the estimate job lays its revisions, so no owner row is written.
         await setFollowedReferenceLabelOnClient(client, siteId, userId, commit.candidate.label, commit.effectiveFrom, utilityName);
         result = { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: false, reattributionRange: null };
+      } else if (revisions && revisions.length > 1) {
+        const applied: ApplyTariffSelectionResult[] = [];
+        for (const revision of revisions) {
+          applied.push(await applyTariffSelectionOnClient(client, siteId, today, {
+            scope: commit.scope,
+            effectiveFrom: revision.effectiveFrom,
+            effectiveTo: revision.effectiveTo,
+            userId,
+            verifiedAgainstBill: commit.verifiedAgainstBill,
+            candidate: revision.applyCandidate,
+            reviewHash: commit.expectedReviewHash,
+          }));
+        }
+        result = {
+          selectionIds: applied.flatMap(item => item.selectionIds),
+          tariffIds: [...new Set(applied.flatMap(item => item.tariffIds))],
+          createdNewTariffVersion: applied.some(item => item.createdNewTariffVersion),
+          unchanged: applied.every(item => item.unchanged),
+          reattributionRange: null,
+        };
       } else {
         result = await applyTariffSelectionOnClient(client, siteId, today, {
           scope: commit.scope,
