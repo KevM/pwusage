@@ -9,6 +9,8 @@ import {
   buildTariffSelectionPreview,
   compareTariffSchedules,
   compareTariffSeasons,
+  followsUtilityPlan,
+  supersedesFollowedLabel,
   validateSelectionDates,
   validateTariffSelectionCommit,
   validateTariffSelectionRequest,
@@ -1180,5 +1182,24 @@ describe('strict date & request validation and reviewHash determinism', () => {
     expect(differentEligibility.reviewHash).not.toBe(p1.reviewHash);
     expect(differentConversion.reviewHash).not.toBe(p1.reviewHash);
     expect(differentScope.reviewHash).not.toBe(p1.reviewHash);
+  });
+});
+
+describe('following a utility plan chosen for the current rate plan', () => {
+  const publicCandidate = { kind: 'public' as const, label: 'fx-1' };
+  const manualCandidate = { kind: 'manual' as const, name: 'Mine', seasons: summerWinterPlanA };
+
+  it('follows only an open-ended public choice for the comparison', () => {
+    expect(followsUtilityPlan({ scope: 'reference', candidate: publicCandidate, effectiveTo: null })).toBe(true);
+    expect(followsUtilityPlan({ scope: 'reference', candidate: publicCandidate, effectiveTo: '2026-12-31' })).toBe(false);
+    expect(followsUtilityPlan({ scope: 'reference', candidate: manualCandidate, effectiveTo: null })).toBe(false);
+    expect(followsUtilityPlan({ scope: 'actual', candidate: publicCandidate, effectiveTo: null })).toBe(false);
+  });
+
+  it('supersedes a followed label only for a choice starting on or before it', () => {
+    expect(supersedesFollowedLabel('2025-01-01', '2025-01-01')).toBe(true);
+    expect(supersedesFollowedLabel('2024-06-01', '2025-01-01')).toBe(true);
+    expect(supersedesFollowedLabel('2025-01-02', '2025-01-01')).toBe(false);
+    expect(supersedesFollowedLabel('2024-06-01', null)).toBe(false);
   });
 });

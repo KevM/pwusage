@@ -1381,6 +1381,91 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         expect(await references(siteId)).toEqual([]);
       });
 
+      describe('editor choice of a utility plan', () => {
+        const rates = [flatRate('fx-2024', '2024-01-01', 0.12), flatRate('fx-2025', '2025-01-01', 0.13, 'fx-2024')];
+        const api = chainApi(rates);
+        const deps = { now: () => new Date('2026-11-16T18:00:00Z'), urdb: api, monthlyUsage: async () => 600 };
+        const choose = async (siteId: string, label: string, effectiveFrom: string, effectiveTo: string | null, kind: 'public' | 'manual' = 'public') => {
+          const request = {
+            scope: 'reference' as const,
+            candidate: kind === 'public' ? { kind: 'public' as const, label } : { kind: 'manual' as const, name: `Manual ${effectiveFrom}`, seasons: seasons(0.4) },
+            effectiveFrom,
+            effectiveTo,
+          };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const commit = await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, deps);
+          return { preview, commit };
+        };
+        const laid = async (siteId: string) => (await local.database.query<{ label: string | null; from: string; to: string | null }>(
+          `SELECT u.urdb_label AS label, p.effective_from::text AS from, p.effective_to::text AS to
+           FROM "TariffReferencePeriod" p JOIN "TariffUrdbSource" u ON u.tariff_id = p.tariff_id AND u.role = 'estimated_reference'
+           WHERE p.site_id = $1 ORDER BY p.effective_from`, [siteId])).rows;
+
+        it('openPublicChoiceFollowsThePlan', async () => {
+          const siteId = 's-editor-follow';
+          await harrisonSite(siteId, 'none');
+          const { preview } = await choose(siteId, 'fx-2024', '2024-01-01', null);
+          expect(preview.reviewHash).toBeTruthy();
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2024-01-01' });
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toEqual([]);
+          const pending = await local.database.query(`SELECT status FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+          expect(pending.rows[0].status).toBe('pending');
+          await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+          expect(await laid(siteId)).toEqual([
+            { label: 'fx-2024', from: '2024-01-01', to: '2024-12-31' },
+            { label: 'fx-2025', from: '2025-01-01', to: null },
+          ]);
+        });
+
+        it('openPublicChoiceDropsOwnerReferenceRowsFromItsStart', async () => {
+          const siteId = 's-editor-follow-replaces';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'x', '2023-11-14', '2024-06-30', 'manual');
+          await choose(siteId, 'x', '2024-09-01', null, 'manual');
+          await choose(siteId, 'fx-2024', '2025-01-01', null);
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2023-11-14', '2024-06-30'], ['2024-09-01', '2024-12-31']]);
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+        });
+
+        it('closedPublicChoiceDoesNotFollow', async () => {
+          const siteId = 's-editor-closed';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2024-01-01', '2024-12-31');
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to])).toEqual([['2024-01-01', '2024-12-31']]);
+        });
+
+        it('laterManualOrClosedChoiceStartingOnOrBeforeTheFollowedRangeClearsTheLabel', async () => {
+          for (const [suffix, to, kind] of [['manual', null, 'manual'], ['closed', '2024-12-31', 'public']] as const) {
+            const siteId = `s-editor-clears-${suffix}`;
+            await harrisonSite(siteId, 'none');
+            await choose(siteId, 'fx-2024', '2025-01-01', null);
+            expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2025-01-01' });
+            await choose(siteId, 'fx-2024', '2024-06-01', to, kind);
+            expect(await followed(siteId)).toEqual({ label: null, from: null });
+          }
+        });
+
+        it('aChoiceStartingAfterTheFollowedRangeKeepsTheLabel', async () => {
+          const siteId = 's-editor-keeps-label';
+          await harrisonSite(siteId, 'none');
+          await choose(siteId, 'fx-2024', '2024-01-01', null);
+          await choose(siteId, 'fx-2024', '2024-03-01', '2024-04-30', 'manual');
+          expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2024-01-01' });
+        });
+
+        it('followingRefusesAChangedUtility', async () => {
+          const siteId = 's-editor-utility-changed';
+          await harrisonSite(siteId, 'none');
+          const client = await local.database.connect();
+          try {
+            await client.query('BEGIN');
+            await expect(setFollowedReferenceLabelOnClient(client, siteId, 'u1', 'fx-2024', '2024-01-01', 'Some Other Utility')).rejects.toThrow(UtilityChangedError);
+          } finally { await client.query('ROLLBACK'); client.release(); }
+          expect(await followed(siteId)).toEqual({ label: null, from: null });
+        });
+      });
+
       it('aFailingFixedWriteRollsBackTheActualRows', async () => {
         const siteId = 's-fixed-rollback';
         await harrisonSite(siteId);
@@ -1930,7 +2015,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           scope: 'reference',
           candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
           effectiveFrom: '2025-01-01',
-          effectiveTo: null,
+          effectiveTo: '2025-06-30',
         },
         { now: fixedNow, repo, urdb, monthlyUsage: async () => 600 }
       );
@@ -1941,7 +2026,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           scope: 'reference',
           candidate: { kind: 'public', label: 'urdb-e2e-tiered' },
           effectiveFrom: '2025-01-01',
-          effectiveTo: null,
+          effectiveTo: '2025-06-30',
           expectedReviewHash: refPreview.reviewHash,
           verifiedAgainstBill: false,
         },

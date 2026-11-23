@@ -268,6 +268,16 @@ export function validateTariffSelectionRequest(
   return { scope, candidate, effectiveFrom, effectiveTo };
 }
 
+/** An open-ended utility plan chosen for the comparison means "this plan": its later revisions are followed. */
+export function followsUtilityPlan(request: { scope: TariffSelectionScope; candidate: { kind: string }; effectiveTo: string | null }): boolean {
+  return request.scope === 'reference' && request.candidate.kind === 'public' && request.effectiveTo === null;
+}
+
+/** Any other comparison choice starting on or before the followed range replaces the follow. */
+export function supersedesFollowedLabel(effectiveFrom: string, followedFrom: string | null): boolean {
+  return followedFrom !== null && effectiveFrom <= followedFrom;
+}
+
 export function validateTariffSelectionCommit(
   raw: unknown,
   todaySiteLocal: string

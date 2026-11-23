@@ -29,9 +29,12 @@ import { mapSystemCostRows, SYSTEM_COST_COMPONENTS, type SystemCostRow, type Sys
 import { SiteRepo } from './site-repo';
 import { fillWindowBounds, loadHistoryWindow, loadHistoryWindowInput, uncoveredPieces, type HistoryWindow } from './urdb/history-window';
 import type { ExpandedRevision } from './urdb/history-expand';
+import { isFixedRate } from './urdb/convert';
 import { enqueueReattributionOnClient, logReattributionEnqueued, type EnqueuedReattribution, type EnqueueReattributionParams } from './tariff-reattribution-queue';
 import {
   buildTariffSelectionPreview,
+  followsUtilityPlan,
+  supersedesFollowedLabel,
   type ConversionInputsRecord,
   type ExistingTimelineSpanInput,
   type RestorationTargetSpanInput,
@@ -1663,12 +1666,13 @@ export type FixedComparisonWrite = { from: string; to: string | null } & (
 /**
  * Follows `label` as the owner's fixed comparison plan from `from` onward: the estimate job lays its
  * revisions as the open-ended reference, so this also clears any owner reference period over that range.
+ * `expectedUtility` ties the write to the utility the caller verified in the same transaction.
  */
-export async function setFollowedReferenceLabelOnClient(client: PoolClient, siteId: string, userId: string, label: string, from: string): Promise<void> {
+export async function setFollowedReferenceLabelOnClient(client: PoolClient, siteId: string, userId: string, label: string, from: string, expectedUtility: string | null = null): Promise<void> {
   const updated = await client.query(
     `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3::date, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $4, updated_at = now()
-     WHERE site_id = $1 AND choice <> 'skipped'`,
-    [siteId, label, from, userId]
+     WHERE site_id = $1 AND choice <> 'skipped' AND ($5::text IS NULL OR urdb_utility = $5)`,
+    [siteId, label, from, userId, expectedUtility]
   );
   if (!updated.rowCount) throw new UtilityChangedError('Utility changed. Start again.');
   const owned = `(p.source <> 'estimated' OR EXISTS (SELECT 1 FROM "TariffSelection" s WHERE s.id = p.selection_id AND s.choice_kind = 'owner'))`;
@@ -4108,8 +4112,10 @@ export class TariffTimelineRepo {
       const utilityRes = await client.query<{
         urdb_utility: string | null;
         choice: 'auto' | 'owner' | 'skipped' | null;
+        urdb_reference_label: string | null;
+        urdb_reference_from: string | null;
       }>(
-        'SELECT urdb_utility, choice FROM "SiteUtility" WHERE site_id = $1',
+        'SELECT urdb_utility, choice, urdb_reference_label, urdb_reference_from::text AS urdb_reference_from FROM "SiteUtility" WHERE site_id = $1',
         [siteId]
       );
       const utilityRow = utilityRes.rows[0];
@@ -4213,19 +4219,27 @@ export class TariffTimelineRepo {
       });
 
       if (currentPreview.reviewHash !== commit.expectedReviewHash) {
-        const retryResult = await findIdempotentRetryOnClient(
-          client,
-          siteId,
-          userId,
-          commit,
-          candidatePlan,
-          existingSpans,
-          restorationTargets
-        );
+        const alreadyFollowing = followsUtilityPlan(commit) && commit.candidate.kind === 'public'
+          && utilityRow?.urdb_reference_label === commit.candidate.label && utilityRow.urdb_reference_from === commit.effectiveFrom;
+        const retryResult = alreadyFollowing
+          ? { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: true, reattributionRange: null }
+          : await findIdempotentRetryOnClient(
+            client,
+            siteId,
+            userId,
+            commit,
+            candidatePlan,
+            existingSpans,
+            restorationTargets
+          );
         if (!retryResult) {
           throw new TariffSelectionConflictError(siteId, currentPreview);
         }
         result = retryResult;
+      } else if (followsUtilityPlan(commit) && commit.candidate.kind === 'public' && publicRate && isFixedRate(publicRate.rate)) {
+        // The open-ended range follows the chosen plan: the estimate job lays its revisions, so no owner row is written.
+        await setFollowedReferenceLabelOnClient(client, siteId, userId, commit.candidate.label, commit.effectiveFrom, utilityName);
+        result = { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: false, reattributionRange: null };
       } else {
         result = await applyTariffSelectionOnClient(client, siteId, today, {
           scope: commit.scope,
@@ -4236,6 +4250,15 @@ export class TariffTimelineRepo {
           candidate: applyCandidate,
           reviewHash: commit.expectedReviewHash,
         });
+        if (commit.scope === 'reference') {
+          // An owner choice starting on or before the followed range supersedes "follow this plan".
+          if (supersedesFollowedLabel(commit.effectiveFrom, utilityRow?.urdb_reference_from ?? null)) {
+            await client.query(
+              `UPDATE "SiteUtility" SET urdb_reference_label = NULL, urdb_reference_from = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_at = now() WHERE site_id = $1`,
+              [siteId]
+            );
+          }
+        }
         if (commit.scope === 'actual' && result.reattributionRange) {
           reattribution = {
             siteId,
