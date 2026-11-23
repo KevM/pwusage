@@ -56,11 +56,27 @@ extension RatePlanHistoryFlow {
         return fixedChoices(startingIn: spans[index].from)
     }
 
+    /// The same plans as `fixedChoices(forSpanAt:)`, with the default flag the picker's Standard pill needs.
+    func fixedOptions(forSpanAt index: Int) -> [FixedComparisonOption] {
+        guard spans.indices.contains(index) else { return [] }
+        return fixedPlans(startingIn: spans[index].from).compactMap { plan in
+            plan.fixedLabel.map {
+                FixedComparisonOption(label: $0, name: plan.name, buyRate: plan.lowRate, isDefault: plan.isDefault)
+            }
+        }
+    }
+
     private func fallbackFixedPlan(startingIn day: String) -> FixedComparisonChoice? {
         fixedChoices(startingIn: day).first
     }
 
     private func fixedChoices(startingIn day: String) -> [FixedComparisonChoice] {
+        fixedPlans(startingIn: day).compactMap { plan in
+            plan.fixedLabel.map { .publicPlan(label: $0, name: plan.name, buyRate: plan.lowRate) }
+        }
+    }
+
+    private func fixedPlans(startingIn day: String) -> [RatePlanHistoryPlanDTO] {
         let year = Int(day.prefix(4))
         // Only the year covering the start. A year the server lists with no plans offers none; a year
         // it does not list is the current (trusted) year, whose plans are `history.current`.
@@ -68,9 +84,6 @@ extension RatePlanHistoryFlow {
             history.years.contains { $0.year == year } ? [] : history.current
         )
         let fixedPlans = listed.filter { $0.kind == .fixed && $0.fixedLabel != nil }
-        let ordered = fixedPlans.filter(\.isDefault) + fixedPlans.filter { !$0.isDefault }
-        return ordered.compactMap { plan in
-            plan.fixedLabel.map { .publicPlan(label: $0, name: plan.name, buyRate: plan.lowRate) }
-        }
+        return fixedPlans.filter(\.isDefault) + fixedPlans.filter { !$0.isDefault }
     }
 }

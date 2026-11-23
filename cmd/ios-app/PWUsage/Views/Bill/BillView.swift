@@ -15,6 +15,7 @@ struct BillView: View {
 
     private var state: DashboardEndpointState<MobileBillResponse> { coordinator.bill }
     private var response: MobileBillResponse? { coordinator.bill.response }
+    private var hasRatePlans: Bool { !(coordinator.savingsTimeline?.periods.isEmpty ?? true) }
     private var timeZone: String { response?.site.timezone ?? "UTC" }
 
     var body: some View {
@@ -84,16 +85,6 @@ struct BillView: View {
                 BillSavingsSheet(move: move, currency: currency, onOpenSmartShift: onOpenSmartShift)
             case let .details(details):
                 BillEstimateDetailsSheet(details: details)
-            case let .fixedRatePlan(existing, suggestion):
-                FixedRatePlanForm(
-                    existing: existing,
-                    defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
-                    suggestedStartDate: suggestion,
-                    estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
-                    timeZone: TimeZone(identifier: timeZone) ?? .current,
-                    currency: response?.currentBill.currency ?? "USD",
-                    actions: .live(coordinator, onDismiss: { self.sheet = nil })
-                )
             case let .ratePlans(startsAdding):
                 RatePlansSheet(site: site, actions: .live(coordinator), startsAddingPlan: startsAdding)
             }
@@ -153,13 +144,7 @@ struct BillView: View {
                 onAddRatePlan: prompt != .pickPlan ? { sheet = .ratePlans(startsAdding: true) } : nil
             )
         }
-        BillSavingsCard(
-            state: coordinator.savings,
-            currency: bill.currency,
-            onAddFixedRatePlan: { sheet = .fixedRatePlan(nil, suggestion: nil) },
-            onEditFixedRatePlan: { sheet = .fixedRatePlan(coordinator.activeReferencePeriod, suggestion: nil) },
-            onCaveatAction: routeCaveat
-        )
+        savingsCard(currency: bill.currency)
         if let history = response.outlook, !history.points.isEmpty {
             BillOutlookChart(history: history, projected: projected, cycleStart: bill.cycleStart,
                              cycleEnd: bill.cycleEnd, now: now, timeZone: timeZone,
@@ -175,12 +160,22 @@ struct BillView: View {
         billMetadata(response, usesSolar: result.usesSolar)
     }
 
+    private func savingsCard(currency: String) -> some View {
+        BillSavingsCard(
+            state: coordinator.savings,
+            currency: currency,
+            hasRatePlans: hasRatePlans,
+            onOpenRatePlans: {
+                let entry = SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans)
+                sheet = .ratePlans(startsAdding: entry.startsAdding)
+            },
+            onCaveatAction: routeCaveat
+        )
+    }
+
     private func routeCaveat(_ action: SavingsCaveat.Action) {
         switch action {
-        case .editFixedRatePlan(let suggestion):
-            let period = suggestion == nil ? coordinator.activeReferencePeriod : coordinator.earliestReferencePeriod
-            sheet = .fixedRatePlan(period, suggestion: suggestion)
-        case .fixRatePlans:
+        case .openRatePlans, .fixRatePlans:
             sheet = .ratePlans(startsAdding: false)
         }
     }
@@ -240,7 +235,6 @@ struct BillView: View {
 private enum BillSheet: Identifiable {
     case savings(BillSavingsMove, currency: String)
     case details(BillEstimateDetails)
-    case fixedRatePlan(TariffPeriodDTO?, suggestion: String?)
     case ratePlans(startsAdding: Bool)
 
     var id: String {
@@ -248,7 +242,6 @@ private enum BillSheet: Identifiable {
         case .savings: "savings"
         case .details: "details"
         case .ratePlans: "ratePlans"
-        case let .fixedRatePlan(period, _): "fixedRatePlan-\(period?.periodId ?? 0)"
         }
     }
 }

@@ -66,124 +66,36 @@ struct SavingsPresentationTests {
         )
     }
 
-    @Test("FixedRatePlanDraft builds an all-year, all-day season request")
-    func fixedRatePlanFormBuildsAllDaySeason() throws {
-        let zone = try #require(TimeZone(identifier: "America/Chicago"))
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = zone
-        let startsOn = try #require(cal.date(from: DateComponents(year: 2024, month: 1, day: 1)))
-
-        let request = FixedRatePlanDraft.makeWriteRequest(
-            name: "Standard Fixed",
-            buyRate: 0.14,
-            sellRate: 0.04,
-            startsOn: startsOn,
-            timeZone: zone
-        )
-
-        #expect(request.name == "Standard Fixed")
-        #expect(request.effectiveFrom == "2024-01-01")
-        #expect(request.effectiveTo == nil)
-        #expect(request.seasons.count == 1)
-
-        let season = try #require(request.seasons.first)
-        #expect(season.fromMonth == 1)
-        #expect(season.toMonth == 12)
-        let expectedWindow = TimePeriodWindowInput(
-            touName: .offPeak,
-            fromHour: 0,
-            fromMinute: 0,
-            toHour: 24,
-            toMinute: 0,
-            buyRate: 0.14,
-            sellRate: 0.04
-        )
-        #expect(season.weekdayPeriods == [expectedWindow])
-        #expect(season.weekendPeriods == [expectedWindow])
-    }
-
-    @Test("Editing a fixed plan leaves its end date unchanged")
-    func fixedPlanEditPreservesEndDate() {
-        let request = FixedRatePlanDraft.makeWriteRequest(
-            name: "Fixed", buyRate: 0.14, sellRate: 0.04, startsOn: .now, timeZone: .gmt
-        )
-        #expect(FixedRatePlanDraft.makePatchRequest(request).effectiveTo == .unchanged)
-    }
-
-    @Test("FixedRatePlanDraft builds a reference-scope selection request and preserves end date")
+    @Test("FixedRatePlanDraft builds an all-year, all-day reference-scope request for exactly the given dates")
     func fixedRatePlanSelectionRequest() throws {
-        let zone = try #require(TimeZone(identifier: "America/Chicago"))
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = zone
-        let startsOn = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: 1)))
-
-        let ongoing = FixedRatePlanDraft.makeSelectionRequest(
-            name: "  ",
-            buyRate: 0.25,
-            sellRate: 0.05,
-            startsOn: startsOn,
-            timeZone: zone
+        let bounded = FixedRatePlanDraft.makeSelectionRequest(
+            name: "Standard Fixed", buyRate: 0.14, sellRate: 0.04, range: ("2024-01-01", "2024-06-30")
         )
-        #expect(ongoing.scope == .reference)
-        #expect(ongoing.effectiveFrom == "2026-03-01")
-        #expect(ongoing.effectiveTo == nil)
-        guard case .manual(let name, let seasons) = ongoing.candidate else {
+        #expect(bounded.scope == .reference)
+        #expect(bounded.effectiveFrom == "2024-01-01")
+        #expect(bounded.effectiveTo == "2024-06-30")
+        guard case .manual(let name, let seasons) = bounded.candidate else {
             Issue.record("Expected manual candidate")
             return
         }
-        #expect(name == "Fixed Rate Plan")
+        #expect(name == "Standard Fixed")
+        let season = try #require(seasons.first)
         #expect(seasons.count == 1)
-        #expect(seasons.first?.weekdayPeriods.first?.buyRate == 0.25)
-        #expect(seasons.first?.weekdayPeriods.first?.sellRate == 0.05)
-
-        let bounded = FixedRatePlanDraft.makeSelectionRequest(
-            name: "Summer Fixed",
-            buyRate: 0.30,
-            sellRate: 0.02,
-            startsOn: startsOn,
-            effectiveTo: "2026-06-30",
-            timeZone: zone
+        #expect(season.fromMonth == 1)
+        #expect(season.toMonth == 12)
+        let expectedWindow = TimePeriodWindowInput(
+            touName: .offPeak, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate: 0.14, sellRate: 0.04
         )
-        #expect(bounded.scope == .reference)
-        #expect(bounded.effectiveTo == "2026-06-30")
-    }
+        #expect(season.weekdayPeriods == [expectedWindow])
+        #expect(season.weekendPeriods == [expectedWindow])
 
-    @Test("FixedRatePlanDraft blocks shortening start date only for reviewed edits")
-    func fixedRatePlanEditRangeProblem() throws {
-        let zone = try #require(TimeZone(identifier: "America/Chicago"))
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = zone
-        let existing = TariffPeriodDTO(
-            periodId: 42,
-            tariffId: 7,
-            name: "Fixed Rate Plan",
-            version: 1,
-            source: .manual,
-            effectiveFrom: "2026-03-01",
-            effectiveTo: nil,
-            isCurrentToday: true,
-            updatedBy: nil,
-            seasons: []
+        let blank = FixedRatePlanDraft.makeSelectionRequest(
+            name: "  ", buyRate: 0.25, sellRate: 0.05, range: ("2026-03-01", nil)
         )
-        let earlier = try #require(cal.date(from: DateComponents(year: 2026, month: 2, day: 15)))
-        let same = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: 1)))
-        let later = try #require(cal.date(from: DateComponents(year: 2026, month: 3, day: 10)))
-
-        #expect(FixedRatePlanDraft.editRangeProblem(
-            existing: nil, startsOn: later, timeZone: zone, usesSelection: true
-        ) == nil)
-        #expect(FixedRatePlanDraft.editRangeProblem(
-            existing: existing, startsOn: later, timeZone: zone, usesSelection: false
-        ) == nil)
-        #expect(FixedRatePlanDraft.editRangeProblem(
-            existing: existing, startsOn: earlier, timeZone: zone, usesSelection: true
-        ) == nil)
-        #expect(FixedRatePlanDraft.editRangeProblem(
-            existing: existing, startsOn: same, timeZone: zone, usesSelection: true
-        ) == nil)
-        #expect(FixedRatePlanDraft.editRangeProblem(
-            existing: existing, startsOn: later, timeZone: zone, usesSelection: true
-        ) == RatePlanEditorState.shortenedEditMessage)
+        #expect(blank.effectiveTo == nil)
+        if case .manual(let blankName, _) = blank.candidate {
+            #expect(blankName == "Fixed Rate Plan")
+        }
     }
 
     @Test("FixedRatePlanDraft formats and parses rates using the given locale")
@@ -207,10 +119,28 @@ struct SavingsPresentationTests {
         )
         #expect(SavingsPresentation.caveats(figures([gap])) == [
             SavingsCaveat(
-                text: "Your fixed rate plan starts Nov 1, 2026, so earlier days aren’t counted.",
-                action: .editFixedRatePlan(suggestedStart: "2026-10-01")
+                text: "Your fixed comparison plan starts Nov 1, 2026, so earlier days aren’t counted.",
+                action: .openRatePlans
             )
         ])
+    }
+
+    @Test("The savings button adds rate plans when the site has none, otherwise edits them")
+    func ratePlansEntryTitleSwitchesOnPeriods() {
+        let none = SavingsPresentation.ratePlansEntry(hasRatePlans: false)
+        #expect(none.title == "Add Rate Plans")
+        #expect(none.startsAdding)
+        let some = SavingsPresentation.ratePlansEntry(hasRatePlans: true)
+        #expect(some.title == "Edit Rate Plans")
+        #expect(!some.startsAdding)
+    }
+
+    @Test("Setup prompts talk about rate plans, not a fixed rate plan")
+    func setupPromptsDropFixedRatePlan() {
+        for text in [SavingsPresentation.billSetupPrompt, SavingsPresentation.solarSetupPrompt] {
+            #expect(!text.localizedCaseInsensitiveContains("fixed rate plan"))
+            #expect(text.localizedCaseInsensitiveContains("rate plans"))
+        }
     }
 
     @Test("Rate plan gap describes the range")
@@ -231,10 +161,10 @@ struct SavingsPresentationTests {
         )
         let caveats = SavingsPresentation.caveats(figures([gap]))
         #expect(caveats == [SavingsCaveat(
-            text: "We don’t have your fixed rate plan for Mar 2 to Jun 30, 2024, so those days aren’t counted.",
-            action: .editFixedRatePlan(suggestedStart: nil)
+            text: "We don’t have your fixed comparison plan for Mar 2 to Jun 30, 2024, so those days aren’t counted.",
+            action: .openRatePlans
         )])
-        #expect(caveats.first?.actionTitle == "Edit Fixed Rate Plan")
+        #expect(caveats.first?.actionTitle == "Edit Rate Plans")
         #expect(caveats.first?.id == "fixed")
     }
 

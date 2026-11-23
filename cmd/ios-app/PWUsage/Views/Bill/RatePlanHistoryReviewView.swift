@@ -5,6 +5,7 @@ import SwiftUI
 struct RatePlanHistoryReviewView: View {
     let flow: RatePlanHistoryFlow
     let model: RatePlanHistoryModel
+    let currency: String
     let teslaRow: RatePlanHistoryPresentation.TeslaRow?
     @State private var changingFixedSpan: ChangingFixedSpan?
 
@@ -52,10 +53,9 @@ struct RatePlanHistoryReviewView: View {
 
     private func fixedChangeSheet(forSpanAt index: Int) -> some View {
         FixedComparisonGuideChange(
-            options: flow.fixedChoices(forSpanAt: index).compactMap { FixedComparisonOption(choice: $0) },
+            options: flow.fixedOptions(forSpanAt: index),
             range: flow.spans.indices.contains(index) ? (flow.spans[index].from, flow.spans[index].endDate) : ("", nil),
-            // The guide offers US utility plans only.
-            currency: "USD",
+            currency: currency,
             utilityName: flow.history.utilityName
         ) { choice in
             model.update { $0.chooseFixed(choice, forSpanAt: index) }
@@ -111,7 +111,7 @@ struct RatePlanHistoryReviewView: View {
             Divider()
             FixedComparisonRowsView(
                 rows: flow.comparisonRows(forSpanAt: index),
-                currency: "USD",
+                currency: currency,
                 onChangeAll: { changingFixedSpan = ChangingFixedSpan(index: index) }
             )
         }

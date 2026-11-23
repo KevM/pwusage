@@ -72,12 +72,6 @@ struct FixedComparisonOption: Equatable, Identifiable, Sendable {
         )
     }
 
-    /// Only utility plans (`.publicPlan`) are options, so a manual choice has no option.
-    init?(choice: FixedComparisonChoice, isDefault: Bool = false) {
-        guard case let .publicPlan(label, name, buyRate) = choice else { return nil }
-        self.init(label: label, name: name, buyRate: buyRate, isDefault: isDefault)
-    }
-
     var choice: FixedComparisonChoice {
         .publicPlan(label: label, name: name, buyRate: buyRate ?? 0)
     }

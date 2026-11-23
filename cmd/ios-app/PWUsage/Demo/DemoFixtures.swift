@@ -273,6 +273,7 @@ enum DemoFixtures {
             timezone: timeZone.identifier,
             currency: "USD",
             periods: [demoCurrentPeriod(), demoPriorPeriod()],
+            referencePeriods: demoReferencePeriods(),
             reattribution: nil,
             teslaSync: TeslaSyncDTO(
                 latestTariffId: 10,
@@ -295,7 +296,11 @@ enum DemoFixtures {
                     unconfirmedDays: 3 * 365
                 )
             ),
-            systemCosts: SystemCostsDTO(siteInstalled: siteInstalled, solar: nil, powerwall: nil)
+            systemCosts: SystemCostsDTO(siteInstalled: siteInstalled, solar: nil, powerwall: nil),
+            // A US home, so Rate Plans offers Change on the fixed comparison rows.
+            rateCountry: SiteRateCountryDTO(
+                countryCode: "US", source: .owner, updatedAt: nil, eligibility: .unitedStates
+            )
         )
     }
 
@@ -353,7 +358,7 @@ enum DemoFixtures {
         )
     }
 
-    private static func demoWindow(
+    static func demoWindow(
         _ name: TariffPeriodName,
         startHour: Int,
         endHour: Int,

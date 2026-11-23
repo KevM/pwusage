@@ -11,7 +11,6 @@ private enum FixedComparisonChangeRoute: Hashable {
 struct FixedComparisonChangeFlow: View {
     @State private var model: FixedComparisonChangeModel
     @State private var path: [FixedComparisonChangeRoute] = []
-    let timeZone: TimeZone
     let currency: String
     let utilityName: String?
     let actions: TariffTimelineActions
@@ -27,7 +26,6 @@ struct FixedComparisonChangeFlow: View {
         _model = State(initialValue: FixedComparisonChangeModel(
             row: row, selection: actions.selection, loadPlans: actions.publicPlans
         ))
-        timeZone = timeline.flatMap { TimeZone(identifier: $0.timezone) } ?? .current
         currency = timeline?.currency ?? "USD"
         utilityName = timeline?.estimates?.utilityName
         self.actions = actions
@@ -39,12 +37,9 @@ struct FixedComparisonChangeFlow: View {
             switch model.state {
             case .enteringRates:
                 FixedRatePlanForm(
-                    timeZone: timeZone,
+                    range: model.lockedRange,
                     currency: currency,
-                    actions: FixedRatePlanActions(
-                        save: { _, _ in nil }, selection: actions.selection, onApplied: onApplied
-                    ),
-                    lockedRange: model.lockedRange
+                    actions: FixedRatePlanActions(selection: actions.selection, onApplied: onApplied)
                 )
             case .loading, .choosing, .failed:
                 picker
@@ -131,12 +126,7 @@ struct FixedComparisonGuideChange: View {
 
     var body: some View {
         if entersRates {
-            FixedRatePlanForm(
-                timeZone: .current,
-                currency: currency,
-                actions: FixedRatePlanActions(save: { _, _ in nil }, stage: onChoose),
-                lockedRange: range
-            )
+            FixedRatePlanForm(range: range, currency: currency, actions: FixedRatePlanActions(stage: onChoose))
         } else {
             NavigationStack {
                 FixedComparisonPicker(

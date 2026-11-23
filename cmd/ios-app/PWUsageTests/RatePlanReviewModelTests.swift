@@ -147,13 +147,11 @@ struct RatePlanReviewModelTests {
     @Test("Fixed comparison plan routes through reference-scope review and commit")
     func fixedReferencePlanReviewAndCommit() async throws {
         let spy = try Spy(preview: Self.preview())
-        let startsOn = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01 UTC
         let request = FixedRatePlanDraft.makeSelectionRequest(
             name: "Fixed Comparison",
             buyRate: 0.28,
             sellRate: 0.04,
-            startsOn: startsOn,
-            timeZone: .gmt
+            range: ("2026-01-01", nil)
         )
         let model = RatePlanReviewModel(request: request, actions: spy.actions)
         await model.load()

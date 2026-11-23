@@ -129,35 +129,6 @@ extension PWUsageAPI {
         )
     }
 
-    func createReferenceRatePlan(
-        siteID: String,
-        body: TariffPlanWriteRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        try await performTariffMutation(
-            siteID: siteID,
-            suffix: "tariffs/reference",
-            method: "POST",
-            body: body
-        )
-    }
-
-    func updateReferenceRatePlan(
-        siteID: String,
-        periodID: Int,
-        body: TariffPlanPatchRequest
-    ) async throws -> SiteTariffsTimelineResponse {
-        try await performTariffMutation(
-            siteID: siteID,
-            suffix: "tariffs/reference/\(periodID)",
-            method: "PATCH",
-            body: body
-        )
-    }
-
-    func deleteReferenceRatePlan(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse {
-        try await deleteTariff(siteID: siteID, suffix: "tariffs/reference/\(periodID)")
-    }
-
     func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse {
         try await performTariffMutation(siteID: siteID, suffix: "system-costs", method: "PUT", body: body)
     }

@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// Card on the Bill tab showing current-cycle savings or a setup prompt for a fixed rate plan.
+/// Card on the Bill tab showing current-cycle savings or a setup prompt that opens Rate Plans.
 struct BillSavingsCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let state: SavingsState
     let currency: String
-    let onAddFixedRatePlan: () -> Void
-    let onEditFixedRatePlan: () -> Void
+    let hasRatePlans: Bool
+    let onOpenRatePlans: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
 
     var body: some View {
@@ -70,7 +70,7 @@ struct BillSavingsCard: View {
     }
 
     private var editButton: some View {
-        Button("Edit Plan", action: onEditFixedRatePlan)
+        Button(SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).title, action: onOpenRatePlans)
             .font(.caption.weight(.medium))
     }
 
@@ -78,10 +78,10 @@ struct BillSavingsCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("See what you’ve saved")
                 .font(.subheadline.weight(.semibold))
-            Text("Add the fixed rate plan you’d pay without solar or your current rate plan.")
+            Text(SavingsPresentation.billSetupPrompt)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button("Add Fixed Rate Plan", action: onAddFixedRatePlan)
+            Button(SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).title, action: onOpenRatePlans)
                 .emphasisProminentButton()
                 .controlSize(.small)
         }
@@ -115,8 +115,8 @@ struct BillSavingsCard: View {
     return BillSavingsCard(
         state: .ready(report),
         currency: "USD",
-        onAddFixedRatePlan: {},
-        onEditFixedRatePlan: {}
+        hasRatePlans: true,
+        onOpenRatePlans: {}
     )
     .padding()
 }
@@ -125,8 +125,8 @@ struct BillSavingsCard: View {
     BillSavingsCard(
         state: .notReady(.noReferencePlan),
         currency: "USD",
-        onAddFixedRatePlan: {},
-        onEditFixedRatePlan: {}
+        hasRatePlans: false,
+        onOpenRatePlans: {}
     )
     .padding()
 }

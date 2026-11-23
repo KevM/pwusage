@@ -202,6 +202,7 @@ struct AppTabView: View {
         let sync = coordinator.savingsTimeline?.teslaSync
         return RatePlanHistorySheet(
             teslaPlanName: sync?.latestTariffName,
+            currency: coordinator.savingsTimeline?.currency ?? "USD",
             // The offer that opens this sheet comes from the loaded timeline, so its reference periods are there.
             referencePeriods: coordinator.savingsTimeline?.referencePeriods ?? [],
             load: { try await coordinator.loadRateHistory() },

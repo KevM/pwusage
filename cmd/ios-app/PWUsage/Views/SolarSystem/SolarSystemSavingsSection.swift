@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// Section in Solar System settings showing Past Year and Lifetime savings and fixed rate plan management.
+/// Section in Solar System settings showing Past Year and Lifetime savings and a button into Rate Plans.
 struct SolarSystemSavingsSection: View {
     let state: SavingsState
     let currency: String
-    let hasReferencePlan: Bool
-    let onAddFixedRatePlan: () -> Void
-    let onEditFixedRatePlan: () -> Void
+    let hasRatePlans: Bool
+    let onOpenRatePlans: () -> Void
     var onCaveatAction: (SavingsCaveat.Action) -> Void = { _ in }
     /// The estimate setup step still needed; its rows stay here even when the Home accessory is dismissed.
     var estimatePrompt: RateEstimatesPrompt?
@@ -32,13 +31,10 @@ struct SolarSystemSavingsSection: View {
             case .ready(let report):
                 readyRows(report)
             case .notReady(.noReferencePlan):
-                Text(
-                    "Add a fixed rate plan to see how much your solar and Powerwall saved "
-                        + "over the past year and lifetime."
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                Button("Add Fixed Rate Plan", action: onAddFixedRatePlan)
+                Text(SavingsPresentation.solarSetupPrompt)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                planActionButton
             case .notReady(.flowsMissing):
                 Text("Savings will appear once daily energy history has synced.")
                     .font(.subheadline)
@@ -116,10 +112,7 @@ struct SolarSystemSavingsSection: View {
 
     private var planActionButton: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Button(
-                hasReferencePlan ? "Edit Fixed Rate Plan" : "Add Fixed Rate Plan",
-                action: hasReferencePlan ? onEditFixedRatePlan : onAddFixedRatePlan
-            )
+            Button(SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).title, action: onOpenRatePlans)
             if let fixedPlanNote {
                 Text(fixedPlanNote)
                     .font(.caption)
@@ -155,9 +148,8 @@ struct SolarSystemSavingsSection: View {
                 rateGrowth: .typical
             )),
             currency: "USD",
-            hasReferencePlan: true,
-            onAddFixedRatePlan: {},
-            onEditFixedRatePlan: {}
+            hasRatePlans: true,
+            onOpenRatePlans: {}
         )
     }
 }

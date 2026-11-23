@@ -80,16 +80,6 @@ struct SolarSystemView: View {
         .task(id: deepHistory?.status.daysLoaded) { await coordinator.refreshSavings() }
         .sheet(item: $savingsSheet) { sheet in
             switch sheet {
-            case let .fixedRatePlan(existing, suggestion):
-                FixedRatePlanForm(
-                    existing: existing,
-                    defaultStartDate: coordinator.savingsTimeline?.periods.map(\.effectiveFrom).min(),
-                    suggestedStartDate: suggestion,
-                    estimateCoverageNote: coordinator.fixedPlanEstimateCoverageNote(editing: existing),
-                    timeZone: siteTimeZone,
-                    currency: coordinator.bill.response?.currentBill.currency ?? "USD",
-                    actions: .live(coordinator, onDismiss: { savingsSheet = nil })
-                )
             case .systemCosts:
                 SystemCostsForm(
                     costs: coordinator.savingsTimeline?.systemCosts,
@@ -99,8 +89,8 @@ struct SolarSystemView: View {
                     currency: currency,
                     onSave: { request in await coordinator.saveSystemCosts(request) }
                 )
-            case .ratePlans:
-                RatePlansSheet(site: site, actions: .live(coordinator))
+            case let .ratePlans(startsAdding):
+                RatePlansSheet(site: site, actions: .live(coordinator), startsAddingPlan: startsAdding)
             case .rateEstimates(let prompt):
                 RateEstimatesSetupSheet(
                     prompt: prompt,
@@ -191,13 +181,18 @@ struct SolarSystemView: View {
         }
     }
 
+    private var hasRatePlans: Bool { !(coordinator.savingsTimeline?.periods.isEmpty ?? true) }
+
     private var savingsSection: some View {
         SolarSystemSavingsSection(
             state: coordinator.savings,
             currency: currency,
-            hasReferencePlan: coordinator.activeReferencePeriod != nil,
-            onAddFixedRatePlan: { savingsSheet = .fixedRatePlan(nil, suggestion: nil) },
-            onEditFixedRatePlan: { savingsSheet = .fixedRatePlan(coordinator.activeReferencePeriod, suggestion: nil) },
+            hasRatePlans: hasRatePlans,
+            onOpenRatePlans: {
+                savingsSheet = .ratePlans(
+                    startsAdding: SavingsPresentation.ratePlansEntry(hasRatePlans: hasRatePlans).startsAdding
+                )
+            },
             onCaveatAction: routeCaveat,
             estimatePrompt: RateEstimatesPresentation.prompt(coordinator.savingsTimeline?.estimates),
             estimateUtilityName: coordinator.savingsTimeline?.estimates?.utilityName,
@@ -228,9 +223,7 @@ struct SolarSystemView: View {
 
     private func routeCaveat(_ action: SavingsCaveat.Action) {
         switch action {
-        case .editFixedRatePlan(let suggestion):
-            savingsSheet = .fixedRatePlan(coordinator.earliestReferencePeriod, suggestion: suggestion)
-        case .fixRatePlans: savingsSheet = .ratePlans
+        case .openRatePlans, .fixRatePlans: savingsSheet = .ratePlans(startsAdding: false)
         }
     }
 
@@ -369,14 +362,12 @@ struct SolarSystemView: View {
 }
 
 private enum SolarSavingsSheet: Identifiable {
-    case fixedRatePlan(TariffPeriodDTO?, suggestion: String?)
-    case ratePlans
+    case ratePlans(startsAdding: Bool)
     case rateEstimates(RateEstimatesPrompt)
     case systemCosts
 
     var id: String {
         switch self {
-        case let .fixedRatePlan(period, _): "fixedRatePlan-\(period?.periodId ?? 0)"
         case .ratePlans: "ratePlans"
         case .systemCosts: "systemCosts"
         case .rateEstimates(let prompt): "rateEstimates-\(prompt)"

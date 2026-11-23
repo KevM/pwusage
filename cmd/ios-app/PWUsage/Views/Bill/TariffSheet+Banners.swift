@@ -86,7 +86,8 @@ extension TariffSheet {
     var rateHistorySheet: some View {
         RatePlanHistorySheet(
             // Opens from the loaded timeline (the Find button lives on it), so its reference periods are there.
-            teslaPlanName: timeline?.teslaSync.latestTariffName, referencePeriods: timeline?.referencePeriods ?? [],
+            teslaPlanName: timeline?.teslaSync.latestTariffName, currency: timeline?.currency ?? "USD",
+            referencePeriods: timeline?.referencePeriods ?? [],
             load: { try await actions.loadRateHistory() },
             save: { timeline = try await actions.saveRateHistory($0) }
         )

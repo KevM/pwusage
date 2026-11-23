@@ -124,6 +124,11 @@ struct FixedComparisonPresentationTests {
         let choices = flow.fixedChoices(forSpanAt: 0)
         #expect(choices.map(\.label) == ["Residential Rg 1 2023"])
         #expect(flow.fixedChoices(forSpanAt: 9).isEmpty)
+        // The picker's Standard pill needs the default flag, which the choices alone drop.
+        let options = flow.fixedOptions(forSpanAt: 0)
+        #expect(options.map(\.label) == ["Residential Rg 1 2023"])
+        #expect(options.map(\.isDefault) == [true])
+        #expect(flow.fixedOptions(forSpanAt: 9).isEmpty)
     }
 
     // MARK: Change model
