@@ -1,13 +1,13 @@
 import Foundation
 
-enum BatteryHoldCommand: Encodable, Equatable {
+public enum BatteryHoldCommand: Encodable, Equatable, Sendable {
     case park(BatteryHoldChoice)
     case restore
     case dismiss
 
     private enum CodingKeys: String, CodingKey { case action, mode, durationHours, reserveChoice }
 
-    func encode(to encoder: any Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .park(let choice):

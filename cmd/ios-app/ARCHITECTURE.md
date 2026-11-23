@@ -28,6 +28,8 @@
 - A file belongs to the feature whose screen or lifecycle consumes it.
 - Cross-target code lives in `Shared`.
 - `Models` holds value types only.
+- `PWUsageCore/BatteryHold` holds the Battery Saver wire models, commands and reserve plan. Copy, state and the
+  Live Activity stay in the app.
 - `PWUsageCore/SharedModels` holds the live dashboard wire contract (`MobileLiveContract.swift`, mirrored by
   `cmd/next-app/src/lib/mobile-dashboard-contract.ts`) and its decoder, for both the app and the widget.
 - `PWUsageCore/SolarLayout` holds each site's layout record and merges a record from another device (last

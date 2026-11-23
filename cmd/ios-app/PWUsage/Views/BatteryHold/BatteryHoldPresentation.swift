@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Copy and availability rules shared by the sheet, toolbar and native tests.
 enum BatteryHoldPresentation {

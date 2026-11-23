@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct BatteryHoldState: Equatable {
     var response: BatteryHoldResponse?

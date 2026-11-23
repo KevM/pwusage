@@ -1,6 +1,7 @@
 import CryptoKit
 
 import Foundation
+import PWUsageCore
 
 /// Whether a rejected registration attempt should be retried.
 private enum RegistrationAttemptOutcome: Equatable {

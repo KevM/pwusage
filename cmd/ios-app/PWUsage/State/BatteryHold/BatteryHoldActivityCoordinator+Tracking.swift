@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension BatteryHoldActivityCoordinator {
     func batteryHoldConfirmed(_ confirmation: BatteryHoldConfirmation, siteID: String, timeZone: String?) {

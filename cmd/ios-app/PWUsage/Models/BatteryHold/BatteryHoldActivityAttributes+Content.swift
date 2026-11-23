@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension BatteryHoldActivityAttributes.ContentState {
     /// The state the server would push for this confirmed hold.

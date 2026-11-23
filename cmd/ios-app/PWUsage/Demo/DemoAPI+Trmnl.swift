@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Demo has no connected Trmnl devices, so Settings > Trmnl shows the intro screen
 /// with a preview rendered against the real TRMNL framework stylesheet.
