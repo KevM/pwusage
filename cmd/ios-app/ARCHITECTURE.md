@@ -34,7 +34,8 @@
   history store and wraps the result in the mobile bill response.
 - `PWUsageCore/BillPricing` owns rate plan history and tariff write contracts, plus responses for public utility
   plans, Tesla Sync, rate plan reviews, and AI handoff. It validates rate plan drafts and builds their write
-  requests. The app handles API transport, editor and review state, validation messages, and display.
+  requests. It also runs the rate plan history guide’s walk-back and pairs each plan with its fixed comparison.
+  The app handles API transport, editor and review state, validation messages, and display.
 - A declaration belongs in one place; access-level changes are only to promote `private`/`fileprivate` to `internal` for cross-file extensions.
 
 ## Dynamic entry points (retained)

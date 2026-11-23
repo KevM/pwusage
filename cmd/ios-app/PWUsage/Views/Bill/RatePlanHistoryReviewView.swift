@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The last step: every span the walk filled in, newest first, behind the greyed Tesla row. Change

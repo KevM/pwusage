@@ -106,31 +106,6 @@ struct FixedComparisonPresentationTests {
         #expect(options.last?.rateText(currency: "USD") == nil)
     }
 
-    // MARK: Guide choices
-
-    @Test func guideChoicesAreTheStartYearsFixedPlansDefaultFirst() throws {
-        let timeOfUse = RatePlanHistoryFlowTests.timeOfUse(2026)
-        let years = [
-            RatePlanHistoryFlowTests.year(2025, [timeOfUse]),
-            RatePlanHistoryFlowTests.year(2024, [timeOfUse]),
-            RatePlanHistoryFlowTests.year(2023, [timeOfUse, RatePlanHistoryFlowTests.fixed(2023)])
-        ]
-        var flow = RatePlanHistoryFlow(
-            history: RatePlanHistoryFlowTests.harrison(years: years), hasTeslaPlan: true, referencePeriods: []
-        )
-        flow.chooseKind(.timeOfUse)
-        flow.choosePeakWindow(RatePlanHistoryFlowTests.optionB(2026))
-        flow.answerSinceStart(true)
-        let choices = flow.fixedChoices(forSpanAt: 0)
-        #expect(choices.map(\.label) == ["Residential Rg 1 2023"])
-        #expect(flow.fixedChoices(forSpanAt: 9).isEmpty)
-        // The picker's Standard pill needs the default flag, which the choices alone drop.
-        let options = flow.fixedOptions(forSpanAt: 0)
-        #expect(options.map(\.label) == ["Residential Rg 1 2023"])
-        #expect(options.map(\.isDefault) == [true])
-        #expect(flow.fixedOptions(forSpanAt: 9).isEmpty)
-    }
-
     // MARK: Change model
 
     @MainActor

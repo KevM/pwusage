@@ -1,10 +1,9 @@
 import Foundation
-import PWUsageCore
 
 extension RatePlanHistoryFlow {
     /// The spans review lists, newest first, with their index in `spans` for Change. A span left with
     /// no days (it starts after it ends) is left out, as `periods()` leaves it out of the save.
-    var reviewSpans: [(index: Int, span: Span)] {
+    public var reviewSpans: [(index: Int, span: Span)] {
         spans.enumerated()
             .filter { _, span in span.endDate.map { span.from <= $0 } ?? true }
             .map { (index: $0.offset, span: $0.element) }
@@ -12,7 +11,7 @@ extension RatePlanHistoryFlow {
 
     /// Review's Change: steps back until the span at `index` (newest first) is gone, which lands on the
     /// answer that created it. An index past the spans changes nothing.
-    mutating func reopenSpan(at index: Int) {
+    public mutating func reopenSpan(at index: Int) {
         while spans.count > index {
             let before = self
             back()
@@ -24,7 +23,7 @@ extension RatePlanHistoryFlow {
     /// the owner's change; else, for a plan that is itself a fixed plan, that plan; else, only when no
     /// reference period covers any of the plan's days, the start year's default fixed plan (else its
     /// first). A partly covered plan stages nothing, and its gaps show as gap rows.
-    func stagedFixed(forSpanAt index: Int) -> FixedComparisonChoice? {
+    public func stagedFixed(forSpanAt index: Int) -> FixedComparisonChoice? {
         guard spans.indices.contains(index) else { return nil }
         let span = spans[index]
         if let chosen = span.fixed { return chosen }
@@ -38,7 +37,7 @@ extension RatePlanHistoryFlow {
 
     /// Oldest first. One row per stored reference revision over the plan; a staged comparison is one
     /// row covering the whole plan, its `reference` a display-only period (`source == .manual`).
-    func comparisonRows(forSpanAt index: Int) -> [FixedComparisonRow] {
+    public func comparisonRows(forSpanAt index: Int) -> [FixedComparisonRow] {
         guard spans.indices.contains(index) else { return [] }
         let span = spans[index]
         if let staged = stagedFixed(forSpanAt: index) {
@@ -51,13 +50,13 @@ extension RatePlanHistoryFlow {
 
     /// The fixed plans the guide offers for the plan at `index`: those listed for the year covering
     /// its start, the default first. Empty for an index out of range.
-    func fixedChoices(forSpanAt index: Int) -> [FixedComparisonChoice] {
+    public func fixedChoices(forSpanAt index: Int) -> [FixedComparisonChoice] {
         guard spans.indices.contains(index) else { return [] }
         return fixedChoices(startingIn: spans[index].from)
     }
 
     /// The same plans as `fixedChoices(forSpanAt:)`, with the default flag the picker's Standard pill needs.
-    func fixedOptions(forSpanAt index: Int) -> [FixedComparisonOption] {
+    public func fixedOptions(forSpanAt index: Int) -> [FixedComparisonOption] {
         guard spans.indices.contains(index) else { return [] }
         return fixedPlans(startingIn: spans[index].from).compactMap { plan in
             plan.fixedLabel.map {

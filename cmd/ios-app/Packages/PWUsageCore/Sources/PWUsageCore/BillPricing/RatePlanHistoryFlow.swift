@@ -1,11 +1,10 @@
 import Foundation
-import PWUsageCore
 
 /// The rate plan history guide's walk-back: the current plan first, then one question per plan,
 /// "since the start?", and on No, when they switched and what they were on before.
 /// Pure state; the view renders `step` and calls the answers.
-struct RatePlanHistoryFlow: Equatable, Sendable {
-    enum Step: Equatable, Sendable {
+public struct RatePlanHistoryFlow: Equatable, Sendable {
+    public enum Step: Equatable, Sendable {
         /// "What kind of rate plan are you on now?"
         case currentKind
         case currentPlan(RatePlanKind)
@@ -22,17 +21,29 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     }
 
     /// One plan over a run of days, `YYYY-MM-DD` site-local.
-    struct Span: Equatable, Sendable {
-        let plan: RatePlanHistoryPlanDTO
-        var windowLabel: String?
-        var from: String
-        var endDate: String?
-        var assumed: Bool
+    public struct Span: Equatable, Sendable {
+        public let plan: RatePlanHistoryPlanDTO
+        public var windowLabel: String?
+        public var from: String
+        public var endDate: String?
+        public var assumed: Bool
         /// The owner's changed fixed comparison for this plan's whole range; nil keeps the prefill.
-        var fixed: FixedComparisonChoice?
+        public var fixed: FixedComparisonChoice?
+
+        public init(
+            plan: RatePlanHistoryPlanDTO, windowLabel: String?, from: String, endDate: String?, assumed: Bool,
+            fixed: FixedComparisonChoice? = nil
+        ) {
+            self.plan = plan
+            self.windowLabel = windowLabel
+            self.from = from
+            self.endDate = endDate
+            self.assumed = assumed
+            self.fixed = fixed
+        }
 
         /// The URDB label sent on save.
-        var label: String {
+        public var label: String {
             windowLabel ?? plan.fixedLabel ?? plan.name
         }
     }
@@ -50,19 +61,19 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         let pick: Pick
     }
 
-    let history: RatePlanHistoryDTO
-    let hasTeslaPlan: Bool
+    public let history: RatePlanHistoryDTO
+    public let hasTeslaPlan: Bool
     /// Site-local `YYYY-MM-DD`: the newest switch month offered when the plan is open (no Tesla).
-    let today: String
+    public let today: String
     /// The site's stored fixed comparison (reference) periods the guide prefills rows from.
-    let referencePeriods: [TariffPeriodDTO]
-    private(set) var step: Step = .currentKind
+    public let referencePeriods: [TariffPeriodDTO]
+    public private(set) var step: Step = .currentKind
     /// Newest first; the last one is the plan the walk is asking about.
-    private(set) var spans: [Span] = []
+    public private(set) var spans: [Span] = []
     private var pick = Pick()
     private var undo: [Snapshot] = []
 
-    init(
+    public init(
         history: RatePlanHistoryDTO,
         hasTeslaPlan: Bool,
         today: String = IsoDay.today(),
@@ -75,27 +86,27 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     }
 
     /// Tesla's shape, on the first step only.
-    var preselectedKind: RatePlanKind? {
+    public var preselectedKind: RatePlanKind? {
         step == .currentKind ? history.teslaShape : nil
     }
 
     /// The plan whose Peak hours the hours step asks about.
-    var pickedPlan: RatePlanHistoryPlanDTO? {
+    public var pickedPlan: RatePlanHistoryPlanDTO? {
         pick.plan
     }
 
     /// The window closest to the Tesla plan, on the hours step.
-    var preselectedWindowLabel: String? {
+    public var preselectedWindowLabel: String? {
         guard case .peakHours = step else { return nil }
         return pick.plan?.closestWindow
     }
 
     /// The plan the since-start and switch-month questions name.
-    var currentPlan: RatePlanHistoryPlanDTO? {
+    public var currentPlan: RatePlanHistoryPlanDTO? {
         spans.last?.plan
     }
 
-    func plans(for step: Step) -> [RatePlanHistoryPlanDTO] {
+    public func plans(for step: Step) -> [RatePlanHistoryPlanDTO] {
         switch step {
         case .currentKind: history.current
         case let .currentPlan(kind): history.current.filter { $0.kind == kind }
@@ -107,7 +118,7 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
 
     /// `YYYY-MM`, newest first: the months the asked plan could have started in, from its last
     /// month down to the month after the history start, so the plan before it gets at least one day.
-    func switchMonths() -> [String] {
+    public func switchMonths() -> [String] {
         guard let asked = spans.last, let upper = YearMonth(day: asked.endDate ?? today) else { return [] }
         var months: [String] = []
         var month = upper
@@ -119,7 +130,7 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     }
 
     /// The newest January offered (rates often change then), else the newest month offered.
-    func defaultSwitchMonth() -> String? {
+    public func defaultSwitchMonth() -> String? {
         let months = switchMonths()
         return months.first { $0.hasSuffix("-01") } ?? months.first
     }
@@ -127,7 +138,7 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     /// Oldest first, contiguous; the newest `to` is `fillThrough` (nil = open).
     /// Adjacent spans with one label (split only by `assumed`, which the review shows) are one period,
     /// so the server saves each public rate change once.
-    func periods() -> [RatePlanHistoryPeriod] {
+    public func periods() -> [RatePlanHistoryPeriod] {
         var result: [RatePlanHistoryPeriod] = []
         let filled = spans.indices.reversed().filter { index in
             spans[index].endDate.map { spans[index].from <= $0 } ?? true
@@ -150,7 +161,7 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
 
     // MARK: - Answers
 
-    mutating func chooseKind(_ kind: RatePlanKind) {
+    public mutating func chooseKind(_ kind: RatePlanKind) {
         let year: Int?
         switch step {
         case .currentKind: year = nil
@@ -167,7 +178,7 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         }
     }
 
-    mutating func choosePlan(_ plan: RatePlanHistoryPlanDTO) {
+    public mutating func choosePlan(_ plan: RatePlanHistoryPlanDTO) {
         switch step {
         case .currentPlan, .plan: break
         default: return
@@ -177,27 +188,27 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         take(plan)
     }
 
-    mutating func choosePeakWindow(_ window: RatePlanPeakWindowDTO) {
+    public mutating func choosePeakWindow(_ window: RatePlanPeakWindowDTO) {
         guard case .peakHours = step, pick.plan != nil else { return }
         save()
         pick.windowLabel = window.label
         finishPick()
     }
 
-    mutating func answerSinceStart(_ yes: Bool) {
+    public mutating func answerSinceStart(_ yes: Bool) {
         guard step == .sinceStart else { return }
         save()
         step = yes || switchMonths().isEmpty ? .review : .switchMonth
     }
 
-    mutating func chooseSwitchMonth(_ month: String) {
+    public mutating func chooseSwitchMonth(_ month: String) {
         guard step == .switchMonth, switchMonths().contains(month) else { return }
         save()
         applySwitch(month: month)
     }
 
     /// The help sheet's Still Not Sure: answers this step with the best guess, marked assumed.
-    mutating func stillNotSure() {
+    public mutating func stillNotSure() {
         switch step {
         case .currentKind, .currentPlan, .kind, .plan:
             // The plan steps list only the kind the owner chose, so the guess keeps to it.
@@ -227,13 +238,13 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
 
     /// Stages `choice` as the fixed comparison for the whole plan at `index`, replacing every row
     /// shown for it. An index past the spans changes nothing.
-    mutating func chooseFixed(_ choice: FixedComparisonChoice, forSpanAt index: Int) {
+    public mutating func chooseFixed(_ choice: FixedComparisonChoice, forSpanAt index: Int) {
         guard spans.indices.contains(index) else { return }
         save()
         spans[index].fixed = choice
     }
 
-    mutating func back() {
+    public mutating func back() {
         guard let previous = undo.popLast() else { return }
         step = previous.step
         spans = previous.spans
@@ -335,8 +346,10 @@ private struct YearMonth: Comparable {
     }
 }
 
+@usableFromInline
 enum IsoDay {
     /// Today in the device's zone, `YYYY-MM-DD`.
+    @usableFromInline
     static func today(_ now: Date = Date()) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
