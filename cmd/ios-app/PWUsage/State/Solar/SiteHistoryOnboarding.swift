@@ -13,10 +13,7 @@ import PWUsageCore
 final class SiteHistoryOnboarding {
     enum PauseReason: String, Codable, Sendable { case reconnectTesla, signIn }
 
-    enum FinishReason: String, Codable, Sendable {
-        case layoutFound, layoutAlreadyUsable, reachedHistoryStart, reachedOneYear
-        case noSolarProduction, locationNeeded, detectorNeedsOtherAction, historyUnavailable
-    }
+    typealias FinishReason = SiteHistoryFinishReason
 
     enum WaitReason: String, Codable, Sendable { case retrying, busy, teslaLimited }
 
@@ -38,9 +35,6 @@ final class SiteHistoryOnboarding {
     static let recentDays = SolarHistoryStore.actualsDays
     /// Not a promise: the solar search may end earlier or continue past it.
     static let initialCheckpointDays = 90
-    static let reassessEveryDays = 30
-    /// Unsorted checked days that run the clear-day pass: two slices' worth.
-    static let sortEveryDays = 6
     static let maxDaysBack = 365
     static let partialRetries = 3
 
