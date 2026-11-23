@@ -1654,6 +1654,63 @@ export async function loadRestorationTargets(
   });
 }
 
+/** A fixed comparison plan the owner chose for one period of the rate plan history guide. */
+export type FixedComparisonWrite = { from: string; to: string | null } & (
+  | { kind: 'public'; revisions: ExpandedRevision[]; label?: string }
+  | { kind: 'manual'; name: string; buyRate: number; sellRate: number }
+);
+
+/**
+ * Follows `label` as the owner's fixed comparison plan from `from` onward: the estimate job lays its
+ * revisions as the open-ended reference, so this also clears any owner reference period over that range.
+ */
+export async function setFollowedReferenceLabelOnClient(client: PoolClient, siteId: string, userId: string, label: string, from: string): Promise<void> {
+  const updated = await client.query(
+    `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3::date, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $4, updated_at = now()
+     WHERE site_id = $1 AND choice <> 'skipped'`,
+    [siteId, label, from, userId]
+  );
+  if (!updated.rowCount) throw new UtilityChangedError('Utility changed. Start again.');
+  const owned = `(p.source <> 'estimated' OR EXISTS (SELECT 1 FROM "TariffSelection" s WHERE s.id = p.selection_id AND s.choice_kind = 'owner'))`;
+  await client.query(`DELETE FROM "TariffReferencePeriod" p WHERE p.site_id = $1 AND p.effective_from >= $2::date AND ${owned}`, [siteId, from]);
+  await client.query(
+    `UPDATE "TariffReferencePeriod" p SET effective_to = ($2::date - 1) WHERE p.site_id = $1 AND p.effective_from < $2::date AND (p.effective_to IS NULL OR p.effective_to >= $2::date) AND ${owned}`,
+    [siteId, from]
+  );
+  await bumpSiteTimelineRevisionOnClient(client, siteId);
+}
+
+const flatFixedSeasons = (buyRate: number, sellRate: number): TariffSeasonInput[] => {
+  const window = { touName: 'OFF_PEAK' as const, fromHour: 0, fromMinute: 0, toHour: 24, toMinute: 0, buyRate, sellRate };
+  return [{ name: 'All Year', fromMonth: 1, toMonth: 12, weekdayPeriods: [window], weekendPeriods: [window] }];
+};
+
+/** Writes the owner's fixed comparison plans; open utility plans are followed, everything else becomes an owner reference period. */
+async function writeFixedComparisonsOnClient(client: PoolClient, siteId: string, userId: string, today: string, utility: string, fixed: FixedComparisonWrite[]): Promise<void> {
+  for (const write of fixed) {
+    if (write.kind === 'public' && write.to === null) {
+      const label = write.label ?? write.revisions.find(revision => revision.to === null)?.label ?? write.revisions.at(-1)?.label;
+      if (!label) throw new TariffValidationError('Choose a fixed comparison plan.');
+      await setFollowedReferenceLabelOnClient(client, siteId, userId, label, write.from);
+      continue;
+    }
+    const candidates = write.kind === 'public'
+      ? write.revisions.map(revision => ({
+        from: revision.from,
+        to: revision.to,
+        candidate: { kind: 'public' as const, name: revision.name, seasons: revision.seasons, urdbLabel: revision.label, utilityName: utility, revisionStart: revision.revisionStart, exportRateProvenance: 'published' as const },
+      }))
+      : [{ from: write.from, to: write.to, candidate: { kind: 'manual' as const, name: write.name, seasons: flatFixedSeasons(write.buyRate, write.sellRate) } }];
+    for (const { from, to, candidate } of candidates) {
+      await applyTariffSelectionOnClient(client, siteId, today, { scope: 'reference', effectiveFrom: from, effectiveTo: to, userId, verifiedAgainstBill: false, candidate });
+    }
+    // A manual plan from `from` onward replaces whatever a followed label would lay from that day.
+    if (write.kind === 'manual' && write.to === null) {
+      await client.query(`UPDATE "SiteUtility" SET urdb_reference_label = NULL, urdb_reference_from = NULL WHERE site_id = $1 AND urdb_reference_from >= $2::date`, [siteId, write.from]);
+    }
+  }
+}
+
 export async function applyTariffSelectionOnClient(
   client: PoolClient,
   siteId: string,
@@ -2994,7 +3051,7 @@ export class TariffTimelineRepo {
    * rate revision becomes an owner (`manual`) plan, clipped to the fill window minus the owner's
    * own plans, and `openLabel` (only without Tesla versions) becomes the site's plan pick.
    */
-  async saveRatePlanHistory(siteId: string, userId: string, expectedUtility: string, revisions: ExpandedRevision[], openLabel: string | null): Promise<SiteTariffsTimelineResponse> {
+  async saveRatePlanHistory(siteId: string, userId: string, expectedUtility: string, revisions: ExpandedRevision[], openLabel: string | null, fixed: FixedComparisonWrite[] = []): Promise<SiteTariffsTimelineResponse> {
     const client = await pool.connect();
     let reattribution: EnqueueReattributionParams | null = null;
     let queued: EnqueuedReattribution | null = null;
@@ -3076,6 +3133,7 @@ export class TariffTimelineRepo {
         // The site now has a rate plan: rerun the estimate job so the actual timeline is built from it.
         await client.query(`UPDATE "SiteUtility" SET status = 'pending', next_check_at = NULL, updated_at = clock_timestamp() WHERE site_id = $1 AND status = 'needs_plan'`, [siteId]);
       }
+      await writeFixedComparisonsOnClient(client, siteId, userId, today, expectedUtility, fixed);
       const estimateChanges = (await applyEstimatesOnClient(client, siteId, today)).changed;
       savedCount = saved.length;
       const changed: Array<{ from: string; to: string | null }> = [...saved, ...estimateChanges];

@@ -10,7 +10,7 @@ import {
 import { isCrossOriginRequest } from '@/lib/request-security';
 import { jsonWithETag } from '@/lib/tariff-etag';
 import { siteLocalDateString, TariffValidationError } from '@/lib/tariff-timeline';
-import { TariffNotFoundError, TariffTimelineRepo, UtilityChangedError } from '@/lib/tariff-timeline-repo';
+import { type FixedComparisonWrite, TariffNotFoundError, TariffTimelineRepo, UtilityChangedError } from '@/lib/tariff-timeline-repo';
 import * as urdb from '@/lib/urdb/client';
 import { averageSell, monthlyUsage } from '@/lib/urdb/estimate-job';
 import { memoisedApi } from '@/lib/urdb/memoised-api';
@@ -57,22 +57,48 @@ const isCalendarDate = (value: unknown): value is string => {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 };
 
+type FixedInput = { label: string } | { name: string; buyRate: number; sellRate: number };
+type ParsedPeriod = HistoryPeriodInput & { fixed?: FixedInput };
+const hasOnlyKeys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
+
+/** The owner's fixed comparison plan for a period, or an owner-facing reason it can't be saved. */
+function parseFixed(value: unknown): FixedInput | string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Invalid request body.';
+  const fixed = value as Record<string, unknown>;
+  if ('label' in fixed) {
+    if (!hasOnlyKeys(fixed, ['label']) || typeof fixed.label !== 'string' || !fixed.label) return 'Invalid request body.';
+    return { label: fixed.label };
+  }
+  if (!hasOnlyKeys(fixed, ['name', 'buyRate', 'sellRate']) || typeof fixed.name !== 'string' || !fixed.name.trim()) return 'Invalid request body.';
+  const { buyRate, sellRate = 0 } = fixed;
+  if (typeof buyRate !== 'number' || !Number.isFinite(buyRate) || buyRate <= 0) return 'Enter a price per kWh.';
+  if (typeof sellRate !== 'number' || !Number.isFinite(sellRate) || sellRate < 0) return 'Enter a price per kWh.';
+  return { name: fixed.name, buyRate, sellRate };
+}
+
 /** The owner's periods, oldest first, or an owner-facing reason they can't be saved. */
-function parseHistoryPeriods(body: unknown): HistoryPeriodInput[] | string {
+function parseHistoryPeriods(body: unknown): ParsedPeriod[] | string {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'Invalid request body.';
   const input = body as Record<string, unknown>;
   if (Object.keys(input).length !== 1 || !Array.isArray(input.periods)) return 'Invalid request body.';
   if (!input.periods.length) return 'Choose a rate plan.';
   if (input.periods.length > MAX_PERIODS) return `Choose at most ${MAX_PERIODS} rate plans.`;
-  const periods: HistoryPeriodInput[] = [];
+  const periods: ParsedPeriod[] = [];
   for (const item of input.periods as unknown[]) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return 'Invalid request body.';
-    const { label, from, to } = item as Record<string, unknown>;
+    if (!hasOnlyKeys(item as Record<string, unknown>, ['label', 'from', 'to', 'fixed'])) return 'Invalid request body.';
+    const { label, from, to, fixed: rawFixed } = item as Record<string, unknown>;
     if (typeof label !== 'string' || !label || !isCalendarDate(from) || (to !== null && !isCalendarDate(to))) return 'Choose a valid rate plan and dates.';
     if (to !== null && from > to) return 'Each rate plan must end on or after its start.';
     const previous = periods.at(-1);
     if (previous && (previous.to === null || previous.to >= from)) return 'Rate plan dates can’t overlap.';
-    periods.push({ label, from, to });
+    const period: ParsedPeriod = { label, from, to };
+    if (rawFixed !== undefined) {
+      const fixed = parseFixed(rawFixed);
+      if (typeof fixed === 'string') return fixed;
+      period.fixed = fixed;
+    }
+    periods.push(period);
   }
   return periods;
 }
@@ -109,7 +135,14 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const expanded = await withIoDeadline(45_000, () => mapWithConcurrency(periods, 4, period =>
         expandHistoryPeriod(period, { api, utilityName, timeZone: site.timezone, today, convert })));
       const revisions = expanded.flatMap((items, index) => periods[index] === open ? items.filter(item => item.to !== null) : items);
-      const timeline = await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null);
+      const expandCtx = { api, utilityName, timeZone: site.timezone, today, convert };
+      const fixedPeriods = periods.filter((period): period is ParsedPeriod & { fixed: FixedInput } => period.fixed !== undefined);
+      const fixed: FixedComparisonWrite[] = await withIoDeadline(45_000, () => mapWithConcurrency(fixedPeriods, 4, async (period): Promise<FixedComparisonWrite> => {
+        const { fixed: choice, from, to } = period;
+        if ('name' in choice) return { kind: 'manual', from, to, name: choice.name, buyRate: choice.buyRate, sellRate: choice.sellRate };
+        return { kind: 'public', from, to, label: choice.label, revisions: await expandHistoryPeriod({ label: choice.label, from, to }, expandCtx) };
+      }));
+      const timeline = await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null, fixed);
       startPendingEstimates(siteId, timeline);
       return jsonWithETag(timeline);
     } catch (error) {

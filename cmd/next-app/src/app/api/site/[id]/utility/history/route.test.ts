@@ -207,6 +207,51 @@ describe('PUT /api/site/[id]/utility/history', () => {
     expect(revisions.map((r: { from: string; to: string | null }) => [r.from, r.to])).toEqual([['2024-01-01', '2024-12-31'], ['2025-01-01', '2025-05-31']]);
   });
 
+  describe('fixed comparison plans', () => {
+    const closed = { from: '2025-06-01', to: '2026-04-27' };
+    const save = (fixed: unknown) => PUT(put({ periods: [{ label: OPTION_B, ...closed, ...(fixed === undefined ? {} : { fixed }) }] }), context);
+    it('passesALabelThroughExpanded', async () => {
+      expect((await save({ label: OPTION_B })).status).toBe(200);
+      const [, , , , , fixed] = mocks.saveRatePlanHistory.mock.calls[0];
+      expect(fixed).toHaveLength(1);
+      expect(fixed[0]).toMatchObject({ kind: 'public', from: closed.from, to: closed.to, label: OPTION_B });
+      expect(fixed[0].revisions.length).toBeGreaterThan(0);
+      expect(fixed[0].revisions[0]).toMatchObject({ from: closed.from });
+    });
+    it('passesAManualPlan', async () => {
+      expect((await save({ name: 'Mine', buyRate: 0.2, sellRate: 0.03 })).status).toBe(200);
+      expect(mocks.saveRatePlanHistory.mock.calls[0][5]).toEqual([{ kind: 'manual', ...closed, name: 'Mine', buyRate: 0.2, sellRate: 0.03 }]);
+    });
+    it('missingSellRateIsZero', async () => {
+      expect((await save({ name: 'Mine', buyRate: 0.2 })).status).toBe(200);
+      expect(mocks.saveRatePlanHistory.mock.calls[0][5][0]).toMatchObject({ sellRate: 0 });
+    });
+    it('rejectsABadBuyRate', async () => {
+      for (const buyRate of [0, -1, '0.2', null, Number.NaN]) {
+        const response = await save({ name: 'Mine', buyRate });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Enter a price per kWh.' });
+      }
+      expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+    });
+    it('rejectsUnknownKeys', async () => {
+      for (const fixed of [{ label: OPTION_B, extra: 1 }, { name: 'Mine', buyRate: 0.2, extra: 1 }, { label: OPTION_B, name: 'Mine' }, {}, 'x', null]) {
+        const response = await save(fixed);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'Invalid request body.' });
+      }
+      expect(mocks.saveRatePlanHistory).not.toHaveBeenCalled();
+    });
+    it('aPeriodWithoutFixedWritesNone', async () => {
+      expect((await save(undefined)).status).toBe(200);
+      expect(mocks.saveRatePlanHistory.mock.calls[0][5]).toEqual([]);
+    });
+    it('rejectsAFixedLabelFromAnotherUtility', async () => {
+      mocks.rateByLabel.mockResolvedValue({ ...y2025[0], utility: 'Madison Gas & Electric Co' });
+      expect((await save({ label: OPTION_B })).status).toBe(400);
+    });
+  });
+
   it('gates GET and PUT /utility/history for outside-US and unknown sites with zero OpenEI calls', async () => {
     for (const ctx of [
       { name: 'Wisconsin Electric Power Co', timezone: 'America/Chicago', currency: 'USD', choice: 'owner' as const, rateCountry: 'CA', rateCountrySource: 'owner' as const, eligibility: 'outside_us' as const },
