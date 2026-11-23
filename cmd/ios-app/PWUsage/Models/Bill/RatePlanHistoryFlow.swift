@@ -135,10 +135,11 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         for index in filled {
             let span = spans[index]
             let fixed = stagedFixed(forSpanAt: index)
-            if let older = result.last, older.label == span.label {
-                // Merged spans keep the older span's staged comparison, else the newer one's.
+            // Same-label spans merge only when they stage the same comparison, so an owner's choice is
+            // never dropped; otherwise they are adjacent periods the server saves one after the other.
+            if let older = result.last, older.label == span.label, older.fixed == fixed {
                 result[result.count - 1] = RatePlanHistoryPeriod(
-                    label: span.label, from: older.from, to: span.endDate, fixed: older.fixed ?? fixed
+                    label: span.label, from: older.from, to: span.endDate, fixed: fixed
                 )
             } else {
                 result.append(RatePlanHistoryPeriod(label: span.label, from: span.from, to: span.endDate, fixed: fixed))

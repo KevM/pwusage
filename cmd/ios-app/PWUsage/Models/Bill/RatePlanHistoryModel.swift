@@ -25,7 +25,7 @@ final class RatePlanHistoryModel {
     @ObservationIgnored private let saveHistory: ([RatePlanHistoryPeriod]) async throws -> Void
 
     init(
-        referencePeriods: [TariffPeriodDTO] = [],
+        referencePeriods: [TariffPeriodDTO],
         loadHistory: @escaping () async throws -> RatePlanHistoryDTO,
         saveHistory: @escaping ([RatePlanHistoryPeriod]) async throws -> Void
     ) {

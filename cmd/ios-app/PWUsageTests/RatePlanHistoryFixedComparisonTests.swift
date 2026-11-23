@@ -171,6 +171,42 @@ struct RatePlanHistoryFixedComparisonTests {
         #expect(flow.stagedFixed(forSpanAt: 5) == nil)
         #expect(flow.comparisonRows(forSpanAt: 5).isEmpty)
     }
+
+    @Test func aYearWithNoPlansNeverStagesTodaysFixedPlan() {
+        let years = [RatePlanHistoryFlowTests.year(2023, [])]
+        let flow = Self.reviewed(references: [], history: RatePlanHistoryFlowTests.harrison(years: years))
+        #expect(flow.stagedFixed(forSpanAt: 0) == nil)
+        #expect(flow.periods().map(\.fixed) == [nil])
+    }
+
+    @Test func sameLabelSpansWithDifferentComparisonsStaySeparateAndKeepTheOwnersChoice() {
+        let timeOfUse = RatePlanHistoryFlowTests.timeOfUse(2026)
+        let years = [
+            RatePlanHistoryFlowTests.year(2025, [timeOfUse]),
+            RatePlanHistoryFlowTests.year(2024, [timeOfUse]),
+            RatePlanHistoryFlowTests.year(2023, [timeOfUse, RatePlanHistoryFlowTests.fixed(2023)])
+        ]
+        var flow = RatePlanHistoryFlow(
+            history: RatePlanHistoryFlowTests.harrison(years: years), hasTeslaPlan: true, referencePeriods: []
+        )
+        flow.chooseKind(.timeOfUse)
+        flow.choosePeakWindow(RatePlanHistoryFlowTests.optionB(2026))
+        flow.answerSinceStart(false)
+        flow.chooseSwitchMonth("2025-01")
+        flow.chooseKind(.timeOfUse)
+        flow.choosePeakWindow(RatePlanHistoryFlowTests.optionB(2026))
+        flow.answerSinceStart(true)
+        let older = FixedComparisonChoice.publicPlan(
+            label: "Residential Rg 1 2023", name: "Residential Rg 1", buyRate: 0.18
+        )
+        #expect(flow.periods().map(\.fixed) == [older, nil])
+        let mine = FixedComparisonChoice.manual(name: "Mine", buyRate: 0.3, sellRate: 0)
+        flow.chooseFixed(mine, forSpanAt: 0)
+        let periods = flow.periods()
+        #expect(periods.map(\.label) == ["Rg 2 Option B 2026", "Rg 2 Option B 2026"])
+        #expect(periods.map(\.fixed) == [older, mine])
+        #expect(periods.map(\.from) == ["2023-11-14", "2025-01-01"])
+    }
 }
 
 extension RatePlanHistoryPeriod {

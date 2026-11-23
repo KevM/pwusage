@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// The rate plan history guide: one question per screen, walking back from the current plan, then a
@@ -14,11 +15,12 @@ struct RatePlanHistorySheet: View {
 
     init(
         teslaPlanName: String?,
+        referencePeriods: [TariffPeriodDTO],
         load: @escaping () async throws -> RatePlanHistoryDTO,
         save: @escaping ([RatePlanHistoryPeriod]) async throws -> Void
     ) {
         self.init(
-            model: RatePlanHistoryModel(loadHistory: load, saveHistory: save),
+            model: RatePlanHistoryModel(referencePeriods: referencePeriods, loadHistory: load, saveHistory: save),
             teslaPlanName: teslaPlanName
         )
     }
