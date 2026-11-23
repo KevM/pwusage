@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Fetches within WidgetKit's timeline invocation, independently of the app lifecycle.
 struct TodayEnergyWidgetRefresh: Sendable {

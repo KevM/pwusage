@@ -1,5 +1,6 @@
 #if DEBUG
     import Foundation
+    import PWUsageCore
 
     /// Shared by Xcode previews and visual checks. No App Group reads or networking.
     enum TodayEnergyPreviewFixtures {

@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// What sits behind the header's estimate, kept out of the way until someone asks.

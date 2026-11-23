@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// Presentation-only daily totals. No authentication or battery control state belongs here.
 struct TodayEnergy: Codable, Equatable, Sendable {
@@ -10,21 +11,6 @@ struct TodayEnergy: Codable, Equatable, Sendable {
     var activeTariff: String?
     var todayComplete = true
     var energyDataThrough: Date?
-}
-
-/// Canonical daily tariff/TOU netted amounts, calculated by the server.
-struct TodayEnergyCost: Codable, Equatable, Sendable {
-    var netCost: Double
-    var importCharges: Double
-    var exportCredits: Double
-    var currency: String
-
-    var isValid: Bool {
-        [netCost, importCharges, exportCredits].allSatisfy(\.isFinite)
-            && importCharges >= 0 && exportCredits >= 0
-            && abs(netCost - (importCharges - exportCredits)) < 0.000001
-            && currency.count == 3 && currency.utf8.allSatisfy { (65 ... 90).contains($0) }
-    }
 }
 
 struct TodayEnergySnapshot: Codable, Equatable, Sendable {

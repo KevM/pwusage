@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 extension PWUsageAPI {
     func fetchTrmnlDevices(siteID: String) async throws -> [TrmnlDevice] {

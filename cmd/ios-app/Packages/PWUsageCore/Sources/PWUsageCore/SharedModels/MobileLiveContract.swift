@@ -1,50 +1,53 @@
 import Foundation
-import PWUsageCore
 
-struct MobileLiveResponse: Codable, Equatable {
+public struct MobileLiveResponse: Codable, Equatable, Sendable {
     /// A battery charge reading older than this is unknown, never "fresh". Mirrors the server
     /// rule in `buildMobileDashboardContract` — change one and you must change both: the server
     /// constant is `MOBILE_SOC_MAX_AGE_MS` in
     /// `cmd/next-app/src/lib/mobile-dashboard-contract.ts`, which uses the same inclusive `<=`
     /// edge. Without the client copy, a drifted, proxied, or cached response would present a
     /// stale percentage as current.
-    static let stateOfChargeMaximumAge: TimeInterval = 2 * 3600
+    public static let stateOfChargeMaximumAge: TimeInterval = 2 * 3600
 
-    let version: Int
-    let site: Site
-    let live: Live
-    let stateOfCharge: Double?
-    let activeTariff: String?
-    let activeLoadTiming: ActiveLoadTiming?
-    let today: Today
-    let todayCost: TodayEnergyCost?
-    let todayComplete: Bool
-    let currentBill: Bill?
-    let sources: Sources
-    let historyRevision: String?
-    var historyRefresh: HistoryRefresh?
+    public let version: Int
+    public let site: Site
+    public let live: Live
+    public let stateOfCharge: Double?
+    public let activeTariff: String?
+    public let activeLoadTiming: ActiveLoadTiming?
+    public let today: Today
+    public let todayCost: TodayEnergyCost?
+    public let todayComplete: Bool
+    public let currentBill: Bill?
+    public let sources: Sources
+    public let historyRevision: String?
+    public var historyRefresh: HistoryRefresh?
 
-    struct HistoryRefresh: Codable, Equatable {
-        let status: HistoryRefreshStatus
+    public struct HistoryRefresh: Codable, Equatable, Sendable {
+        public let status: HistoryRefreshStatus
+
+        public init(status: HistoryRefreshStatus) {
+            self.status = status
+        }
     }
 
-    enum HistoryRefreshStatus: String, Codable {
+    public enum HistoryRefreshStatus: String, Codable, Sendable {
         case changed, current, overdue, pending, failed, throttled
         case awaitingData = "awaiting-data"
     }
 
-    struct Site: Codable, Equatable {
-        let id: String
-        let name: String
-        let timezone: String
-        let localDate: String
+    public struct Site: Codable, Equatable, Sendable {
+        public let id: String
+        public let name: String
+        public let timezone: String
+        public let localDate: String
     }
 
-    struct Live: Codable, Equatable {
-        let solarPower: Double
-        let loadPower: Double
-        let batteryPower: Double
-        let gridPower: Double
+    public struct Live: Codable, Equatable, Sendable {
+        public let solarPower: Double
+        public let loadPower: Double
+        public let batteryPower: Double
+        public let gridPower: Double
 
         /// Power readings are non-optional doubles, so a non-finite value has no "unknown" to map
         /// to without inventing one: `loadPower` drives the home total, so a null there would
@@ -54,9 +57,9 @@ struct MobileLiveResponse: Codable, Equatable {
         /// it cannot represent as a Swift `Double` (`1e400` and friends) and `NaN`/`Infinity` are
         /// not valid JSON, so nothing non-finite can arrive from a response. Negative readings are
         /// left alone, because negative grid and battery power are legitimate.
-        static func finiteOrZero(_ value: Double) -> Double { value.isFinite ? value : 0 }
+        public static func finiteOrZero(_ value: Double) -> Double { value.isFinite ? value : 0 }
 
-        init(from decoder: Decoder) throws {
+        public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: LiveCodingKeys.self)
             solarPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .solarPower))
             loadPower = Self.finiteOrZero(try container.decode(Double.self, forKey: .loadPower))
@@ -65,7 +68,7 @@ struct MobileLiveResponse: Codable, Equatable {
         }
 
         /// Encoding uses the same keys as decoding, so the two cannot drift apart.
-        func encode(to encoder: Encoder) throws {
+        public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: LiveCodingKeys.self)
             try container.encode(solarPower, forKey: .solarPower)
             try container.encode(loadPower, forKey: .loadPower)
@@ -74,32 +77,32 @@ struct MobileLiveResponse: Codable, Equatable {
         }
     }
 
-    struct Today: Codable, Equatable {
-        let homeKwh: Double
-        let solarKwh: Double
-        let gridNetKwh: Double
-        let batteryNetKwh: Double
+    public struct Today: Codable, Equatable, Sendable {
+        public let homeKwh: Double
+        public let solarKwh: Double
+        public let gridNetKwh: Double
+        public let batteryNetKwh: Double
     }
 
-    struct Bill: Codable, Equatable {
-        let estimatedCost: Double?
-        let currency: String
-        let cycleStart: Date
-        let cycleEnd: Date
-        let periods: [Period]
+    public struct Bill: Codable, Equatable, Sendable {
+        public let estimatedCost: Double?
+        public let currency: String
+        public let cycleStart: Date
+        public let cycleEnd: Date
+        public let periods: [Period]
 
-        var hasFiniteAmounts: Bool {
+        public var hasFiniteAmounts: Bool {
             (estimatedCost?.isFinite ?? true) && periods.allSatisfy(\.hasFiniteAmounts)
         }
     }
 
-    struct Sources: Codable, Equatable {
-        let liveStatusAt: Date?
-        let energyDataThrough: Date?
-        let stateOfChargeAt: Date?
+    public struct Sources: Codable, Equatable, Sendable {
+        public let liveStatusAt: Date?
+        public let energyDataThrough: Date?
+        public let stateOfChargeAt: Date?
     }
 
-    enum ContractError: Error, Equatable {
+    public enum ContractError: Error, Equatable, Sendable {
         case unsupportedVersion(Int)
         case siteMismatch(expected: String, actual: String)
         case invalidAmount
@@ -110,7 +113,7 @@ struct MobileLiveResponse: Codable, Equatable {
              today, todayCost, todayComplete, currentBill, sources, historyRevision, historyRefresh
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .version)
         guard version == 1 else { throw ContractError.unsupportedVersion(version) }
@@ -137,7 +140,7 @@ struct MobileLiveResponse: Codable, Equatable {
     }
 
     /// Replace just the fast readings; history and bill source times stay unchanged.
-    init(snapshot: MobileLiveResponse, power: MobileLivePowerResponse) {
+    public init(snapshot: MobileLiveResponse, power: MobileLivePowerResponse) {
         version = snapshot.version
         site = snapshot.site
         live = power.live
@@ -159,7 +162,7 @@ struct MobileLiveResponse: Codable, Equatable {
     /// this guards against a non-conforming source rather than a wire value. Rates are not
     /// bounded below on purpose: the server prices negative buy and sell rates, and rejecting
     /// them would blank a real bill.
-    func validating(siteID: String) throws -> Self {
+    public func validating(siteID: String) throws -> Self {
         guard site.id == siteID else {
             throw ContractError.siteMismatch(expected: siteID, actual: site.id)
         }
@@ -171,7 +174,7 @@ struct MobileLiveResponse: Codable, Equatable {
     /// A reading that cannot be dated, or that is out of range, is unknown rather than wrong.
     /// Suppressing towards `nil` is deliberate: a dropped timestamp must show `--`, not a
     /// reading we cannot vouch for.
-    static func validatedStateOfCharge(_ reported: Double?, takenAt: Date?, now: Date) -> Double? {
+    public static func validatedStateOfCharge(_ reported: Double?, takenAt: Date?, now: Date) -> Double? {
         guard let reported, reported.isFinite, (0 ... 100).contains(reported) else { return nil }
         guard let takenAt else { return nil }
         let age = now.timeIntervalSince(takenAt)
@@ -185,45 +188,65 @@ private enum LiveCodingKeys: String, CodingKey {
     case solarPower, loadPower, batteryPower, gridPower
 }
 
-struct ActiveLoadTiming: Codable, Equatable {
-    let periodName: String
-    let buyRate: Double
-    let sellRate: Double
-    let marginalCost: Double?
-    let basis: String
-    let balanceKwh: Double?
-    let energyDataThrough: Date?
+public struct ActiveLoadTiming: Codable, Equatable, Sendable {
+    public let periodName: String
+    public let buyRate: Double
+    public let sellRate: Double
+    public let marginalCost: Double?
+    public let basis: String
+    public let balanceKwh: Double?
+    public let energyDataThrough: Date?
 
-    var hasFiniteAmounts: Bool {
+    public init(
+        periodName: String, buyRate: Double, sellRate: Double, marginalCost: Double?, basis: String,
+        balanceKwh: Double?, energyDataThrough: Date?
+    ) {
+        self.periodName = periodName
+        self.buyRate = buyRate
+        self.sellRate = sellRate
+        self.marginalCost = marginalCost
+        self.basis = basis
+        self.balanceKwh = balanceKwh
+        self.energyDataThrough = energyDataThrough
+    }
+
+    public var hasFiniteAmounts: Bool {
         buyRate.isFinite && sellRate.isFinite && (marginalCost?.isFinite ?? true)
     }
 }
 
-struct Period: Codable, Equatable {
-    let tariffName: String
-    let periodName: String
-    let netGridKwh: Double
-    let cost: Double
+public struct Period: Codable, Equatable, Sendable {
+    public let tariffName: String
+    public let periodName: String
+    public let netGridKwh: Double
+    public let cost: Double
 
-    var hasFiniteAmounts: Bool { cost.isFinite }
+    public init(tariffName: String, periodName: String, netGridKwh: Double, cost: Double) {
+        self.tariffName = tariffName
+        self.periodName = periodName
+        self.netGridKwh = netGridKwh
+        self.cost = cost
+    }
+
+    public var hasFiniteAmounts: Bool { cost.isFinite }
 }
 
 /// Small foreground response independent of history and rate-plan summaries.
-struct MobileLivePowerResponse: Codable, Equatable {
-    let version: Int
-    let siteID: String
-    let live: MobileLiveResponse.Live
-    let stateOfCharge: Double?
-    let sources: Sources
+public struct MobileLivePowerResponse: Codable, Equatable, Sendable {
+    public let version: Int
+    public let siteID: String
+    public let live: MobileLiveResponse.Live
+    public let stateOfCharge: Double?
+    public let sources: Sources
 
-    struct Sources: Codable, Equatable {
-        let liveStatusAt: Date?
-        let stateOfChargeAt: Date?
+    public struct Sources: Codable, Equatable, Sendable {
+        public let liveStatusAt: Date?
+        public let stateOfChargeAt: Date?
     }
 
     private enum CodingKeys: String, CodingKey { case version, siteID, live, stateOfCharge, sources }
 
-    init(snapshot: MobileLiveResponse) {
+    public init(snapshot: MobileLiveResponse) {
         version = snapshot.version
         siteID = snapshot.site.id
         live = snapshot.live
@@ -233,7 +256,7 @@ struct MobileLivePowerResponse: Codable, Equatable {
         )
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decode(Int.self, forKey: .version)
         guard version == 1 else { throw MobileLiveResponse.ContractError.unsupportedVersion(version) }
@@ -246,7 +269,7 @@ struct MobileLivePowerResponse: Codable, Equatable {
         )
     }
 
-    func validating(siteID expected: String) throws -> Self {
+    public func validating(siteID expected: String) throws -> Self {
         guard siteID == expected else {
             throw MobileLiveResponse.ContractError.siteMismatch(expected: expected, actual: siteID)
         }

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum DashboardPresentation {
     /// Narrowest content width, in points, at which Home splits into two columns:

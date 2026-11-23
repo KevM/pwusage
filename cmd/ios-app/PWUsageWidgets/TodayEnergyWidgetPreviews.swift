@@ -1,4 +1,5 @@
 #if DEBUG
+    import PWUsageCore
     import SwiftUI
     import WidgetKit
 
