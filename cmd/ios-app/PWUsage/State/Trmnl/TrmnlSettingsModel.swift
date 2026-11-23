@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// The Trmnl screen's devices. One device at a time is edited (see `TrmnlScreensEditorModel`); a site with
 /// none shows the default screen as a preview of what a device would get.
