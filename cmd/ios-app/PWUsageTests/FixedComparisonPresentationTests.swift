@@ -161,17 +161,29 @@ struct FixedComparisonPresentationTests {
     }
 
     @MainActor
-    @Test func changeModelGoesStraightToRatesForGapsAndNoFixedPlansButReportsFailures() async {
+    @Test func changeModelGoesStraightToRatesOnlyWhenNoFixedPlanMatchesAndReportsFailures() async {
         let noNetwork = RatePlanSelectionActions(
             preview: { _ in throw PWUsageAPIError.invalidResponse },
             commit: { _ in throw PWUsageAPIError.invalidResponse }
         )
-        let gap = FixedComparisonChangeModel(row: Self.row(nil), selection: noNetwork, loadPlans: { _ in
-            Issue.record("a gap row must not load plans")
-            throw PWUsageAPIError.invalidResponse
-        })
+        let gap = FixedComparisonChangeModel(row: Self.row(nil), selection: noNetwork) { date in
+            PublicUtilityPlansResponse(
+                utilityName: "U", effectiveDate: date, currency: "USD", plans: [Self.plan("FIX")]
+            )
+        }
         await gap.load()
+        #expect(gap.state == .choosing(FixedComparisonPicker.options(from: [Self.plan("FIX")])))
+        gap.enterRates()
         #expect(gap.state == .enteringRates)
+        #expect(gap.backToPicker())
+        #expect(gap.state == .choosing(FixedComparisonPicker.options(from: [Self.plan("FIX")])))
+
+        let uncovered = FixedComparisonChangeModel(row: Self.row(nil), selection: noNetwork) { date in
+            PublicUtilityPlansResponse(utilityName: "U", effectiveDate: date, currency: "USD", plans: [])
+        }
+        await uncovered.load()
+        #expect(uncovered.state == .enteringRates)
+        #expect(!uncovered.backToPicker())
 
         let none = FixedComparisonChangeModel(row: Self.row(Self.reference()), selection: noNetwork) { date in
             PublicUtilityPlansResponse(

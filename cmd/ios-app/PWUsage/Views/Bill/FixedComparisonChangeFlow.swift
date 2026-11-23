@@ -39,7 +39,11 @@ struct FixedComparisonChangeFlow: View {
                 FixedRatePlanForm(
                     range: model.lockedRange,
                     currency: currency,
-                    actions: FixedRatePlanActions(selection: actions.selection, onApplied: onApplied)
+                    actions: FixedRatePlanActions(
+                        selection: actions.selection,
+                        onApplied: onApplied,
+                        onBack: { if !model.backToPicker() { dismiss() } }
+                    )
                 )
             case .loading, .choosing, .failed:
                 picker
@@ -126,7 +130,10 @@ struct FixedComparisonGuideChange: View {
 
     var body: some View {
         if entersRates {
-            FixedRatePlanForm(range: range, currency: currency, actions: FixedRatePlanActions(stage: onChoose))
+            FixedRatePlanForm(range: range, currency: currency, actions: FixedRatePlanActions(
+                stage: onChoose,
+                onBack: { if options.isEmpty { dismiss() } else { entersRates = false } }
+            ))
         } else {
             NavigationStack {
                 FixedComparisonPicker(

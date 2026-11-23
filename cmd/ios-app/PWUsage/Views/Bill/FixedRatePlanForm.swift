@@ -7,6 +7,8 @@ struct FixedRatePlanActions: Sendable {
     var stage: (@MainActor (FixedComparisonChoice) -> Void)?
     var onApplied: @MainActor (TariffSelectionCommitResponse, TariffSelectionRequest) -> Void = { _, _ in }
     var onDismiss: (@MainActor () -> Void)?
+    /// Cancel returns to the picker that led here instead of closing everything.
+    var onBack: (@MainActor () -> Void)?
 }
 
 /// Enter rates myself for one fixed comparison row: a flat price per kWh for exactly the row's dates,
@@ -18,7 +20,7 @@ struct FixedRatePlanForm: View {
     let actions: FixedRatePlanActions
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name = FixedRatePlanDraft.normalizedName("")
+    @State private var name = ""
     @State private var buyRateText = ""
     @State private var sellRateText = FixedRatePlanDraft.formatRate(0)
     @State private var path: [Route] = []
@@ -54,7 +56,7 @@ struct FixedRatePlanForm: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { close() }
+                    Button("Cancel") { if let onBack = actions.onBack { onBack() } else { close() } }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if stagesChoice {
@@ -73,7 +75,7 @@ struct FixedRatePlanForm: View {
 
     private var detailsSection: some View {
         Section {
-            TextField("Plan name", text: $name)
+            TextField(FixedRatePlanDraft.normalizedName(""), text: $name)
                 .textInputAutocapitalization(.words)
             LabeledContent("Dates", value: RatePlanTimelineFormatting.displayRange(from: range.from, to: range.to))
         } footer: {
