@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// A small sheet for the two things that change at every plug-in: which car it is and how full it is.

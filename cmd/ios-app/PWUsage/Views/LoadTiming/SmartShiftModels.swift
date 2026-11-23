@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 enum ForecastAvailability: Equatable {
     /// This site doesn't use the automatic forecast, so there is none to add.

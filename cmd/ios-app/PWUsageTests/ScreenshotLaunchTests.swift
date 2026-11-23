@@ -1,3 +1,4 @@
+import PWUsageCore
 #if DEBUG
     import Foundation
     @testable import PWUsage
