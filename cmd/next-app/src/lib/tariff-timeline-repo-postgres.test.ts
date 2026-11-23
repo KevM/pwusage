@@ -1364,6 +1364,23 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         expect((await references(siteId)).filter(row => row.choice_kind === 'owner').map(row => [row.effective_from, row.effective_to, row.name])).toEqual([['2024-01-01', '2024-12-31', 'Plan fx-2024']]);
       });
 
+      it('guideFollowStartingBeforeTheLabelsOldestRevisionStaysCoveredByTheFollowedPlan', async () => {
+        const siteId = 's-fixed-guide-early';
+        await harrisonSite(siteId, 'none');
+        const defaults = [flatRate('default', '2023-01-01', 0.15)];
+        const api = { ...chainApi([flatRate('fx-2024', '2024-01-01', 0.12)]), defaultRates: async () => defaults };
+        const repo = new TariffTimelineRepo();
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect((await references(siteId)).some(row => row.name === 'Plan default' && row.effective_from <= '2023-12-01')).toBe(true);
+        await repo.saveRatePlanHistory(siteId, 'u1', UTILITY, [revision('a', '2023-12-01', '2024-12-31')], 'a-open', [publicFixed('fx-2024', '2023-12-01', null)]);
+        expect(await followed(siteId)).toEqual({ label: 'fx-2024', from: '2023-12-01' });
+        await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T18:00:00Z'));
+        expect((await followed(siteId)).label).toBe('fx-2024');
+        const estimated = (await references(siteId)).filter(row => row.source === 'estimated');
+        expect(estimated.find(row => row.name === 'Plan fx-2024')).toMatchObject({ effective_from: '2023-12-01', effective_to: null });
+        expect(estimated.filter(row => row.name === 'Plan default').every(row => (row.effective_to ?? '9') < '2023-12-01')).toBe(true);
+      });
+
       it('changingTheUtilityClearsTheFollowedComparisonPlan', async () => {
         const siteId = 's-fixed-utility-change';
         await harrisonSite(siteId, 'none');

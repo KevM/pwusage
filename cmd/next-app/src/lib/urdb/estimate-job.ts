@@ -44,6 +44,9 @@ export function referenceDesiredSpans(defaults: RevisionSpan[], followed: Revisi
   const from = followed
     .filter(span => span.effectiveTo === null || span.effectiveTo >= followedFrom)
     .map(span => span.effectiveFrom < followedFrom ? { ...span, effectiveFrom: followedFrom } : span);
+  // The owner's range may start before the label's oldest known revision; that revision applies back to it.
+  const oldest = from.reduce<number>((best, span, index) => best < 0 || span.effectiveFrom < from[best].effectiveFrom ? index : best, -1);
+  if (oldest >= 0 && from[oldest].effectiveFrom > followedFrom) from[oldest] = { ...from[oldest], effectiveFrom: followedFrom };
   return [...before, ...from];
 }
 // URDB lists some utilities under an alias ("We energies") whose rates it files under another name

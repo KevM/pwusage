@@ -351,6 +351,18 @@ describe('referenceDesiredSpans', () => {
       ['X', '2024-06-01', null],
     ]);
   });
+  it('extends the oldest followed revision back to the followed start when it begins later', () => {
+    const result = referenceDesiredSpans(
+      [span('A', '2023-01-01', null)],
+      [span('X1', '2024-01-01', '2024-12-31'), span('X2', '2025-01-01', null)],
+      '2023-03-01',
+    );
+    expect(result.map(item => [item.rate.label, item.effectiveFrom, item.effectiveTo])).toEqual([
+      ['A', '2023-01-01', '2023-02-28'],
+      ['X1', '2023-03-01', '2024-12-31'],
+      ['X2', '2025-01-01', null],
+    ]);
+  });
 });
 
 describe('estimate job followed comparison plan', () => {
