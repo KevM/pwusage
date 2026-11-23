@@ -47,7 +47,7 @@ export function referenceDesiredSpans(defaults: RevisionSpan[], followed: Revisi
   // The owner's range may start before the label's oldest known revision; that revision applies back to it.
   const oldest = from.reduce<number>((best, span, index) => best < 0 || span.effectiveFrom < from[best].effectiveFrom ? index : best, -1);
   if (oldest >= 0 && from[oldest].effectiveFrom > followedFrom) from[oldest] = { ...from[oldest], effectiveFrom: followedFrom };
-  // One revision on both sides of the boundary is one source row: merge it so it is not upserted twice.
+  // Keep a single continuous span when the default and followed plan share a revision at the boundary.
   return [...before, ...from].reduce<RevisionSpan[]>((merged, span) => {
     const last = merged.at(-1);
     if (last && last.rate.label === span.rate.label && last.effectiveTo !== null && addCalendarDays(last.effectiveTo, 1) === span.effectiveFrom) merged[merged.length - 1] = { ...last, effectiveTo: span.effectiveTo };
@@ -284,7 +284,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
               changed: [],
               matchOutcomes: [],
             };
-      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string; end_date: string | null; created_at: Date }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text, u.end_date::text, u.created_at FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference', 'owner_selection')`, [siteId]);
+      const old = await write.query<{ tariff_id: number; role: string; urdb_label: string | null; content_hash: string | null; start_date: string }>(`SELECT u.tariff_id, u.role, u.urdb_label, t.content_hash, u.start_date::text FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id WHERE u.site_id = $1 AND u.role IN ('tesla_anchor', 'estimated_actual', 'estimated_reference', 'owner_selection')`, [siteId]);
       await clearUnprotectedUrdbSourcesOnClient(write, siteId);
       if (effectivePreview.planBackfill) {
         await write.query('UPDATE "Tariff" SET plan_name = $3, plan_code = $4 WHERE id = $1 AND site_id = $2 AND plan_name IS NULL AND plan_code IS NULL', [effectivePreview.planBackfill.tariffId, siteId, effectivePreview.planBackfill.name, effectivePreview.planBackfill.code]);
@@ -292,11 +292,20 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       for (const anchor of effectivePreview.anchors) {
         await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, start_source, newer_urdb_label, newer_urdb_name, newer_urdb_start, is_current_estimate) VALUES ($1, $2, 'tesla_anchor', $3, $4::date, $5, $6, $7, $8::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, start_source = EXCLUDED.start_source, newer_urdb_label = EXCLUDED.newer_urdb_label, newer_urdb_name = EXCLUDED.newer_urdb_name, newer_urdb_start = EXCLUDED.newer_urdb_start, is_current_estimate = TRUE`, [anchor.tariffId, siteId, anchor.label, anchor.startDate, anchor.startSource, anchor.newer?.label ?? null, anchor.newer?.name ?? null, anchor.newer ? urdbStartDate(anchor.newer) : null]);
       }
-      for (const item of [...effectivePreview.actual, ...effectivePreview.reference]) {
+      const estimates = [...effectivePreview.actual, ...effectivePreview.reference];
+      const reusedTariffIds = new Set<number>();
+      for (const item of estimates) {
         const parsed = compileSeasonsToParsedTariff(item.name, item.seasons);
         const hash = tariffContentHash(parsed);
-        const previous = old.rows.find(row => row.role === item.role && row.urdb_label === item.span.rate.label && row.content_hash === hash);
+        const matching = old.rows.filter(row => row.role === item.role && row.urdb_label === item.span.rate.label
+          && row.content_hash === hash && !reusedTariffIds.has(Number(row.tariff_id)));
+        // A tariff ID can store only one source span. Reserve matching starts for their own spans
+        // so a default revision can keep its identity even when it also reappears as a followed plan.
+        const previous = matching.find(row => row.start_date === item.span.effectiveFrom)
+          ?? matching.find(row => !estimates.some(estimate => estimate.role === row.role
+            && estimate.span.rate.label === row.urdb_label && estimate.span.effectiveFrom === row.start_date));
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
+        reusedTariffIds.add(tariffId);
         await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start, is_current_estimate) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, start_source = EXCLUDED.start_source, revision_start = EXCLUDED.revision_start, is_current_estimate = TRUE`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
       }
       const today = siteLocalDateString(now, lockedSite?.timezone ?? 'UTC');

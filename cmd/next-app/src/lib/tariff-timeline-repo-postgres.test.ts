@@ -1518,6 +1518,39 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           expect([first.from, first.label]).toEqual([preview.affectedIntervals[0].effectiveFrom, preview.affectedIntervals[0].after?.urdbLabel]);
         });
 
+        it('keeps disjoint spans of the same followed revision across estimate refreshes', async () => {
+          const siteId = 's-editor-follow-disjoint';
+          await harrisonSite(siteId, 'none');
+          const earlier = flatRate('earlier-default', '2023-01-01', 0.12);
+          const intervening = flatRate('intervening-default', '2024-01-01', 0.15);
+          const disjointApi = { ...chainApi([earlier, intervening]), defaultRates: async () => [earlier, intervening] };
+          const disjointDeps = { ...deps, urdb: disjointApi };
+          const sources = async () => (await local.database.query<{ tariff_id: number; label: string; from: string; to: string | null }>(
+            `SELECT tariff_id, urdb_label AS label, start_date::text AS from, end_date::text AS to
+             FROM "TariffUrdbSource" WHERE site_id = $1 AND role = 'estimated_reference' AND is_current_estimate
+             ORDER BY start_date`, [siteId])).rows;
+
+          await runUrdbEstimatesForSite(siteId, disjointApi, deps.now());
+          const original = await sources();
+          expect(original.map(row => row.label)).toEqual(['earlier-default', 'intervening-default']);
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: earlier.label }, effectiveFrom: '2025-01-01', effectiveTo: null };
+          const preview = await previewTariffSelection(siteId, 'u1', request, disjointDeps);
+          await commitTariffSelection(siteId, 'u1', { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false }, disjointDeps);
+
+          await runUrdbEstimatesForSite(siteId, disjointApi, deps.now());
+          expect(await laid(siteId)).toEqual([
+            { label: earlier.label, from: '2023-01-01', to: '2023-12-31' },
+            { label: intervening.label, from: '2024-01-01', to: '2024-12-31' },
+            { label: earlier.label, from: '2025-01-01', to: null },
+          ]);
+          const refreshed = await sources();
+          expect(refreshed[0]).toEqual(original[0]);
+          expect(refreshed[2].tariff_id).not.toBe(refreshed[0].tariff_id);
+
+          await runUrdbEstimatesForSite(siteId, disjointApi, deps.now());
+          expect(await sources()).toEqual(refreshed);
+        });
+
         it('retryingTheSameFollowIsUnchangedButStillChecksTheUtility', async () => {
           const siteId = 's-editor-follow-retry';
           await harrisonSite(siteId, 'none');
