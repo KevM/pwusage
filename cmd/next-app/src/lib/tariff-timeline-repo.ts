@@ -553,6 +553,13 @@ export async function bumpSiteTimelineRevisionOnClient(
   return val !== undefined && val !== null ? Number(val) : null;
 }
 
+async function stampSelectionTimelineRevisionOnClient(client: PoolClient, siteId: string, selectionIds: number[]): Promise<void> {
+  const revision = await bumpSiteTimelineRevisionOnClient(client, siteId);
+  if (revision !== null && selectionIds.length > 0) {
+    await client.query(`UPDATE "TariffSelection" SET timeline_revision = $2 WHERE id = ANY($1::int[])`, [selectionIds, revision]);
+  }
+}
+
 export async function insertTariffSelectionOnClient(
   client: Pick<PoolClient, 'query'>,
   params: InsertTariffSelectionParams
@@ -760,6 +767,36 @@ export async function storeSelectionOriginalsOnClient(
       ]
     );
   }
+}
+
+type UrdbEstimateSource = {
+  role: 'estimated_actual' | 'estimated_reference';
+  label: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  revisionStart: string | null;
+  followedReferenceLabel: string | null;
+};
+
+export async function upsertUrdbEstimateSourceOnClient(
+  client: Pick<PoolClient, 'query'>,
+  siteId: string,
+  tariffId: number,
+  source: UrdbEstimateSource
+): Promise<void> {
+  await client.query(
+    `INSERT INTO "TariffUrdbSource" (
+       tariff_id, site_id, role, urdb_label, start_date, end_date, start_source,
+       revision_start, is_current_estimate, followed_reference_label
+     ) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date, TRUE, $8)
+     ON CONFLICT (tariff_id) DO UPDATE SET
+       role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label,
+       start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
+       start_source = EXCLUDED.start_source, revision_start = EXCLUDED.revision_start,
+       is_current_estimate = TRUE, followed_reference_label = EXCLUDED.followed_reference_label`,
+    [tariffId, siteId, source.role, source.label, source.effectiveFrom, source.effectiveTo,
+      source.revisionStart, source.followedReferenceLabel]
+  );
 }
 
 export async function clearUnprotectedUrdbSourcesOnClient(
@@ -1194,6 +1231,7 @@ export interface ApplyTariffSelectionInput {
   candidateKindOverride?: TariffSelectionCandidateKind;
   allowMinuteResolution?: boolean;
   reviewHash?: string | null;
+  referenceBatch?: { selectionIds: number[]; layoutChanged: boolean };
 }
 
 export interface ApplyTariffSelectionResult {
@@ -1664,7 +1702,8 @@ export async function loadRestorationTargets(
  * so ending the follow keeps the owner's choice for those days. Rows reaching past `before` end the day before.
  * A row that began before `from` (the followed plan merged with the default before it) keeps its earlier part as estimated.
  */
-async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId: string, userId: string, from: string, before: string): Promise<void> {
+async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId: string, userId: string, followed: { label: string; from: string }, before: string): Promise<void> {
+  const { label, from } = followed;
   const rows = (await client.query<{
     id: number; tariff_id: number; effective_from: string; effective_to: string | null;
     urdb_label: string | null; revision_start: string | null; utility_name: string | null; content_hash: string | null;
@@ -1674,12 +1713,13 @@ async function keepFollowedRangeAsOwnerChoiceOnClient(client: PoolClient, siteId
      FROM "TariffReferencePeriod" p
      JOIN "Tariff" t ON t.id = p.tariff_id
      LEFT JOIN "SiteUtility" su ON su.site_id = p.site_id
-     LEFT JOIN "TariffUrdbSource" u ON u.tariff_id = p.tariff_id AND u.site_id = p.site_id AND u.role = 'estimated_reference'
+     JOIN "TariffUrdbSource" u ON u.tariff_id = p.tariff_id AND u.site_id = p.site_id
+       AND u.role = 'estimated_reference' AND u.followed_reference_label = $4
      LEFT JOIN "TariffSelection" s ON s.id = p.selection_id
      WHERE p.site_id = $1 AND p.source = 'estimated' AND COALESCE(s.choice_kind, 'automatic') <> 'owner'
        AND p.effective_from < $3::date AND (p.effective_to IS NULL OR p.effective_to >= $2::date)
      ORDER BY p.effective_from`,
-    [siteId, from, before]
+    [siteId, from, before, label]
   )).rows;
   for (const row of rows) {
     const to = row.effective_to === null || row.effective_to >= before ? addCalendarDays(before, -1) : row.effective_to;
@@ -1723,30 +1763,88 @@ export type FixedComparisonWrite = { from: string; to: string | null } & (
   | { kind: 'manual'; name: string; buyRate: number; sellRate: number }
 );
 
-/**
- * Follows `label` as the owner's fixed comparison plan from `from` onward: the estimate job lays its
- * revisions as the open-ended reference, so this also clears any owner reference period over that range.
- * `expectedUtility` ties the write to the utility the caller verified in the same transaction.
- */
-export async function setFollowedReferenceLabelOnClient(client: PoolClient, siteId: string, userId: string, label: string, from: string, expectedUtility: string | null = null): Promise<void> {
-  const previous = (await client.query<{ from: string | null }>(
-    `SELECT urdb_reference_from::text AS from FROM "SiteUtility" WHERE site_id = $1 AND urdb_reference_label IS NOT NULL FOR UPDATE`,
+type FollowedReferenceRevision = Pick<ExpandedRevision, 'label' | 'name' | 'seasons' | 'from' | 'to'> & {
+  revisionStart: string | null;
+};
+
+/** Keeps the prefix of any current estimate that straddles the replacement date. */
+async function truncateComparisonEstimatesOnClient(client: PoolClient, siteId: string, from: string): Promise<void> {
+  await client.query(
+    `UPDATE "TariffUrdbSource"
+     SET is_current_estimate = start_date < $2::date,
+         end_date = CASE WHEN start_date < $2::date THEN $2::date - 1 ELSE end_date END
+     WHERE site_id = $1 AND role = 'estimated_reference' AND is_current_estimate
+       AND (end_date IS NULL OR end_date >= $2::date)`,
+    [siteId, from]
+  );
+}
+
+async function clearSupersededFollowOnClient(client: PoolClient, siteId: string, from: string): Promise<boolean> {
+  const cleared = await client.query(
+    `UPDATE "SiteUtility" SET urdb_reference_label = NULL, urdb_reference_from = NULL,
+        status = 'pending', attempt_count = 0, next_check_at = NULL, updated_at = clock_timestamp()
+     WHERE site_id = $1 AND urdb_reference_from >= $2::date`,
+    [siteId, from]
+  );
+  if (!cleared.rowCount) return false;
+  await truncateComparisonEstimatesOnClient(client, siteId, from);
+  return true;
+}
+
+/** Saves the reviewed reference estimates now and schedules the follow to pick up future revisions. */
+export async function setFollowedReferenceLabelOnClient(
+  client: PoolClient,
+  siteId: string,
+  userId: string,
+  label: string,
+  from: string,
+  options: { expectedUtility?: string; revisions?: FollowedReferenceRevision[] } = {}
+): Promise<void> {
+  const previous = (await client.query<{ label: string; from: string }>(
+    `SELECT urdb_reference_label AS label, urdb_reference_from::text AS from
+     FROM "SiteUtility" WHERE site_id = $1 AND urdb_reference_label IS NOT NULL FOR UPDATE`,
     [siteId]
-  )).rows[0]?.from ?? null;
+  )).rows[0];
   const updated = await client.query(
-    `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3::date, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $4, updated_at = now()
+    `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3::date,
+        status = 'pending', attempt_count = 0, next_check_at = NULL, updated_by_user_id = $4, updated_at = clock_timestamp()
      WHERE site_id = $1 AND choice <> 'skipped' AND ($5::text IS NULL OR urdb_utility = $5)`,
-    [siteId, label, from, userId, expectedUtility]
+    [siteId, label, from, userId, options.expectedUtility ?? null]
   );
   if (!updated.rowCount) throw new UtilityChangedError('Utility changed. Start again.');
-  // Moving the follow later must not hand the days it used to cover back to the utility defaults.
-  if (previous !== null && previous < from) await keepFollowedRangeAsOwnerChoiceOnClient(client, siteId, userId, previous, from);
+
+  // Keep only estimates the previous follow supplied when moving its start later.
+  if (previous && previous.from < from) await keepFollowedRangeAsOwnerChoiceOnClient(client, siteId, userId, previous, from);
   const owned = `(p.source <> 'estimated' OR EXISTS (SELECT 1 FROM "TariffSelection" s WHERE s.id = p.selection_id AND s.choice_kind = 'owner'))`;
   await client.query(`DELETE FROM "TariffReferencePeriod" p WHERE p.site_id = $1 AND p.effective_from >= $2::date AND ${owned}`, [siteId, from]);
   await client.query(
     `UPDATE "TariffReferencePeriod" p SET effective_to = ($2::date - 1) WHERE p.site_id = $1 AND p.effective_from < $2::date AND (p.effective_to IS NULL OR p.effective_to >= $2::date) AND ${owned}`,
     [siteId, from]
   );
+
+  await truncateComparisonEstimatesOnClient(client, siteId, from);
+  for (const revision of options.revisions ?? []) {
+    const parsed = compileSeasonsToParsedTariff(revision.name, revision.seasons);
+    const hash = tariffContentHash(parsed);
+    const existing = (await client.query<{ tariff_id: number }>(
+      `SELECT u.tariff_id FROM "TariffUrdbSource" u JOIN "Tariff" t ON t.id = u.tariff_id
+       WHERE u.site_id = $1 AND u.role = 'estimated_reference' AND u.urdb_label = $2
+         AND u.start_date = $3::date AND t.content_hash = $4
+       ORDER BY u.tariff_id DESC LIMIT 1`,
+      [siteId, revision.label, revision.from, hash]
+    )).rows[0];
+    const tariffId = existing?.tariff_id ?? await insertTariffGraph(client, siteId, parsed, 'estimated', null, false, hash);
+    await upsertUrdbEstimateSourceOnClient(client, siteId, tariffId, {
+      role: 'estimated_reference',
+      label: revision.label,
+      effectiveFrom: revision.from,
+      effectiveTo: revision.to,
+      revisionStart: revision.revisionStart,
+      followedReferenceLabel: label,
+    });
+  }
+  // The reference-only layout does not use the calendar date.
+  await applyEstimatesOnClient(client, siteId, from, 'reference');
   await bumpSiteTimelineRevisionOnClient(client, siteId);
 }
 
@@ -1759,9 +1857,10 @@ const flatFixedSeasons = (buyRate: number, sellRate: number): TariffSeasonInput[
 async function writeFixedComparisonsOnClient(client: PoolClient, siteId: string, userId: string, today: string, utility: string, fixed: FixedComparisonWrite[]): Promise<void> {
   for (const write of fixed) {
     if (write.kind === 'public' && write.to === null) {
-      await setFollowedReferenceLabelOnClient(client, siteId, userId, write.label, write.from);
+      await setFollowedReferenceLabelOnClient(client, siteId, userId, write.label, write.from, { revisions: write.revisions });
       continue;
     }
+    if (write.kind === 'manual' && write.to === null) await clearSupersededFollowOnClient(client, siteId, write.from);
     const candidates = write.kind === 'public'
       ? write.revisions.map(revision => ({
         from: revision.from,
@@ -1772,10 +1871,6 @@ async function writeFixedComparisonsOnClient(client: PoolClient, siteId: string,
     for (const { from, to, candidate } of candidates) {
       await applyTariffSelectionOnClient(client, siteId, today, { scope: 'reference', effectiveFrom: from, effectiveTo: to, userId, verifiedAgainstBill: false, candidate });
     }
-    // A manual plan from `from` onward replaces whatever a followed label would lay from that day.
-    if (write.kind === 'manual' && write.to === null) {
-      await client.query(`UPDATE "SiteUtility" SET urdb_reference_label = NULL, urdb_reference_from = NULL WHERE site_id = $1 AND urdb_reference_from >= $2::date`, [siteId, write.from]);
-    }
   }
 }
 
@@ -1785,7 +1880,7 @@ export async function applyTariffSelectionOnClient(
   today: string,
   input: ApplyTariffSelectionInput
 ): Promise<ApplyTariffSelectionResult> {
-  const { scope, effectiveFrom, effectiveTo, userId, verifiedAgainstBill, candidate, reviewHash } = input;
+  const { scope, effectiveFrom, effectiveTo, userId, verifiedAgainstBill, candidate, reviewHash, referenceBatch } = input;
   validateEffectiveDates(effectiveFrom, effectiveTo, today);
   if (scope === 'reference' && candidate.kind === 'restore_tesla') {
     throw new TariffValidationError('Tesla restoration is only available for your rate plan.');
@@ -2106,6 +2201,8 @@ export async function applyTariffSelectionOnClient(
          WHERE site_id = $1 AND status = 'needs_plan'`,
         [siteId]
       );
+    } else if (referenceBatch) {
+      referenceBatch.layoutChanged = true;
     } else {
       await applyEstimatesOnClient(client, siteId, today, 'reference');
     }
@@ -2113,12 +2210,10 @@ export async function applyTariffSelectionOnClient(
 
   const unchanged = !anyTimelineChange && createdSelectionCount === 0;
   if (!unchanged) {
-    const timelineRevision = await bumpSiteTimelineRevisionOnClient(client, siteId);
-    if (timelineRevision !== null && createdSelectionIds.length > 0) {
-      await client.query(
-        `UPDATE "TariffSelection" SET timeline_revision = $2 WHERE id = ANY($1::int[])`,
-        [createdSelectionIds, timelineRevision]
-      );
+    if (referenceBatch) {
+      referenceBatch.selectionIds.push(...createdSelectionIds);
+    } else {
+      await stampSelectionTimelineRevisionOnClient(client, siteId, createdSelectionIds);
     }
   }
 
@@ -2511,7 +2606,8 @@ async function findIdempotentRetryOnClient(
   commit: TariffSelectionCommit,
   candidatePlan: TariffReviewPlanSnapshot | null,
   existingSpans: ExistingTimelineSpanInput[],
-  restorationTargets: RestorationTargetSpanInput[]
+  restorationTargets: RestorationTargetSpanInput[],
+  candidateRevisions?: readonly CandidateRevision[]
 ): Promise<ApplyTariffSelectionResult | null> {
   const { scope, effectiveFrom, effectiveTo, candidate, verifiedAgainstBill } = commit;
   const currentSpans = await loadScopeSpans(client, siteId, scope);
@@ -2628,21 +2724,17 @@ async function findIdempotentRetryOnClient(
   }
 
   if (!candidatePlan) return null;
-  const overlapping = currentSpans.filter(s =>
-    spansOverlapDates(s.effectiveFrom, s.effectiveTo, effectiveFrom, effectiveTo)
-  );
-  const coalesced = coalesceContiguousSelectionSpans(
-    overlapping,
-    effectiveFrom,
-    effectiveTo,
-    candidatePlan.source
-  );
-  if (!coalesced) return null;
-
-  const matchingPreviewSpans = existingSpans.filter(s => s.plan.selectionId === coalesced.selectionId);
-  if (matchingPreviewSpans.some(s => s.plan.name !== candidatePlan.name)) {
-    return null;
+  const revisions = candidateRevisions ?? [{ effectiveFrom, effectiveTo, plan: candidatePlan }];
+  const matches = [];
+  for (const revision of revisions) {
+    const overlapping = currentSpans.filter(span =>
+      spansOverlapDates(span.effectiveFrom, span.effectiveTo, revision.effectiveFrom, revision.effectiveTo)
+    );
+    const coalesced = coalesceContiguousSelectionSpans(overlapping, revision.effectiveFrom, revision.effectiveTo, revision.plan.source);
+    if (!coalesced) return null;
+    matches.push({ revision, coalesced });
   }
+  const selectionIds = matches.map(match => match.coalesced.selectionId);
 
   const selRes = await client.query<TariffSelectionRow & { created_at_text?: string | null }>(
     `SELECT id, site_id, scope, tariff_id, effective_from::text, effective_to::text,
@@ -2652,79 +2744,92 @@ async function findIdempotentRetryOnClient(
             restored_from_selection_id, review_hash, timeline_revision, created_at, created_at::text AS created_at_text
      FROM "TariffSelection"
      WHERE site_id = $1 AND scope = $2 AND id = ANY($3::int[])`,
-    [siteId, scope, [coalesced.selectionId]]
+    [siteId, scope, selectionIds]
   );
-  const sel = selRes.rows[0];
-  if (!sel) return null;
-  if (sel.selected_by_user_id !== userId) return null;
-  if (sel.choice_kind !== 'owner' || sel.candidate_kind !== candidate.kind) return null;
-  if (sel.review_hash === null || sel.review_hash === undefined || sel.review_hash !== commit.expectedReviewHash) {
-    return null;
-  }
-  if (sel.effective_from.slice(0, 10) !== effectiveFrom) return null;
-  const selTo = sel.effective_to ? sel.effective_to.slice(0, 10) : null;
-  if (selTo !== effectiveTo) return null;
-  if (sel.selected_content_hash !== candidatePlan.contentHash) return null;
-  if ((sel.urdb_label ?? null) !== candidatePlan.urdbLabel) return null;
-  if ((sel.utility_name ?? null) !== candidatePlan.utilityName) return null;
-  const selRev = sel.revision_start ? sel.revision_start.slice(0, 10) : null;
-  if (selRev !== candidatePlan.revisionStart) return null;
-  if (sel.export_rate_provenance !== candidatePlan.exportRateProvenance) return null;
-  if (Boolean(sel.holidays_use_weekend) !== candidatePlan.holidaysUseWeekendSchedule) return null;
-  if (
-    JSON.stringify(parseApproximationNotes(sel.approximation_notes)) !==
-    JSON.stringify(candidatePlan.approximationNotes)
-  ) {
-    return null;
+  const reviewed = [];
+  for (const { revision, coalesced } of matches) {
+    const { effectiveFrom, effectiveTo, plan: candidatePlan } = revision;
+    if (existingSpans.some(span => span.plan.selectionId === coalesced.selectionId && span.plan.name !== candidatePlan.name)) {
+      return null;
+    }
+    const sel = selRes.rows.find(row => Number(row.id) === coalesced.selectionId);
+    if (!sel || sel.selected_by_user_id !== userId || sel.choice_kind !== 'owner' || sel.candidate_kind !== candidate.kind) {
+      return null;
+    }
+    if (sel.review_hash === commit.expectedReviewHash) reviewed.push(sel);
+
+    if (sel.effective_from.slice(0, 10) !== effectiveFrom) return null;
+    const selTo = sel.effective_to ? sel.effective_to.slice(0, 10) : null;
+    if (selTo !== effectiveTo) return null;
+    if (sel.selected_content_hash !== candidatePlan.contentHash) return null;
+    if ((sel.urdb_label ?? null) !== candidatePlan.urdbLabel) return null;
+    if ((sel.utility_name ?? null) !== candidatePlan.utilityName) return null;
+    const selRev = sel.revision_start ? sel.revision_start.slice(0, 10) : null;
+    if (selRev !== candidatePlan.revisionStart) return null;
+    if (sel.export_rate_provenance !== candidatePlan.exportRateProvenance) return null;
+    if (Boolean(sel.holidays_use_weekend) !== candidatePlan.holidaysUseWeekendSchedule) return null;
+    if (
+      JSON.stringify(parseApproximationNotes(sel.approximation_notes)) !==
+      JSON.stringify(candidatePlan.approximationNotes)
+    ) {
+      return null;
+    }
+
+    const verRes = await client.query<{
+      tariff_id: number;
+      tariff_content_hash: string;
+      effective_from: string;
+      effective_to: string | null;
+      verified_by_user_id: string | null;
+    }>(
+      `SELECT tariff_id, tariff_content_hash, effective_from::text, effective_to::text, verified_by_user_id
+       FROM "TariffSelectionVerification"
+       WHERE selection_id = $1`,
+      [coalesced.selectionId]
+    );
+    const ver = verRes.rows[0];
+    if (verifiedAgainstBill) {
+      if (!ver) return null;
+      if (ver.verified_by_user_id !== userId) return null;
+      if (Number(ver.tariff_id) !== coalesced.tariffId) return null;
+      if (ver.tariff_content_hash !== candidatePlan.contentHash) return null;
+      if (ver.effective_from.slice(0, 10) !== effectiveFrom) return null;
+      const vTo = ver.effective_to ? ver.effective_to.slice(0, 10) : null;
+      if (vTo !== effectiveTo) return null;
+    } else if (ver) {
+      return null;
+    }
+
   }
 
-  const verRes = await client.query<{
-    tariff_id: number;
-    tariff_content_hash: string;
-    effective_from: string;
-    effective_to: string | null;
-    verified_by_user_id: string | null;
-  }>(
-    `SELECT tariff_id, tariff_content_hash, effective_from::text, effective_to::text, verified_by_user_id
-     FROM "TariffSelectionVerification"
-     WHERE selection_id = $1`,
-    [coalesced.selectionId]
+  // A batch may have left an already-identical revision untouched. Any such selection must
+  // predate the rows written by this review, which all share the same timeline revision.
+  const first = reviewed.reduce<typeof reviewed[number] | undefined>(
+    (earliest, row) => !earliest || Number(row.id) < Number(earliest.id) ? row : earliest, undefined
   );
-  const ver = verRes.rows[0];
-  if (verifiedAgainstBill) {
-    if (!ver) return null;
-    if (ver.verified_by_user_id !== userId) return null;
-    if (Number(ver.tariff_id) !== coalesced.tariffId) return null;
-    if (ver.tariff_content_hash !== candidatePlan.contentHash) return null;
-    if (ver.effective_from.slice(0, 10) !== effectiveFrom) return null;
-    const vTo = ver.effective_to ? ver.effective_to.slice(0, 10) : null;
-    if (vTo !== effectiveTo) return null;
-  } else if (ver) {
+  if (!first) return null;
+  const reviewedIds = new Set(reviewed.map(row => Number(row.id)));
+  const selectionTimelineRevision = first.timeline_revision == null ? null : Number(first.timeline_revision);
+  if (reviewed.some(row => (row.timeline_revision == null ? null : Number(row.timeline_revision)) !== selectionTimelineRevision)
+    || selectionIds.some(id => id > Number(first.id) && !reviewedIds.has(id))) {
     return null;
   }
 
-  const selectionTimelineRevision =
-    sel.timeline_revision !== undefined && sel.timeline_revision !== null
-      ? Number(sel.timeline_revision)
-      : null;
-
-  if (
-    await hasNewerTimelineActivityOnClient(
-      client,
-      siteId,
-      scope,
-      coalesced.selectionId,
-      sel.created_at_text ?? sel.created_at,
-      [coalesced.selectionId],
-      selectionTimelineRevision
-    )
-  ) {
+  if (await hasNewerTimelineActivityOnClient(
+    client,
+    siteId,
+    scope,
+    Math.max(...reviewedIds),
+    first.created_at_text ?? first.created_at,
+    selectionIds,
+    selectionTimelineRevision
+  )) {
     return null;
   }
 
   return {
-    selectionIds: [coalesced.selectionId],
-    tariffIds: [coalesced.tariffId],
+    selectionIds,
+    tariffIds: [...new Set(matches.map(match => match.coalesced.tariffId))],
     createdNewTariffVersion: false,
     unchanged: true,
     reattributionRange: null,
@@ -4348,25 +4453,36 @@ export class TariffTimelineRepo {
           )).rowCount;
         const retryResult = alreadyFollowing
           ? { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: true, reattributionRange: null }
-          : follow || (revisions && revisions.length > 1) ? null : await findIdempotentRetryOnClient(
+          : follow ? null : await findIdempotentRetryOnClient(
             client,
             siteId,
             userId,
             commit,
             candidatePlan,
             existingSpans,
-            restorationTargets
+            restorationTargets,
+            revisions
           );
         if (!retryResult) {
           throw new TariffSelectionConflictError(siteId, currentPreview);
         }
         result = retryResult;
       } else if (follow && commit.candidate.kind === 'public') {
-        // The open-ended range follows the chosen plan: the estimate job lays its revisions, so no owner row is written.
-        await setFollowedReferenceLabelOnClient(client, siteId, userId, commit.candidate.label, commit.effectiveFrom, utilityName);
+        await setFollowedReferenceLabelOnClient(client, siteId, userId, commit.candidate.label, commit.effectiveFrom, {
+          expectedUtility: utilityName ?? undefined,
+          revisions: revisions?.map(revision => ({
+            from: revision.effectiveFrom,
+            to: revision.effectiveTo,
+            label: revision.applyCandidate.urdbLabel,
+            revisionStart: revision.applyCandidate.revisionStart,
+            name: revision.applyCandidate.name,
+            seasons: revision.applyCandidate.seasons,
+          })),
+        });
         result = { selectionIds: [], tariffIds: [], createdNewTariffVersion: false, unchanged: false, reattributionRange: null };
       } else if (revisions && revisions.length > 1) {
         const applied: ApplyTariffSelectionResult[] = [];
+        const referenceBatch: NonNullable<ApplyTariffSelectionInput['referenceBatch']> = { selectionIds: [], layoutChanged: false };
         for (const revision of revisions) {
           applied.push(await applyTariffSelectionOnClient(client, siteId, today, {
             scope: commit.scope,
@@ -4376,16 +4492,23 @@ export class TariffTimelineRepo {
             verifiedAgainstBill: commit.verifiedAgainstBill,
             candidate: revision.applyCandidate,
             reviewHash: commit.expectedReviewHash,
+            referenceBatch,
           }));
         }
+        const unchanged = applied.every(item => item.unchanged);
+        if (referenceBatch.layoutChanged) await applyEstimatesOnClient(client, siteId, today, 'reference');
+        if (!unchanged) await stampSelectionTimelineRevisionOnClient(client, siteId, referenceBatch.selectionIds);
         result = {
           selectionIds: applied.flatMap(item => item.selectionIds),
           tariffIds: [...new Set(applied.flatMap(item => item.tariffIds))],
           createdNewTariffVersion: applied.some(item => item.createdNewTariffVersion),
-          unchanged: applied.every(item => item.unchanged),
+          unchanged,
           reattributionRange: null,
         };
       } else {
+        const clearedFollow = commit.scope === 'reference'
+          && supersedesFollowedLabel(commit.effectiveFrom, commit.effectiveTo, utilityRow?.urdb_reference_from ?? null)
+          && await clearSupersededFollowOnClient(client, siteId, commit.effectiveFrom);
         result = await applyTariffSelectionOnClient(client, siteId, today, {
           scope: commit.scope,
           effectiveFrom: commit.effectiveFrom,
@@ -4395,14 +4518,10 @@ export class TariffTimelineRepo {
           candidate: applyCandidate,
           reviewHash: commit.expectedReviewHash,
         });
-        if (commit.scope === 'reference') {
-          // An open-ended owner choice starting on or before the followed range supersedes "follow this plan".
-          if (supersedesFollowedLabel(commit.effectiveFrom, commit.effectiveTo, utilityRow?.urdb_reference_from ?? null)) {
-            await client.query(
-              `UPDATE "SiteUtility" SET urdb_reference_label = NULL, urdb_reference_from = NULL, status = 'pending', attempt_count = 0, next_check_at = NULL, updated_at = now() WHERE site_id = $1`,
-              [siteId]
-            );
-          }
+        if (clearedFollow && result.unchanged) {
+          await applyEstimatesOnClient(client, siteId, today, 'reference');
+          await bumpSiteTimelineRevisionOnClient(client, siteId);
+          result.unchanged = false;
         }
         if (commit.scope === 'actual' && result.reattributionRange) {
           reattribution = {

@@ -85,6 +85,9 @@ export async function createTariffTestDatabase(dbName: string): Promise<Pool> {
   const referenceLabelMigration = (await readdir('db-migrations')).find(f => f.endsWith('_site_utility_reference_label.sql'));
   if (!referenceLabelMigration) throw new Error('Site utility reference label migration missing');
   await database.query(await readFile(`db-migrations/${referenceLabelMigration}`, 'utf8'));
+  const followedReferenceSource = (await readdir('db-migrations')).find(f => f.endsWith('_urdb_followed_reference_source.sql'));
+  if (!followedReferenceSource) throw new Error('Missing followed reference source migration');
+  await database.query(await readFile(`db-migrations/${followedReferenceSource}`, 'utf8'));
 
   return database;
 }

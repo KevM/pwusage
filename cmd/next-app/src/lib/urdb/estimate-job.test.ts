@@ -51,8 +51,8 @@ describe('estimate-job', () => {
         if (sql.includes('RETURNING updated_at::text AS claim')) {
           return { rows: [{ claim: '2026-11-17T00:00:00Z' }], rowCount: 1 };
         }
-        if (sql.includes('SELECT updated_at::text AS claim, choice FROM "SiteUtility"')) {
-          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto' }], rowCount: 1 };
+        if (sql.includes('SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label')) {
+          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto', followed_label: null, followed_from: null }], rowCount: 1 };
         }
         if (sql.includes('SELECT timezone FROM "Site"')) {
           return { rows: [{ timezone: 'America/Chicago' }], rowCount: 1 };
@@ -141,8 +141,8 @@ describe('estimate-job', () => {
           if (sql.includes('RETURNING updated_at::text AS claim')) {
             return { rows: [{ claim: '2026-11-17T00:00:00Z' }], rowCount: 1 };
           }
-          if (sql.includes('SELECT updated_at::text AS claim, choice FROM "SiteUtility"')) {
-            return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: scenario.choice }], rowCount: 1 };
+          if (sql.includes('SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label')) {
+            return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: scenario.choice, followed_label: null, followed_from: null }], rowCount: 1 };
           }
           return { rows: [], rowCount: 0 };
         }),
@@ -209,8 +209,8 @@ describe('estimate-job', () => {
         if (sql.includes('RETURNING updated_at::text AS claim')) {
           return { rows: [{ claim: '2026-11-17T00:00:00Z' }], rowCount: 1 };
         }
-        if (sql.includes('SELECT updated_at::text AS claim, choice FROM "SiteUtility"')) {
-          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto' }], rowCount: 1 };
+        if (sql.includes('SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label')) {
+          return { rows: [{ claim: '2026-11-17T00:00:00Z', choice: 'auto', followed_label: null, followed_from: null }], rowCount: 1 };
         }
         if (sql.includes('FROM "TariffEffectivePeriod"') && sql.includes('ORDER BY effective_from ASC')) {
           return {

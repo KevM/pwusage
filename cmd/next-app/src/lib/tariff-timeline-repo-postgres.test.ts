@@ -1458,6 +1458,23 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
         expect(await followed(siteId)).toEqual({ label: null, from: null });
       });
 
+      it('queues a refresh when the guide clears a followed plan', async () => {
+        const siteId = 's-fixed-guide-clears-refresh';
+        await harrisonSite(siteId);
+        await local.database.query(
+          `UPDATE "SiteUtility" SET urdb_reference_label = 'old', urdb_reference_from = '2025-01-01',
+           status = 'ready', attempt_count = 3, next_check_at = '2026-11-20' WHERE site_id = $1`,
+          [siteId]
+        );
+        await new TariffTimelineRepo().saveRatePlanHistory(siteId, 'u1', UTILITY, [
+          revision('a', '2024-01-01', '2024-12-31'),
+        ], null, [manualFixed('2024-01-01', null)]);
+
+        expect(await followed(siteId)).toEqual({ label: null, from: null });
+        const status = await local.database.query(`SELECT status, attempt_count, next_check_at FROM "SiteUtility" WHERE site_id = $1`, [siteId]);
+        expect(status.rows).toEqual([{ status: 'pending', attempt_count: 0, next_check_at: null }]);
+      });
+
       it('absentFixedKeepsOwnerReferences', async () => {
         const siteId = 's-fixed-absent';
         await harrisonSite(siteId);
@@ -1517,6 +1534,35 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
             { label: 'fx-2024', from: '2024-01-01', to: '2024-12-31' },
             { label: 'fx-2025', from: '2025-01-01', to: null },
           ]);
+        });
+
+        it('returns reviewed follow rates immediately in place of prior defaults', async () => {
+          const siteId = 's-editor-follow-immediate';
+          await harrisonSite(siteId, 'none');
+          await runUrdbEstimatesForSite(siteId, { ...api, defaultRates: async () => [flatRate('default', '2023-01-01', 0.17)] }, deps.now());
+
+          const { commit } = await choose(siteId, 'fx-2024', '2024-01-01', null);
+          expect(commit.timeline.referencePeriods?.map(row => [
+            row.effectiveFrom, row.effectiveTo, row.urdbLabel, row.seasons[0].weekdayPeriods[0].buyRate,
+          ])).toEqual([
+            ['2023-01-01', '2023-12-31', 'default', 0.17],
+            ['2024-01-01', '2024-12-31', 'fx-2024', 0.12],
+            ['2025-01-01', null, 'fx-2025', 0.13],
+          ]);
+        });
+
+        it('moving an unapplied follow later does not save the old utility default as an owner choice', async () => {
+          const siteId = 's-editor-follow-unapplied';
+          await harrisonSite(siteId, 'none');
+          await runUrdbEstimatesForSite(siteId, { ...api, defaultRates: async () => [flatRate('default', '2023-01-01', 0.17)] }, deps.now());
+          await local.database.query(
+            `UPDATE "SiteUtility" SET urdb_reference_label = 'fx-2024', urdb_reference_from = '2024-01-01',
+             status = 'pending' WHERE site_id = $1`, [siteId]
+          );
+
+          await choose(siteId, 'fx-2025', '2025-01-01', null);
+
+          expect((await references(siteId)).filter(row => row.choice_kind === 'owner')).toEqual([]);
         });
 
         it('requires a fresh follow review if a known successor price changed', async () => {
@@ -1648,10 +1694,44 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           expect(await followed(siteId)).toEqual({ label: null, from: null });
         });
 
+        it('records and retries multiple closed revisions as one reviewed commit', async () => {
+          const siteId = 's-editor-closed-retry';
+          await harrisonSite(siteId, 'none');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-06-01', effectiveTo: '2025-06-30' };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const reviewed = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: true };
+          const first = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+
+          const retry = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+          expect(retry).toMatchObject({ selectionIds: first.selectionIds, tariffIds: first.tariffIds, unchanged: true });
+          const stamps = await local.database.query(`SELECT s.timeline_revision::text AS site_revision,
+            array_agg(t.timeline_revision::text ORDER BY t.id) AS selection_revisions
+            FROM "Site" s JOIN "TariffSelection" t ON t.site_id = s.id
+            WHERE s.id = $1 GROUP BY s.timeline_revision`, [siteId]);
+          expect(stamps.rows).toEqual([{ site_revision: '1', selection_revisions: ['1', '1'] }]);
+        });
+
+        it('retries a closed revision batch even if an identical selection was already present', async () => {
+          const siteId = 's-editor-closed-retry-partial';
+          await harrisonSite(siteId, 'none');
+          const preExisting = await choose(siteId, 'fx-2024', '2024-06-01', '2024-12-31');
+          const request = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2024-06-01', effectiveTo: '2025-06-30' };
+          const preview = await previewTariffSelection(siteId, 'u1', request, deps);
+          const reviewed = { ...request, expectedReviewHash: preview.reviewHash, verifiedAgainstBill: false };
+          const first = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+          expect(first.selectionIds[0]).toEqual(preExisting.commit.selectionIds[0]);
+
+          const retry = await commitTariffSelection(siteId, 'u1', reviewed, deps);
+          expect(retry).toMatchObject({ selectionIds: first.selectionIds, tariffIds: first.tariffIds, unchanged: true });
+
+          await choose(siteId, 'x', '2026-01-01', null, 'manual');
+          await expect(commitTariffSelection(siteId, 'u1', reviewed, deps)).rejects.toThrow(TariffSelectionConflictError);
+        });
+
         it.each([
           { change: 'label', label: 'fx-2025', from: '2025-01-01' },
           { change: 'start date', label: 'fx-2024', from: '2025-02-01' },
-        ])('rejects a stale follow review with a different $change before estimates run', async ({ change, label, from }) => {
+        ])('rejects a stale review when only the followed $change changed', async ({ change, label, from }) => {
           const siteId = `s-editor-stale-${change.replace(' ', '-')}`;
           await harrisonSite(siteId, 'none');
           const first = { scope: 'reference' as const, candidate: { kind: 'public' as const, label: 'fx-2024' }, effectiveFrom: '2025-01-01', effectiveTo: null };
@@ -1663,9 +1743,12 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           expect(before.length).toBeGreaterThan(0);
           expect(before.every(row => row.source === 'estimated')).toBe(true);
 
-          const firstReview = await previewTariffSelection(siteId, 'u1', first, deps);
           const secondReview = await previewTariffSelection(siteId, 'u1', second, deps);
-          await commitTariffSelection(siteId, 'u1', { ...first, expectedReviewHash: firstReview.reviewHash, verifiedAgainstBill: false }, deps);
+          // Isolate the followed setting from the visible estimates, which the editor now writes on Apply.
+          await local.database.query(
+            `UPDATE "SiteUtility" SET urdb_reference_label = $2, urdb_reference_from = $3 WHERE site_id = $1`,
+            [siteId, first.candidate.label, first.effectiveFrom]
+          );
 
           expect(await references(siteId)).toEqual(before);
           await expect(commitTariffSelection(siteId, 'u1', { ...second, expectedReviewHash: secondReview.reviewHash, verifiedAgainstBill: false }, deps))
@@ -1775,7 +1858,7 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
           const client = await local.database.connect();
           try {
             await client.query('BEGIN');
-            await expect(setFollowedReferenceLabelOnClient(client, siteId, 'u1', 'fx-2024', '2024-01-01', 'Some Other Utility')).rejects.toThrow(UtilityChangedError);
+            await expect(setFollowedReferenceLabelOnClient(client, siteId, 'u1', 'fx-2024', '2024-01-01', { expectedUtility: 'Some Other Utility' })).rejects.toThrow(UtilityChangedError);
           } finally { await client.query('ROLLBACK'); client.release(); }
           expect(await followed(siteId)).toEqual({ label: null, from: null });
         });

@@ -15,6 +15,7 @@ import {
   insertTariffGraph,
   loadExistingSpans,
   pickActivePeriodForDate,
+  upsertUrdbEstimateSourceOnClient,
 } from '../tariff-timeline-repo';
 import { addCalendarDays, compileSeasonsToParsedTariff, isProtectedSpan, siteLocalDateString, validateTariffPlanInput } from '../tariff-timeline';
 import { buildDefaultTariff, parseTariffContent, tariffContentHash, type ParsedTariff } from '../importer/tariff-parser';
@@ -273,7 +274,11 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
           [siteId]
         )
       ).rows[0];
-      const current = await write.query<{ claim: string; choice: string }>('SELECT updated_at::text AS claim, choice FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE', [siteId]);
+      const current = await write.query<{ claim: string; choice: string; followed_label: string | null; followed_from: string | null }>(
+        `SELECT updated_at::text AS claim, choice, urdb_reference_label AS followed_label,
+                urdb_reference_from::text AS followed_from FROM "SiteUtility" WHERE site_id = $1 FOR UPDATE`,
+        [siteId]
+      );
       if (current.rows[0]?.claim !== claim) { await write.query('ROLLBACK'); return { status: 'pending', changedDays: 0 }; }
       checkIoDeadline();
       const writeEligibility = deriveRatePlanEligibility(lockedSite?.rate_country ?? null);
@@ -314,7 +319,17 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
             && estimate.span.rate.label === row.urdb_label && estimate.span.effectiveFrom === row.start_date));
         const tariffId = previous ? Number(previous.tariff_id) : await insertTariffGraph(write, siteId, parsed, 'estimated', null, false, hash);
         reusedTariffIds.add(tariffId);
-        await write.query(`INSERT INTO "TariffUrdbSource" (tariff_id, site_id, role, urdb_label, start_date, end_date, start_source, revision_start, is_current_estimate) VALUES ($1, $2, $3, $4, $5::date, $6::date, 'urdb', $7::date, TRUE) ON CONFLICT (tariff_id) DO UPDATE SET role = EXCLUDED.role, urdb_label = EXCLUDED.urdb_label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date, start_source = EXCLUDED.start_source, revision_start = EXCLUDED.revision_start, is_current_estimate = TRUE`, [tariffId, siteId, item.role, item.span.rate.label, item.span.effectiveFrom, item.span.effectiveTo, urdbStartDate(item.span.rate)]);
+        const { followed_label, followed_from } = current.rows[0];
+        const suppliedByFollow = item.role === 'estimated_reference' && followed_from !== null
+          && (item.span.effectiveTo === null || item.span.effectiveTo >= followed_from);
+        await upsertUrdbEstimateSourceOnClient(write, siteId, tariffId, {
+          role: item.role,
+          label: item.span.rate.label,
+          effectiveFrom: item.span.effectiveFrom,
+          effectiveTo: item.span.effectiveTo,
+          revisionStart: urdbStartDate(item.span.rate),
+          followedReferenceLabel: suppliedByFollow ? followed_label : null,
+        });
       }
       const today = siteLocalDateString(now, lockedSite?.timezone ?? 'UTC');
       const skipCoverageCheck = current.rows[0].choice === 'skipped' || writeEligibility !== 'us';
@@ -347,8 +362,7 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
         const afterCoverage = (await write.query<{ effective_from: string; effective_to: string | null; kind: string }>(`SELECT effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;
         // An owner-followed plan that cannot be fetched intentionally leaves [from, ∞) uncovered: estimated
         // reference days there may go. Owner rows, actual days and reference days before `from` stay guarded.
-        const follow = (await write.query<{ label: string | null; from: string | null }>('SELECT urdb_reference_label AS label, urdb_reference_from::text AS from FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
-        const followedFrom = follow?.label ? follow.from : null;
+        const followedFrom = current.rows[0].followed_label ? current.rows[0].followed_from : null;
         const guarded = beforeCoverage.flatMap(before => {
           if (!followedFrom || before.kind !== 'reference' || before.source !== 'estimated') return [before];
           if (before.effective_from >= followedFrom) return [];
