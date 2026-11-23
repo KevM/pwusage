@@ -1,12 +1,11 @@
 import Foundation
-import PWUsageCore
 
-enum BillOutlook {
+public enum BillOutlook {
     /// Mirrors priceBillUsage: merge rate buckets first, then proportionally net each plan/period.
     static func cost(_ buckets: [BillOutlookBucket]) -> Double {
         BillOutlookHistoryBuilder.cost(buckets)
     }
-    static func point(date: Date, buckets: [BillOutlookBucket]) -> BillOutlookPoint {
+    public static func point(date: Date, buckets: [BillOutlookBucket]) -> BillOutlookPoint {
         let periods = Dictionary(grouping: buckets, by: \.key).values.compactMap { group -> BillOutlookPeriod? in
             guard let first = group.first else { return nil }
             return .init(tariffName: first.tariffName, periodName: first.periodName,
@@ -14,14 +13,25 @@ enum BillOutlook {
         }.sorted { $0.key < $1.key }
         return .init(date: date, buckets: buckets, complete: true, estimatedCost: cost(buckets), periods: periods)
     }
-    struct ProjectionResult {
-        let points: [BillOutlookPoint]
-        let usesSolar: Bool
-        let usesHistory: Bool
-        static let empty = ProjectionResult(points: [], usesSolar: false, usesHistory: false)
+    public struct ProjectionResult: Sendable {
+        public let points: [BillOutlookPoint]
+        public let usesSolar: Bool
+        public let usesHistory: Bool
+        public static let empty = ProjectionResult(points: [], usesSolar: false, usesHistory: false)
+
+        public init(points: [BillOutlookPoint], usesSolar: Bool, usesHistory: Bool) {
+            self.points = points
+            self.usesSolar = usesSolar
+            self.usesHistory = usesHistory
+        }
     }
-    static func evaluate(history: BillOutlookHistory, context: LoadTimingForecastEstimator.PlanningContext,
-                         forecast: [SolarForecastInterval], now: Date, cycleEnd: Date) -> ProjectionResult {
+    public static func evaluate(
+        history: BillOutlookHistory,
+        context: LoadTimingForecastEstimator.PlanningContext,
+        forecast: [SolarForecastInterval],
+        now: Date,
+        cycleEnd: Date
+    ) -> ProjectionResult {
         guard history.complete, let observed = history.points.last, observed.complete,
               observed.date == history.observedThrough, history.observedThrough <= now.addingTimeInterval(300),
               now.timeIntervalSince(

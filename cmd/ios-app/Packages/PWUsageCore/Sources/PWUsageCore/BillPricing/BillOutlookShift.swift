@@ -1,12 +1,11 @@
 import Foundation
-import PWUsageCore
 
 /// Moving imports out of a gap into a cushion on the same plan, priced exactly as the bill settles.
-struct BillOutlookShift: Equatable {
-    let cushion: BillOutlookTariff
-    let gap: BillOutlookTariff
-    let energyKwh: Double
-    let savings: Double
+public struct BillOutlookShift: Equatable {
+    public let cushion: BillOutlookTariff
+    public let gap: BillOutlookTariff
+    public let energyKwh: Double
+    public let savings: Double
 }
 
 extension BillOutlook {
@@ -16,7 +15,7 @@ extension BillOutlook {
     /// The most valuable shift still possible this cycle. Each rate period settles alone, so a kWh
     /// left in a cushion earns its sell rate while a kWh in a gap costs its buy rate. `remaining`
     /// limits this to periods that still occur, since an ended period's cushion cannot be used.
-    static func bestShift(projected: BillOutlookPoint, remaining: [BillOutlookTariff]) -> BillOutlookShift? {
+    public static func bestShift(projected: BillOutlookPoint, remaining: [BillOutlookTariff]) -> BillOutlookShift? {
         let before = cost(projected.buckets)
         func tariff(for period: BillOutlookPeriod) -> BillOutlookTariff? {
             remaining.last { $0.tariffName == period.tariffName && $0.periodName == period.periodName }
