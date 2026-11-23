@@ -2,8 +2,8 @@ import Foundation
 
 /// One `POST /api/mobile/solar-history` answer: the server asked Tesla for the slice's missing days
 /// and returns what it now stores for them.
-struct MobileSolarHistoryFill: Equatable, Sendable {
-    enum Status: String, Decodable, Equatable, Sendable {
+public struct MobileSolarHistoryFill: Equatable, Sendable {
+    public enum Status: String, Decodable, Equatable, Sendable {
         /// Every day of the slice is stored or settled: the slice need not be asked for again.
         case complete
         /// The server's budget ran out; asking again continues where it stopped.
@@ -12,20 +12,27 @@ struct MobileSolarHistoryFill: Equatable, Sendable {
         case busy
     }
 
-    let timeZone: TimeZone
-    let status: Status
+    public let timeZone: TimeZone
+    public let status: Status
     /// The first site-local day that can hold data (installation or the backfill boundary).
-    let historyStart: String
-    let days: [MobileSolarHistoryDay]
+    public let historyStart: String
+    public let days: [MobileSolarHistoryDay]
+
+    public init(timeZone: TimeZone, status: Status, historyStart: String, days: [MobileSolarHistoryDay]) {
+        self.timeZone = timeZone
+        self.status = status
+        self.historyStart = historyStart
+        self.days = days
+    }
 }
 
-enum MobileSolarHistoryFillResponse: Decodable, Equatable, Sendable {
+public enum MobileSolarHistoryFillResponse: Decodable, Equatable, Sendable {
     case disabled
     case enabled(MobileSolarHistoryFill)
 
     private enum CodingKeys: String, CodingKey { case version, enabled, timeZone, status, historyStart, days }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         guard try values.decode(Int.self, forKey: .version) == 1 else {
             throw DecodingError.dataCorruptedError(
@@ -47,7 +54,7 @@ enum MobileSolarHistoryFillResponse: Decodable, Equatable, Sendable {
 }
 
 /// Fill failures the caller schedules around instead of treating as a failed import.
-enum MobileSolarHistoryFillError: Error, Equatable {
+public enum MobileSolarHistoryFillError: Error, Equatable {
     /// Tesla is limiting requests until `retryAt`. `isFallback` when Tesla named no wait.
     case rateLimited(retryAt: Date, isFallback: Bool)
     /// The account's Tesla token refresh is backing off until `retryAt`.
@@ -56,10 +63,10 @@ enum MobileSolarHistoryFillError: Error, Equatable {
     case teslaReconnectRequired
 
     /// Wait assumed when a throttle names no deadline (mirrors the server's fallback).
-    static let fallbackWait: TimeInterval = 60
+    public static let fallbackWait: TimeInterval = 60
 }
 
-protocol MobileSolarHistoryFillAPI: Sendable {
+public protocol MobileSolarHistoryFillAPI: Sendable {
     /// Ask the server to fill complete site-local days `[from, from + days)`, `days` 1...3.
     func fillSolarHistory(siteID: String, from: String, days: Int) async throws -> MobileSolarHistoryFillResponse
 }

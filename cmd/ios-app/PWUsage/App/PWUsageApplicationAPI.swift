@@ -1,3 +1,5 @@
+import PWUsageCore
+
 @MainActor
 protocol PWUsageApplicationAPI: MobileDashboardDataAPI, MobileLoadPlanningDataAPI, MobileSolarHistoryDataAPI,
     MobileBillingDayAPI, MobileTrmnlAPI, MobileAuthAPI {

@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// History is partitioned by account, site, provider and semantic configuration, so a changed
 /// layout or Solcast selection starts from identity correction instead of mixing forecasts.

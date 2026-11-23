@@ -2,20 +2,20 @@ import Foundation
 
 /// A published forecast's provenance for "Copy diagnostics": no credentials, only identity,
 /// age, coverage and the correction applied per lead-time cohort.
-struct SmartShiftForecastSource: Codable, Equatable {
-    let providerID: String
-    let configurationRevision: String
-    let outcome: String
-    let fetchedAt: Date
-    let ageMinutes: Double
-    let coverageStart: Date
-    let coverageEnd: Date
-    let sameDayFactors: [String: Double]
-    let dayAheadFactors: [String: Double]
-    let sameDaySamples: Int
-    let dayAheadSamples: Int
+public struct SmartShiftForecastSource: Codable, Equatable, Sendable {
+    public let providerID: String
+    public let configurationRevision: String
+    public let outcome: String
+    public let fetchedAt: Date
+    public let ageMinutes: Double
+    public let coverageStart: Date
+    public let coverageEnd: Date
+    public let sameDayFactors: [String: Double]
+    public let dayAheadFactors: [String: Double]
+    public let sameDaySamples: Int
+    public let dayAheadSamples: Int
 
-    init(publication: SolarForecastPublication, now: Date) {
+    public init(publication: SolarForecastPublication, now: Date) {
         providerID = publication.descriptor.id.rawValue
         configurationRevision = publication.configurationRevision
         outcome = "\(publication.outcome)"

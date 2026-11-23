@@ -1,5 +1,6 @@
 import Foundation
 @testable import PWUsage
+import PWUsageCore
 
 /// Application API fakes that predate solar history support behave like a server that has it switched off.
 extension PWUsageApplicationAPI {

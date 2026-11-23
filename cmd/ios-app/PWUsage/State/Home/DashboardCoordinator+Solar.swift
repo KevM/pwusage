@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import PWUsageCore
 
 extension DashboardCoordinator {
     /// The automatic forecast's view of this site, for Smart Shift's "Copy diagnostics".

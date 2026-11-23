@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 @MainActor
 protocol MobileDashboardDataAPI: Sendable {
@@ -60,21 +61,6 @@ enum SolarForecastConnectionState: Equatable {
     case notConnected
     case awaitingArraySelection
     case ready
-}
-
-/// Why forecast enhancement is unavailable, from the device's own request
-/// bookkeeping. Kept apart from `SolarForecastRefreshFailure` so a spent daily
-/// allowance is not reported as a failed request.
-enum SolarForecastUnavailableCause: Equatable {
-    case unauthorized
-    case rateLimited
-    case requestFailed
-    case unknownResource
-    case invalidForecast
-    case storageFailure
-    case cleanupFailure
-    case budgetExhausted
-    case deferred
 }
 
 /// Why the optional enhancement is not showing, when the connection itself is

@@ -27,14 +27,6 @@ private struct URLSessionOpenMeteoTransport: OpenMeteoTransport {
     }
 }
 
-enum OpenMeteoClientError: Error, Equatable {
-    case transportFailure
-    case invalidResponse
-    case decodingFailure
-    case rateLimited(retryAfter: Date?)
-    case httpStatus(Int)
-}
-
 /// Downloads weather only. Panel geometry and production history stay on the phone.
 struct OpenMeteoClient: Sendable {
     private static let archiveHost = "archive-api.open-meteo.com"

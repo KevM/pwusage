@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// One JSON value on disk. Injected so tests run without the file system.
 protocol SolarForecastFileStoring<Value>: Sendable {

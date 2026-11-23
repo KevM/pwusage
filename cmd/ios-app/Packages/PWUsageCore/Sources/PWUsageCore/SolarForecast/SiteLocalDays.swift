@@ -2,13 +2,13 @@ import Foundation
 
 /// Calendar arithmetic on site-local `YYYY-MM-DD` days. Steps whole calendar days, so a 23- or
 /// 25-hour daylight-saving day is still one day.
-enum SiteLocalDays {
-    static func today(now: Date, timeZone: TimeZone) -> String {
+public enum SiteLocalDays {
+    public static func today(now: Date, timeZone: TimeZone) -> String {
         format(now, calendar: calendar(timeZone))
     }
 
     /// `day` moved by `count` calendar days, or nil when `day` is not a real date.
-    static func adding(_ count: Int, to day: String, timeZone: TimeZone) -> String? {
+    public static func adding(_ count: Int, to day: String, timeZone: TimeZone) -> String? {
         let calendar = calendar(timeZone)
         guard let noon = noon(of: day, calendar: calendar),
               let moved = calendar.date(byAdding: .day, value: count, to: noon) else { return nil }
@@ -16,7 +16,7 @@ enum SiteLocalDays {
     }
 
     /// Calendar days from `start` to `end`; negative when `end` is earlier.
-    static func days(from start: String, to end: String, timeZone: TimeZone) -> Int? {
+    public static func days(from start: String, to end: String, timeZone: TimeZone) -> Int? {
         let calendar = calendar(timeZone)
         guard let from = noon(of: start, calendar: calendar), let until = noon(of: end, calendar: calendar) else {
             return nil

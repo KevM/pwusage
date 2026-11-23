@@ -1,3 +1,4 @@
+import PWUsageCore
 import SwiftUI
 
 /// What "How this is worked out" shows, captured when it is opened so later

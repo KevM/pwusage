@@ -1,24 +1,36 @@
 import Foundation
-import PWUsageCore
 
 /// The hourly radiation columns of an Open-Meteo response.
-struct OpenMeteoWeatherHourly: Decodable, Sendable {
-    let time: [Double]
-    let ghi: [Double?]
-    let dni: [Double?]
-    let dhi: [Double?]
+public struct OpenMeteoWeatherHourly: Decodable, Sendable {
+    public let time: [Double]
+    public let ghi: [Double?]
+    public let dni: [Double?]
+    public let dhi: [Double?]
     enum CodingKeys: String, CodingKey {
         case time
         case ghi = "shortwave_radiation"
         case dni = "direct_normal_irradiance"
         case dhi = "diffuse_radiation"
     }
+
+    public init(time: [Double], ghi: [Double?], dni: [Double?], dhi: [Double?]) {
+        self.time = time
+        self.ghi = ghi
+        self.dni = dni
+        self.dhi = dhi
+    }
 }
 
-struct OpenMeteoWeather: Decodable, Sendable {
-    let utcOffsetSeconds: Int
-    let units: [String: String]
-    let hourly: OpenMeteoWeatherHourly
+public struct OpenMeteoWeather: Decodable, Sendable {
+    public let utcOffsetSeconds: Int
+    public let units: [String: String]
+    public let hourly: OpenMeteoWeatherHourly
+
+    public init(utcOffsetSeconds: Int, units: [String: String], hourly: OpenMeteoWeatherHourly) {
+        self.utcOffsetSeconds = utcOffsetSeconds
+        self.units = units
+        self.hourly = hourly
+    }
 
     enum CodingKeys: String, CodingKey {
         case utcOffsetSeconds = "utc_offset_seconds"
@@ -27,7 +39,7 @@ struct OpenMeteoWeather: Decodable, Sendable {
     }
 
     /// Radiation labelled h is mean W/m² during [h−1h,h). UTC avoids DST ambiguities.
-    func intervals(
+    public func intervals(
         layout: SolarLayout,
         location: SolarHomeLocation,
         window: DateInterval,

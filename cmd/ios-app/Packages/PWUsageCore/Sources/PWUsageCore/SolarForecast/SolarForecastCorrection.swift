@@ -1,24 +1,29 @@
 import Foundation
-import PWUsageCore
 
 /// Scales a forecast by how it has compared with measured production, per site-local hour.
 /// Trained only on raw forecasts and complete measured hours, never on corrected output.
-struct SolarForecastCorrection: Equatable, Sendable {
+public struct SolarForecastCorrection: Equatable, Sendable {
     /// Factor by site-local hour of day, 0–23.
-    let hourFactors: [Int: Double]
-    let fallbackFactor: Double
+    public let hourFactors: [Int: Double]
+    public let fallbackFactor: Double
     /// Qualifying hours behind the factors, for diagnostics.
-    let samples: Int
+    public let samples: Int
 
-    static let identity = SolarForecastCorrection(hourFactors: [:], fallbackFactor: 1, samples: 0)
-    static let factorRange = 0.5 ... 1.5
-    static let minimumHourSamples = 5
-    static let minimumForecastWh = 50.0
-    static let trainingDays = 14
+    public static let identity = SolarForecastCorrection(hourFactors: [:], fallbackFactor: 1, samples: 0)
+    public static let factorRange = 0.5 ... 1.5
+    public static let minimumHourSamples = 5
+    public static let minimumForecastWh = 50.0
+    public static let trainingDays = 14
+
+    public init(hourFactors: [Int: Double], fallbackFactor: Double, samples: Int) {
+        self.hourFactors = hourFactors
+        self.fallbackFactor = fallbackFactor
+        self.samples = samples
+    }
 
     /// Pairs UTC-hour forecasts with complete actuals from the 14 site-local days before
     /// today and today so far.
-    static func derive(
+    public static func derive(
         pastForecastWh: [Date: Double],
         actuals: [MobileSolarActualsHour],
         siteTimeZone: TimeZone,
@@ -47,11 +52,11 @@ struct SolarForecastCorrection: Equatable, Sendable {
         return SolarForecastCorrection(hourFactors: factors, fallbackFactor: fallback, samples: total.count)
     }
 
-    func factor(forLocalHour hour: Int) -> Double { hourFactors[hour] ?? fallbackFactor }
+    public func factor(forLocalHour hour: Int) -> Double { hourFactors[hour] ?? fallbackFactor }
 
     /// Scales median and cautious power by the factor for each interval's local start hour,
     /// then caps at the AC limit.
-    func apply(
+    public func apply(
         to intervals: [SolarForecastInterval],
         siteTimeZone: TimeZone,
         acClipKw: Double?
@@ -95,13 +100,18 @@ struct SolarForecastCorrection: Equatable, Sendable {
 
 /// Separate factors by forecast lead. A batch's intervals on its fetch date use same-day
 /// factors, the next date day-ahead factors; longer leads are not yet evaluated, so stay raw.
-struct SolarForecastCohortCorrection: Equatable, Sendable {
-    let sameDay: SolarForecastCorrection
-    let dayAhead: SolarForecastCorrection
+public struct SolarForecastCohortCorrection: Equatable, Sendable {
+    public let sameDay: SolarForecastCorrection
+    public let dayAhead: SolarForecastCorrection
 
-    static let identity = SolarForecastCohortCorrection(sameDay: .identity, dayAhead: .identity)
+    public static let identity = SolarForecastCohortCorrection(sameDay: .identity, dayAhead: .identity)
 
-    func apply(
+    public init(sameDay: SolarForecastCorrection, dayAhead: SolarForecastCorrection) {
+        self.sameDay = sameDay
+        self.dayAhead = dayAhead
+    }
+
+    public func apply(
         to intervals: [SolarForecastInterval],
         fetchedAt: Date,
         siteTimeZone: TimeZone,

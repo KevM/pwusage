@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 struct SolarForecastRequestLedgerState: Codable, Equatable, Sendable {
     /// Start times of every request sent in the last hour, failures included.

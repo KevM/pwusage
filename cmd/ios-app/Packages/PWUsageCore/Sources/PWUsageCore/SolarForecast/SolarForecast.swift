@@ -1,14 +1,22 @@
 import Foundation
 
-struct SolarForecastInterval: Codable, Equatable, Sendable {
-    let periodStart: Date
-    let periodEnd: Date
-    let powerKw: Double
+public struct SolarForecastInterval: Codable, Equatable, Sendable {
+    public let periodStart: Date
+    public let periodEnd: Date
+    public let powerKw: Double
     /// Summed `pv_estimate10` across the selected arrays, for the cautious
     /// projection. `nil` when any array lacks it, and in batches stored by
     /// builds that did not keep it.
-    var cautiousPowerKw: Double?
-    func energyKwh() throws -> Double {
+    public var cautiousPowerKw: Double?
+
+    public init(periodStart: Date, periodEnd: Date, powerKw: Double, cautiousPowerKw: Double? = nil) {
+        self.periodStart = periodStart
+        self.periodEnd = periodEnd
+        self.powerKw = powerKw
+        self.cautiousPowerKw = cautiousPowerKw
+    }
+
+    public func energyKwh() throws -> Double {
         let duration = periodEnd.timeIntervalSince(periodStart)
         let energy = powerKw * (duration / 3600)
         guard periodStart.timeIntervalSince1970.isFinite, periodEnd.timeIntervalSince1970.isFinite,
@@ -19,27 +27,27 @@ struct SolarForecastInterval: Codable, Equatable, Sendable {
     }
 }
 
-enum SolarForecastError: Error, Equatable {
+public enum SolarForecastError: Error, Equatable {
     case duplicateInterval
     case incompleteCoverage
     case nonFiniteValue
 }
 
-enum SolarForecastScope {
-    static func key(_ accountScopeID: String, _ siteID: String) -> String {
+public enum SolarForecastScope {
+    public static func key(_ accountScopeID: String, _ siteID: String) -> String {
         segment(accountScopeID) + segment(siteID)
     }
 
-    static func prefix(_ accountScopeID: String) -> String { segment(accountScopeID) }
+    public static func prefix(_ accountScopeID: String) -> String { segment(accountScopeID) }
 
     private static func segment(_ value: String) -> String { "\(value.utf8.count):\(value)" }
 }
 
-enum SolarForecast {
-    static let foregroundRefreshThreshold: TimeInterval = 3 * 60 * 60
-    static let recommendationFreshness: TimeInterval = 6 * 60 * 60
+public enum SolarForecast {
+    public static let foregroundRefreshThreshold: TimeInterval = 3 * 60 * 60
+    public static let recommendationFreshness: TimeInterval = 6 * 60 * 60
 
-    static func energy(in intervals: [SolarForecastInterval], from start: Date, to end: Date) throws -> Double {
+    public static func energy(in intervals: [SolarForecastInterval], from start: Date, to end: Date) throws -> Double {
         guard start.timeIntervalSince1970.isFinite, end.timeIntervalSince1970.isFinite else {
             throw SolarForecastError.nonFiniteValue
         }

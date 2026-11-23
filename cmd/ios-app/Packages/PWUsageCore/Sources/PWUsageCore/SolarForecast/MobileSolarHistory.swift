@@ -1,10 +1,10 @@
 import Foundation
 
-enum MobileSolarHistoryResponse: Decodable, Equatable, Sendable {
+public enum MobileSolarHistoryResponse: Decodable, Equatable, Sendable {
     case disabled
     case enabled(timeZone: TimeZone, days: [MobileSolarHistoryDay], nextFrom: String?)
     private enum CodingKeys: String, CodingKey { case version, enabled, timeZone, days, nextFrom }
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         guard try values.decode(Int.self, forKey: .version) == 1 else {
             throw DecodingError.dataCorruptedError(
@@ -25,19 +25,19 @@ enum MobileSolarHistoryResponse: Decodable, Equatable, Sendable {
     }
 }
 
-struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
-    enum Status: String, Decodable, Equatable, Sendable { case open, complete, gapped, empty }
-    let day: String
-    let dayStart: Date
-    let status: Status
-    let fetchedAt: Date?
-    let solarWh: [Double?]
-    let loadWh: [Double?]
-    let gridWh: [Double?]
-    let batteryWh: [Double?]
-    let batterySoc: [Double?]
+public struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
+    public enum Status: String, Decodable, Equatable, Sendable { case open, complete, gapped, empty }
+    public let day: String
+    public let dayStart: Date
+    public let status: Status
+    public let fetchedAt: Date?
+    public let solarWh: [Double?]
+    public let loadWh: [Double?]
+    public let gridWh: [Double?]
+    public let batteryWh: [Double?]
+    public let batterySoc: [Double?]
 
-    init(
+    public init(
         day: String,
         dayStart: Date,
         status: Status,
@@ -64,7 +64,7 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
     }
 
     /// Whether every day holds one 5-minute slot per slot of its site-local day (276/288/300 with DST).
-    static func slotsMatchDays(_ days: [MobileSolarHistoryDay], timeZone: TimeZone) -> Bool {
+    public static func slotsMatchDays(_ days: [MobileSolarHistoryDay], timeZone: TimeZone) -> Bool {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         return days.allSatisfy { day in
@@ -80,7 +80,7 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
         }
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         day = try values.decode(String.self, forKey: .day)
         dayStart = try values.decode(Date.self, forKey: .dayStart)
@@ -113,6 +113,6 @@ struct MobileSolarHistoryDay: Decodable, Equatable, Sendable {
     }
 }
 
-protocol MobileSolarHistoryDataAPI: Sendable {
+public protocol MobileSolarHistoryDataAPI: Sendable {
     func fetchSolarHistory(siteID: String, from: String, changedSince: Date?) async throws -> MobileSolarHistoryResponse
 }
