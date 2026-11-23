@@ -1656,7 +1656,7 @@ export async function loadRestorationTargets(
 
 /** A fixed comparison plan the owner chose for one period of the rate plan history guide. */
 export type FixedComparisonWrite = { from: string; to: string | null } & (
-  | { kind: 'public'; revisions: ExpandedRevision[]; label?: string }
+  | { kind: 'public'; revisions: ExpandedRevision[]; label: string }
   | { kind: 'manual'; name: string; buyRate: number; sellRate: number }
 );
 
@@ -1689,9 +1689,7 @@ const flatFixedSeasons = (buyRate: number, sellRate: number): TariffSeasonInput[
 async function writeFixedComparisonsOnClient(client: PoolClient, siteId: string, userId: string, today: string, utility: string, fixed: FixedComparisonWrite[]): Promise<void> {
   for (const write of fixed) {
     if (write.kind === 'public' && write.to === null) {
-      const label = write.label ?? write.revisions.find(revision => revision.to === null)?.label ?? write.revisions.at(-1)?.label;
-      if (!label) throw new TariffValidationError('Choose a fixed comparison plan.');
-      await setFollowedReferenceLabelOnClient(client, siteId, userId, label, write.from);
+      await setFollowedReferenceLabelOnClient(client, siteId, userId, write.label, write.from);
       continue;
     }
     const candidates = write.kind === 'public'

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ratesEffectiveOn: vi.fn(), defaultRates: vi.fn(),
   getSiteUtilityContext: vi.fn(), getRatePlanHistoryInputs: vi.fn(),
   isCrossOriginRequest: vi.fn(), rateByLabel: vi.fn(), saveRatePlanHistory: vi.fn(),
+  deadline: vi.fn((_ms: number, action: () => Promise<unknown>) => action()),
 }));
 vi.mock('@/lib/request-security', () => ({ isCrossOriginRequest: mocks.isCrossOriginRequest }));
 vi.mock('@/lib/urdb/estimate-job', async importOriginal => ({
@@ -18,7 +19,7 @@ vi.mock('@/lib/urdb/estimate-job', async importOriginal => ({
 vi.mock('@/lib/auth-checks', () => ({ getCurrentUser: mocks.getCurrentUser, verifySiteAccess: mocks.verifySiteAccess }));
 vi.mock('@/lib/io-deadline', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/io-deadline')>(),
-  withIoDeadline: (_ms: number, action: () => Promise<unknown>) => action(),
+  withIoDeadline: mocks.deadline,
 }));
 vi.mock('@/lib/observability', () => ({
   observeRoute: (_name: string, handler: (request: NextRequest, context: unknown) => Promise<Response>) => handler,
@@ -217,6 +218,11 @@ describe('PUT /api/site/[id]/utility/history', () => {
       expect(fixed[0]).toMatchObject({ kind: 'public', from: closed.from, to: closed.to, label: OPTION_B });
       expect(fixed[0].revisions.length).toBeGreaterThan(0);
       expect(fixed[0].revisions[0]).toMatchObject({ from: closed.from });
+    });
+    it('expandsPeriodsAndFixedUnderOneDeadline', async () => {
+      mocks.deadline.mockClear();
+      expect((await save({ label: OPTION_B })).status).toBe(200);
+      expect(mocks.deadline).toHaveBeenCalledTimes(1);
     });
     it('passesAManualPlan', async () => {
       expect((await save({ name: 'Mine', buyRate: 0.2, sellRate: 0.03 })).status).toBe(200);

@@ -132,16 +132,18 @@ export function PUT(req: NextRequest, context: { params: Promise<{ id: string }>
       const api = memoisedApi();
       // The open period's current revision is saved as the plan pick. Its closed revisions are saved like the
       // others: the oldest one reaches back to the owner's start, which the pick's own chain does not.
-      const expanded = await withIoDeadline(45_000, () => mapWithConcurrency(periods, 4, period =>
-        expandHistoryPeriod(period, { api, utilityName, timeZone: site.timezone, today, convert })));
-      const revisions = expanded.flatMap((items, index) => periods[index] === open ? items.filter(item => item.to !== null) : items);
       const expandCtx = { api, utilityName, timeZone: site.timezone, today, convert };
       const fixedPeriods = periods.filter((period): period is ParsedPeriod & { fixed: FixedInput } => period.fixed !== undefined);
-      const fixed: FixedComparisonWrite[] = await withIoDeadline(45_000, () => mapWithConcurrency(fixedPeriods, 4, async (period): Promise<FixedComparisonWrite> => {
-        const { fixed: choice, from, to } = period;
-        if ('name' in choice) return { kind: 'manual', from, to, name: choice.name, buyRate: choice.buyRate, sellRate: choice.sellRate };
-        return { kind: 'public', from, to, label: choice.label, revisions: await expandHistoryPeriod({ label: choice.label, from, to }, expandCtx) };
+      // One deadline covers both expansions so the worst case stays under maxDuration.
+      const { expanded, fixed } = await withIoDeadline(45_000, async () => ({
+        expanded: await mapWithConcurrency(periods, 4, period => expandHistoryPeriod(period, expandCtx)),
+        fixed: await mapWithConcurrency(fixedPeriods, 4, async (period): Promise<FixedComparisonWrite> => {
+          const { fixed: choice, from, to } = period;
+          if ('name' in choice) return { kind: 'manual', from, to, name: choice.name, buyRate: choice.buyRate, sellRate: choice.sellRate };
+          return { kind: 'public', from, to, label: choice.label, revisions: await expandHistoryPeriod({ label: choice.label, from, to }, expandCtx) };
+        }),
       }));
+      const revisions = expanded.flatMap((items, index) => periods[index] === open ? items.filter(item => item.to !== null) : items);
       const timeline = await repo.saveRatePlanHistory(siteId, user.id, utilityName, revisions, open?.label ?? null, fixed);
       startPendingEstimates(siteId, timeline);
       return jsonWithETag(timeline);
