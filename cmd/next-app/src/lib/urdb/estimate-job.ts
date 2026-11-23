@@ -322,7 +322,17 @@ export async function runUrdbEstimatesForSite(siteId: string, api: UrdbApi, now:
       const { changed } = await applyEstimatesOnClient(write, siteId, today);
       if (beforeCoverage.length) {
         const afterCoverage = (await write.query<{ effective_from: string; effective_to: string | null; kind: string }>(`SELECT effective_from::text, effective_to::text, 'actual' AS kind FROM "TariffEffectivePeriod" WHERE site_id = $1 UNION ALL SELECT effective_from::text, effective_to::text, 'reference' AS kind FROM "TariffReferencePeriod" WHERE site_id = $1`, [siteId])).rows;
-        for (const before of beforeCoverage) {
+        // An owner-followed plan that cannot be fetched intentionally leaves [from, ∞) uncovered: estimated
+        // reference days there may go. Owner rows, actual days and reference days before `from` stay guarded.
+        const follow = (await write.query<{ label: string | null; from: string | null }>('SELECT urdb_reference_label AS label, urdb_reference_from::text AS from FROM "SiteUtility" WHERE site_id = $1', [siteId])).rows[0];
+        const followedFrom = follow?.label ? follow.from : null;
+        const guarded = beforeCoverage.flatMap(before => {
+          if (!followedFrom || before.kind !== 'reference' || before.source !== 'estimated') return [before];
+          if (before.effective_from >= followedFrom) return [];
+          const last = addCalendarDays(followedFrom, -1);
+          return [before.effective_to === null || before.effective_to > last ? { ...before, effective_to: last } : before];
+        });
+        for (const before of guarded) {
           let cursor = before.effective_from;
           const following = afterCoverage.filter(row => row.kind === before.kind).sort((a, b) => a.effective_from.localeCompare(b.effective_from));
           let covered = false;

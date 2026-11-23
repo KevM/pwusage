@@ -797,6 +797,47 @@ describe.skipIf(!safeActivityTestSocket)('TariffTimelineRepo & Tesla sync preced
     expect(queued.rows).toEqual([{ status: 'pending' }]);
   });
 
+  describe('unavailable followed comparison plan', () => {
+    const referenceRows = async (siteId: string) => (await local.database.query<{ effective_from: string; effective_to: string | null; source: string }>(
+      `SELECT effective_from::text, effective_to::text, source FROM "TariffReferencePeriod" WHERE site_id = $1 ORDER BY effective_from`, [siteId])).rows;
+    async function seeded(siteId: string) {
+      await local.database.query(`INSERT INTO "Site"(id, user_id, timezone, json, utility, rate_country, rate_country_source) VALUES ($1, 'u1', 'America/Chicago', '{}', 'We Energies', 'US', 'owner')`, [siteId]);
+      await local.database.query(`INSERT INTO "SiteUtility"(site_id, urdb_utility, choice, urdb_plan_label, status) VALUES ($1, 'Wisconsin Electric Power Co', 'owner', 'picked', 'pending')`, [siteId]);
+      const base = { ...chainApi([flatRate('picked', '2025-01-01', 0.2)]), defaultRates: async () => [flatRate('default', '2024-01-01', 0.15)] };
+      await runUrdbEstimatesForSite(siteId, base, new Date('2026-11-16T12:00:00Z'));
+      expect((await referenceRows(siteId)).some(row => row.source === 'estimated' && row.effective_to === null)).toBe(true);
+      return base;
+    }
+
+    it('lets the followed range go uncovered without rolling back the refresh', async () => {
+      const siteId = 's-followed-unavailable';
+      const base = await seeded(siteId);
+      await local.database.query(`UPDATE "SiteUtility" SET urdb_reference_label = 'gone', urdb_reference_from = '2025-06-01', status = 'pending' WHERE site_id = $1`, [siteId]);
+      const rates = [flatRate('older', '2024-06-01', 0.18), flatRate('picked', '2025-01-01', 0.2, 'older')];
+      const api: UrdbApi = { ...base, ...chainApi(rates), rateByLabel: async label => label === 'gone' ? null : rates.find(rate => rate.label === label) ?? null, defaultRates: base.defaultRates };
+
+      const result = await runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'));
+
+      expect(result.status).toBe('ready');
+      const reference = await referenceRows(siteId);
+      expect(reference.length).toBeGreaterThan(0);
+      expect(reference.every(row => row.effective_to !== null && row.effective_to < '2025-06-01')).toBe(true);
+      expect(reference[0].effective_from).toBe('2024-01-01');
+      // The actual-plan estimate in the same run was applied: the picked plan now walks back to its predecessor.
+      expect((await actualSpans(siteId)).map(row => [row.urdb_label, row.effective_from, row.effective_to])).toEqual([['older', '2024-06-01', '2024-12-31'], ['picked', '2025-01-01', null]]);
+    });
+
+    it('still rejects removing reference days when no plan is followed', async () => {
+      const siteId = 's-unfollowed-removal';
+      const base = await seeded(siteId);
+      await local.database.query(`UPDATE "SiteUtility" SET status = 'pending' WHERE site_id = $1`, [siteId]);
+      const api: UrdbApi = { ...base, defaultRates: async () => [flatRate('default', '2026-01-01', 0.15)] };
+
+      await expect(runUrdbEstimatesForSite(siteId, api, new Date('2026-11-16T12:00:00Z'))).rejects.toThrow('URDB refresh would remove previously covered days');
+      expect((await referenceRows(siteId)).some(row => row.effective_from < '2026-01-01')).toBe(true);
+    });
+  });
+
   /** Two estimated revisions of one public plan, converted one after the other by dates-only edits. */
   const convertEstimateChain = async (siteId: string, name: string) => {
     await local.database.query(`INSERT INTO "Site" VALUES ($1, 'u1', 'America/Chicago', '{}')`, [siteId]);
