@@ -1,4 +1,5 @@
 import Foundation
+import PWUsageCore
 
 /// The rate plan history guide's walk-back: the current plan first, then one question per plan,
 /// "since the start?", and on No, when they switched and what they were on before.
@@ -27,6 +28,8 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         var from: String
         var endDate: String?
         var assumed: Bool
+        /// The owner's changed fixed comparison for this plan's whole range; nil keeps the prefill.
+        var fixed: FixedComparisonChoice?
 
         /// The URDB label sent on save.
         var label: String {
@@ -51,16 +54,24 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     let hasTeslaPlan: Bool
     /// Site-local `YYYY-MM-DD`: the newest switch month offered when the plan is open (no Tesla).
     let today: String
+    /// The site's stored fixed comparison (reference) periods the guide prefills rows from.
+    let referencePeriods: [TariffPeriodDTO]
     private(set) var step: Step = .currentKind
     /// Newest first; the last one is the plan the walk is asking about.
     private(set) var spans: [Span] = []
     private var pick = Pick()
     private var undo: [Snapshot] = []
 
-    init(history: RatePlanHistoryDTO, hasTeslaPlan: Bool, today: String = IsoDay.today()) {
+    init(
+        history: RatePlanHistoryDTO,
+        hasTeslaPlan: Bool,
+        today: String = IsoDay.today(),
+        referencePeriods: [TariffPeriodDTO] = []
+    ) {
         self.history = history
         self.hasTeslaPlan = hasTeslaPlan
         self.today = today
+        self.referencePeriods = referencePeriods
     }
 
     /// Tesla's shape, on the first step only.
@@ -118,12 +129,19 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
     /// so the server saves each public rate change once.
     func periods() -> [RatePlanHistoryPeriod] {
         var result: [RatePlanHistoryPeriod] = []
-        let filled = spans.reversed().filter { span in span.endDate.map { span.from <= $0 } ?? true }
-        for span in filled {
+        let filled = spans.indices.reversed().filter { index in
+            spans[index].endDate.map { spans[index].from <= $0 } ?? true
+        }
+        for index in filled {
+            let span = spans[index]
+            let fixed = stagedFixed(forSpanAt: index)
             if let older = result.last, older.label == span.label {
-                result[result.count - 1] = RatePlanHistoryPeriod(label: span.label, from: older.from, to: span.endDate)
+                // Merged spans keep the older span's staged comparison, else the newer one's.
+                result[result.count - 1] = RatePlanHistoryPeriod(
+                    label: span.label, from: older.from, to: span.endDate, fixed: older.fixed ?? fixed
+                )
             } else {
-                result.append(RatePlanHistoryPeriod(label: span.label, from: span.from, to: span.endDate))
+                result.append(RatePlanHistoryPeriod(label: span.label, from: span.from, to: span.endDate, fixed: fixed))
             }
         }
         return result
@@ -204,6 +222,14 @@ struct RatePlanHistoryFlow: Equatable, Sendable {
         case .review:
             return
         }
+    }
+
+    /// Stages `choice` as the fixed comparison for the whole plan at `index`, replacing every row
+    /// shown for it. An index past the spans changes nothing.
+    mutating func chooseFixed(_ choice: FixedComparisonChoice, forSpanAt index: Int) {
+        guard spans.indices.contains(index) else { return }
+        save()
+        spans[index].fixed = choice
     }
 
     mutating func back() {

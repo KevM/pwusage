@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PWUsageCore
 
 /// The history guide screen's state: loads the walk-back's data, holds the flow while the owner
 /// answers, and saves the confirmed periods. The view renders `state` and mutates the flow via `update`.
@@ -18,13 +19,17 @@ final class RatePlanHistoryModel {
     private(set) var errorMessage: String?
     private(set) var isDone = false
 
+    /// The site's stored fixed comparison periods, which the flow prefills each plan's rows from.
+    @ObservationIgnored private let referencePeriods: [TariffPeriodDTO]
     @ObservationIgnored private let loadHistory: () async throws -> RatePlanHistoryDTO
     @ObservationIgnored private let saveHistory: ([RatePlanHistoryPeriod]) async throws -> Void
 
     init(
+        referencePeriods: [TariffPeriodDTO] = [],
         loadHistory: @escaping () async throws -> RatePlanHistoryDTO,
         saveHistory: @escaping ([RatePlanHistoryPeriod]) async throws -> Void
     ) {
+        self.referencePeriods = referencePeriods
         self.loadHistory = loadHistory
         self.saveHistory = saveHistory
     }
@@ -42,7 +47,9 @@ final class RatePlanHistoryModel {
         errorMessage = nil
         do {
             let history = try await loadHistory()
-            state = .ready(RatePlanHistoryFlow(history: history, hasTeslaPlan: history.teslaShape != nil))
+            state = .ready(RatePlanHistoryFlow(
+                history: history, hasTeslaPlan: history.teslaShape != nil, referencePeriods: referencePeriods
+            ))
         } catch {
             // A cancelled load (the view went away) ends as failed too, never stuck at loading.
             state = .failed(RatePlanHistoryPresentation.loadErrorMessage(for: error))
