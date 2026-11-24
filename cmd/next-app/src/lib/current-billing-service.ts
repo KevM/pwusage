@@ -3,7 +3,7 @@ import { createEnergyRepo } from '@/lib/energy-repo-factory';
 import { SiteRepo } from '@/lib/site-repo';
 import { getCurrentCycleStart, getNextCycleStart } from '@/lib/billing-cycle';
 import { MOBILE_DASHBOARD_CONTRACT_VERSION, type MobileBillSummary } from '@/lib/mobile-dashboard-contract';
-import { buildMobileLoadTiming, summarizeBillUsage } from '@/lib/mobile-bill-summary';
+import { buildBillLoadTiming, buildMobileLoadTiming, summarizeBillUsage } from '@/lib/mobile-bill-summary';
 import { Schedule } from '@/lib/schedule';
 import { buildLoadTimingTimeline } from '@/lib/load-timing-timeline';
 import { matchesMobileBillConfiguration, readCurrentMobileSite, readMobileBillConfiguration, readMobileBillRevision } from '@/lib/mobile-bill-revision';
@@ -21,10 +21,12 @@ type CurrentBillingResult =
 
 export async function readCurrentBilling(siteId: string, {
     includeOutlook = false,
+    includeLoadTimingTimeline = true,
     acceptRevision,
     refreshStale = false,
 }: {
     includeOutlook?: boolean;
+    includeLoadTimingTimeline?: boolean;
     acceptRevision?: (revision: string, energyDataThrough?: Date | null) => boolean;
     refreshStale?: boolean;
 }): Promise<CurrentBillingResult> {
@@ -88,18 +90,18 @@ export async function readCurrentBilling(siteId: string, {
     }
     const usage = billing.value.usage;
     const { estimatedCost, periods } = summarizeBillUsage(usage);
-    const loadTimingWithTimeline = billing.status === 'complete'
-        ? buildMobileLoadTiming({
-            schedule,
-            usage,
-            now,
-            timezone: site.timezone,
-            cycleEnd,
-            energyDataThrough: latest,
-            hasTariffs: site.tariffs.length > 0,
-            hasRevision: includeOutlook && Boolean(revision),
-        })
-        : null;
+    const timingParams = { schedule, usage, now, timezone: site.timezone, hasTariffs: site.tariffs.length > 0 };
+    let loadTiming: MobileBillSummary['loadTiming'] = null;
+    if (billing.status === 'complete') {
+        loadTiming = includeLoadTimingTimeline
+            ? buildMobileLoadTiming({
+                ...timingParams,
+                cycleEnd,
+                energyDataThrough: latest,
+                hasRevision: includeOutlook && Boolean(revision),
+            })
+            : buildBillLoadTiming(timingParams);
+    }
 
     const summary: MobileBillSummary = {
         version: MOBILE_DASHBOARD_CONTRACT_VERSION,
@@ -113,7 +115,7 @@ export async function readCurrentBilling(siteId: string, {
             cycleEnd: cycleEnd.toISOString(),
             periods,
         },
-        loadTiming: loadTimingWithTimeline,
+        loadTiming,
         ...(tariffReattribution ? { tariffReattribution } : {}),
         ...(includeOutlook ? { outlook: billing.status === 'complete' && billing.value.outlook ? {
             ...billing.value.outlook,

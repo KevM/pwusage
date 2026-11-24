@@ -73,34 +73,33 @@ export function resolveActiveLoadTimingPeriod(
         : null;
 }
 
-/**
- * Build the mobile `loadTiming` payload (including `tariffTimeline`) from
- * resolved cycle usage and schedule.
- */
-export function buildMobileLoadTiming(params: {
+interface BillLoadTimingParams {
     schedule: Schedule;
     usage: UsageData[];
     now: Date;
     timezone: string;
+    hasTariffs: boolean;
+}
+
+export function buildBillLoadTiming({ schedule, usage, now, timezone, hasTariffs }: BillLoadTimingParams): LoadTimingView | null {
+    const activePeriod = resolveActiveLoadTimingPeriod(schedule, now);
+    return hasTariffs && activePeriod ? computeLoadTiming(schedule, usage, now, timezone, activePeriod) : null;
+}
+
+/** Add the forward schedule that the iOS Smart Shift planner uses. */
+export function buildMobileLoadTiming(params: BillLoadTimingParams & {
     cycleEnd: Date;
     energyDataThrough: Date | null;
-    hasTariffs: boolean;
     hasRevision?: boolean;
 }): MobileLoadTimingWithTimeline | null {
     const {
         schedule,
-        usage,
         now,
-        timezone,
         cycleEnd,
         energyDataThrough,
-        hasTariffs,
         hasRevision = false,
     } = params;
-    const activePeriod = resolveActiveLoadTimingPeriod(schedule, now);
-    const loadTiming = hasTariffs && activePeriod
-        ? computeLoadTiming(schedule, usage, now, timezone, activePeriod)
-        : null;
+    const loadTiming = buildBillLoadTiming(params);
     if (!loadTiming) return null;
 
     const timelineStart = new Date(Math.max(

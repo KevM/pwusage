@@ -11,7 +11,7 @@ export const maxDuration = 30;
 const PRIVATE_RESPONSE = { 'Cache-Control': 'private, no-store', Vary: 'Authorization' };
 
 function revisionTag(revision: string, energyDataThrough?: Date | null): string {
-    return `W/"bill-v1-${revision}-${energyDataThrough?.getTime() ?? 'unknown'}"`;
+    return `W/"bill-v1-compact-${revision}-${energyDataThrough?.getTime() ?? 'unknown'}"`;
 }
 
 function billingHeaders(etag: string) {
@@ -35,6 +35,7 @@ async function handleGET(request: Request) {
             }
             const result = await readCurrentBilling(credential.siteId, {
                 refreshStale: true,
+                includeLoadTimingTimeline: false,
                 acceptRevision: (revision, latest) => ifNoneMatchMatches(request, revisionTag(revision, latest)),
             });
             if (result.status === 'not-found') {

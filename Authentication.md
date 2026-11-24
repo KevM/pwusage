@@ -677,10 +677,12 @@ requires its own explicit grant. A valid credential lacking the required
 grant receives `403`. Deleting a credential removes all of its grants.
 
 Send `Authorization: Bearer <token>` to `GET /api/integrations/v1/billing`.
-The credential selects its home. The response uses the same bill-summary shape
-as the web app, with `currentBill.periods`, `loadTiming`, and
-`sources.energyDataThrough`. Positive `loadTiming.periods[].cycleNetExportKwh`
-means banked exports. Negative values mean an import gap.
+The credential selects its home. The response includes the same
+`currentBill.periods`, `loadTiming` period balances and rates, and
+`sources.energyDataThrough` as the app summary. Positive
+`loadTiming.periods[].cycleNetExportKwh` means banked exports. Negative
+values mean an import gap. The expanded forward schedule used by Smart Shift
+is available through the app's bill summary.
 
 Copy the response's `ETag` into `If-None-Match` on the next request. A `304`
 has an empty body and tells the client to reuse its previous response. PWUsage

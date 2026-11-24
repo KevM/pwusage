@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { IncompleteTariffAttributionError } from '@/lib/billing-availability';
+import type { Tariff } from '@/lib/db';
+import type { MobileLoadTimingWithTimeline } from '@/lib/mobile-bill-summary';
+import type { MobileBillSummary } from '@/lib/mobile-dashboard-contract';
 
 const mocks = vi.hoisted(() => ({
     query: vi.fn(), config: vi.fn(), site: vi.fn(), latest: vi.fn(), usage: vi.fn(), history: vi.fn(),
@@ -73,11 +76,37 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('billing integration', () => {
-    it('returns the same summary as the web app for the home bound to the credential', async () => {
+    it('returns the same bill fields and current period banks without the app’s forward schedule', async () => {
+        const tariff: Tariff = {
+            id: 1, site_id: 'home', name: 'Utility', updated: now,
+            seasons: [{
+                id: 2, tariff_id: 1, name: 'All year', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: 0.3, sell_rate: 0.05,
+                schedules: [
+                    { id: 3, season_id: 2, name: 'Peak', buy_rate: 0.3, sell_rate: 0.05,
+                        from_day_of_week: 0, to_day_of_week: 6, from_hour: 6, from_minute: 0, to_hour: 20, to_minute: 0 },
+                    { id: 4, season_id: 2, name: 'Off peak', buy_rate: 0.15, sell_rate: 0.04,
+                        from_day_of_week: 0, to_day_of_week: 6, from_hour: 20, from_minute: 0, to_hour: 6, to_minute: 0 },
+                ],
+            }],
+        };
+        const config = { name: 'Home', timezone: 'UTC', billing_start_day: 1, currency: 'USD', tariff_ids: [tariff.id] };
+        mocks.site.mockResolvedValue({ ...config, id: 'home', tariffs: [tariff] });
+        mocks.config.mockResolvedValue({ rows: [config] });
+        mocks.usage.mockResolvedValue([
+            { cost: -0.1, gridUsage: -2000, tariff, touName: 'Peak', buyRate: 0.3, sellRate: 0.05 },
+        ]);
+
         const integrated = await poll();
         const mobile = await getMobileBill(new Request('https://example.test/api/mobile/bill-summary?siteId=home'));
         expect(integrated.status).toBe(200);
-        expect(await integrated.json()).toEqual(await mobile.json());
+        const appBill = await mobile.json() as MobileBillSummary & { loadTiming: MobileLoadTimingWithTimeline };
+        const { tariffTimeline, ...periodBalances } = appBill.loadTiming;
+        expect(tariffTimeline.length).toBeGreaterThan(1);
+        expect(periodBalances.periods).toEqual([
+            expect.objectContaining({ name: 'Peak', isActive: true, cycleNetExportKwh: 2, buyRate: 0.3, sellRate: 0.05 }),
+        ]);
+        expect(await integrated.json()).toEqual({ ...appBill, loadTiming: periodBalances });
         expect(mocks.site).toHaveBeenCalledWith('home');
         expect(mocks.site).not.toHaveBeenCalledWith('another-home');
         expect(mocks.refresh).not.toHaveBeenCalled();
@@ -89,13 +118,14 @@ describe('billing integration', () => {
     it('returns an empty 304 for a matching ETag without recalculating the bill', async () => {
         const initial = await poll();
         const etag = initial.headers.get('ETag');
-        expect(etag).toMatch(/^W\/"bill-v1-/);
+        expect(etag).toMatch(/^W\/"bill-v1-compact-/);
         const repeated = await poll(`"an-old-tag", ${etag?.slice(2)}`);
         expect(repeated.status).toBe(304);
         expect(await repeated.text()).toBe('');
         expect(repeated.headers.get('ETag')).toBe(etag);
         expect(repeated.headers.get('Vary')).toBe('Authorization');
         expect(mocks.usage).toHaveBeenCalledTimes(1);
+        expect((await poll(etag?.replace('bill-v1-compact-', 'bill-v1-'))).status).toBe(200);
     });
 
     it('refreshes a stale bill before comparing the ETag and returns any new sample', async () => {
