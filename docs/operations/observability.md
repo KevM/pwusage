@@ -176,6 +176,23 @@ rejection is recorded separately by `tesla.refresh.state-changed` with
 If only a start/checking checkpoint exists, inspect platform timeouts and the
 count-only export-failure diagnostics before assuming the account changed state.
 
+## Billing integration usage
+
+Count `request.completed` events for the billing endpoint. Group authorized
+polls by `integrationId` and `siteId` to find an unusually busy credential.
+Compare `200` with `304` to see how often polls transfer a new bill. A spike
+in `401` responses shows rejected requests, which have no credential ID.
+
+```apl
+['pwusage']
+| where route == '/api/integrations/v1/billing' and event == 'request.completed'
+| summarize count() by bin(_time, 5m), siteId, integrationId, status
+```
+
+For costly polls, filter for `integration.billing.refresh` and group by
+`status` and `siteId`. The event reports the age of the prior stored sample
+in `ageMs`. Use `requestId` to correlate it with the request completion.
+
 After measuring normal volume, configure Axiom monitors for an unusual increase
 in confirmed reconnect-required transitions, unknown refresh outcomes, guarded-save
 failures, failed cron requests and TRMNL errors. Monitor rules and

@@ -1,5 +1,11 @@
 # PWUsage Integration Billing API Implementation Plan
 
+The implementation uses self-service tokens in web settings, the existing
+web billing response, and ETag revalidation. Requests try a throttled history
+refresh when the last sample is more than an hour old or missing. The scheduled
+refresh and operator-only provisioning below describe the earlier pilot proposal.
+See the [billing integration contract](../../Authentication.md#billing-integration-credentials).
+
 > Use the superpowers:executing-plans skill when implementing this plan.
 
 **Goal** Let a homelab worker read its site's current billing state while the PWUsage iOS app is closed.

@@ -9,6 +9,7 @@ import { TimezoneDisplayForm } from '@/components/TimezoneDisplayForm';
 import { SankeyRendererForm } from '@/components/SankeyRendererForm';
 import { DEFAULT_RENDERER_ID } from '@/lib/sankey/renderers/registry';
 import { TariffList } from './TariffList';
+import { BillingIntegrations } from './BillingIntegrations';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/Card';
 import { Select, Label } from '@/components/ui/Form';
@@ -197,6 +198,8 @@ export function SettingsView({ site, installations, memberEmails, tariffTimeline
                     </div>
                 </CardContent>
             </Card>
+
+            <BillingIntegrations key={site.id} siteId={site.id} />
 
             {memberEmails.length > 1 ? (
                 <Card>
