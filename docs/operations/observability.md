@@ -181,7 +181,8 @@ count-only export-failure diagnostics before assuming the account changed state.
 Count `request.completed` events for the billing endpoint. Group authorized
 polls by `integrationId` and `siteId` to find an unusually busy credential.
 Compare `200` with `304` to see how often polls transfer a new bill. A spike
-in `401` responses shows rejected requests, which have no credential ID.
+in `401` responses shows rejected credentials, which have no credential ID.
+A `403` identifies a valid credential missing its billing grant.
 
 ```apl
 ['pwusage']

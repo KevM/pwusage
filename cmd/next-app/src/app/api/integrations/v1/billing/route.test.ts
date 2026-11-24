@@ -36,7 +36,7 @@ import {
     GET as listTokens, POST as createToken, DELETE as revokeToken,
 } from '@/app/api/site/[id]/billing-integrations/route';
 
-const token = 'pwu_bill_' + 'a'.repeat(43);
+const token = 'pwu_int_' + 'a'.repeat(43);
 const id = '87ed8088-70f1-482c-86ce-c4ef67106e8d';
 const now = new Date('2026-09-19T12:30:00Z');
 const current = new Date('2026-09-19T12:25:00Z');
@@ -66,7 +66,7 @@ beforeEach(() => {
     mocks.siteIds.mockResolvedValue(['home']);
     mocks.refresh.mockResolvedValue({ status: 'no-new-rows' });
     mocks.query.mockImplementation((sql: string) => sql.includes('c.token_hash')
-        ? { rows: [{ siteId: 'home', id }] }
+        ? { rows: [{ siteId: 'home', id, allowed: true }] }
         : mocks.config(sql));
 });
 
@@ -83,7 +83,7 @@ describe('billing integration', () => {
         expect(mocks.refresh).not.toHaveBeenCalled();
         expect(mocks.setLogContext).toHaveBeenCalledWith({ siteId: 'home', integrationId: id });
         const matchingDigest = createHash('sha256').update(token).digest();
-        expect(mocks.query.mock.calls[0][1]).toEqual([matchingDigest]);
+        expect(mocks.query.mock.calls[0][1]).toEqual([matchingDigest, 'billing:read']);
     });
 
     it('returns an empty 304 for a matching ETag without recalculating the bill', async () => {
@@ -136,6 +136,16 @@ describe('billing integration', () => {
         expect(mocks.refresh).toHaveBeenCalledTimes(2);
     });
 
+    it('requires the billing grant on an otherwise valid credential', async () => {
+        mocks.query.mockResolvedValueOnce({ rows: [{ siteId: 'home', id, allowed: false }] });
+
+        expect((await poll('*')).status).toBe(403);
+        expect(mocks.query.mock.calls[0][0]).toContain('FROM "IntegrationGrant"');
+        expect(mocks.query.mock.calls[0][1][1]).toBe('billing:read');
+        expect(mocks.latest).not.toHaveBeenCalled();
+        expect(mocks.refresh).not.toHaveBeenCalled();
+    });
+
     it('authenticates before revalidating or refreshing', async () => {
         expect((await poll('*', 'invalid')).status).toBe(401);
         expect(mocks.query).not.toHaveBeenCalled();
@@ -152,16 +162,18 @@ describe('billing integration settings', () => {
     it('returns the credential once and stores only its digest', async () => {
         mocks.query.mockResolvedValueOnce({ rows: [{ id, name: 'Home Assistant' }] });
         const created = await createToken(new NextRequest(settingsUrl, {
-            method: 'POST', body: JSON.stringify({ name: ' Home Assistant ' }),
+            method: 'POST', body: JSON.stringify({ name: ' Home Assistant ', scope: 'unrequested:read' }),
         }), context);
         expect(created.status).toBe(201);
         expect(created.headers.get('cache-control')).toBe('private, no-store');
         const result: { token: string } = await created.json();
-        expect(result.token).toMatch(/^pwu_bill_[\w-]{43}$/);
+        expect(result.token).toMatch(/^pwu_int_[\w-]{43}$/);
         expect(mocks.query.mock.calls[0][1]).toEqual([
             expect.any(String), 'owner', 'home', 'Home Assistant',
-            createHash('sha256').update(result.token).digest(),
+            createHash('sha256').update(result.token).digest(), 'billing:read',
         ]);
+
+        expect(mocks.query.mock.calls[0][0]).toContain('INSERT INTO "IntegrationGrant"');
 
         mocks.query.mockResolvedValueOnce({ rows: [{ id, name: 'Home Assistant' }] });
         const listed = await listTokens(new NextRequest(settingsUrl), context);
@@ -173,7 +185,7 @@ describe('billing integration settings', () => {
         mocks.query.mockResolvedValueOnce({ rowCount: 1 });
         const response = await revokeToken(new NextRequest(`${settingsUrl}?id=${id}`, { method: 'DELETE' }), context);
         expect(response.status).toBe(204);
-        expect(mocks.query.mock.calls[0][1]).toEqual(['owner', 'home', id]);
+        expect(mocks.query.mock.calls[0][1]).toEqual(['owner', 'home', id, 'billing:read']);
     });
 
     it('blocks creation from a different origin or for another home', async () => {

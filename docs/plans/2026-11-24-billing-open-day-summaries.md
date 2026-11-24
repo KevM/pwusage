@@ -15,8 +15,7 @@ import that changes a day already writes that day's summary rows, including the 
 (`day_end <= end`), so today's rows are skipped even though they exist.
 
 **Scope** In scope: `getUsageByTOU` when the caller passes no `todayRows`, and `getBillOutlook`.
-Those serve the iOS bill summary, `site-service.ts`, and the planned integration billing API
-([2026-11-23-integration-snapshots.md](2026-11-23-integration-snapshots.md)). Out of scope: the
+Those serve the iOS bill summary, `site-service.ts`, and the [integration billing API](../../Authentication.md#integration-credentials). Out of scope: the
 live page and `site-live-data`. They read today's samples for charts anyway and already pass them
 in, so they keep pricing from those samples.
 
@@ -80,7 +79,7 @@ under `cmd/next-app/src/lib/prototypes/`.
 ## References
 
 - [Web app guide](../../cmd/next-app/AGENTS.md)
-- [Integration billing API plan](2026-11-23-integration-snapshots.md)
+- [Integration billing API](../../Authentication.md#integration-credentials)
 - [Current-day storage and recovery behavior](2026-10-24-day-record-v2.md)
 - [Historical tariff attribution](../../DesignDecisions.md)
 - [Dev database safeguards](../dev-database-copy.md)

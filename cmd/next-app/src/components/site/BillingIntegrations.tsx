@@ -4,11 +4,11 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label } from '@/components/ui/Form';
-import type { BillingIntegrationCredential } from '@/lib/billing-integration-repo';
+import type { IntegrationCredential } from '@/lib/integration-credential-repo';
 
 export function BillingIntegrations({ siteId }: { siteId: string }) {
     const url = `/api/site/${encodeURIComponent(siteId)}/billing-integrations`;
-    const [credentials, setCredentials] = useState<BillingIntegrationCredential[] | null>(null);
+    const [credentials, setCredentials] = useState<IntegrationCredential[] | null>(null);
     const [name, setName] = useState('');
     const [created, setCreated] = useState<{ id: string; token: string } | null>(null);
     const [copied, setCopied] = useState(false);
@@ -21,7 +21,7 @@ export function BillingIntegrations({ siteId }: { siteId: string }) {
             try {
                 const response = await fetch(url, { signal: controller.signal });
                 if (!response.ok) throw new Error();
-                const data: { credentials: BillingIntegrationCredential[] } = await response.json();
+                const data: { credentials: IntegrationCredential[] } = await response.json();
                 setCredentials(data.credentials);
             } catch {
                 if (!controller.signal.aborted) setError('Couldn’t load billing integrations.');
@@ -42,7 +42,7 @@ export function BillingIntegrations({ siteId }: { siteId: string }) {
                 body: JSON.stringify({ name }),
             });
             if (!response.ok) throw new Error();
-            const data: { credential: BillingIntegrationCredential; token: string } = await response.json();
+            const data: { credential: IntegrationCredential; token: string } = await response.json();
             setCredentials(previous => [data.credential, ...(previous ?? [])]);
             setCreated({ id: data.credential.id, token: data.token });
             setCopied(false);

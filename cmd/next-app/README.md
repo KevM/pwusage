@@ -43,7 +43,7 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 ## Billing Integrations
 
 Create a token under **Site Settings → Billing Integrations** to read the
-current bill from another app. See the [billing integration contract](../../Authentication.md#billing-integration-credentials)
+current bill from another app. See the [billing integration contract](../../Authentication.md#integration-credentials)
 for the endpoint, ETags, and data freshness.
 
 ## Cron Jobs

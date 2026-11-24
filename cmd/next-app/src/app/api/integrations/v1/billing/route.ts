@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateBillingIntegration } from '@/lib/billing-integration-repo';
+import { authorizeIntegration, BILLING_READ_SCOPE } from '@/lib/integration-credential-repo';
 import { readCurrentBilling } from '@/lib/current-billing-service';
 import { errorFields, logEvent, observeRoute, setLogContext } from '@/lib/observability';
 import { computeJsonETag, ifNoneMatchMatches } from '@/lib/tariff-etag';
@@ -21,7 +21,7 @@ function billingHeaders(etag: string) {
 async function handleGET(request: Request) {
     return withRequestContext(async () => {
         try {
-            const credential = await authenticateBillingIntegration(request.headers.get('Authorization'));
+            const credential = await authorizeIntegration(request.headers.get('Authorization'), BILLING_READ_SCOPE);
             if (!credential) {
                 return NextResponse.json({ error: 'Unauthorized' }, {
                     status: 401,
@@ -30,6 +30,9 @@ async function handleGET(request: Request) {
             }
 
             setLogContext({ siteId: credential.siteId, integrationId: credential.id });
+            if (!credential.allowed) {
+                return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: PRIVATE_RESPONSE });
+            }
             const result = await readCurrentBilling(credential.siteId, {
                 refreshStale: true,
                 acceptRevision: (revision, latest) => ifNoneMatchMatches(request, revisionTag(revision, latest)),

@@ -664,12 +664,17 @@ fixtures; it does not apply or connect the migration. Cookie persistence across
 app launches, renewal, expiry, logout, and the custom URL callback still require
 simulator and device verification in the native app implementation.
 
-## Billing integration credentials
+## Integration credentials
 
 Signed-in home members can create and revoke their own tokens in the web
 app under **Site Settings → Billing Integrations**. The token is shown once.
 PWUsage stores its SHA-256 digest and checks the issuing account and home
 access on every poll. Revocation or loss of that access invalidates the token.
+
+Each credential belongs to one home and one issuing user. The billing setup
+creates the credential and its `billing:read` grant together. Each endpoint
+requires its own explicit grant. A valid credential lacking the required
+grant receives `403`. Deleting a credential removes all of its grants.
 
 Send `Authorization: Bearer <token>` to `GET /api/integrations/v1/billing`.
 The credential selects its home. The response uses the same bill-summary shape
@@ -689,7 +694,7 @@ still describes data freshness.
 - Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
 - Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
-- Billing integration auth: home-scoped, read-only bearer credential (`/api/integrations/v1/billing`).
+- Integration auth: home-scoped bearer credential with explicit grants. `/api/integrations/v1/billing` requires `billing:read`.
 - Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
 
 ## Current Open Gaps

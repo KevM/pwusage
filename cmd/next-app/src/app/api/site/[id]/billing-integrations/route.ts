@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthorizedSiteIds, getCurrentUser } from '@/lib/auth-checks';
 import {
-    createBillingIntegrationCredential,
-    listBillingIntegrationCredentials,
-    revokeBillingIntegrationCredential,
-} from '@/lib/billing-integration-repo';
+    BILLING_READ_SCOPE,
+    createIntegrationCredential,
+    listIntegrationCredentials,
+    revokeIntegrationCredential,
+} from '@/lib/integration-credential-repo';
 import { isCrossOriginRequest } from '@/lib/request-security';
 
 type Context = { params: Promise<{ id: string }> };
@@ -22,7 +23,7 @@ function json(body: unknown, status = 200) {
 export async function GET(_request: NextRequest, context: Context) {
     const access = await getAccess(context);
     if (!access) return json({ error: 'Unauthorized' }, 401);
-    return json({ credentials: await listBillingIntegrationCredentials(access.userId, access.siteId) });
+    return json({ credentials: await listIntegrationCredentials(access.userId, access.siteId, BILLING_READ_SCOPE) });
 }
 
 export async function POST(request: NextRequest, context: Context) {
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest, context: Context) {
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
     if (!name || name.length > 80 || name.includes('\0')) return json({ error: 'Enter a name up to 80 characters.' }, 400);
 
-    return json(await createBillingIntegrationCredential(access.userId, access.siteId, name), 201);
+    return json(await createIntegrationCredential(access.userId, access.siteId, name, BILLING_READ_SCOPE), 201);
 }
 
 export async function DELETE(request: NextRequest, context: Context) {
@@ -47,7 +48,7 @@ export async function DELETE(request: NextRequest, context: Context) {
         return json({ error: 'Invalid token ID' }, 400);
     }
 
-    const revoked = await revokeBillingIntegrationCredential(access.userId, access.siteId, id);
+    const revoked = await revokeIntegrationCredential(access.userId, access.siteId, id, BILLING_READ_SCOPE);
     if (!revoked) return json({ error: 'Token not found' }, 404);
     return new NextResponse(null, { status: 204, headers: PRIVATE_RESPONSE });
 }
