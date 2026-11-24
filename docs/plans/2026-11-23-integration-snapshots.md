@@ -8,6 +8,27 @@
 
 **Stack** Next.js, Supabase Postgres, the existing `pg_cron` and `pg_net` scheduling pattern, and Vitest.
 
+## 0. Measure current-day reads before implementation
+
+1. Measure database-to-app bytes for a TRMNL markup poll, the web live and card views, and the iOS live-power, mobile summary, and bill-summary routes. Use a marked Dev database or an isolated Postgres fixture. Test an early and a late point in the site-local day, warm and cold reads, and unchanged revision requests where supported. Report archive payload, auth and site metadata, and billing and tariff reads separately where the harness allows.
+2. Count production requests over a representative day. Classify web and iOS requests by their view or route because both use `/api/site-live-data`. Separate poll volume from runtime log-line counts and count repeated requests for an unchanged source revision. Report database protocol bytes and Supabase-metered egress separately.
+3. Compare the baseline with the estimated end-to-end cost of a prepared snapshot, including its refresh reads. If only one route or query dominates, evaluate a targeted cache or a narrower read first. Use a shared latest-value snapshot only if repeated reads across consumers justify maintaining it. Confirm the pilot scope once the baseline is available.
+
+### Initial measurements, November 24
+
+The isolated Postgres trace used one synthetic site, a single tariff period, 23 prior days and 151 samples at midday or 288 late in the day. It counted PostgreSQL response bytes at the app, excluding connection setup, TLS, and background Tesla refreshes. The TRMNL measurements used the authenticated markup route.
+
+| Request | Database response bytes |
+| --- | ---: |
+| TRMNL markup, midday / late | 8,533 / 9,052 |
+| Web live, midday cold / warm | 8,837 / 4,447 |
+| Web card, cold / warm | 1,830 / 318 |
+| iOS daily summary, midday cold / warm / unchanged cold | 8,666 / 4,276 / 2,327 |
+| iOS bill summary without outlook, cold | 7,884 |
+| iOS bill outlook, cold / unchanged cold | 12,360 / 2,755 |
+
+In production, 68 complete day archives across 12 TRMNL-linked sites in the preceding week had compressed payloads of 1,890 bytes at the median and 2,234 bytes at the 95th percentile. Those are stored payload sizes. The available production logs do not give database bytes per request or a representative daily split between web and iOS. A production request count by view and a byte measurement on representative sites remain the decision gate. The synthetic results show that the existing iOS conditional paths already avoid chart reads when the source is unchanged.
+
 ## 1. Share the current billing calculation
 
 **Files** Create `cmd/next-app/src/lib/current-billing-service.ts` and its test. Update `cmd/next-app/src/app/api/mobile/bill-summary/route.ts` and its test. Reuse `mobile-bill-summary.ts`, `billing-availability.ts`, `energy-repo.ts`, and the tariff schedule helpers under `cmd/next-app/src/lib/`.
