@@ -1,10 +1,80 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label } from '@/components/ui/Form';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import type { IntegrationCredential } from '@/lib/integration-credential-repo';
+
+const BILLING_ENDPOINT = '/api/integrations/v1/billing';
+
+// The origin is fixed for the lifetime of this page and only available in the browser.
+const subscribeToOrigin = () => () => {};
+const browserOrigin = () => window.location.origin;
+const serverOrigin = () => 'https://your-pwusage-host';
+
+function BillingIntegrationExamples() {
+    const id = useId();
+    const [tab, setTab] = useState('curl');
+    const origin = useSyncExternalStore(subscribeToOrigin, browserOrigin, serverOrigin);
+    const endpoint = new URL(BILLING_ENDPOINT, origin).href;
+    const curlExample = `curl --include --header "Authorization: Bearer $PWUSAGE_TOKEN" "${endpoint}"`;
+    const powerShellExample = `$response = Invoke-WebRequest -UseBasicParsing -Uri '${endpoint.replaceAll("'", "''")}' -Headers @{
+    Authorization = "Bearer $env:PWUSAGE_TOKEN"
+}
+$response.StatusCode
+$response.Headers['ETag']
+$response.Content`;
+    const nodeExample = `const token = process.env.PWUSAGE_TOKEN;
+if (!token) throw new Error('Set PWUSAGE_TOKEN first.');
+
+const response = await fetch(${JSON.stringify(endpoint)}, {
+    headers: { Authorization: 'Bearer ' + token },
+});
+
+console.log('HTTP', response.status);
+console.log('ETag', response.headers.get('etag'));
+console.log(await response.text());`;
+
+    const examples = [
+        { value: 'curl', label: 'curl', code: curlExample },
+        { value: 'powershell', label: 'PowerShell', code: powerShellExample },
+        {
+            value: 'node', label: 'Node.js', code: nodeExample,
+            instruction: <>Save this as <code>test-billing.mjs</code> and run <code>node test-billing.mjs</code>.</>,
+        },
+    ];
+
+    return (
+        <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-3 rounded-md border border-border p-3 text-sm">
+            <p>Set the <code>PWUSAGE_TOKEN</code> environment variable to the token you created. A successful request returns HTTP 200 and the current bill.</p>
+            <TabsList aria-label="Billing endpoint examples" onKeyDown={event => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                const step = event.key === 'ArrowRight' ? 1 : -1;
+                event.preventDefault();
+                const current = examples.findIndex(example => example.value === tab);
+                const next = (current + step + examples.length) % examples.length;
+                event.currentTarget.querySelectorAll('button')[next]?.focus();
+                setTab(examples[next].value);
+            }}>
+                {examples.map(({ value, label }) => (
+                    <TabsTrigger key={value} id={`${id}-${value}`} value={value}
+                        aria-controls={`${id}-${value}-example`} tabIndex={tab === value ? 0 : -1}>
+                        {label}
+                    </TabsTrigger>
+                ))}
+            </TabsList>
+            {examples.map(({ value, code, instruction }) => (
+                <div key={value} id={`${id}-${value}-example`} role="tabpanel" aria-labelledby={`${id}-${value}`}
+                    hidden={tab !== value} tabIndex={0} className="space-y-2">
+                    {instruction && <p>{instruction}</p>}
+                    <pre className="overflow-x-auto rounded-md bg-bg-muted p-3"><code>{code}</code></pre>
+                </div>
+            ))}
+        </Tabs>
+    );
+}
 
 export function BillingIntegrations({ siteId }: { siteId: string }) {
     const url = `/api/site/${encodeURIComponent(siteId)}/billing-integrations`;
@@ -86,7 +156,7 @@ export function BillingIntegrations({ siteId }: { siteId: string }) {
             </CardHeader>
             <CardContent className="space-y-4">
                 <div className="space-y-1 text-sm">
-                    <p>Send a GET request to <code className="break-all">/api/integrations/v1/billing</code> with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+                    <p>Send a GET request to <code className="break-all">{BILLING_ENDPOINT}</code> with <code>Authorization: Bearer &lt;token&gt;</code>.</p>
                     <p>Send the returned ETag as <code>If-None-Match</code> on later requests. A 304 response means you can reuse the previous bill.</p>
                 </div>
                 <form onSubmit={createToken} className="flex flex-wrap items-end gap-2">
@@ -107,6 +177,7 @@ export function BillingIntegrations({ siteId }: { siteId: string }) {
                         </Button>
                     </div>
                 )}
+                <BillingIntegrationExamples />
                 {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
                 {credentials && credentials.length > 0 && (
                     <ul className="divide-y divide-border">
