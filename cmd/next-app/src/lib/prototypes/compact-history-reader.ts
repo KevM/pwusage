@@ -2,7 +2,7 @@ import {IncompleteTariffAttributionError} from '../billing-availability';
 /** Reads measurements and billing projections from versioned energy day records. */
 import type { EnergyData } from '../db-types';
 import { bucketEnergyRows, energyMeasurements } from '../energy-buckets';
-import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow, CycleAggregatesAndCoverage, DailyCoverageStat, EnergyHistoryReader } from '../energy-repo';
+import type { LatestEnergySnapshot,LatestBatterySoc,CycleAggregateRow, CycleAggregatesAndCoverage, CurrentBillingDay, DailyCoverageStat, EnergyHistoryReader } from '../energy-repo';
 import { addDaysInSiteTimezone, formatSiteDate, getSiteMidnight } from '../date-utils';
 import { verifyDayMetadata,type SummarizedHistoryDay } from './compact-day-metadata';
 import { decodeDaySamples, rollupDay, type DayArchive, type DayRollup } from './compact-energy';
@@ -21,13 +21,14 @@ export interface FinalizedHistoryDay {
 }
 export interface HistorySnapshot { days: FinalizedHistoryDay[] }
 export interface AggregateHistorySnapshot { timezone:string|null; fullDays:SummarizedHistoryDay[]; detail:HistorySnapshot }
-export interface ScalarHistorySnapshot {attributionComplete?:boolean;timezone:string|null;aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[];detail:HistorySnapshot}
+export interface ScalarHistorySnapshot {currentDayCompatible?:boolean;attributionComplete?:boolean;timezone:string|null;aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[];detail:HistorySnapshot}
+export interface ScalarHistoryMode { billing: boolean; coverage: boolean; currentDay?: CurrentBillingDay }
 export interface HistorySnapshotStore {
     getLatestEnergyData?(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null>;
     getLatestBatterySoc?(siteId:string,since:Date):Promise<LatestBatterySoc|null>;
     getLatestTimestamp?(siteId:string):Promise<Date|null>;
     /** Full-day digests verified inside PostgreSQL before projecting scalar results. */
-    readScalarSnapshot?(siteId:string,start:Date,end:Date,mode:{billing:boolean;coverage:boolean}):Promise<ScalarHistorySnapshot>;
+    readScalarSnapshot?(siteId:string,start:Date,end:Date,mode:ScalarHistoryMode):Promise<ScalarHistorySnapshot>;
     /** One coherent revision of intersecting site-local day records and summaries. */
     readSnapshot(siteId: string, start: Date, end: Date): Promise<HistorySnapshot>;
     hasData?(siteId: string): Promise<boolean>;
@@ -91,9 +92,10 @@ export class CompactHistoryReader implements EnergyHistoryReader {
         return {fullDays,detail};
     }
 
-    private async projectedRequest(siteId:string,start:Date,end:Date,mode:{billing:boolean;coverage:boolean}):Promise<CycleAggregatesAndCoverage|null> {
+    private async projectedRequest(siteId:string,start:Date,end:Date,mode:ScalarHistoryMode):Promise<CycleAggregatesAndCoverage|null> {
         if (!this.store.readScalarSnapshot) return null;
         const snapshot=await this.store.readScalarSnapshot(siteId,start,end,mode);
+        if (mode.currentDay && snapshot.currentDayCompatible !== true) return null;
         if(snapshot.timezone!==null && snapshot.timezone!==this.timezone) throw new Error('History timezone mismatch');
         const ids=new Set<string>();
         for(const row of snapshot.aggregates) {
@@ -125,9 +127,17 @@ export class CompactHistoryReader implements EnergyHistoryReader {
         if(mode.billing&&snapshot.attributionComplete===false)throw new IncompleteTariffAttributionError();
         const aggregate={fullDays:[],detail};
         const aggregates=mode.billing?[...snapshot.aggregates,...this.cycleFromSnapshot(aggregate,start,end)]:[];
-        const coverage=mode.coverage?[...snapshot.coverage,...this.coverageFromSnapshot(aggregate,this.timezone)]:[];
+        const coverage=mode.coverage?[...snapshot.coverage,...this.coverageFromSnapshot(aggregate,this.timezone)]:snapshot.coverage;
         return {aggregates:aggregates.sort((a,b)=>+a.day-+b.day||a.tariff_id-b.tariff_id||(a.tariff_schedule_id??0)-(b.tariff_schedule_id??0)),
             coverage:coverage.sort((a,b)=>a.localDayKey.localeCompare(b.localDayKey))};
+    }
+
+    async getBillingSnapshot(siteId: string, start: Date, dayEnd: Date, currentDay: CurrentBillingDay,
+        includeHistoricalCoverage: boolean): Promise<CycleAggregatesAndCoverage | null> {
+        if (this.scalarWindows(start, dayEnd).length !== 1) return null;
+        return this.projectedRequest(siteId, start, dayEnd, {
+            billing: true, coverage: includeHistoricalCoverage, currentDay,
+        });
     }
 
     async getLatestEnergyData(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null> {

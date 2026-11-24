@@ -12,7 +12,7 @@ import { buildDayMetadataV3, type SummarizedHistoryDay } from './compact-day-met
 import { DAY_GAP_HEAL_DAYS, dayStatus, deriveDayAttribution, type DayAttribution, type DayRecordStatus, type DayStatus, type EmptyDayState } from './day-attribution';
 import { Schedule } from '../schedule';
 import {beginTransaction} from '../pg-transaction';
-import type { ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
+import type { ScalarHistoryMode, ScalarHistorySnapshot, AggregateHistorySnapshot, FinalizedHistoryDay, HistorySnapshot, HistorySnapshotStore } from './compact-history-reader';
 import { siteAuthRestoredSql, siteConnectionUserSql } from '../site-outage-sql';
 import { siteLocalDateString } from '../tariff-timeline';
 import { TariffTimelineRepo } from '../tariff-timeline-repo';
@@ -250,12 +250,28 @@ export class CompactHistoryStore implements HistorySnapshotStore {
         } catch (error) { await client.query('ROLLBACK');throw error; } finally { client.release(); }
     }
 
-    async readScalarSnapshot(siteId:string,start:Date,end:Date,mode:{billing:boolean;coverage:boolean}):Promise<ScalarHistorySnapshot> {
+    async readScalarSnapshot(siteId:string,start:Date,end:Date,mode:ScalarHistoryMode):Promise<ScalarHistorySnapshot> {
         if(!siteId || !Number.isSafeInteger(+start)||!Number.isSafeInteger(+end)||+end-+start>366*86400000) throw new Error('History window invalid or exceeds 366 days');
         if(start>=end) return {timezone:null,aggregates:[],coverage:[],detail:{days:[]}};
         const client=await this.pool.connect();
         try {
             await beginTransaction(client,'ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='15s'");
+            const currentDay = mode.currentDay;
+            if (currentDay) {
+                // Prove the whole-day projection answers the original sample window.
+                // Repeatable read keeps the proof, digest and totals on one revision.
+                const guard = await client.query<{ compatible: boolean }>(`SELECT NOT EXISTS (
+                    SELECT 1 FROM "EnergyDayArchive" a WHERE a.site_id=$1
+                        AND a.day_start >= $2 AND a.day_start < $4 AND ${HAS_SAMPLES_SQL('a.')}
+                        AND (a.day_start = $2 AND a.day_end = $3 AND ${MODERN_METADATA_SQL('a.')}
+                            AND a.axis='grid' AND a.last_timestamp < $4 AND a.attribution_complete
+                            AND a.attribution->'segments' = $5::jsonb) IS NOT TRUE
+                ) AS compatible`, [siteId, currentDay.start, end, currentDay.cutoff, JSON.stringify(currentDay.segments)]);
+                if (!guard.rows[0]?.compatible) {
+                    await client.query('COMMIT');
+                    return { currentDayCompatible: false, timezone: null, aggregates: [], coverage: [], detail: { days: [] } };
+                }
+            }
             // verify_compact_day_range checks every whole modern day in one query (raising on a
             // mismatch); only billing reads need the attribution lookup.
             const site=await client.query<{timezone:string;has_detail:boolean;verified:boolean;attribution_complete?:boolean}>(`SELECT timezone,
@@ -280,10 +296,13 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 aggregates.push(...result.rows.map(r=>({...r,day:new Date(r.day),tariff_id:Number(r.tariff_id),tariff_schedule_id:r.tariff_schedule_id===null?null:Number(r.tariff_schedule_id),
                     load_power:Number(r.load_power),solar_power:Number(r.solar_power),grid_power:Number(r.grid_power),battery_power:Number(r.battery_power)})));
             }
-            if(mode.coverage && timezone) {
+            if ((mode.coverage || currentDay) && timezone) {
+                const currentDayOnly = currentDay && !mode.coverage;
                 const result=await client.query<{key:string;count:number;first:Date;last:Date;gap:number;settled:boolean;is_open:boolean;fetched_at:Date|null}>(`WITH eligible AS MATERIALIZED (${eligible})
                     SELECT to_char(day_start AT TIME ZONE $4::text,'YYYY-MM-DD') AS key,sample_count AS count,
-                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled,is_open,fetched_at FROM eligible ORDER BY day_start`,[siteId,start,end,timezone]);
+                        first_timestamp AS first,last_timestamp AS last,max_interior_gap_ms AS gap,settled,is_open,fetched_at
+                    FROM eligible ${currentDayOnly ? 'WHERE day_start=$5' : ''} ORDER BY day_start`,
+                    currentDayOnly ? [siteId,start,end,timezone,currentDay.start] : [siteId,start,end,timezone]);
                 coverage.push(...result.rows.map(r=>({localDayKey:r.key,count:r.count,first:new Date(r.first),last:new Date(r.last),maxInteriorGapMs:r.gap,archived:r.settled,
                     ...(r.is_open?{open:true}:{}),...(r.fetched_at?{fetchedAt:new Date(r.fetched_at)}:{})})));
             }
@@ -294,7 +313,8 @@ export class CompactHistoryStore implements HistorySnapshotStore {
                 ORDER BY s.day_start,s.tariff_id,s.tariff_schedule_id NULLS FIRST`,[siteId,start,end])).rows:[];
             const days=partial.rows.map(a=>detailDay(a,summaries));
             await client.query('COMMIT');
-            return {...(mode.billing?{attributionComplete:site.rows[0]?.attribution_complete??true}:{}),timezone,aggregates,coverage,detail:{days}};
+            return {...(currentDay ? {currentDayCompatible: true} : {}),
+                ...(mode.billing?{attributionComplete:site.rows[0]?.attribution_complete??true}:{}),timezone,aggregates,coverage,detail:{days}};
         } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
     }
 
