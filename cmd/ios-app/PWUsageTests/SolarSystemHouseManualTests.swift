@@ -7,7 +7,6 @@ import Testing
 struct SolarSystemHouseManualTests {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
     private let old = Date(timeIntervalSince1970: 1_450_000_000)
-    private let added = Date(timeIntervalSince1970: 1_780_000_000)
     private let detected = SolarLayout(
         planes: [SolarLayoutPlane(azimuth: 200, tilt: 25, dcKwp: 6)],
         acClipKw: nil, confidence: .high, detectedAt: nil)

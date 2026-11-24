@@ -3,7 +3,7 @@ import { BatteryHoldRepo } from './battery-hold-repo';
 import { createEnergyRepo } from './energy-repo-factory';
 import { SiteRepo } from './site-repo';
 import { adaptTeslaData } from './nilm/tesla-adapter';
-import { summarizeHoldMonitoring, type BatteryHoldMonitoring, type HoldLiveStatus } from './battery-hold-monitoring';
+import { noLoadConfirmed, summarizeHoldMonitoring, type BatteryHoldMonitoring, type HoldLiveStatus } from './battery-hold-monitoring';
 import { evaluateHold } from './battery-hold-detection';
 import { refreshLiveStatus, refreshTodayData } from './today-refresh';
 import { createSiteTeslaClient, restoreBattery } from './battery-hold-service';
@@ -15,6 +15,9 @@ import type { PowerData } from './nilm/types';
 export const MONITOR_SITE_BUDGET_MS = 10000;
 export const MONITOR_HISTORY_BUDGET_MS = 4000;
 export const MONITOR_WORKERS = 3;
+// No site starts after this, so a worst-case run (one more site budget, lease
+// release and the reconcile) still leaves Live Activity delivery time in the same route.
+export const MONITOR_START_CUTOFF_MS = 30000;
 // One live_status per check: reuse a dashboard read from moments ago, never the previous check's.
 export const MONITOR_LIVE_TTL_MS = 2 * 60 * 1000;
 // Runs alongside the history refresh, inside the site budget; Tesla's own call is capped at 3s.
@@ -74,8 +77,7 @@ async function processHold(hold: BatteryHold): Promise<MonitorResult> {
         }
       }
       const monitoring = summarizeHoldMonitoring(hold, samples, now, decision, live);
-      if (!decision && !hold.restore_attempted_at && hold.mode === 'auto'
-        && !monitoring.job_detected && (monitoring.no_load_checks ?? 0) >= 2) {
+      if (!decision && !hold.restore_attempted_at && hold.mode === 'auto' && noLoadConfirmed(monitoring)) {
         decision = { restore: true, reason: 'no_load_detected' };
         monitoring.phase = 'restoring';
       }
@@ -108,7 +110,7 @@ export async function monitorBatteryHolds(holds: BatteryHold[]) {
     while (next < queue.length) {
       const hold = queue[next++];
       // Leave headroom for the site attempt, failure telemetry and lease cleanup.
-      if (Date.now() - started > 40000) results.push({ siteId: hold.site_id, status: 'skipped' });
+      if (Date.now() - started > MONITOR_START_CUTOFF_MS) results.push({ siteId: hold.site_id, status: 'skipped' });
       else results.push(await processHold(hold));
     }
   }));

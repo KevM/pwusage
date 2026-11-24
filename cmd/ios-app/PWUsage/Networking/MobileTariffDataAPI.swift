@@ -28,7 +28,6 @@ protocol MobileTariffDataAPI: Sendable {
     func deleteTariffPeriod(siteID: String, periodID: Int) async throws -> SiteTariffsTimelineResponse
     func retryTariffReattribution(siteID: String) async throws -> SiteTariffsTimelineResponse
     func saveSystemCosts(siteID: String, body: SystemCostsWriteRequest) async throws -> SiteTariffsTimelineResponse
-    func siteRateCountry(siteID: String) async throws -> SiteRateCountryDTO
     func setSiteRateCountry(
         siteID: String,
         body: SiteRateCountryWriteRequest
@@ -93,10 +92,6 @@ extension MobileTariffDataAPI {
         siteID _: String,
         body _: SystemCostsWriteRequest
     ) async throws -> SiteTariffsTimelineResponse {
-        throw PWUsageAPIError.invalidResponse
-    }
-
-    func siteRateCountry(siteID _: String) async throws -> SiteRateCountryDTO {
         throw PWUsageAPIError.invalidResponse
     }
 

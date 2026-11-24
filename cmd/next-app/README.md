@@ -49,8 +49,11 @@ The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for b
 
 Sub-daily jobs run from Supabase `pg_cron` + `pg_net` (created by migrations, authorized with `CRON_SECRET`), not `vercel.json`:
 
-- **Battery hold monitor** (`/api/cron/restore-reserve`): every 15 minutes.
-- **Live Activity delivery** (`/api/cron/battery-hold-activity-delivery`): every 5 minutes at :02, :07, …, about 2 minutes after each monitor run; a no-op until the `APNS_*` variables are set. See [Live Activity delivery](../../docs/battery-hold-live-activity-delivery.md).
+- **Battery Saver** (`/api/cron/restore-reserve`): every 5 minutes, called only while a hold is active or a Live Activity needs work. Checks each hold, then sends Live Activity updates (a no-op until the `APNS_*` variables are set). See [Live Activity delivery](../../docs/battery-hold-live-activity-delivery.md).
+- **Gap heal** (`/api/cron/heal-gaps`): every 2 hours at :37. Re-fetches missing history days for sites used in the last 7 days.
+- **Tariff re-attribution** (`/api/cron/reattribute-tariffs`): every 5 minutes, called only while a re-attribution is pending or stalled.
+- **Utility rate estimates** (`/api/cron/urdb-estimates`): every 10 minutes, called only while a site needs an estimate; at most five sites a run.
+- **Run-history prune**: nightly at 03:41 UTC, deletes `cron.job_run_details` rows older than 7 days (SQL only, no route).
 
 ## Getting Started
 

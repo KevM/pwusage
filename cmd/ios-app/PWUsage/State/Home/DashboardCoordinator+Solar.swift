@@ -47,10 +47,6 @@ extension DashboardCoordinator {
         clearAutomaticPublication()
     }
 
-    /// Settings text edits and profile comparisons are deliberately local.
-    func solarForecastSettingsDidEdit() {}
-    func loadProfileDidEdit() {}
-
     func beginForecastOperation() -> Int {
         forecastOperationPending = false
         forecastGeneration += 1

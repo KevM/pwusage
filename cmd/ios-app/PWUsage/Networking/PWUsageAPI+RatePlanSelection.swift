@@ -2,11 +2,6 @@ import Foundation
 import PWUsageCore
 
 extension PWUsageAPI {
-    func siteRateCountry(siteID: String) async throws -> SiteRateCountryDTO {
-        let data = try await request(url: makeSiteURL(siteID: siteID, suffix: "rate-country"))
-        return try decodeSelectionPayload(SiteRateCountryDTO.self, from: data)
-    }
-
     /// Sends only a country code and its source; coordinates never leave the device.
     func setSiteRateCountry(
         siteID: String,

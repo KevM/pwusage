@@ -3,7 +3,6 @@ import PWUsageCore
 
 /// Loads `single-plan-cycle.json` for app-level bill/savings tests that stay in `PWUsageTests`.
 struct BillPricingFixture: Decodable {
-    let name: String
     let now: Date
     let billingDay: Int
     let timeline: SiteTariffsTimelineResponse
@@ -16,19 +15,6 @@ struct BillPricingFixture: Decodable {
         let solarWh: [Float?]
         let loadWh: [Float?]
         let gridWh: [Float?]
-
-        func asEnergyFlowDay() -> EnergyFlowDay {
-            let empty = [Float?](repeating: nil, count: gridWh.count)
-            return EnergyFlowDay(
-                day: day,
-                dayStart: dayStart,
-                solarWh: solarWh,
-                loadWh: loadWh,
-                gridWh: gridWh,
-                batteryWh: empty,
-                batterySoc: empty
-            )
-        }
     }
 
     struct Expected: Decodable {

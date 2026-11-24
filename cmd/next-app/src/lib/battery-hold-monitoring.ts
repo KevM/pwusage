@@ -23,12 +23,19 @@ export interface BatteryHoldMonitoring {
   /** When Tesla measured the live reading (live_status.timestamp). */
   live_at?: string | null;
   no_load_checks?: number;
+  /** When the first fresh check with no job ran: the start of the no-load streak. */
+  no_load_since?: string | null;
   no_load_last_checked_at?: string | null;
   no_load_last_sample_at?: string | null;
   job_detected?: boolean;
 }
 
-const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+// The restore-reserve-trigger checks every 5 minutes (:00, :05, ...) while a hold is active.
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+// Auto restores a hold that never saw a job once fresh no-load checks span this
+// long. 14 minutes, not 15, absorbs cron jitter so two quarter-hour checks still
+// qualify; at the 5-minute cadence it takes the fourth fresh check.
+export const NO_LOAD_CONFIRM_MS = 14 * 60 * 1000;
 const finite = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const isoOrNull = (value: unknown): string | null => {
   const ms = typeof value === 'string' && value ? Date.parse(value) : NaN;
@@ -43,6 +50,7 @@ function baseMonitoring(hold: BatteryHold, now: Date, live: HoldLiveStatus | nul
     sampled_at: null, estimated_load_w: null, baseline_load_w: null, home_load_w: null, peak_load_w: null,
     battery_percent: finite(live?.percentage_charged), live_at: isoOrNull(live?.timestamp),
     no_load_checks: hold.monitoring?.no_load_checks ?? 0,
+    no_load_since: hold.monitoring?.no_load_since ?? null,
     no_load_last_checked_at: hold.monitoring?.no_load_last_checked_at ?? null,
     no_load_last_sample_at: hold.monitoring?.no_load_last_sample_at ?? null,
     job_detected: hold.monitoring?.job_detected ?? false,
@@ -64,7 +72,18 @@ export function seedHoldMonitoring(hold: BatteryHold, live: HoldLiveStatus, now:
   return { ...result, phase: 'watching', baseline_load_w: Math.round(hold.baseline_load_w), peak_load_w: result.home_load_w };
 }
 
-// The existing restore-reserve-trigger runs at :00, :15, :30 and :45 UTC.
+/**
+ * True once an Auto hold has seen at least two fresh no-load checks spanning
+ * NO_LOAD_CONFIRM_MS. The span runs to the last fresh check, not to now, so a
+ * later check without new history can never complete it.
+ */
+export function noLoadConfirmed(monitoring: BatteryHoldMonitoring): boolean {
+  const since = Date.parse(monitoring.no_load_since ?? '');
+  const lastFresh = Date.parse(monitoring.no_load_last_checked_at ?? '');
+  return !monitoring.job_detected && (monitoring.no_load_checks ?? 0) >= 2
+    && Number.isFinite(since) && Number.isFinite(lastFresh) && lastFresh - since >= NO_LOAD_CONFIRM_MS;
+}
+
 export function summarizeHoldMonitoring(
   hold: BatteryHold, power: PowerData[], now: Date, decision: RestoreDecision | null,
   live?: HoldLiveStatus | null,
@@ -105,8 +124,10 @@ export function summarizeHoldMonitoring(
   const priorSample = Date.parse(result.no_load_last_sample_at ?? '');
   if (!decision && !result.job_detected && Number.isFinite(latestMs)
     && latestMs > hold.created_at.getTime() && now.getTime() - latestMs <= 20 * 60 * 1000
-    && (!Number.isFinite(priorSample) || latestMs > priorSample)
-    && (!Number.isFinite(priorCheck) || Math.floor(now.getTime() / CHECK_INTERVAL_MS) > Math.floor(priorCheck / CHECK_INTERVAL_MS))) {
+    && (!Number.isFinite(priorSample) || latestMs > priorSample)) {
+    // A streak counted before no_load_since existed started at its first (only) check.
+    result.no_load_since ??= (result.no_load_checks ?? 0) > 0 && Number.isFinite(priorCheck)
+      ? new Date(priorCheck).toISOString() : now.toISOString();
     result.no_load_checks = (result.no_load_checks ?? 0) + 1;
     result.no_load_last_checked_at = now.toISOString();
     result.no_load_last_sample_at = new Date(latestMs).toISOString();

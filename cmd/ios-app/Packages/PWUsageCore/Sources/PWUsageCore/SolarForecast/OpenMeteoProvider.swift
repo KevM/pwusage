@@ -35,6 +35,7 @@ public actor OpenMeteoProvider: SolarForecastProviding {
     }
     private var inFlight: [String: Fetch] = [:]
 
+    // periphery:ignore - read by OpenMeteoProviderTests
     /// Identity-free count useful for validating that callers share work without sharing cancellation.
     var activeRefreshWaiterCount: Int { inFlight.values.reduce(0) { $0 + $1.waiters.count } }
 

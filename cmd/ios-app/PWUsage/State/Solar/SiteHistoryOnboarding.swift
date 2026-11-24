@@ -117,11 +117,6 @@ final class SiteHistoryOnboarding {
         onProgress?(scope)
     }
 
-    /// Whether the site already has a layout the forecast can use.
-    func hasUsableLayout(scope: SolarForecastSiteScope) async -> Bool {
-        await environment.layoutConfidence(scope: scope) != nil
-    }
-
     func hasLocation(scope: SolarForecastSiteScope) async -> Bool {
         await environment.hasLocation(scope: scope)
     }

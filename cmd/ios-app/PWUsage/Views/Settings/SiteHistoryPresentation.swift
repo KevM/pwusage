@@ -48,7 +48,7 @@ struct SiteHistoryPresentation: Equatable {
         }
         // A found system nobody has seen stays up in any phase, until it is seen.
         showsBanner = showsForPhase || status?.isRevealOwed == true
-        accessibilitySummary = Self.summary(phase, line: wording.line, status: status)
+        accessibilitySummary = Self.summary(line: wording.line, status: status)
     }
 
     // MARK: - Phase
@@ -127,7 +127,7 @@ struct SiteHistoryPresentation: Equatable {
         return status.producingDays > 0 ? "\(downloaded), \(status.clearDays.formatted()) clear" : downloaded
     }
 
-    private static func summary(_ phase: Phase, line: String, status: SiteHistoryStatus?) -> String {
+    private static func summary(line: String, status: SiteHistoryStatus?) -> String {
         if let layout = status?.layout {
             return line.isEmpty ? describe(layout) : "\(describe(layout)) \(line)."
         }

@@ -4,6 +4,7 @@ import SwiftUI
 struct RatePlanEditorFlow: View {
     @Environment(\.dismiss) private var dismiss
     @State private var state: RatePlanEditorState
+    // periphery:ignore - read through its $binding by RatePlanSummaryScreen
     @State private var expandedSeasonIDs: Set<UUID> = []
     @State private var isConfirmingDiscard = false
 

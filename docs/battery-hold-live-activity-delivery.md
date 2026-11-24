@@ -1,14 +1,17 @@
 # Battery hold Live Activity delivery (plan Task 5)
 
-`/api/cron/battery-hold-activity-delivery` sends each registered Live Activity
-the latest state of its battery hold through the Apple Push Notification service
-(APNs). It runs as its own pg_cron + pg_net trigger, separate from the 15-minute
-battery monitor (`restore-reserve`), so a slow or failing Apple endpoint can never
-spend the monitor's 60-second budget.
+Delivery sends each registered Live Activity the latest state of its battery
+hold through the Apple Push Notification service (APNs). Since November 2026 it
+runs inside the Battery Saver cron, `/api/cron/restore-reserve`, right after the
+hold check: `runBatteryHoldCron` (`battery-hold-cron-service.ts`) checks every
+active hold first and then delivers with whatever remains of the 55-second plan,
+so a slow or failing Apple endpoint can never delay a restore, and each check's
+update goes out in the same run. If the check used up the budget, delivery is
+skipped (`cron.activity-delivery.skipped`) and the next run sends it.
 
 Code: `cmd/next-app/src/lib/battery-hold-apns.ts` (APNs client and payload),
-`battery-hold-activity-delivery-service.ts` (one run), and the claim/acknowledge
-methods in `battery-hold-activity-repo.ts`.
+`battery-hold-activity-delivery-service.ts` (one delivery pass), and the
+claim/acknowledge methods in `battery-hold-activity-repo.ts`.
 
 ## What a run does
 
@@ -49,7 +52,7 @@ exactly that. Delivery to a phone is verified on devices in Task 6.
 **A new terminal version skips backoff.** `syncDesired` clears `next_attempt_at`
 when the snapshot becomes terminal, and a failure racing such a version doesn't
 reimpose it, so the end is sent on the next run. Non-terminal monitoring
-updates keep the backoff; they arrive every 15 minutes and would otherwise defeat it.
+updates keep the backoff; they arrive every 5 minutes and would otherwise defeat it.
 
 **Logs and storage.** Tokens, signing material and APNs response bodies are
 never logged or stored. `last_error` holds only Apple's reason string
@@ -158,46 +161,29 @@ the route stays a no-op.
 
 ## Schedule and rollout
 
-Migration `20261015124607_battery_hold_activity_delivery_cron.sql` schedules
-`battery-hold-activity-delivery-trigger` every 5 minutes at :02, :07, :12, …
-(`2-59/5`). Each run lands about 2 minutes after a 15-minute monitor run
-(:00/:15/:30/:45, up to about 60 s), so monitor updates and automatic ends go out
-about 2 minutes after the check. A manual stop waits at most 5 minutes; a stop
-made in the iOS app can end the activity locally (Task 6). Every 2.5 minutes
-can't be written as one cron expression. If manual-stop latency matters, send
-from the stop path rather than running the cron more often.
+Migration `20261123141448_battery_saver_cron_merge_and_cron_prune.sql` removed
+the separate `battery-hold-activity-delivery-trigger` (every 5 minutes at :02,
+:07, …, from `20261015124607_battery_hold_activity_delivery_cron.sql`) and runs
+`restore-reserve-trigger` every 5 minutes instead of 15. The job calls the route
+only while there is work: an active hold, an activity row with an unsent update
+(`pending`) or a live registration (`current`) whose hold may have ended without
+a sync, or a row due to expire or be pruned. Idle, it makes no Vercel call. A
+manual stop therefore waits at most 5 minutes, as before, and monitor updates go
+out in the same run instead of about 2 minutes later.
 
-Egress: an idle run (keys set, nothing pending) measured 342 bytes of query
-results on local Postgres. Each run also reconnects through the pooler, because
-the app pool closes idle connections after 30 s; TLS plus auth is estimated at
-about 5 KB. That is roughly 40–60 MB a month at this cadence, versus 200–300 MB
-at once a minute. Each pending registration adds about 0.5 KB.
-
-It derives
-the URL from the existing `battery_restore_cron_target_url` Vault secret, so
-prod calls pwusage and the dev copy calls pwusagebeta. If that secret ever stops
-ending in `/api/cron/restore-reserve`, the job calls nothing. The route allows 30 s;
-pg_net allows 35 s.
-
-**CI runs migrations on merge to main, so merging turns on this production
-schedule.** Without the APNs variables a run is one authorized HTTP request
-that returns at once, with no database or Apple work. They are now set in
-Production and Preview, so each run reconciles and claims; Apple is contacted
-only once activities are registered (Task 6). Merging needs the
-owner's explicit approval (the plan does not authorize production schedules).
-To pause it later: `SELECT cron.unschedule('battery-hold-activity-delivery-trigger');`.
-
-Verified on the Supabase image (`public.ecr.aws/supabase/postgres:17.11.0.004`):
-the activity migrations and this schedule apply twice cleanly. One run queues
-`GET https://<host>/api/cron/battery-hold-activity-delivery` with the cron bearer
-token and a 35000 ms timeout. An unexpected target URL queues nothing.
+The route allows 60 s and pg_net 65 s. Without the APNs variables delivery is a
+no-op inside the run. To pause Battery Saver checks and delivery together:
+`SELECT cron.unschedule('restore-reserve-trigger');`. The migration test
+(`battery-hold-cron-postgres.test.ts`) runs the job's command against stand-ins
+for pg_cron, Vault and pg_net to prove when it calls the route.
 
 ## Tests
 
 - `npx vitest --run src/lib/battery-hold-apns.test.ts`: JWT (ES256, kid/iss/iat,
   30-minute reuse), payload compatibility, headers, endpoints, response
   classification, deadlines and reconnects, against a local HTTP/2 mock.
-- `src/lib/battery-hold-activity-delivery-service.test.ts` and the route test:
+- `src/lib/battery-hold-activity-delivery-service.test.ts`, `battery-hold-cron-service.test.ts`
+  and the `restore-reserve` route test:
   no-op paths, backoff, credential surfacing, bounded parallelism and budget,
   and no tokens or keys in logs.
 - `npm run test:hold:postgres` (local disposable Postgres): claim conditions,

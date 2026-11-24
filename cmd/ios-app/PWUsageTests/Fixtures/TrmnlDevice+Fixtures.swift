@@ -1,5 +1,4 @@
 import Foundation
-@testable import PWUsage
 import PWUsageCore
 
 extension TrmnlComponentConfig {

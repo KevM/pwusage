@@ -12,7 +12,7 @@ enum SmartShiftFixtures {
     static let now = at(8.5)
     static let horizonEnd = at(48)
 
-    static func historyContext(asOf: Date, forecastHours: Bool = false) -> Estimator.PlanningContext {
+    static func historyContext(asOf: Date) -> Estimator.PlanningContext {
         let slots = stride(from: 0, to: 1440, by: 30).map { minute in
             Estimator.PlanningSlot(localMinute: minute, homeKw: 0.5, batteryNetChargeKw: 0,
                                    gridNetExportKw: (480 ..< 1200).contains(minute) ? 2 : -0.5,

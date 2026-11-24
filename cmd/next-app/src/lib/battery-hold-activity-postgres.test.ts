@@ -690,7 +690,9 @@ describe.skipIf(!safeSocket)('BatteryHoldActivity isolated PostgreSQL', () => {
       const id = await pendingRow();
       const owner = randomUUID();
       await claim(owner);
-      expect(await repo.releaseClaim(id, owner)).toBe(true);
+      // Another owner's release is a no-op; the claimant's releases its row.
+      expect(await repo.releaseClaims([id], randomUUID())).toBe(0);
+      expect(await repo.releaseClaims([id], owner)).toBe(1);
       expect((await rows())[0]).toMatchObject({ claim_owner: null, attempt_count: 0, next_attempt_at: null });
       expect(await claim()).toHaveLength(1);
     });

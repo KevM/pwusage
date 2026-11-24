@@ -1,9 +1,13 @@
-project:
-  project: PWUsage.xcodeproj
-  schemes:
-    - PWUsage
-  targets:
-    - PWUsage
-    - PWUsageWidgets
+# Periphery 3 reads these keys at the top level. It scans every target the schemes build,
+# so the PWUsage scheme covers the app, the widget extension it embeds, and PWUsageCore.
+project: PWUsage.xcodeproj
+schemes:
+  - PWUsage
 retain_public: true
 retain_objc_accessible: true
+# Synthesized encode(to:), == and hash(into:) read every stored property, which Periphery cannot
+# see. Decoded fields the app never reads are still reported.
+retain_encodable_properties: true
+retain_equatable_properties: true
+retain_hashable_properties: true
+retain_swift_ui_previews: true
