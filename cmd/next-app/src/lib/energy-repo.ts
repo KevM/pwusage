@@ -3,7 +3,8 @@ import { buildBillOutlookHistory, type BillOutlookHistory, type BillOutlookDay }
 import { pool, Tariff, EnergyData, TariffSchedule } from './db';
 import { wattsToKilowatts } from './energy-utils';
 import { priceBillUsage } from './bill-pricing';
-import { getSiteMidnight } from './date-utils';
+import { addDaysInSiteTimezone, getSiteMidnight } from './date-utils';
+import { deriveDayAttribution, type TariffSegment } from './prototypes/day-attribution';
 
 import { Schedule } from './schedule';
 import { SiteRepo } from './site-repo';
@@ -69,6 +70,10 @@ export interface UsageByTOUAggregationInputs {
     tariffMap: Map<number, Tariff>;
     scheduleMap: Map<number, TariffSchedule>;
 }
+
+type BillingContext = Pick<UsageByTOUAggregationInputs, 'siteId' | 'schedule' | 'tariffMap' | 'scheduleMap'> & {
+    timezone: string;
+};
 
 /**
  * Canonical "today so far" scalar totals. Single source of truth — both the
@@ -139,11 +144,18 @@ export function sumTodayRows(rows: EnergyData[]): TodayTotals {
 
 /** Read backend: day records (`CompactHistoryReader`), the only energy store. */
 export interface CycleAggregatesAndCoverage { aggregates:CycleAggregateRow[];coverage:DailyCoverageStat[] }
+export interface CurrentBillingDay {
+    start: Date;
+    cutoff: Date;
+    segments: TariffSegment[];
+}
 export interface EnergyHistoryReader {
     getLatestEnergyData(siteId:string,asOf?:Date):Promise<LatestEnergySnapshot|null>;
     getLatestBatterySoc(siteId:string,since:Date):Promise<LatestBatterySoc|null>;
     getLatestTimestamp(siteId:string):Promise<Date|null>;
     getCycleAggregatesAndCoverage(siteId:string,start:Date,end:Date,timezone:string):Promise<CycleAggregatesAndCoverage>;
+    getBillingSnapshot?(siteId: string, start: Date, dayEnd: Date, currentDay: CurrentBillingDay,
+        includeHistoricalCoverage: boolean): Promise<CycleAggregatesAndCoverage | null>;
     getDailyCoverage(siteId: string, start: Date, end: Date, timezone: string): Promise<DailyCoverageStat[]>;
     hasData(siteId: string): Promise<boolean>;
     getRawEnergyData(siteId: string, start: Date, end: Date): Promise<EnergyData[]>;
@@ -215,7 +227,7 @@ FROM w`,
         return new Map(res.rows.map((r: { site_id: string; n: string | number }) => [r.site_id, Number(r.n)]));
     }
 
-    private async usageContext(siteId:string) {
+    private async usageContext(siteId:string): Promise<BillingContext | null> {
 
         const siteRepo = new SiteRepo();
         const site = await siteRepo.getSite(siteId);
@@ -235,6 +247,41 @@ FROM w`,
         return {siteId,timezone:site.timezone,schedule,tariffMap,scheduleMap};
     }
 
+    private async readBillingThroughToday(
+        context: BillingContext,
+        start: Date, today: Date, cutoff: Date, includeHistoricalCoverage: boolean,
+    ) {
+        if (!this.historyReader.getBillingSnapshot || start > today || cutoff <= today) return null;
+        const tariff = context.schedule.getTariffPeriod(today)?.tariff;
+        if (!tariff) return null;
+        const dayEnd = addDaysInSiteTimezone(today, 1, context.timezone);
+        const { segments } = deriveDayAttribution(context.schedule, tariff.id, today, dayEnd);
+        const snapshot = await this.historyReader.getBillingSnapshot(context.siteId, start, dayEnd,
+            { start: today, cutoff, segments }, includeHistoricalCoverage);
+        if (!snapshot) return null;
+
+        const coverage = snapshot.coverage.find(day => day.first && day.first >= today);
+        if (coverage?.first && coverage.last) {
+            // Preserve the sample path's first-seen period order. A gap can hide the
+            // first appearance of a period when that period occurs in multiple segments.
+            const key = (tariffId: number, scheduleId: number | null) => `${tariffId}:${scheduleId}`;
+            const order = new Map<string, number>();
+            const first = (+coverage.first - +today) / 60000;
+            const last = (+coverage.last - +today) / 60000;
+            const hasGap = coverage.maxInteriorGapMs > 300000;
+            for (const [index, segment] of segments.entries()) {
+                if (segment.offset > last) break;
+                if ((segments[index + 1]?.offset ?? Infinity) <= first) continue;
+                const period = key(segment.tariffId, segment.scheduleId);
+                if (order.has(period) && hasGap) return null;
+                if (!order.has(period)) order.set(period, index);
+            }
+            const position = (row: CycleAggregateRow) => order.get(key(row.tariff_id, row.tariff_schedule_id)) ?? segments.length;
+            snapshot.aggregates.sort((a, b) => +a.day - +b.day || (+a.day === +today ? position(a) - position(b) : 0));
+        }
+        return { snapshot, dayEnd };
+    }
+
     /** Pass the already-read site-day samples to share a snapshot with mobile totals. */
     async getUsageByTOU(siteId: string, start: Date, end: Date, todayRows?: EnergyData[]): Promise<UsageData[]> {
         const context=await this.usageContext(siteId);
@@ -248,6 +295,12 @@ FROM w`,
         const splitPoint = new Date(
             Math.max(start.getTime(), Math.min(todayStart.getTime(), end.getTime()))
         );
+        if (!todayRows) {
+            const projected = await this.readBillingThroughToday(context, start, todayStart, end, false);
+            if (projected) return EnergyRepo.aggregateUsageByTOU({
+                ...context, start, priorAggregates: projected.snapshot.aggregates, todayRaw: [],
+            });
+        }
 
         // Fetch prior aggregates and today's raw data in parallel
         const [priorAggregates, todayRaw] = await Promise.all([
@@ -266,8 +319,10 @@ FROM w`,
         if (!context) return { usage: [], outlook: null };
         const now = new Date();
         const stop = new Date(Math.min(+now, +end));
-        const split = new Date(Math.max(+start, Math.min(+EnergyRepo.getSiteMidnight(now, context.timezone), +stop)));
-        const [prior, raw] = await Promise.all([
+        const today = EnergyRepo.getSiteMidnight(now, context.timezone);
+        const split = new Date(Math.max(+start, Math.min(+today, +stop)));
+        const projected = await this.readBillingThroughToday(context, start, today, stop, true);
+        const [prior, raw] = projected ? [projected.snapshot, []] : await Promise.all([
             start < split ? this.getCycleAggregatesAndCoverage(siteId, start, split, context.timezone)
                 : Promise.resolve({ aggregates: [], coverage: [] }),
             split < stop ? this.getRawEnergyData(siteId, split, stop) : Promise.resolve([]),
@@ -281,7 +336,7 @@ FROM w`,
             priorAggregates: prior.aggregates,
             todayRaw: raw,
             coverage: prior.coverage,
-            split,
+            split: projected?.dayEnd ?? split,
             lastTimestampMs: last,
         });
         return { usage, outlook };

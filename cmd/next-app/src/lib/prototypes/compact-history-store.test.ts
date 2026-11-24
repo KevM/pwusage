@@ -89,6 +89,35 @@ describe.skipIf(!socket)('compact persistence on private local PostgreSQL', { ti
     const daySamples=(solar=3)=>Array.from({length:288},(_,n)=>({site_id:'site',timestamp:new Date(+start+n*300000),tariff_id:1,tariff_schedule_id:2,
         load_power:20,solar_power:solar,grid_power:10,battery_power:-2,battery_soc:n%12===0?50:null}));
     const fetched=new Date('2026-01-09T12:00:00Z');
+    it('projects the open day only when its samples and tariff match the bill window', async () => {
+        const cutoff = new Date(+start + 600000);
+        const currentDay = {
+            start, cutoff,
+            segments: [{ offset: 0, tariffId: 1, scheduleId: 2 }],
+        };
+        const reader = new CompactHistoryReader(store, 'America/Chicago');
+        const read = () => reader.getBillingSnapshot('site', start, end, currentDay, true);
+        const empty = { aggregates: [], coverage: [] };
+        await expect(read()).resolves.toEqual(empty);
+        await store.writeDay('site', start, [], new Date(+start + 300000), cutoff);
+        await expect(read()).resolves.toEqual(empty);
+        await store.writeDay('site', start, daySamples().slice(0, 2), cutoff, cutoff);
+        await expect(read()).resolves.toMatchObject({
+            aggregates: [{ day: start, tariff_id: 1, tariff_schedule_id: 2, grid_power: 20 }],
+            coverage: [{ count: 2, first: start, last: new Date(+start + 300000), open: true }],
+        });
+        await expect(reader.getBillingSnapshot('site', start, end, {
+            ...currentDay, cutoff: new Date(+start + 300000),
+        }, true)).resolves.toBeNull();
+        await expect(reader.getBillingSnapshot('site', start, end, {
+            ...currentDay, segments: [{ offset: 0, tariffId: 1, scheduleId: 3 }],
+        }, true)).resolves.toBeNull();
+        const nextSample = { ...daySamples()[0], timestamp: end };
+        await store.writeDay('site', end, [nextSample], new Date(+end + 600000), new Date(+end + 600000));
+        await expect(reader.getBillingSnapshot('site', start, end, {
+            ...currentDay, cutoff: new Date(+end + 600000),
+        }, true)).resolves.toBeNull();
+    });
     it('writes a whole day from samples as the only copy, readable and billable',async()=>{
         const samples=daySamples();
         const result=await store.writeDay('site',start,samples,fetched,jobOptions.now);

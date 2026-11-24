@@ -311,6 +311,65 @@ describe('EnergyRepo.getUsageByTOU range clamping', () => {
 
 describe('EnergyRepo.getBillOutlook', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+    it('matches sample billing and outlook when today crosses a rate boundary', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const start = new Date('2026-11-01T00:00:00Z');
+        const today = new Date('2026-11-02T00:00:00Z');
+        const dayEnd = new Date('2026-11-03T00:00:00Z');
+        const end = new Date('2026-12-01T00:00:00Z');
+        vi.setSystemTime(new Date(+today + 600000));
+        const offPeak = { id: 20, season_id: 2, name: 'Off-Peak', buy_rate: .1, sell_rate: .03,
+            from_day_of_week: 0, to_day_of_week: 6, from_hour: 0, to_hour: 0, from_minute: 0, to_minute: 5 };
+        const peak = { ...offPeak, id: 10, name: 'On-Peak', buy_rate: .3, from_minute: 5, to_hour: 24, to_minute: 0 };
+        const tariff = { id: 2, site_id: 'site-1', name: 'Utility', updated: today, seasons: [
+            { id: 2, tariff_id: 2, name: 'All', from_month: 1, from_day: 1, to_month: 12, to_day: 31,
+                buy_rate: .3, sell_rate: .04, schedules: [offPeak, peak] }] };
+        const previousTariff = { ...tariff, id: 1, updated: start };
+        const previousPeak = { ...peak, id: 30, buy_rate: .2 };
+        vi.spyOn(SiteRepo.prototype, 'getSite').mockResolvedValue({ id: 'site-1', timezone: 'UTC', tariffs: [tariff] } as never);
+        vi.spyOn(TariffRepo.prototype, 'getTariffsForSite').mockResolvedValue([previousTariff, tariff]);
+        vi.spyOn(TariffRepo.prototype, 'getSchedulesForSite').mockResolvedValue([offPeak, peak, previousPeak]);
+        const rows = [
+            makeEnergyRow({ timestamp: today, tariff_id: 2, tariff_schedule_id: 20, grid_power: -120 }),
+            makeEnergyRow({ timestamp: new Date(+today + 300000), tariff_id: 2, tariff_schedule_id: 10, grid_power: 300 }),
+        ];
+        const todayTotals = rows.map(row => ({ ...row, day: today })).reverse();
+        const prior = {
+            aggregates: [{ ...todayTotals[0], day: start, tariff_id: 1, tariff_schedule_id: 30 }],
+            coverage: [{ localDayKey: '2026-11-01', count: 288, first: start,
+                last: new Date(+today - 300000), maxInteriorGapMs: 300000 }],
+        };
+        const currentCoverage = { localDayKey: '2026-11-02', count: 2, first: today,
+            last: rows[1].timestamp, maxInteriorGapMs: 300000, open: true };
+        const projected = vi.fn<NonNullable<EnergyHistoryReader['getBillingSnapshot']>>()
+            .mockResolvedValue(null);
+        const repo = new EnergyRepo({ ...unusedReader, getBillingSnapshot: projected });
+        const history = vi.spyOn(repo, 'getCycleAggregates').mockImplementation(async (_siteId, from) =>
+            +from === +start ? prior.aggregates : []);
+        const historyWithCoverage = vi.spyOn(repo, 'getCycleAggregatesAndCoverage').mockResolvedValue(prior);
+        const raw = vi.spyOn(repo, 'getRawEnergyData').mockResolvedValue(rows);
+        const expectedBill = await repo.getUsageByTOU('site-1', start, end);
+        const expectedOutlook = await repo.getBillOutlook('site-1', start, end);
+        const todayOnly = await repo.getUsageByTOU('site-1', today, end);
+
+        history.mockClear();
+        historyWithCoverage.mockClear();
+        raw.mockClear();
+        projected.mockImplementation(async (_id, from, _until, _currentDay, includeCoverage) => ({
+            aggregates: [...(+from === +start ? prior.aggregates : []), ...todayTotals],
+            coverage: [...(includeCoverage ? prior.coverage : []), currentCoverage],
+        }));
+        await expect(repo.getUsageByTOU('site-1', start, end)).resolves.toEqual(expectedBill);
+        await expect(repo.getBillOutlook('site-1', start, end)).resolves.toEqual(expectedOutlook);
+        await expect(repo.getUsageByTOU('site-1', today, end)).resolves.toEqual(todayOnly);
+        expect(projected).toHaveBeenLastCalledWith('site-1', today, dayEnd, expect.objectContaining({
+            segments: [{ offset: 0, tariffId: 2, scheduleId: 20 }, { offset: 5, tariffId: 2, scheduleId: 10 }],
+        }), false);
+        expect(raw).not.toHaveBeenCalled();
+        expect(history).not.toHaveBeenCalled();
+        expect(historyWithCoverage).not.toHaveBeenCalled();
+    });
+
     it.each([false, true])('reads once, respects the 25-hour DST day and marks gaps (%s)', async (gap) => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-11-02T06:10:00Z'));
