@@ -199,8 +199,6 @@ export function SettingsView({ site, installations, memberEmails, tariffTimeline
                 </CardContent>
             </Card>
 
-            <BillingIntegrations key={site.id} siteId={site.id} />
-
             {memberEmails.length > 1 ? (
                 <Card>
                     <CardHeader>
@@ -348,6 +346,8 @@ export function SettingsView({ site, installations, memberEmails, tariffTimeline
                 retryLoading={retryLoading}
                 onTimelineUpdated={setTimelineOverride}
             />
+
+            <BillingIntegrations key={site.id} siteId={site.id} />
         </div>
     );
 }
