@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label } from '@/components/ui/Form';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { useToast } from '@/components/ui/Toast';
 import type { IntegrationCredential } from '@/lib/integration-credential-repo';
 
 const BILLING_ENDPOINT = '/api/integrations/v1/billing';
@@ -15,6 +16,7 @@ const browserOrigin = () => window.location.origin;
 const serverOrigin = () => 'https://your-pwusage-host';
 
 function BillingIntegrationExamples() {
+    const { toast } = useToast();
     const id = useId();
     const [tab, setTab] = useState('curl');
     const origin = useSyncExternalStore(subscribeToOrigin, browserOrigin, serverOrigin);
@@ -46,6 +48,15 @@ console.log(await response.text());`;
         },
     ];
 
+    async function copyExample(code: string) {
+        try {
+            await navigator.clipboard.writeText(code);
+            toast({ title: 'Example copied', variant: 'success' });
+        } catch {
+            toast({ title: 'Couldn’t copy the example', description: 'Select the example and copy it manually.', variant: 'danger' });
+        }
+    }
+
     return (
         <Tabs value={tab} onValueChange={setTab} className="min-w-0 space-y-3 rounded-md border border-border p-3 text-sm">
             <p>Set the <code>PWUSAGE_TOKEN</code> environment variable to the token you created. A successful request returns HTTP 200 and the current bill.</p>
@@ -68,7 +79,12 @@ console.log(await response.text());`;
             {examples.map(({ value, code, instruction }) => (
                 <div key={value} id={`${id}-${value}-example`} role="tabpanel" aria-labelledby={`${id}-${value}`}
                     hidden={tab !== value} tabIndex={0} className="space-y-2">
-                    {instruction && <p>{instruction}</p>}
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                        {instruction && <p className="flex-1">{instruction}</p>}
+                        <Button type="button" variant="outline" size="sm" onClick={() => void copyExample(code)}>
+                            {value === 'curl' ? 'Copy Command' : 'Copy Example'}
+                        </Button>
+                    </div>
                     <pre className="overflow-x-auto rounded-md bg-bg-muted p-3"><code>{code}</code></pre>
                 </div>
             ))}
@@ -177,7 +193,7 @@ export function BillingIntegrations({ siteId }: { siteId: string }) {
                         </Button>
                     </div>
                 )}
-                <BillingIntegrationExamples />
+                {credentials && credentials.length > 0 && <BillingIntegrationExamples />}
                 {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
                 {credentials && credentials.length > 0 && (
                     <ul className="divide-y divide-border">
