@@ -138,6 +138,18 @@ class ControlTests(unittest.TestCase):
         self.reconcile(0)
         self.ecobee.set_mode.assert_called_once_with(aux.AUX)
 
+    def test_delayed_aux_keeps_restore_state_across_the_boundary(self):
+        self.ecobee.set_mode.side_effect = aux.ScriptError("Aux unconfirmed")
+        with self.assertRaises(aux.ScriptError):
+            self.reconcile(0)
+        self.assertEqual(self.reconcile(None, condition="off-peak"), "awaiting Aux confirmation")
+        self.assertEqual(self.state["previous_mode"], "heat")
+        self.ecobee.read.return_value = (aux.AUX, True, False)
+        self.ecobee.set_mode.side_effect = None
+        self.reconcile(None, condition="off-peak")
+        self.ecobee.set_mode.assert_called_with("heat")
+        self.assertTrue(self.state["restore_pending"])
+
     def test_leaves_manual_aux_cooling_and_auto_without_heat_demand_alone(self):
         for mode in (aux.AUX, "cool", "off", "auto"):
             with self.subTest(mode=mode):
@@ -166,55 +178,79 @@ class ControlTests(unittest.TestCase):
         self.assertNotIn(CONFIG.token, output.getvalue())
 
 
-class HomeAssistantApiTests(unittest.TestCase):
+class EcobeeApiTests(unittest.TestCase):
     def setUp(self):
-        env = {
-            "HA_URL": "http://127.0.0.1:8123", "HA_TOKEN": "test-ha-token",
-            "HA_CLIMATE_ENTITY": "climate.ecobee", "HA_AUX_SWITCH": "switch.ecobee_aux",
+        self.state = {"ecobee_tokens": {aux.ECOBEE_REFRESH_TOKEN: "test-refresh"}}
+        self.save = Mock()
+        self.thermostat = aux.EcobeeThermostat("123", self.state, self.save)
+
+    @staticmethod
+    def thermostat_response(mode):
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "status": {"code": 0},
+            "thermostatList": [
+                {"identifier": "456", "settings": {"hvacMode": "cool"}},
+                {"identifier": "123", "runtime": {"connected": True},
+                 "settings": {"hvacMode": mode, "hasHeatPump": True},
+                 "equipmentStatus": "fan,heatPump"},
+            ],
         }
-        with patch.dict("os.environ", env, clear=True):
-            self.thermostat = aux.HomeAssistant()
+        return response
 
-    @patch.object(aux, "fetch_service")
-    def test_requires_both_entities_and_distinguishes_aux_from_normal_heat(self, fetch):
-        climate = {"entity_id": "climate.ecobee", "state": "heat",
-                   "attributes": {"equipment_running": "fan,heatPump"}}
-        fetch.side_effect = [
-            (200, {"entity_id": "switch.ecobee_aux", "state": "on"}, None),
-            (200, climate, None),
-            (200, {"entity_id": "switch.ecobee_aux", "state": "off"}, None),
-            (200, {**climate, "state": "heat_cool"}, None),
-            (200, {"entity_id": "switch.ecobee_aux", "state": "unavailable"}, None),
+    @patch("pyecobee.requests.request")
+    @patch("pyecobee.requests.post")
+    def test_refreshes_and_confirms_aux_and_restore_for_the_selected_thermostat(self, refresh, request):
+        refresh.return_value.json.return_value = {"access_token": "new-access", "refresh_token": "rotated-refresh"}
+        accepted = Mock(status_code=200)
+        accepted.json.return_value = {"status": {"code": 0}}
+        request.side_effect = [
+            self.thermostat_response("auto"), accepted, self.thermostat_response(aux.AUX),
+            accepted, self.thermostat_response("auto"),
         ]
-        self.assertEqual(self.thermostat.read(), (aux.AUX, True, True))
         self.assertEqual(self.thermostat.read(), ("auto", True, True))
-        with self.assertRaisesRegex(aux.ScriptError, "could not read"):
-            self.thermostat.read()
-        self.assertEqual(fetch.call_args_list[0].args[1], "http://127.0.0.1:8123/api/states/switch.ecobee_aux")
-        self.assertEqual(fetch.call_args_list[1].args[1], "http://127.0.0.1:8123/api/states/climate.ecobee")
-
-    @patch.object(aux, "fetch_service")
-    def test_enables_aux_and_restores_the_saved_mode_explicitly(self, fetch):
-        fetch.return_value = (200, [], None)
         self.thermostat.set_mode(aux.AUX)
         self.thermostat.set_mode("auto")
-        request_aux, request_restore = fetch.call_args_list
-        self.assertEqual(request_aux.args[1], "http://127.0.0.1:8123/api/services/switch/turn_on")
-        self.assertEqual(request_aux.kwargs, {
-            "token": "test-ha-token", "method": "POST", "body": {"entity_id": "switch.ecobee_aux"},
+        self.assertEqual(self.state["ecobee_tokens"], {
+            aux.ECOBEE_ACCESS_TOKEN: "new-access", aux.ECOBEE_REFRESH_TOKEN: "rotated-refresh",
         })
-        self.assertEqual(request_restore.args[1], "http://127.0.0.1:8123/api/services/climate/set_hvac_mode")
-        self.assertEqual(request_restore.kwargs["body"], {"entity_id": "climate.ecobee", "hvac_mode": "heat_cool"})
+        self.save.assert_called_once()
+        refresh.assert_called_once()
+        for call, mode in ((request.call_args_list[1], aux.AUX), (request.call_args_list[3], "auto")):
+            self.assertEqual(call.args[0], "POST")
+            self.assertEqual(call.kwargs["json"], {
+                "selection": {"selectionType": "thermostats", "selectionMatch": "123"},
+                "thermostat": {"settings": {"hvacMode": mode}},
+            })
 
-    def test_failed_home_assistant_command_logs_the_attempt_without_claiming_success(self):
+    def test_authorizes_with_mfa_and_saves_only_tokens(self):
+        login = Mock(access_token="test-access", refresh_token="test-refresh")
+        login.refresh_tokens.side_effect = aux.EcobeeAuthMfaRequiredError("test-challenge")
+        login.submit_mfa_code.return_value = True
+        with patch.object(aux.sys.stdin, "isatty", return_value=True):
+            with patch("builtins.input", return_value="test@example.com"):
+                with patch.object(aux, "getpass", side_effect=["test-password", "test-otp"]):
+                    with patch.object(aux, "Ecobee", side_effect=[login, login]) as library:
+                        with patch.object(self.thermostat, "read", return_value=("heat", True, False)):
+                            self.thermostat.authorize()
+        login.submit_mfa_code.assert_called_once_with("test-challenge", "test-otp")
+        self.assertEqual(library.call_args.kwargs["config"], {
+            aux.ECOBEE_ACCESS_TOKEN: "test-access", aux.ECOBEE_REFRESH_TOKEN: "test-refresh",
+        })
+        self.assertNotIn("test-password", json.dumps(self.state))
+        self.assertNotIn("test-otp", json.dumps(self.state))
+
+    def test_unconfirmed_mode_does_not_log_success(self):
         output = StringIO()
-        with redirect_stdout(output), patch.object(aux, "fetch_service", return_value=(503, None, None)):
-            with self.assertRaisesRegex(aux.ScriptError, "HTTP 503"):
-                self.thermostat.set_mode("heat")
-        [event] = list(map(json.loads, output.getvalue().splitlines()))
-        self.assertEqual(event["event"], "ecobee_mode_change_requested")
-        self.assertEqual(event["target_mode"], "heat")
-        self.assertNotIn("test-ha-token", output.getvalue())
+        with redirect_stdout(output), patch.object(self.thermostat, "thermostat_index", return_value=0):
+            with patch.object(self.thermostat, "call"), patch.object(self.thermostat, "read", return_value=("heat", True, False)):
+                with self.assertRaisesRegex(aux.ScriptError, "not reported"):
+                    self.thermostat.set_mode(aux.AUX)
+        requested, unconfirmed = map(json.loads, output.getvalue().splitlines())
+        self.assertEqual(requested["event"], "ecobee_mode_change_requested")
+        self.assertEqual(unconfirmed["event"], "ecobee_mode_change_unconfirmed")
+        self.assertEqual(unconfirmed["observed_mode"], "heat")
+        self.assertNotIn("test-refresh", output.getvalue())
 
     def test_private_state_persists_across_runs(self):
         with tempfile.TemporaryDirectory() as directory:
