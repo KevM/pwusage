@@ -10,6 +10,7 @@ import { UserRepo } from '@/lib/user-repo';
 import { reconcileDueMemberships } from '@/lib/site-membership-daily';
 import { siteMembershipEnabled } from '@/lib/site-membership-flag';
 import { SiteRepo } from '@/lib/site-repo';
+import { cleanupExpiredOAuthRecords, type OAuthCleanupCounts } from '@/lib/oauth/oauth-repo';
 
 async function handleGET(request: NextRequest) {
     try {
@@ -28,12 +29,24 @@ async function handleGET(request: NextRequest) {
         const memberships = shared ? await reconcileDueMemberships(deadline) : null;
         const result = await userRepo.verifyAllUserStatuses(deadline);
 
-        logEvent('info', 'cron.check-users.completed', { summary: result, ...(shared ? { memberships } : {}) });
+        let oauthCleanup: OAuthCleanupCounts | null = null;
+        try {
+            oauthCleanup = await cleanupExpiredOAuthRecords();
+        } catch (error) {
+            logEvent('warn', 'oauth.cleanup.failed', { error });
+        }
+
+        logEvent('info', 'cron.check-users.completed', {
+            summary: result,
+            ...(shared ? { memberships } : {}),
+            ...(oauthCleanup ? { oauthCleanup } : {}),
+        });
 
         return NextResponse.json({
             success: true,
             summary: result,
-            ...(shared ? { memberships } : {})
+            ...(shared ? { memberships } : {}),
+            ...(oauthCleanup ? { oauthCleanup } : {}),
         });
 
     } catch (error) {

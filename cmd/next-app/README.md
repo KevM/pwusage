@@ -46,6 +46,16 @@ Create a token under **Site Settings → Billing Integrations** to read the
 current bill from another app. See the [billing integration contract](../../Authentication.md#integration-credentials)
 for the endpoint, ETags, and data freshness.
 
+## Remote MCP Server (OAuth 2.1)
+
+Connect AI assistants to `POST /api/mcp` using OAuth 2.1 + PKCE (`S256`).
+Discovery metadata is served at `/.well-known/oauth-protected-resource` and
+`/.well-known/oauth-authorization-server`, with DCR (`POST /api/oauth/register`),
+CIMD, consent (`/oauth/authorize`), token exchange/rotation (`POST /api/oauth/token`),
+revocation (`POST /api/oauth/revoke`), and Site Settings management under
+**Connected AI Apps** (`/api/oauth/grants`). See
+[Remote MCP Server & OAuth 2.1](../../Authentication.md#remote-mcp-server--oauth-21).
+
 ## Cron Jobs
 
 The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:

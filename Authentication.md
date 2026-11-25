@@ -691,12 +691,33 @@ missing or more than an hour old, it tries the existing throttled Tesla history
 refresh during the request. If no newer sample arrives, the previous timestamp
 still describes data freshness.
 
+## Remote MCP Server & OAuth 2.1
+
+AI assistants (Claude, ChatGPT, Cursor, VS Code, Antigravity) connect to the stateless Streamable HTTP MCP endpoint at `POST /api/mcp` using **OAuth 2.1 + PKCE (`S256`)** access tokens (`pwu_oat_...`). Personal `pwu_int_` integration tokens are rejected on `/api/mcp`.
+
+- **Discovery:**
+  - `GET /.well-known/oauth-protected-resource` (RFC 9728) advertises `resource` (`<origin>/api/mcp`), `authorization_servers`, and `scopes_supported` (`billing:read`, `usage:read`).
+  - `GET /.well-known/oauth-authorization-server` (RFC 8414) advertises `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `revocation_endpoint`, `code_challenge_methods_supported: ["S256"]`, `token_endpoint_auth_methods_supported: ["none"]`, and `client_id_metadata_document_supported: true`.
+- **Client resolution:**
+  - **DCR (RFC 7591):** `POST /api/oauth/register` registers public PKCE clients (`pwu_client_...`) with strict `redirect_uris` validation and IP rate limiting.
+  - **CIMD:** HTTPS URLs with a non-empty path are fetched on demand with SSRF guards (public DNS IP check, no redirects, 16 KB body cap, 3s timeout) and strict `client_id` matching.
+- **Consent & Tesla onboarding:**
+  - `GET /oauth/authorize` validates all OAuth parameters first, prompts unauthenticated users to **Continue with Tesla** (`/login?callback=...`), and lets authenticated users choose which home(s) to share.
+  - If a Tesla account has no Powerwall, `/no-sites` offers **Try a different Tesla account** (`/login?switch_account=1`, which sends `prompt=login`) and **Cancel and return to app** (`error=access_denied`).
+  - `POST /oauth/authorize/decision` enforces same-origin and CSRF token verification before issuing a 5-minute single-use authorization code (`OAuthAuthCode`).
+- **Tokens, rotation & revocation:**
+  - `POST /api/oauth/token` exchanges auth codes (verifying PKCE `S256`, `client_id`, `redirect_uri`, and `resource`) for a 1-hour `pwu_oat_` access token and a 30-day sliding / 90-day max `pwu_ort_` refresh token (SHA-256 hashed at rest).
+  - Refresh tokens rotate on every use; presenting an already-used refresh token or replaying a consumed auth code revokes the entire `OAuthGrant` and all its tokens.
+  - `POST /api/oauth/revoke` (RFC 7009) revokes the token's grant. Users can also disconnect apps under **Site Settings → Connected AI Apps** (`GET /api/oauth/grants`, `DELETE /api/oauth/grants/[id]`).
+- **Per-request authorization:** `POST /api/mcp` validates the `pwu_oat_` token, parent `OAuthGrant`, `resource`, active `User`, and live `SiteMember` intersection on every request.
+
 ## Authorization Decision Summary
 
 - Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
 - Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
 - Integration auth: home-scoped bearer credential with explicit grants. `/api/integrations/v1/billing` requires `billing:read`.
+- MCP OAuth 2.1 auth: opaque `pwu_oat_` access tokens bound to `OAuthGrant` + `OAuthGrantSite` and intersected with live `SiteMember` on `POST /api/mcp` (`billing:read`, `usage:read`).
 - Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
 
 ## Current Open Gaps
