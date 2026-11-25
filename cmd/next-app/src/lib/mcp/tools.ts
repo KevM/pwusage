@@ -199,6 +199,11 @@ function formatUtcDate(date: Date): string {
     return date.toISOString().slice(0, 10);
 }
 
+/** Wh (pg may return a numeric as a string) → kWh rounded to 3 decimals. */
+function whToKwh(wh: string | number): number {
+    return Math.round(Number(wh)) / 1000;
+}
+
 export async function handleGetDailyUsage(
     ctx: OAuthAccessContext,
     args: { site_id?: string; from_date?: string; to_date?: string },
@@ -233,23 +238,25 @@ export async function handleGetDailyUsage(
         return errorResult('Date range is capped at 31 days per request.');
     }
 
+    // Every EnergyDaySummary energy column is Wh summed over that day's samples
+    // (rollupDay), so all six convert to kWh the same way, in TypeScript.
     const res = await pool.query<{
         day: string;
-        load_kwh: string | number;
-        solar_kwh: string | number;
-        grid_import_kwh: string | number;
-        grid_export_kwh: string | number;
-        battery_charge_kwh: string | number;
-        battery_discharge_kwh: string | number;
+        load_wh: string | number;
+        solar_wh: string | number;
+        grid_import_wh: string | number;
+        grid_export_wh: string | number;
+        battery_charge_wh: string | number;
+        battery_discharge_wh: string | number;
         sample_count: number;
     }>(
         `SELECT (a.day_start AT TIME ZONE $4)::date::text AS day,
-                ROUND((COALESCE(SUM(s.load_power), 0) / 12000.0)::numeric, 3) AS load_kwh,
-                ROUND((COALESCE(SUM(s.solar_power), 0) / 12000.0)::numeric, 3) AS solar_kwh,
-                ROUND((COALESCE(SUM(s.sample_import_wh), 0) / 1000.0)::numeric, 3) AS grid_import_kwh,
-                ROUND((COALESCE(SUM(s.sample_export_wh), 0) / 1000.0)::numeric, 3) AS grid_export_kwh,
-                ROUND((COALESCE(SUM(s.sample_charge_wh), 0) / 1000.0)::numeric, 3) AS battery_charge_kwh,
-                ROUND((COALESCE(SUM(s.sample_discharge_wh), 0) / 1000.0)::numeric, 3) AS battery_discharge_kwh,
+                COALESCE(SUM(s.load_power), 0) AS load_wh,
+                COALESCE(SUM(s.solar_power), 0) AS solar_wh,
+                COALESCE(SUM(s.sample_import_wh), 0) AS grid_import_wh,
+                COALESCE(SUM(s.sample_export_wh), 0) AS grid_export_wh,
+                COALESCE(SUM(s.sample_charge_wh), 0) AS battery_charge_wh,
+                COALESCE(SUM(s.sample_discharge_wh), 0) AS battery_discharge_wh,
                 COALESCE(SUM(s.sample_count), 0)::int AS sample_count
          FROM "EnergyDayArchive" a
          INNER JOIN "EnergyDaySummary" s
@@ -263,12 +270,12 @@ export async function handleGetDailyUsage(
 
     const days = res.rows.map(row => ({
         date: row.day,
-        loadKwh: Number(row.load_kwh),
-        solarKwh: Number(row.solar_kwh),
-        gridImportKwh: Number(row.grid_import_kwh),
-        gridExportKwh: Number(row.grid_export_kwh),
-        batteryChargeKwh: Number(row.battery_charge_kwh),
-        batteryDischargeKwh: Number(row.battery_discharge_kwh),
+        loadKwh: whToKwh(row.load_wh),
+        solarKwh: whToKwh(row.solar_wh),
+        gridImportKwh: whToKwh(row.grid_import_wh),
+        gridExportKwh: whToKwh(row.grid_export_wh),
+        batteryChargeKwh: whToKwh(row.battery_charge_wh),
+        batteryDischargeKwh: whToKwh(row.battery_discharge_wh),
         sampleCount: row.sample_count,
     }));
 

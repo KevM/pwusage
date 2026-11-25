@@ -220,9 +220,40 @@ describe('mcp tools', () => {
             expect.stringContaining('AT TIME ZONE $4'),
             ['site-1', '2026-11-18', '2026-11-25', 'America/Los_Angeles'],
         );
-        expect(mockPoolQuery).toHaveBeenCalledWith(
-            expect.stringContaining('::numeric, 3'),
-            ['site-1', '2026-11-18', '2026-11-25', 'America/Los_Angeles'],
-        );
+    });
+
+    it('get_daily_usage converts summary Wh sums to kWh for every field, load and solar included', async () => {
+        mockGetSite.mockResolvedValue({ id: 'site-1', name: 'Main Home', timezone: 'America/Chicago' });
+        // EnergyDaySummary stores every column as Wh summed over samples (rollupDay),
+        // so load and solar convert exactly like the grid and battery columns.
+        mockPoolQuery.mockResolvedValueOnce({
+            rows: [{
+                day: '2026-11-16',
+                load_wh: 81_216.4,
+                solar_wh: 20_832.6,
+                grid_import_wh: 61_522,
+                grid_export_wh: 52,
+                battery_charge_wh: 10_778,
+                battery_discharge_wh: 9_690,
+                sample_count: 288,
+            }],
+        });
+
+        const res = await handleGetDailyUsage(singleHomeCtx, { from_date: '2026-11-16', to_date: '2026-11-16' });
+        const payload = JSON.parse(res.content[0].text);
+        expect(payload.days).toEqual([{
+            date: '2026-11-16',
+            loadKwh: 81.216,
+            solarKwh: 20.833,
+            gridImportKwh: 61.522,
+            gridExportKwh: 0.052,
+            batteryChargeKwh: 10.778,
+            batteryDischargeKwh: 9.69,
+            sampleCount: 288,
+        }]);
+        // The day balances: load = solar + import - export + discharge - charge.
+        const day = payload.days[0];
+        expect(day.solarKwh + day.gridImportKwh - day.gridExportKwh + day.batteryDischargeKwh - day.batteryChargeKwh)
+            .toBeCloseTo(day.loadKwh, 1);
     });
 });
