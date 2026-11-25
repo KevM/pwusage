@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import type { UserOAuthGrantSummary } from '@/lib/oauth/oauth-repo';
+import { SignOutEverywhere } from './SignOutEverywhere';
 
 function formatShortDate(iso: string): string {
     const date = new Date(iso);
@@ -98,6 +99,7 @@ export function ConnectedAiApps({ siteId }: { siteId: string }) {
                         ))}
                     </ul>
                 )}
+                <SignOutEverywhere />
             </CardContent>
         </Card>
     );
