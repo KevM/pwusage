@@ -1,0 +1,217 @@
+import { createHash } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockQuery = vi.fn();
+const mockClientQuery = vi.fn();
+const mockClientRelease = vi.fn();
+const mockConnect = vi.fn();
+const mockSiteMembershipEnabled = vi.fn(() => true);
+
+vi.mock('../db', () => ({
+    pool: {
+        query: (...args: unknown[]) => mockQuery(...args),
+        connect: (...args: unknown[]) => mockConnect(...args),
+    },
+}));
+
+vi.mock('../site-membership-flag', () => ({
+    siteMembershipEnabled: () => mockSiteMembershipEnabled(),
+}));
+
+import {
+    authenticateOAuthAccessToken,
+    cleanupExpiredOAuthRecords,
+    exchangeAuthCode,
+    rotateRefreshToken,
+} from './oauth-repo';
+
+describe('oauth-repo', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSiteMembershipEnabled.mockReturnValue(true);
+        mockConnect.mockResolvedValue({
+            query: mockClientQuery,
+            release: mockClientRelease,
+        });
+    });
+
+    it('exchangeAuthCode consumes code atomically, verifies PKCE, creates grant/sites/tokens, and links grant_id', async () => {
+        const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+        const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+        mockClientQuery
+            .mockResolvedValueOnce({ rows: [] }) // BEGIN
+            .mockResolvedValueOnce({
+                rows: [{
+                    client_id: 'pwu_client_1',
+                    client_name: 'Claude',
+                    client_uri: null,
+                    user_id: 'user-1',
+                    redirect_uri: 'https://claude.ai/cb',
+                    code_challenge: challenge,
+                    resource: 'https://pwusage.fm.rodeo/api/mcp',
+                    scopes: ['billing:read', 'usage:read'],
+                    site_ids: ['site-1', 'site-2'],
+                }],
+            }) // UPDATE OAuthAuthCode
+            .mockResolvedValueOnce({ rows: [] }) // INSERT OAuthGrant
+            .mockResolvedValueOnce({ rows: [] }) // INSERT OAuthGrantSite
+            .mockResolvedValueOnce({ rows: [] }) // INSERT access OAuthToken
+            .mockResolvedValueOnce({ rows: [] }) // INSERT refresh OAuthToken
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthAuthCode grant_id
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthClient last_used_at
+            .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+        const result = await exchangeAuthCode({
+            code: 'raw-auth-code',
+            clientId: 'pwu_client_1',
+            redirectUri: 'https://claude.ai/cb',
+            codeVerifier: verifier,
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.accessToken.startsWith('pwu_oat_')).toBe(true);
+            expect(result.refreshToken.startsWith('pwu_ort_')).toBe(true);
+            expect(result.scope).toBe('billing:read usage:read');
+        }
+        expect(mockClientRelease).toHaveBeenCalledTimes(1);
+    });
+
+    it('exchangeAuthCode revokes grant when a consumed code is replayed', async () => {
+        mockClientQuery
+            .mockResolvedValueOnce({ rows: [] }) // BEGIN
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthAuthCode (0 rows)
+            .mockResolvedValueOnce({
+                rows: [{ consumed_at: new Date(), grant_id: 'grant-99' }],
+            }) // SELECT OAuthAuthCode
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthGrant revoked_at
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthToken revoked_at
+            .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+        const result = await exchangeAuthCode({
+            code: 'replayed-code',
+            clientId: 'pwu_client_1',
+            redirectUri: 'https://claude.ai/cb',
+            codeVerifier: 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            error: 'invalid_grant',
+            errorDescription: 'Authorization code is invalid or expired',
+        });
+        expect(mockClientQuery).toHaveBeenCalledWith(
+            expect.stringContaining('UPDATE "OAuthGrant"'),
+            ['grant-99'],
+        );
+    });
+
+    it('rotateRefreshToken rotates tokens and caps refresh expiry at grant max_expires_at', async () => {
+        const maxExpiresAt = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+        mockClientQuery
+            .mockResolvedValueOnce({ rows: [] }) // BEGIN
+            .mockResolvedValueOnce({ rows: [{ grant_id: 'grant-1' }] }) // UPDATE OAuthToken used_at
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 'grant-1',
+                    user_id: 'user-1',
+                    client_id: 'pwu_client_1',
+                    resource: 'https://pwusage.fm.rodeo/api/mcp',
+                    scopes: ['billing:read'],
+                    max_expires_at: maxExpiresAt,
+                    revoked_at: null,
+                }],
+            }) // SELECT OAuthGrant
+            .mockResolvedValueOnce({ rows: [{ is_active: true }] }) // SELECT User
+            .mockResolvedValueOnce({ rows: [] }) // INSERT access token
+            .mockResolvedValueOnce({ rows: [] }) // INSERT refresh token
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthGrant last_used_at
+            .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+        const result = await rotateRefreshToken({
+            refreshToken: 'pwu_ort_valid_token',
+            clientId: 'pwu_client_1',
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.accessToken.startsWith('pwu_oat_')).toBe(true);
+            expect(result.refreshToken.startsWith('pwu_ort_')).toBe(true);
+        }
+    });
+
+    it('rotateRefreshToken revokes entire grant on refresh token reuse', async () => {
+        mockClientQuery
+            .mockResolvedValueOnce({ rows: [] }) // BEGIN
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthToken used_at (0 rows)
+            .mockResolvedValueOnce({
+                rows: [{ grant_id: 'grant-compromised', used_at: new Date() }],
+            }) // SELECT OAuthToken
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthGrant revoked_at
+            .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthToken revoked_at
+            .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+        const result = await rotateRefreshToken({
+            refreshToken: 'pwu_ort_reused_token',
+            clientId: 'pwu_client_1',
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+        });
+
+        expect(result.ok).toBe(false);
+        expect(mockClientQuery).toHaveBeenCalledWith(
+            expect.stringContaining('UPDATE "OAuthGrant"'),
+            ['grant-compromised'],
+        );
+    });
+
+    it('authenticateOAuthAccessToken rejects non-pwu_oat_ tokens and intersects live SiteMember', async () => {
+        expect(await authenticateOAuthAccessToken('Bearer pwu_int_wrong', 'https://pwusage.fm.rodeo/api/mcp')).toBeNull();
+        expect(mockQuery).not.toHaveBeenCalled();
+
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    grant_id: 'grant-1',
+                    user_id: 'user-1',
+                    client_id: 'pwu_client_1',
+                    client_name: 'Claude',
+                    scopes: ['billing:read', 'usage:read'],
+                }],
+            })
+            .mockResolvedValueOnce({
+                rows: [{ site_id: 'site-1' }],
+            })
+            .mockResolvedValueOnce({ rows: [] });
+
+        const ctx = await authenticateOAuthAccessToken('Bearer pwu_oat_valid', 'https://pwusage.fm.rodeo/api/mcp');
+        expect(ctx).toEqual({
+            grantId: 'grant-1',
+            userId: 'user-1',
+            clientId: 'pwu_client_1',
+            clientName: 'Claude',
+            scopes: ['billing:read', 'usage:read'],
+            authorizedSiteIds: ['site-1'],
+        });
+    });
+
+    it('cleanupExpiredOAuthRecords runs all 4 cleanup deletes and returns counts', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rowCount: 2 })
+            .mockResolvedValueOnce({ rowCount: 3 })
+            .mockResolvedValueOnce({ rowCount: 4 })
+            .mockResolvedValueOnce({ rowCount: 1 });
+
+        const counts = await cleanupExpiredOAuthRecords();
+        expect(counts).toEqual({
+            deletedClients: 2,
+            deletedAuthCodes: 3,
+            deletedTokens: 4,
+            deletedGrants: 1,
+        });
+        expect(mockQuery).toHaveBeenCalledTimes(4);
+    });
+});
