@@ -165,7 +165,8 @@ async function handleGET(request: NextRequest) {
             return mobileCallbackResponse({ error: 'no_sites', state: mobileState });
         }
         cookieStore.delete('site_auth');
-        redirect('/no-sites?reason=no-products');
+        const callbackParam = savedCallback ? `&callback=${encodeURIComponent(savedCallback)}` : '';
+        redirect(`/no-sites?reason=no-products${callbackParam}`);
     }
     if (result.status === 'fleet-api-failed') {
         clearAttempt();
@@ -202,7 +203,8 @@ async function handleGET(request: NextRequest) {
         if (result.siteIds.length === 0 && !result.roles.includes('admin') && !allowZeroSitesForDeletion) {
             cookieStore.delete('site_auth');
             clearAttempt();
-            redirect('/no-sites');
+            const callbackParam = savedCallback ? `?callback=${encodeURIComponent(savedCallback)}` : '';
+            redirect(`/no-sites${callbackParam}`);
         }
 
         if (result.siteIds.length > 0 || result.roles.includes('admin') || allowZeroSitesForDeletion) {
