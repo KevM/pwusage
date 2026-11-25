@@ -39,7 +39,7 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('mobile handoff revoca
     }));
     const issuedCookie = (response: Response) => response.headers.getSetCookie()
         .find(cookie => cookie.startsWith('site_auth='))?.split(';', 1)[0].slice('site_auth='.length) ?? '';
-    const signOutEverywhere = () => new UserRepo().bumpSessionVersion('user-1');
+    const signOutEverywhere = () => new UserRepo().signOutEverywhere('user-1');
 
     beforeAll(async () => {
         local.client = new Client({ host: process.env.COMPACT_HISTORY_TEST_SOCKET, port: 55439,
@@ -63,6 +63,9 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('mobile handoff revoca
             id text PRIMARY KEY, email text, roles text[] NOT NULL DEFAULT '{}'::text[], is_active boolean DEFAULT true,
             session_version integer NOT NULL DEFAULT 0, access_token text, refresh_token text
         )`);
+        // The columns of the OAuth tables that sign-out-everywhere revokes.
+        await local.client.query('CREATE TEMP TABLE "OAuthGrant" (id uuid PRIMARY KEY, user_id text NOT NULL, revoked_at timestamptz)');
+        await local.client.query('CREATE TEMP TABLE "OAuthToken" (grant_id uuid NOT NULL, kind text NOT NULL, revoked_at timestamptz)');
     });
     afterAll(async () => {
         await local.client?.query('DROP TABLE IF EXISTS "MobileLoginHandoff"');
@@ -71,8 +74,25 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('mobile handoff revoca
     beforeEach(async () => {
         vi.restoreAllMocks();
         await local.client.query('DELETE FROM "MobileLoginHandoff" WHERE session_version IS NOT NULL');
-        await local.client.query('TRUNCATE "User"');
+        await local.client.query('TRUNCATE "User", "OAuthGrant", "OAuthToken"');
         await local.client.query(`INSERT INTO "User" (id, roles) VALUES ('user-1', ARRAY['user'])`);
+    });
+
+    it('disconnects every connected AI app and its tokens, leaving other users alone', async () => {
+        const mine = randomUUID();
+        const theirs = randomUUID();
+        await local.client.query(`INSERT INTO "OAuthGrant" (id, user_id) VALUES ($1, 'user-1'), ($2, 'user-2')`, [mine, theirs]);
+        await local.client.query(`INSERT INTO "OAuthToken" (grant_id, kind) VALUES ($1, 'access'), ($1, 'refresh'), ($2, 'access')`, [mine, theirs]);
+
+        expect(await signOutEverywhere()).toEqual({ disconnectedApps: 1 });
+
+        const grants = await local.client.query('SELECT user_id, revoked_at IS NOT NULL AS revoked FROM "OAuthGrant" ORDER BY user_id');
+        expect(grants.rows).toEqual([{ user_id: 'user-1', revoked: true }, { user_id: 'user-2', revoked: false }]);
+        const tokens = await local.client.query(
+            'SELECT count(*)::int AS open FROM "OAuthToken" WHERE grant_id = $1 AND revoked_at IS NULL', [mine]);
+        expect(tokens.rows).toEqual([{ open: 0 }]);
+        const user = await local.client.query(`SELECT session_version FROM "User" WHERE id = 'user-1'`);
+        expect(user.rows).toEqual([{ session_version: 1 }]);
     });
 
     it('binds a new handoff to the session version current when it is created', async () => {

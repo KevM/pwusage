@@ -448,6 +448,10 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
   JWT on every device: each request blocks on the `sv` mismatch and the proxy
   refuses to renew the cookie. Re-authentication issues a token stamped with the
   new version. The caller's cookie is cleared in the same response.
+- In the same statement, revokes every connected AI app: all of the user's
+  `OAuthGrant` rows and their access and refresh tokens, so MCP calls fail at
+  once and each app must be connected again. Pending OAuth authorization codes
+  stop redeeming because they are stamped with the old `session_version`.
 
 ### 6. Account deletion
 Page: `/account-delete` (signed-out visitors go through `/login?callback=/account-delete`;
@@ -706,7 +710,7 @@ AI assistants (Claude, ChatGPT, Cursor, VS Code, Antigravity) connect to the sta
   - `GET /oauth/authorize` validates all OAuth parameters first, prompts unauthenticated users to **Continue with Tesla** (`/login?callback=...`), and lets authenticated users choose which home(s) to share.
   - If a Tesla account has no Powerwall, `/no-sites` offers **Try a different Tesla account** (`/login?switch_account=1`, which sends `prompt=login`) and **Cancel and return to app** (`error=access_denied`).
   - The consent screen shows only what PWUsage can verify: the host publishing a CIMD app (only when the app also returns to that host), otherwise **Unverified app**, and always where the browser returns after Allow. A `client_uri` is shown only when it is exactly the publisher or redirect host. `/oauth/*` sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
-  - `POST /oauth/authorize/decision` enforces same-origin and a CSRF token bound to the exact request shown (client, redirect URI, PKCE challenge, resource, scope) before issuing a 5-minute single-use authorization code (`OAuthAuthCode`). The code records the user's `session_version` and redeems only while the user is active and that version is unchanged, so **Sign out everywhere** voids codes in flight. It does not revoke apps already connected: disconnect those under **Connected AI Apps**.
+  - `POST /oauth/authorize/decision` enforces same-origin and a CSRF token bound to the exact request shown (client, redirect URI, PKCE challenge, resource, scope) before issuing a 5-minute single-use authorization code (`OAuthAuthCode`). The code records the user's `session_version` and redeems only while the user is active and that version is unchanged, so **Sign out everywhere** voids codes in flight. Sign out everywhere also disconnects every connected AI app (below).
 - **Tokens, rotation & revocation:**
   - `POST /api/oauth/token` exchanges auth codes (verifying PKCE `S256`, `client_id`, `redirect_uri`, and `resource`) for a 1-hour `pwu_oat_` access token and a 30-day sliding / 90-day max `pwu_ort_` refresh token (SHA-256 hashed at rest).
   - Refresh tokens rotate on every use; presenting an already-used refresh token or replaying a consumed auth code revokes the entire `OAuthGrant` and all its tokens.
