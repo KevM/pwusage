@@ -66,4 +66,11 @@ describe('DELETE /api/oauth/grants/[id]', () => {
         expect(res.status).toBe(200);
         expect(mockRevokeUserOAuthGrant).toHaveBeenCalledWith('user-1', id);
     });
+
+    it('marks grant responses private and uncacheable', async () => {
+        const res = await DELETE(new Request('https://pwusage.fm.rodeo/api/oauth/grants/0b6f3e1a-2c4d-4e5f-8a9b-1c2d3e4f5a6b', {
+            method: 'DELETE', headers: { Origin: 'https://pwusage.fm.rodeo' },
+        }), { params: Promise.resolve({ id: '0b6f3e1a-2c4d-4e5f-8a9b-1c2d3e4f5a6b' }) });
+        expect(res.headers.get('cache-control')).toBe('private, no-store');
+    });
 });

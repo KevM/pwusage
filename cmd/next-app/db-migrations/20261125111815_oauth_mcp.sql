@@ -52,8 +52,13 @@ CREATE TABLE IF NOT EXISTS "OAuthAuthCode" (
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
     grant_id uuid REFERENCES "OAuthGrant"(id) ON DELETE SET NULL,
+    -- The user's session_version when consent was given: "Sign out everywhere"
+    -- bumps it, so a code minted under a revoked session cannot be redeemed.
+    session_version integer NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+-- Databases that ran an earlier draft of this migration (the table already existed).
+ALTER TABLE "OAuthAuthCode" ADD COLUMN IF NOT EXISTS session_version integer;
 
 CREATE INDEX IF NOT EXISTS oauth_auth_code_expires_idx
     ON "OAuthAuthCode" (expires_at);

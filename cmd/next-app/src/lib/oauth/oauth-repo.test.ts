@@ -21,6 +21,9 @@ vi.mock('../site-membership-flag', () => ({
 import {
     authenticateOAuthAccessToken,
     cleanupExpiredOAuthRecords,
+    createAuthCode,
+    listUserOAuthGrantsForSite,
+    registerDcrClient,
     exchangeAuthCode,
     rotateRefreshToken,
 } from './oauth-repo';
@@ -77,6 +80,30 @@ describe('oauth-repo', () => {
             expect(result.scope).toBe('billing:read usage:read');
         }
         expect(mockClientRelease).toHaveBeenCalledTimes(1);
+        // The code is redeemable only while its user is active and has not signed out everywhere since it was issued.
+        const consumeSql = String(mockClientQuery.mock.calls[1][0]);
+        expect(consumeSql).toMatch(/u\.is_active\s*=\s*true/);
+        expect(consumeSql).toMatch(/u\.session_version\s*=\s*c\.session_version/);
+    });
+
+    it('createAuthCode stamps the user\'s current session_version and refuses inactive users', async () => {
+        mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+        await createAuthCode({
+            clientId: 'pwu_client_1', clientName: 'Claude', clientUri: null, userId: 'user-1',
+            redirectUri: 'https://claude.ai/cb', codeChallenge: 'c'.repeat(43),
+            resource: 'https://pwusage.fm.rodeo/api/mcp', scopes: ['billing:read'], siteIds: ['site-1'],
+        });
+        const sql = String(mockQuery.mock.calls[0][0]);
+        expect(sql).toMatch(/session_version/);
+        expect(sql).toMatch(/FROM "User" u/);
+        expect(sql).toMatch(/u\.is_active\s*=\s*true/);
+
+        mockQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+        await expect(createAuthCode({
+            clientId: 'pwu_client_1', clientName: 'Claude', clientUri: null, userId: 'gone',
+            redirectUri: 'https://claude.ai/cb', codeChallenge: 'c'.repeat(43),
+            resource: 'https://pwusage.fm.rodeo/api/mcp', scopes: ['billing:read'], siteIds: ['site-1'],
+        })).rejects.toThrow(/inactive/i);
     });
 
     it('exchangeAuthCode revokes grant when a consumed code is replayed', async () => {
@@ -213,5 +240,27 @@ describe('oauth-repo', () => {
             deletedGrants: 1,
         });
         expect(mockQuery).toHaveBeenCalledTimes(4);
+    });
+
+    it('registerDcrClient caps registrations that were never used', async () => {
+        mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+        const ok = await registerDcrClient({ clientName: 'A', redirectUris: ['https://a.example/cb'], clientUri: null });
+        expect(ok?.clientId.startsWith('pwu_client_')).toBe(true);
+        const sql = String(mockQuery.mock.calls[0][0]);
+        expect(sql).toMatch(/last_used_at IS NULL/);
+        expect(sql).toMatch(/count\(\*\)/i);
+
+        mockQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+        expect(await registerDcrClient({ clientName: 'B', redirectUris: ['https://a.example/cb'], clientUri: null })).toBeNull();
+    });
+
+    it('listUserOAuthGrantsForSite says where each app came from (CIMD host, or null when self-registered)', async () => {
+        const row = (client_id: string) => ({
+            id: 'g', client_id, client_name: 'Claude', client_uri: null, scopes: ['billing:read'],
+            created_at: new Date('2026-11-25T00:00:00Z'), last_used_at: null, max_expires_at: new Date('2027-02-23T00:00:00Z'), site_count: '1',
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [row('https://claude.ai/oauth/client.json'), row('pwu_client_1')] });
+        const grants = await listUserOAuthGrantsForSite('user-1', 'site-1');
+        expect(grants.map(g => g.publisherHost)).toEqual(['claude.ai', null]);
     });
 });

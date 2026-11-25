@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import net from 'node:net';
+import { readBoundedRequestText } from '@/lib/oauth/bounded-body';
+import { parseIpv6Words } from '@/lib/oauth/client-resolver';
 import { registerDcrClient } from '@/lib/oauth/oauth-repo';
 import { validateRedirectUri } from '@/lib/oauth/validation';
 import { logEvent, observeRoute } from '@/lib/observability';
@@ -31,13 +34,20 @@ function checkRegistrationRateLimit(ip: string): boolean {
     return true;
 }
 
-function clientIp(request: Request): string {
-    const forwarded = request.headers.get('x-forwarded-for');
-    if (forwarded) {
-        const first = forwarded.split(',')[0]?.trim();
-        if (first) return first;
+/**
+ * Rate-limit key for the caller. Prefers x-real-ip (set by Vercel's edge), and
+ * groups IPv6 by /64: one allocation holds 2^64 addresses, so a per-address
+ * key would never trip.
+ */
+function rateLimitKey(request: Request): string {
+    const ip = request.headers.get('x-real-ip')?.trim()
+        || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+        || 'unknown';
+    if (net.isIPv6(ip)) {
+        const words = parseIpv6Words(ip);
+        if (words) return `${words.slice(0, 4).map(w => w.toString(16)).join(':')}::/64`;
     }
-    return request.headers.get('x-real-ip')?.trim() || 'unknown';
+    return ip;
 }
 
 function dcrError(error: string, description: string, status = 400): Response {
@@ -48,14 +58,18 @@ function dcrError(error: string, description: string, status = 400): Response {
 }
 
 export const POST = observeRoute('/api/oauth/register', async (request: Request): Promise<Response> => {
-    const ip = clientIp(request);
+    const ip = rateLimitKey(request);
     if (!checkRegistrationRateLimit(ip)) {
         return dcrError('invalid_client_metadata', 'Too many client registrations; try again later', 429);
     }
 
+    const text = await readBoundedRequestText(request);
+    if (text === null) {
+        return dcrError('invalid_client_metadata', 'Request body is too large', 413);
+    }
     let body: unknown;
     try {
-        body = await request.json();
+        body = JSON.parse(text);
     } catch {
         return dcrError('invalid_client_metadata', 'Request body must be valid JSON');
     }
@@ -120,6 +134,9 @@ export const POST = observeRoute('/api/oauth/register', async (request: Request)
         redirectUris,
         clientUri,
     });
+    if (!client) {
+        return dcrError('invalid_client_metadata', 'Too many pending client registrations; try again later', 429);
+    }
 
     logEvent('info', 'oauth.register', {
         clientId: client.clientId,

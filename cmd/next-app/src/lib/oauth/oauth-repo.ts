@@ -54,6 +54,8 @@ export interface UserOAuthGrantSummary {
     lastUsedAt: string | null;
     maxExpiresAt: string;
     siteCount: number;
+    /** Host serving the app's CIMD document; null for a self-registered (DCR) app, whose name is unverified. */
+    publisherHost: string | null;
 }
 
 export interface OAuthCleanupCounts {
@@ -83,6 +85,18 @@ interface GrantRow {
     scopes: OAuthScope[];
     max_expires_at: Date;
     revoked_at: Date | null;
+}
+
+/** Unused self-registrations allowed per day (16 KB bodies: at most ~8 MB of rows). */
+const MAX_PENDING_DCR_CLIENTS = 500;
+
+function cimdHost(clientId: string): string | null {
+    if (!clientId.startsWith('https://')) return null;
+    try {
+        return new URL(clientId).hostname || null;
+    } catch {
+        return null;
+    }
 }
 
 function sha256Buffer(value: string): Buffer {
@@ -135,13 +149,20 @@ export async function registerDcrClient(input: {
     clientName: string;
     redirectUris: string[];
     clientUri: string | null;
-}): Promise<OAuthClientMetadata> {
+}): Promise<OAuthClientMetadata | null> {
     const clientId = `${DCR_CLIENT_ID_PREFIX}${randomUUID()}`;
-    await pool.query(
+    // Registration is unauthenticated: cap registrations nobody has used yet so
+    // abandoned ones (cleaned up daily) cannot eat the shared database quota.
+    const res = await pool.query(
         `INSERT INTO "OAuthClient" (client_id, client_name, redirect_uris, client_uri)
-         VALUES ($1, $2, $3, $4)`,
-        [clientId, input.clientName, input.redirectUris, input.clientUri],
+         SELECT $1, $2, $3::text[], $4
+         WHERE (
+             SELECT count(*) FROM "OAuthClient"
+             WHERE last_used_at IS NULL AND created_at > now() - interval '24 hours'
+         ) < $5`,
+        [clientId, input.clientName, input.redirectUris, input.clientUri, MAX_PENDING_DCR_CLIENTS],
     );
+    if (res.rowCount !== 1) return null;
     return {
         clientId,
         clientName: input.clientName,
@@ -180,11 +201,16 @@ export async function createAuthCode(
 ): Promise<{ code: string; expiresAt: Date }> {
     const code = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + AUTH_CODE_TTL_SECONDS * 1000);
-    await pool.query(
+    // Stamp the user's current session_version (as mobile login handoffs do) and
+    // refuse an inactive account, in the same statement.
+    const res = await pool.query(
         `INSERT INTO "OAuthAuthCode" (
             code_hash, client_id, client_name, client_uri, user_id,
-            redirect_uri, code_challenge, resource, scopes, site_ids, expires_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            redirect_uri, code_challenge, resource, scopes, site_ids, expires_at, session_version
+         )
+         SELECT $1::bytea, $2, $3, $4, u.id, $6, $7, $8, $9::text[], $10::text[], $11::timestamptz, u.session_version
+         FROM "User" u
+         WHERE u.id = $5 AND u.is_active = true`,
         [
             sha256Buffer(code),
             input.clientId,
@@ -199,6 +225,9 @@ export async function createAuthCode(
             expiresAt,
         ],
     );
+    if (res.rowCount !== 1) {
+        throw new Error('Cannot issue an authorization code for an inactive or missing user');
+    }
     return { code, expiresAt };
 }
 
@@ -217,13 +246,19 @@ export async function exchangeAuthCode(input: {
     try {
         await client.query('BEGIN');
         const consumeRes = await client.query<AuthCodeRow>(
-            `UPDATE "OAuthAuthCode"
+            // Redeemable only while the user is active and has not signed out
+            // everywhere since consent (session_version unchanged).
+            `UPDATE "OAuthAuthCode" c
              SET consumed_at = now()
-             WHERE code_hash = $1
-               AND consumed_at IS NULL
-               AND expires_at > now()
-             RETURNING client_id, client_name, client_uri, user_id, redirect_uri,
-                       code_challenge, resource, scopes, site_ids`,
+             FROM "User" u
+             WHERE c.code_hash = $1
+               AND c.consumed_at IS NULL
+               AND c.expires_at > now()
+               AND u.id = c.user_id
+               AND u.is_active = true
+               AND u.session_version = c.session_version
+             RETURNING c.client_id, c.client_name, c.client_uri, c.user_id, c.redirect_uri,
+                       c.code_challenge, c.resource, c.scopes, c.site_ids`,
             [codeHash],
         );
 
@@ -521,6 +556,7 @@ export async function listUserOAuthGrantsForSite(
         lastUsedAt: row.last_used_at ? row.last_used_at.toISOString() : null,
         maxExpiresAt: row.max_expires_at.toISOString(),
         siteCount: Number(row.site_count),
+        publisherHost: cimdHost(row.client_id),
     }));
 }
 

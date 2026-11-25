@@ -8,6 +8,8 @@ const CORS_HEADERS = {
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Cache-Control': 'public, max-age=300',
+    // URLs come from the request's host when NEXT_PUBLIC_APP_URL is unset; never serve one host's metadata to another.
+    Vary: 'Host',
 };
 
 export async function GET(request: Request): Promise<Response> {

@@ -699,17 +699,19 @@ AI assistants (Claude, ChatGPT, Cursor, VS Code, Antigravity) connect to the sta
   - `GET /.well-known/oauth-protected-resource` (RFC 9728) advertises `resource` (`<origin>/api/mcp`), `authorization_servers`, and `scopes_supported` (`billing:read`, `usage:read`).
   - `GET /.well-known/oauth-authorization-server` (RFC 8414) advertises `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `revocation_endpoint`, `code_challenge_methods_supported: ["S256"]`, `token_endpoint_auth_methods_supported: ["none"]`, and `client_id_metadata_document_supported: true`.
 - **Client resolution:**
-  - **DCR (RFC 7591):** `POST /api/oauth/register` registers public PKCE clients (`pwu_client_...`) with strict `redirect_uris` validation and IP rate limiting.
-  - **CIMD:** HTTPS URLs with a non-empty path are fetched on demand with SSRF guards (public DNS IP check, no redirects, 16 KB body cap, 3s timeout) and strict `client_id` matching.
+  - **DCR (RFC 7591):** `POST /api/oauth/register` registers public PKCE clients (`pwu_client_...`) with strict `redirect_uris` validation, a 16 KB body cap, IP rate limiting (IPv6 keyed by /64) and a cap of 500 never-used registrations per day.
+  - **Redirect URIs** are compared as exact strings (validated, never rewritten). Allowed: `https:` (not PWUsage's own origin), loopback `http:`, and hierarchical custom schemes (`cursor://…`, `com.example.app:/…`). Refused: `pwusage:` (the iOS app's own callback), network schemes (`ws:`, `ftp:`…), opaque handlers (`mailto:`, `tel:`, `sms:`) and browser/OS schemes.
+  - **CIMD:** HTTPS URLs on the default port with a non-empty path (never PWUsage itself or an IP literal) are fetched on demand with SSRF guards: the host's addresses are checked against private/reserved IPv4 and IPv6 ranges and the connection is pinned to those checked addresses (no DNS rebinding), no redirects, 16 KB body cap, 3s timeout, strict `client_id` matching.
 - **Consent & Tesla onboarding:**
   - `GET /oauth/authorize` validates all OAuth parameters first, prompts unauthenticated users to **Continue with Tesla** (`/login?callback=...`), and lets authenticated users choose which home(s) to share.
   - If a Tesla account has no Powerwall, `/no-sites` offers **Try a different Tesla account** (`/login?switch_account=1`, which sends `prompt=login`) and **Cancel and return to app** (`error=access_denied`).
-  - `POST /oauth/authorize/decision` enforces same-origin and CSRF token verification before issuing a 5-minute single-use authorization code (`OAuthAuthCode`).
+  - The consent screen shows only what PWUsage can verify: the host publishing a CIMD app (only when the app also returns to that host), otherwise **Unverified app**, and always where the browser returns after Allow. A `client_uri` is shown only when it is exactly the publisher or redirect host. `/oauth/*` sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+  - `POST /oauth/authorize/decision` enforces same-origin and a CSRF token bound to the exact request shown (client, redirect URI, PKCE challenge, resource, scope) before issuing a 5-minute single-use authorization code (`OAuthAuthCode`). The code records the user's `session_version` and redeems only while the user is active and that version is unchanged, so **Sign out everywhere** voids codes in flight. It does not revoke apps already connected: disconnect those under **Connected AI Apps**.
 - **Tokens, rotation & revocation:**
   - `POST /api/oauth/token` exchanges auth codes (verifying PKCE `S256`, `client_id`, `redirect_uri`, and `resource`) for a 1-hour `pwu_oat_` access token and a 30-day sliding / 90-day max `pwu_ort_` refresh token (SHA-256 hashed at rest).
   - Refresh tokens rotate on every use; presenting an already-used refresh token or replaying a consumed auth code revokes the entire `OAuthGrant` and all its tokens.
   - `POST /api/oauth/revoke` (RFC 7009) revokes the token's grant. Users can also disconnect apps under **Site Settings → Connected AI Apps** (`GET /api/oauth/grants`, `DELETE /api/oauth/grants/[id]`).
-- **Per-request authorization:** `POST /api/mcp` validates the `pwu_oat_` token, parent `OAuthGrant`, `resource`, active `User`, and live `SiteMember` intersection on every request.
+- **Per-request authorization:** `POST /api/mcp` validates the `pwu_oat_` token, parent `OAuthGrant`, `resource`, active `User`, and live `SiteMember` intersection on every request. It sends CORS headers (`Access-Control-Allow-Origin: *`, no credentials: access is a bearer token) so browser MCP clients can call it and read the `WWW-Authenticate` challenge.
 
 ## Authorization Decision Summary
 

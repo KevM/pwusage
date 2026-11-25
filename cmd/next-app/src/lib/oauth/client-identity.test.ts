@@ -34,20 +34,29 @@ describe('describeClientIdentity', () => {
         expect(identity.homepageHost).toBe('claude.ai');
     });
 
-    it('accepts a homepage on a parent or child domain of the redirect host', () => {
+    it('shows a homepage only on exactly the redirect host (no shared-suffix matches like github.io)', () => {
         expect(describeClientIdentity(
-            dcr({ clientUri: 'https://www.example.com', redirectUris: ['https://auth.example.com/cb'] }),
-            'https://auth.example.com/cb',
-        ).homepageHost).toBeNull(); // siblings: neither contains the other
-        expect(describeClientIdentity(
-            dcr({ clientUri: 'https://example.com', redirectUris: ['https://auth.example.com/cb'] }),
-            'https://auth.example.com/cb',
-        ).homepageHost).toBe('example.com');
-        // A look-alike suffix is not a subdomain.
-        expect(describeClientIdentity(
-            dcr({ clientUri: 'https://claude.ai', redirectUris: ['https://evilclaude.ai/cb'] }),
-            'https://evilclaude.ai/cb',
+            dcr({ clientUri: 'https://github.io', redirectUris: ['https://attacker-123.github.io/cb'] }),
+            'https://attacker-123.github.io/cb',
         ).homepageHost).toBeNull();
+    });
+
+    it('vouches for a metadata-document app only when it returns to the host that published it', () => {
+        const cimd = (redirect: string) => describeClientIdentity({
+            clientId: 'https://raw.githubusercontent.com/attacker/x/main/client.json',
+            clientName: 'Claude', redirectUris: [redirect], clientUri: 'https://claude.ai', kind: 'cimd',
+        }, redirect);
+        expect(cimd('https://evil.example/cb')).toMatchObject({ verified: false, publisherHost: null, homepageHost: null });
+        expect(cimd('http://127.0.0.1:9000/cb')).toMatchObject({ verified: false, publisherHost: null });
+    });
+
+    it('does not treat a parent, sibling or look-alike domain as the same host', () => {
+        const homepage = (clientUri: string, redirect: string) =>
+            describeClientIdentity(dcr({ clientUri, redirectUris: [redirect] }), redirect).homepageHost;
+        expect(homepage('https://example.com', 'https://auth.example.com/cb')).toBeNull();
+        expect(homepage('https://www.example.com', 'https://auth.example.com/cb')).toBeNull();
+        expect(homepage('https://claude.ai', 'https://evilclaude.ai/cb')).toBeNull();
+        expect(homepage('https://auth.example.com/about', 'https://auth.example.com/cb')).toBe('auth.example.com');
     });
 
     it('treats a metadata-document app as published by the host that serves its client_id', () => {

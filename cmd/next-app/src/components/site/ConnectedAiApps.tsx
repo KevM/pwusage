@@ -76,6 +76,9 @@ export function ConnectedAiApps({ siteId }: { siteId: string }) {
                             <li key={grant.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
                                 <div className="min-w-0 space-y-0.5">
                                     <p className="text-sm font-medium break-words">{grant.clientName}</p>
+                                    <p className="text-xs text-muted-foreground break-words">
+                                        {grant.publisherHost ? `App details from ${grant.publisherHost}` : 'Unverified app'}
+                                    </p>
                                     <p className="text-xs text-muted-foreground">
                                         Connected {formatShortDate(grant.createdAt)}
                                         {grant.lastUsedAt ? ` · Last used ${formatShortDate(grant.lastUsedAt)}` : ' · Never used'}

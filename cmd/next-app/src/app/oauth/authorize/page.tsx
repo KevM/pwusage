@@ -83,8 +83,10 @@ export default async function OAuthAuthorizePage({
     }
 
     const headerList = await headers();
-    const host = headerList.get('x-forwarded-host') ?? headerList.get('host');
-    const proto = headerList.get('x-forwarded-proto') ?? 'https';
+    // Multi-hop proxies send comma-separated lists; the first entry is the client-facing value.
+    const firstValue = (name: string) => headerList.get(name)?.split(',', 1)[0]?.trim() || null;
+    const host = firstValue('x-forwarded-host') ?? firstValue('host');
+    const proto = firstValue('x-forwarded-proto') ?? 'https';
     const requestOrigin = host ? `${proto}://${host}` : undefined;
     const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || requestOrigin || getAppBaseUrl();
 
@@ -152,7 +154,13 @@ export default async function OAuthAuthorizePage({
         redirect(`/no-sites?callback=${encodeURIComponent(authorizePath)}`);
     }
 
-    const csrfToken = createOAuthCsrfToken(user.id);
+    const csrfToken = createOAuthCsrfToken(user.id, {
+        clientId: client.clientId,
+        redirectUri: checkedUri.uri,
+        codeChallenge,
+        resource,
+        scope: parsedScopes.scopes.join(' '),
+    });
 
     return (
         <PageShell maxWidth="md">

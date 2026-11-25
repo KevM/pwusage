@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     expectedMcpResource,
     isValidCodeChallenge,
@@ -44,6 +44,27 @@ describe('oauth validation', () => {
         expect(validateRedirectUri('https://claude.ai/cb#frag').ok).toBe(false);
         expect(validateRedirectUri('javascript:alert(1)').ok).toBe(false);
         expect(validateRedirectUri('data:text/html,hi').ok).toBe(false);
+    });
+
+    it("rejects PWUsage's own origin and app scheme, network and opaque schemes", () => {
+        vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://pwusage.fm.rodeo');
+        try {
+            for (const uri of [
+                'pwusage://auth/callback', // the iOS app's own sign-in callback
+                'https://pwusage.fm.rodeo/oauth/cb',
+                'ws://evil.example/cb', 'wss://evil.example/cb', 'ftp://evil.example/cb', 'ftps://evil.example/cb',
+                'mailto:attacker@evil.example', 'tel:5551234', 'sms:5551234', 'about:blank',
+                'view-source:https://evil.example', 'chrome://settings', 'intent://scan#Intent;end',
+            ]) {
+                expect(validateRedirectUri(uri).ok, uri).toBe(false);
+            }
+            // Native apps in the wild use plain hierarchical schemes (RFC 8252 prefers reverse-domain but does not require it).
+            expect(validateRedirectUri('cursor://anysphere.cursor-mcp/oauth/callback').ok).toBe(true);
+            expect(validateRedirectUri('vscode://vscode.github-authentication/did-authenticate').ok).toBe(true);
+            expect(validateRedirectUri('com.example.app:/oauth2redirect').ok).toBe(true);
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it('defaults empty scope to all v1 read scopes and rejects unknown scopes', () => {

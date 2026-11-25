@@ -35,11 +35,6 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     }
 
     const form = new URLSearchParams(await request.text());
-    const csrfToken = form.get('csrf_token') ?? '';
-    if (!(await verifyOAuthCsrfToken(csrfToken, user.id))) {
-        return NextResponse.json({ error: 'Invalid or expired CSRF token' }, { status: 403 });
-    }
-
     const clientId = form.get('client_id')?.trim() ?? '';
     const rawRedirectUri = form.get('redirect_uri')?.trim() ?? '';
     const state = form.get('state');
@@ -51,6 +46,13 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
 
     const origin = getAppBaseUrl(request);
     const resource = rawResource === null || rawResource === '' ? expectedMcpResource(origin) : rawResource;
+
+    // The token approves only the exact request the consent screen rendered.
+    const csrfToken = form.get('csrf_token') ?? '';
+    const consentRequest = { clientId, redirectUri: rawRedirectUri, codeChallenge, resource, scope: scopeParam ?? '' };
+    if (!(await verifyOAuthCsrfToken(csrfToken, user.id, consentRequest))) {
+        return NextResponse.json({ error: 'Invalid or expired CSRF token' }, { status: 403 });
+    }
     const checkedUri = validateRedirectUri(rawRedirectUri);
     if (!clientId || !checkedUri.ok) {
         return NextResponse.json({ error: 'Invalid client_id or redirect_uri' }, { status: 400 });

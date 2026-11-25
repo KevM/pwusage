@@ -99,6 +99,14 @@ describe('POST /oauth/authorize/decision', () => {
         mockVerifyCsrf.mockResolvedValueOnce(false);
         const badCsrfRes = await POST(makeRequest(validBase));
         expect(badCsrfRes.status).toBe(403);
+        // The token is checked against the exact request the consent screen rendered.
+        expect(mockVerifyCsrf).toHaveBeenLastCalledWith('csrf-ok', expect.any(String), {
+            clientId: 'pwu_client_1',
+            redirectUri: 'https://claude.ai/cb',
+            codeChallenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+            scope: 'billing:read usage:read',
+        });
     });
 
     it('redirects with error=access_denied when decision is deny', async () => {

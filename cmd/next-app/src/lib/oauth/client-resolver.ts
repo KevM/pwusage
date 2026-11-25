@@ -2,6 +2,7 @@ import dns from 'node:dns';
 import https from 'node:https';
 import net, { type LookupFunction } from 'node:net';
 import { Readable } from 'node:stream';
+import { getAppBaseUrl } from '../url-utils';
 import type { OAuthClientMetadata } from './types';
 import { validateRedirectUri } from './validation';
 
@@ -33,10 +34,22 @@ export function isCimdClientId(clientId: string): boolean {
         return false;
     }
     if (parsed.protocol !== 'https:') return false;
-    if (!parsed.hostname || net.isIP(parsed.hostname) !== 0) return false;
+    // URL keeps the brackets on an IPv6 literal ("[::1]"), which net.isIP does not recognise.
+    if (!parsed.hostname || parsed.hostname.startsWith('[') || net.isIP(parsed.hostname) !== 0) return false;
+    // Default port only: a client_id must not turn /oauth/authorize into a port prober.
+    if (parsed.port !== '') return false;
     if (parsed.username || parsed.password || parsed.hash) return false;
+    if (parsed.hostname === appHostname()) return false;
     if (!parsed.pathname || parsed.pathname === '/') return false;
     return true;
+}
+
+function appHostname(): string | null {
+    try {
+        return new URL(getAppBaseUrl()).hostname;
+    } catch {
+        return null;
+    }
 }
 
 function parseIpv4ToInt(ip: string): number | null {
@@ -74,27 +87,47 @@ function isBlockedIpv4(ip: string): boolean {
     return ranges.some(([base, mask]) => ((addr & mask) >>> 0) === (base >>> 0));
 }
 
+/** Any valid IPv6 spelling (compressed, expanded, embedded IPv4, zone) → its eight 16-bit words. */
+export function parseIpv6Words(ip: string): number[] | null {
+    let text = ip.toLowerCase();
+    const zone = text.indexOf('%');
+    if (zone >= 0) text = text.slice(0, zone);
+    const lastColon = text.lastIndexOf(':');
+    const tail = text.slice(lastColon + 1);
+    if (tail.includes('.')) {
+        const v4 = parseIpv4ToInt(tail);
+        if (v4 === null) return null;
+        text = `${text.slice(0, lastColon + 1)}${(v4 >>> 16).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+    }
+    const halves = text.split('::');
+    if (halves.length > 2) return null;
+    const head = halves[0] ? halves[0].split(':') : [];
+    const rest = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    const fill = 8 - head.length - rest.length;
+    if (halves.length === 1 ? fill !== 0 : fill < 1) return null;
+    const groups = [...head, ...Array<string>(halves.length === 2 ? fill : 0).fill('0'), ...rest];
+    if (groups.length !== 8 || groups.some(g => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+    return groups.map(g => Number.parseInt(g, 16));
+}
+
 function isBlockedIpv6(ip: string): boolean {
-    const normalized = ip.toLowerCase();
-    if (normalized === '::' || normalized === '::1') return true;
-    if (normalized.startsWith('::ffff:')) {
-        const mapped = normalized.slice('::ffff:'.length);
-        if (net.isIPv4(mapped)) return isBlockedIpv4(mapped);
-        return true;
+    const w = parseIpv6Words(ip);
+    if (!w) return true;
+    const zeros = (from: number, to: number) => w.slice(from, to).every(x => x === 0);
+    // ::ffff:0:0/96: an IPv4-mapped address is as safe as its IPv4 address.
+    if (zeros(0, 5) && w[5] === 0xffff) {
+        return isBlockedIpv4(`${w[6] >>> 8}.${w[6] & 0xff}.${w[7] >>> 8}.${w[7] & 0xff}`);
     }
-    // ::/96 (IPv4-compatible), NAT64 64:ff9b::/96, 6to4 2002::/16 and documentation
-    // 2001:db8::/32 can all carry or reach an internal IPv4 address.
-    if (normalized.startsWith('::')) return true;
-    if (normalized.startsWith('64:ff9b:') || normalized.startsWith('2002:') || normalized.startsWith('2001:db8:')) return true;
-    const firstHextet = normalized.split(':')[0];
-    if (firstHextet) {
-        const value = Number.parseInt(firstHextet, 16);
-        if (!Number.isNaN(value)) {
-            if ((value & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
-            if ((value & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
-            if ((value & 0xff00) === 0xff00) return true; // ff00::/8 (multicast)
-        }
-    }
+    if (zeros(0, 6)) return true; // ::/96: unspecified, loopback, IPv4-compatible
+    if (w[0] === 0x64 && w[1] === 0xff9b) return true; // 64:ff9b::/96 and 64:ff9b:1::/48 (NAT64)
+    if (w[0] === 0x100 && zeros(1, 4)) return true; // 100::/64 (discard)
+    if (w[0] === 0x2001 && w[1] < 0x200) return true; // 2001::/23 (IETF: Teredo 2001::/32, benchmarking, ORCHID)
+    if (w[0] === 0x2001 && w[1] === 0xdb8) return true; // 2001:db8::/32 (documentation)
+    if (w[0] === 0x2002) return true; // 2002::/16 (6to4: embeds an IPv4 address)
+    if ((w[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
+    if ((w[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
+    if ((w[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 (deprecated site-local)
+    if ((w[0] & 0xff00) === 0xff00) return true; // ff00::/8 (multicast)
     return false;
 }
 
@@ -160,9 +193,20 @@ function fetchPinned(url: string, pinnedIps: string[]): Promise<Response> {
     });
 }
 
+/** The body as text if it fits in maxBytes; null if it is too big or the stream fails (stall, reset, timeout). */
 async function readBoundedText(response: Response, maxBytes: number): Promise<string | null> {
+    try {
+        return await readBoundedTextUnsafe(response, maxBytes);
+    } catch {
+        await response.body?.cancel().catch(() => undefined);
+        return null;
+    }
+}
+
+async function readBoundedTextUnsafe(response: Response, maxBytes: number): Promise<string | null> {
     const contentLength = response.headers.get('content-length');
     if (contentLength && Number(contentLength) > maxBytes) {
+        await response.body?.cancel().catch(() => undefined);
         return null;
     }
     if (!response.body) {
@@ -287,7 +331,11 @@ export async function resolveOAuthClient(
     } catch {
         return null;
     }
-    if (!response.ok) return null;
+    if (!response.ok) {
+        // Release the unpooled connection instead of leaving the body unread.
+        await response.body?.cancel().catch(() => undefined);
+        return null;
+    }
 
     const text = await readBoundedText(response, CIMD_MAX_BODY_BYTES);
     if (!text) return null;

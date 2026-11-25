@@ -17,15 +17,11 @@ export interface ClientIdentity {
     name: string;
     /** True only when a host we fetched from vouches for the app (CIMD). */
     verified: boolean;
-    /** Host serving the CIMD client_id document; null for self-registered apps. */
+    /** Host serving the CIMD client_id document, when the app also returns there; else null. */
     publisherHost: string | null;
     returnTo: ClientReturnTo;
-    /** client_uri host, shown only when it is on the same site as the publisher or redirect. */
+    /** client_uri host, shown only when it is exactly the publisher or redirect host. */
     homepageHost: string | null;
-}
-
-function isSameOrRelatedHost(a: string, b: string): boolean {
-    return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }
 
 function hostOf(url: string | null): string | null {
@@ -46,12 +42,17 @@ function describeReturnTo(redirectUri: string): ClientReturnTo {
 
 export function describeClientIdentity(client: OAuthClientMetadata, redirectUri: string): ClientIdentity {
     const returnTo = describeReturnTo(redirectUri);
-    const publisherHost = client.kind === 'cimd' ? hostOf(client.clientId) : null;
+    // A CIMD document only vouches for an app that returns to the host serving it:
+    // anyone can host JSON on a shared host (raw.githubusercontent.com, a CDN) and
+    // list a redirect to a site they control.
+    const documentHost = client.kind === 'cimd' ? hostOf(client.clientId) : null;
+    const publisherHost = documentHost && returnTo.kind === 'web' && returnTo.host === documentHost ? documentHost : null;
     // The homepage must be anchored to something the app cannot fake: the CIMD
     // host, else a web redirect host. Device and app-scheme redirects anchor nothing.
     const anchor = publisherHost ?? (returnTo.kind === 'web' ? returnTo.host : null);
     const clientUriHost = hostOf(client.clientUri);
-    const homepageHost = anchor && clientUriHost && isSameOrRelatedHost(clientUriHost, anchor) ? clientUriHost : null;
+    // Exact host only: suffix matching would let attacker.github.io vouch for github.io.
+    const homepageHost = anchor && clientUriHost === anchor ? clientUriHost : null;
 
     return {
         name: client.clientName,

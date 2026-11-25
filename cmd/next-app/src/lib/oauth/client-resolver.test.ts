@@ -10,6 +10,47 @@ describe('client-resolver', () => {
         expect(isCimdClientId('pwu_client_123')).toBe(false);
     });
 
+    it('accepts only default-port, hostname CIMD client_ids that are not PWUsage itself', () => {
+        vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://pwusage.fm.rodeo');
+        try {
+            expect(isCimdClientId('https://target.example:6379/x.json')).toBe(false);
+            expect(isCimdClientId('https://agent.example.com:443/x.json')).toBe(true);
+            expect(isCimdClientId('https://[::1]/client.json')).toBe(false);
+            expect(isCimdClientId('https://pwusage.fm.rodeo/client.json')).toBe(false);
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('blocks IPv6 Teredo, IETF/benchmarking and discard ranges, in any spelling', () => {
+        for (const ip of ['2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001:2::1', '2001:1ff::1', '100::1', '0:0:0:0:0:0:0:1', '0:0:0:0:0:ffff:127.0.0.1', '::FFFF:10.0.0.1']) {
+            expect(isBlockedIpAddress(ip), ip).toBe(true);
+        }
+        expect(isBlockedIpAddress('2001:200::1')).toBe(false); // global unicast just past 2001::/23
+        expect(isBlockedIpAddress('2001:4860:4860::8888')).toBe(false);
+    });
+
+    it('returns null instead of throwing when the CIMD body errors mid-stream, and cancels rejected bodies', async () => {
+        const url = 'https://agent.example.com/stall.json';
+        const stalled = new ReadableStream<Uint8Array>({
+            pull() { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); },
+        });
+        await expect(resolveOAuthClient(url, {
+            lookupIps: vi.fn().mockResolvedValue(['93.184.216.34']),
+            fetchFn: vi.fn().mockResolvedValue(new Response(stalled, { status: 200 })),
+            getDcrClient: vi.fn(),
+        })).resolves.toBeNull();
+
+        const cancel = vi.fn();
+        const body = new ReadableStream<Uint8Array>({ cancel });
+        await resolveOAuthClient('https://agent.example.com/missing.json', {
+            lookupIps: vi.fn().mockResolvedValue(['93.184.216.34']),
+            fetchFn: vi.fn().mockResolvedValue(new Response(body, { status: 404 })),
+            getDcrClient: vi.fn(),
+        });
+        expect(cancel).toHaveBeenCalled();
+    });
+
     it('blocks private, loopback, link-local, and metadata IPs', () => {
         expect(isBlockedIpAddress('127.0.0.1')).toBe(true);
         expect(isBlockedIpAddress('10.0.0.5')).toBe(true);

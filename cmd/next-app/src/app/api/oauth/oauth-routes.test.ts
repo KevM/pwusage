@@ -175,4 +175,50 @@ describe('oauth routes', () => {
         expect(res.status).toBe(200);
         expect(mockRevokeOAuthToken).toHaveBeenCalledWith('pwu_oat_unknown');
     });
+
+    it('refuses oversized bodies on register, token and revoke before parsing them', async () => {
+        const big = 'x'.repeat(40_000);
+        const reg = await postRegister(new Request('https://pwusage.fm.rodeo/api/oauth/register', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-real-ip': '198.51.1.1' },
+            body: JSON.stringify({ client_name: 'Big', redirect_uris: ['https://a.example/cb'], pad: big }),
+        }));
+        expect(reg.status).toBe(413);
+        expect(mockRegisterDcrClient).not.toHaveBeenCalled();
+        for (const [post, path] of [[postToken, 'token'], [postRevoke, 'revoke']] as const) {
+            const res = await post(new Request(`https://pwusage.fm.rodeo/api/oauth/${path}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `token=${big}`,
+            }));
+            expect(res.status, path).toBe(413);
+        }
+    });
+
+    it('answers 429 when the unused-registration cap is reached', async () => {
+        mockRegisterDcrClient.mockResolvedValueOnce(null);
+        const res = await postRegister(new Request('https://pwusage.fm.rodeo/api/oauth/register', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-real-ip': '198.51.2.1' },
+            body: JSON.stringify({ client_name: 'Late', redirect_uris: ['https://a.example/cb'] }),
+        }));
+        expect(res.status).toBe(429);
+    });
+
+    it('rate-limits registrations per IPv6 /64, not per address', async () => {
+        mockRegisterDcrClient.mockResolvedValue({ clientId: 'pwu_client_x', clientName: 'X', redirectUris: ['https://a.example/cb'], clientUri: null, kind: 'dcr' });
+        const statuses: number[] = [];
+        for (let i = 1; i <= 21; i++) {
+            const res = await postRegister(new Request('https://pwusage.fm.rodeo/api/oauth/register', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-real-ip': `2001:db9:1:2::${i.toString(16)}` },
+                body: JSON.stringify({ client_name: 'X', redirect_uris: ['https://a.example/cb'] }),
+            }));
+            statuses.push(res.status);
+        }
+        expect(statuses.slice(0, 20).every(status => status === 201)).toBe(true);
+        expect(statuses[20]).toBe(429);
+    });
+
+    it('marks host-derived discovery metadata as varying by Host', async () => {
+        const prm = await getProtectedResource(new Request('https://pwusage.fm.rodeo/.well-known/oauth-protected-resource'));
+        const as = await getAuthServerMetadata(new Request('https://pwusage.fm.rodeo/.well-known/oauth-authorization-server'));
+        expect(prm.headers.get('vary')).toMatch(/host/i);
+        expect(as.headers.get('vary')).toMatch(/host/i);
+    });
 });

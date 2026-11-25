@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { exchangeAuthCode, rotateRefreshToken } from '@/lib/oauth/oauth-repo';
 import { expectedMcpResource, isValidMcpResource } from '@/lib/oauth/validation';
+import { readBoundedRequestText } from '@/lib/oauth/bounded-body';
 import { logEvent, observeRoute } from '@/lib/observability';
 import { getAppBaseUrl } from '@/lib/url-utils';
 
@@ -20,7 +21,10 @@ function tokenError(error: string, description: string, status = 400): Response 
 }
 
 export const POST = observeRoute('/api/oauth/token', async (request: Request): Promise<Response> => {
-    const rawBody = await request.text();
+    const rawBody = await readBoundedRequestText(request);
+    if (rawBody === null) {
+        return tokenError('invalid_request', 'Request body is too large', 413);
+    }
     const form = new URLSearchParams(rawBody);
     const grantType = form.get('grant_type');
     const clientId = form.get('client_id')?.trim() ?? '';

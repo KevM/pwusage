@@ -1,4 +1,5 @@
 import { revokeOAuthToken } from '@/lib/oauth/oauth-repo';
+import { readBoundedRequestText } from '@/lib/oauth/bounded-body';
 import { logEvent, observeRoute } from '@/lib/observability';
 
 const REVOKE_HEADERS = {
@@ -9,7 +10,10 @@ const REVOKE_HEADERS = {
 };
 
 export const POST = observeRoute('/api/oauth/revoke', async (request: Request): Promise<Response> => {
-    const rawBody = await request.text();
+    const rawBody = await readBoundedRequestText(request);
+    if (rawBody === null) {
+        return new Response(null, { status: 413, headers: REVOKE_HEADERS });
+    }
     const form = new URLSearchParams(rawBody);
     const token = form.get('token')?.trim() ?? '';
     if (token) {
