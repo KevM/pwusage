@@ -10,6 +10,7 @@ import { SankeyRendererForm } from '@/components/SankeyRendererForm';
 import { DEFAULT_RENDERER_ID } from '@/lib/sankey/renderers/registry';
 import { TariffList } from './TariffList';
 import { BillingIntegrations } from './BillingIntegrations';
+import { ConnectedAiApps } from './ConnectedAiApps';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/Card';
 import { Select, Label } from '@/components/ui/Form';
@@ -348,6 +349,7 @@ export function SettingsView({ site, installations, memberEmails, tariffTimeline
             />
 
             <BillingIntegrations key={site.id} siteId={site.id} />
+            <ConnectedAiApps key={`ai-${site.id}`} siteId={site.id} />
         </div>
     );
 }
