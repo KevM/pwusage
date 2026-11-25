@@ -664,11 +664,39 @@ fixtures; it does not apply or connect the migration. Cookie persistence across
 app launches, renewal, expiry, logout, and the custom URL callback still require
 simulator and device verification in the native app implementation.
 
+## Integration credentials
+
+Signed-in home members can create and revoke their own tokens in the web
+app under **Site Settings → Billing Integrations**. The token is shown once.
+PWUsage stores its SHA-256 digest and checks the issuing account and home
+access on every poll. Revocation or loss of that access invalidates the token.
+
+Each credential belongs to one home and one issuing user. The billing setup
+creates the credential and its `billing:read` grant together. Each endpoint
+requires its own explicit grant. A valid credential lacking the required
+grant receives `403`. Deleting a credential removes all of its grants.
+
+Send `Authorization: Bearer <token>` to `GET /api/integrations/v1/billing`.
+The credential selects its home. The response includes the same
+`currentBill.periods`, `loadTiming` period balances and rates, and
+`sources.energyDataThrough` as the app summary. Positive
+`loadTiming.periods[].cycleNetExportKwh` means banked exports. Negative
+values mean an import gap. The expanded forward schedule used by Smart Shift
+is available through the app's bill summary.
+
+Copy the response's `ETag` into `If-None-Match` on the next request. A `304`
+has an empty body and tells the client to reuse its previous response. PWUsage
+checks the latest stored sample before revalidating the ETag. If the sample is
+missing or more than an hour old, it tries the existing throttled Tesla history
+refresh during the request. If no newer sample arrives, the previous timestamp
+still describes data freshness.
+
 ## Authorization Decision Summary
 
 - Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
 - Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
+- Integration auth: home-scoped bearer credential with explicit grants. `/api/integrations/v1/billing` requires `billing:read`.
 - Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
 
 ## Current Open Gaps

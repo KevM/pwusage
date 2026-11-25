@@ -66,6 +66,7 @@ does not exist.
 | Table | Rule | Why |
 |---|---|---|
 | `MobileLoginHandoff` | All rows deleted | Short-lived one-time login codes |
+| `IntegrationCredential` | All rows deleted | Integration tokens are scoped to their original environment |
 | `TrmnlInstallation` | `refresh_token` set to NULL | Stored but never used by the app |
 | `BatteryHoldActivity` | All rows deleted | Live Activity push tokens; beta must never push to copied prod registrations |
 | `User` | `access_token`, `refresh_token` set to NULL; `auth_status = 'revoked'` | Tesla refresh tokens are single-use. A copied token is prod's live grant: whichever environment rotates it second presents a consumed token, failing with `invalid_grant` and risking Tesla's reuse detection revoking prod's grant. Beta logs are not sent to Axiom, so this looked like unexplained prod failures |

@@ -21,6 +21,9 @@ BEGIN
     IF to_regclass('public."TrmnlManageHandoff"') IS NOT NULL THEN
         EXECUTE 'DELETE FROM public."TrmnlManageHandoff"';
     END IF;
+    IF to_regclass('public."IntegrationCredential"') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public."IntegrationCredential"';
+    END IF;
     -- Stored but never used by the app.
     IF to_regclass('public."TrmnlInstallation"') IS NOT NULL THEN
         EXECUTE 'UPDATE public."TrmnlInstallation" SET refresh_token = NULL WHERE refresh_token IS NOT NULL';

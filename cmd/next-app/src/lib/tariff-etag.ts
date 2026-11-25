@@ -10,16 +10,17 @@ export function computeJsonETag(body: unknown): { serialized: string; etag: stri
   return { serialized, etag: `"${hash}"` };
 }
 
-export function ifNoneMatchMatches(req: NextRequest, etag: string): boolean {
+export function ifNoneMatchMatches(req: Pick<Request, 'headers'>, etag: string): boolean {
   const header = req.headers.get('if-none-match');
   if (!header) return false;
+  const current = etag.startsWith('W/') ? etag.slice(2) : etag;
   return header
     .split(',')
     .map((part) => part.trim())
     .some((candidate) => {
       if (candidate === '*') return true;
       const normalized = candidate.startsWith('W/') ? candidate.slice(2).trim() : candidate;
-      return normalized === etag;
+      return normalized === current;
     });
 }
 

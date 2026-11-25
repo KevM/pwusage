@@ -40,6 +40,12 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 - `VERCEL_PROJECT_ID`: Your Vercel Project ID.
 - `DISCORD_WEBHOOK`: Discord Webhook URL for Build/Deploy status notifications.
 
+## Billing Integrations
+
+Create a token under **Site Settings → Billing Integrations** to read the
+current bill from another app. See the [billing integration contract](../../Authentication.md#integration-credentials)
+for the endpoint, ETags, and data freshness.
+
 ## Cron Jobs
 
 The application uses [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs) for background maintenance. These are configured in `vercel.json`:
