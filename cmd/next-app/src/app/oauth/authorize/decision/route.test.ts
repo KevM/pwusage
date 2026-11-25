@@ -123,6 +123,16 @@ describe('POST /oauth/authorize/decision', () => {
         }));
     });
 
+    it('defaults omitted resource to canonical MCP endpoint', async () => {
+        const { resource: _omitted, ...withoutResource } = validBase;
+        void _omitted;
+        const okRes = await POST(makeRequest(withoutResource));
+        expect(okRes.status).toBe(303);
+        expect(mockCreateAuthCode).toHaveBeenCalledWith(expect.objectContaining({
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+        }));
+    });
+
     it('returns 400 without redirecting when client_id or redirect_uri is invalid', async () => {
         const res = await POST(makeRequest({
             ...validBase,

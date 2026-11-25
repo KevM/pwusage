@@ -58,11 +58,16 @@ describe('GET /login', () => {
         expect(mocks.cookieSet.mock.calls[0][0]).not.toBe(mocks.cookieSet.mock.calls[1][0]);
         expect(mocks.cookieDelete).not.toHaveBeenCalled();
     });
-    it.each(['//evil.com', '/\\evil.com', 'https://evil.com', 'javascript:alert(1)', '/bad\npath', '/' + 'a'.repeat(1024)])(
+    it.each(['//evil.com', '/\\evil.com', 'https://evil.com', 'javascript:alert(1)', '/bad\npath', '/' + 'a'.repeat(3072)])(
         'does not store unsafe or oversized destination %s', async callback => {
             await startLogin(new NextRequest(`http://localhost:5173/login?callback=${encodeURIComponent(callback)}`));
             expect(issuedAttempt().attempt.callback).toBeUndefined();
         });
+    it('preserves long /oauth/authorize callbacks under the 3072-char cap', async () => {
+        const longOAuthCallback = `/oauth/authorize?client_id=${encodeURIComponent('https://client.example.com/oauth/client.json')}&state=${'x'.repeat(1200)}`;
+        await startLogin(new NextRequest(`http://localhost:5173/login?callback=${encodeURIComponent(longOAuthCallback)}`));
+        expect(issuedAttempt().attempt.callback).toBe(longOAuthCallback);
+    });
     it('rejects malformed mobile parameters without issuing cookies', async () => {
         const response = await GET(new NextRequest('http://localhost:5173/login?mobile_challenge=bad&mobile_state=bad'));
         expect(response.status).toBe(400);

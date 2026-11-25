@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { getAuthorizedSiteIds, getCurrentUser } from '@/lib/auth-checks';
 import { resolveOAuthClient } from '@/lib/oauth/client-resolver';
 import { isSameOriginPost, verifyOAuthCsrfToken } from '@/lib/oauth/csrf';
 import { createAuthCode } from '@/lib/oauth/oauth-repo';
 import {
+    expectedMcpResource,
     isValidCodeChallenge,
     isValidMcpResource,
     parseRequestedScopes,
@@ -44,11 +45,12 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     const state = form.get('state');
     const codeChallenge = form.get('code_challenge')?.trim() ?? '';
     const codeChallengeMethod = form.get('code_challenge_method')?.trim() ?? '';
-    const resource = form.get('resource')?.trim() ?? null;
+    const rawResource = form.get('resource')?.trim() ?? null;
     const scopeParam = form.get('scope');
     const decision = form.get('decision');
 
     const origin = getAppBaseUrl(request);
+    const resource = rawResource === null || rawResource === '' ? expectedMcpResource(origin) : rawResource;
     const checkedUri = validateRedirectUri(rawRedirectUri);
     if (!clientId || !checkedUri.ok) {
         return NextResponse.json({ error: 'Invalid client_id or redirect_uri' }, { status: 400 });
@@ -110,8 +112,13 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     });
 
     // Non-blocking warm-up for newly provisioned sites so initial MCP tool calls have fresh data.
-    for (const siteId of submittedSiteIds) {
-        void refreshTodayData(siteId).catch(() => undefined);
+    const warmup = () => Promise.all(
+        submittedSiteIds.map(siteId => refreshTodayData(siteId).catch(() => undefined)),
+    );
+    try {
+        after(() => warmup());
+    } catch {
+        void warmup();
     }
 
     logEvent('info', 'oauth.authorize', {

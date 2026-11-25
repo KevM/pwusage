@@ -216,5 +216,9 @@ describe('mcp tools', () => {
         const emptyPayload = JSON.parse(emptyRes.content[0].text);
         expect(emptyPayload.syncInProgress).toBe(true);
         expect(emptyPayload.days).toEqual([]);
+        expect(mockPoolQuery).toHaveBeenCalledWith(
+            expect.stringContaining('AT TIME ZONE $4'),
+            ['site-1', '2026-11-18', '2026-11-25', 'America/Los_Angeles'],
+        );
     });
 });

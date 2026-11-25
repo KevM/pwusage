@@ -3,17 +3,21 @@ import { getAppBaseUrl } from '@/lib/url-utils';
 
 const CSRF_TTL_SECONDS = 30 * 60;
 
-function csrfSecret(): string {
-    return (
-        process.env.JWT_SECRET?.trim()
-        || process.env.SESSION_SECRET?.trim()
-        || process.env.TESLA_CLIENT_SECRET?.trim()
-        || 'pwusage-dev-oauth-csrf-secret'
-    );
+function getCsrfSecret(): string {
+    const secret = process.env.AUTH_SECRET?.trim();
+    if (
+        process.env.NODE_ENV === 'production'
+        && (!secret || secret === 'default-dev-secret-do-not-use-in-prod')
+    ) {
+        throw new Error('AUTH_SECRET environment variable is required in production');
+    }
+    return secret || 'default-dev-secret-do-not-use-in-prod';
 }
 
 function signPayload(payloadB64: string): string {
-    return createHmac('sha256', csrfSecret()).update(payloadB64).digest('base64url');
+    return createHmac('sha256', getCsrfSecret())
+        .update(`oauth-csrf:${payloadB64}`)
+        .digest('base64url');
 }
 
 export function createOAuthCsrfToken(userId: string): string {

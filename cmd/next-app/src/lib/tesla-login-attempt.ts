@@ -59,7 +59,7 @@ export function readLoginAttempt(value: string | undefined): TeslaLoginAttempt |
 }
 
 export function safeLoginCallback(callback: string | null): string | undefined {
-    return callback && callback.length <= 1024 && callback.startsWith('/')
+    return callback && callback.length <= 3072 && callback.startsWith('/')
         && !callback.startsWith('//') && !/[\\\x00-\x20\x7f]/.test(callback) ? callback : undefined;
 }
 

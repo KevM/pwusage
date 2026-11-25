@@ -11,6 +11,7 @@ import { resolveOAuthClient } from '@/lib/oauth/client-resolver';
 import { createOAuthCsrfToken } from '@/lib/oauth/csrf';
 import type { OAuthScope } from '@/lib/oauth/types';
 import {
+    expectedMcpResource,
     isValidCodeChallenge,
     isValidMcpResource,
     parseRequestedScopes,
@@ -69,7 +70,7 @@ export default async function OAuthAuthorizePage({
     const state = getParam('state');
     const codeChallenge = getParam('code_challenge')?.trim() ?? '';
     const codeChallengeMethod = getParam('code_challenge_method')?.trim() ?? '';
-    const resource = getParam('resource')?.trim() ?? null;
+    const rawResource = getParam('resource')?.trim() ?? null;
     const scopeParam = getParam('scope') ?? null;
 
     if (responseType !== 'code') {
@@ -85,8 +86,9 @@ export default async function OAuthAuthorizePage({
     const requestOrigin = host ? `${proto}://${host}` : undefined;
     const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || requestOrigin || getAppBaseUrl();
 
+    const resource = rawResource === null || rawResource === '' ? expectedMcpResource(origin) : rawResource;
     if (!isValidMcpResource(resource, origin)) {
-        return renderInvalidRequest('Invalid or missing MCP resource parameter.');
+        return renderInvalidRequest('Invalid MCP resource parameter.');
     }
 
     const parsedScopes = parseRequestedScopes(scopeParam);

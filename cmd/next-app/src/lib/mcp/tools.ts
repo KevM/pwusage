@@ -1,4 +1,5 @@
 import { readCurrentBilling } from '@/lib/current-billing-service';
+import { getSiteTodayDateStr, getValidTimezone } from '@/lib/date-utils';
 import { pool } from '@/lib/db';
 import type { OAuthAccessContext, OAuthScope } from '@/lib/oauth/types';
 import { SiteRepo } from '@/lib/site-repo';
@@ -208,17 +209,22 @@ export async function handleGetDailyUsage(
     const target = resolveTargetSiteId(ctx, args.site_id);
     if (!target.ok) return errorResult(target.error);
 
-    const now = new Date();
-    const toDate = args.to_date ?? formatUtcDate(now);
-    const defaultFrom = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 6));
-    const fromDate = args.from_date ?? formatUtcDate(defaultFrom);
+    const site = await new SiteRepo().getSite(target.siteId);
+    if (!site) return errorResult('site_not_found');
+    const timezone = getValidTimezone(site.timezone);
 
-    if (!ISO_DATE_RE.test(fromDate) || !ISO_DATE_RE.test(toDate)) {
+    const toDate = args.to_date ?? getSiteTodayDateStr(timezone);
+    if (!ISO_DATE_RE.test(toDate)) {
+        return errorResult('from_date and to_date must be YYYY-MM-DD.');
+    }
+    const toMs = Date.parse(`${toDate}T00:00:00Z`);
+    const fromDate = args.from_date ?? formatUtcDate(new Date(toMs - 6 * 86_400_000));
+
+    if (!ISO_DATE_RE.test(fromDate)) {
         return errorResult('from_date and to_date must be YYYY-MM-DD.');
     }
 
     const fromMs = Date.parse(`${fromDate}T00:00:00Z`);
-    const toMs = Date.parse(`${toDate}T00:00:00Z`);
     if (Number.isNaN(fromMs) || Number.isNaN(toMs) || fromMs > toMs) {
         return errorResult('from_date must be on or before to_date.');
     }
@@ -237,7 +243,7 @@ export async function handleGetDailyUsage(
         battery_discharge_kwh: string | number;
         sample_count: number;
     }>(
-        `SELECT a.day_start::date::text AS day,
+        `SELECT (a.day_start AT TIME ZONE $4)::date::text AS day,
                 ROUND(COALESCE(SUM(s.load_power), 0) / 12000.0, 3) AS load_kwh,
                 ROUND(COALESCE(SUM(s.solar_power), 0) / 12000.0, 3) AS solar_kwh,
                 ROUND(COALESCE(SUM(s.sample_import_wh), 0) / 1000.0, 3) AS grid_import_kwh,
@@ -249,11 +255,10 @@ export async function handleGetDailyUsage(
          INNER JOIN "EnergyDaySummary" s
            ON s.site_id = a.site_id AND s.day_start = a.day_start AND s.revision = a.revision
          WHERE a.site_id = $1
-           AND a.day_start >= $2::date
-           AND a.day_start <= $3::date
-         GROUP BY a.day_start
-         ORDER BY a.day_start ASC`,
-        [target.siteId, fromDate, toDate],
+           AND (a.day_start AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date
+         GROUP BY (a.day_start AT TIME ZONE $4)::date
+         ORDER BY day ASC`,
+        [target.siteId, fromDate, toDate, timezone],
     );
 
     const days = res.rows.map(row => ({
