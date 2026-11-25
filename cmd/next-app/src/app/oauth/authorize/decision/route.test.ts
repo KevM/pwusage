@@ -9,7 +9,7 @@ const mockVerifyCsrf = vi.fn();
 const mockVerifySameOrigin = vi.fn();
 
 vi.mock('@/lib/auth-checks', () => ({
-    getCurrentUser: () => mockGetCurrentUser(),
+    getCurrentSession: () => mockGetCurrentUser(),
     getAuthorizedSiteIds: () => mockGetAuthorizedSiteIds(),
 }));
 
@@ -41,7 +41,7 @@ describe('POST /oauth/authorize/decision', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         process.env.NEXT_PUBLIC_APP_URL = 'https://pwusage.fm.rodeo';
-        mockGetCurrentUser.mockResolvedValue({ id: 'user-1' });
+        mockGetCurrentUser.mockResolvedValue({ id: 'user-1', sessionVersion: 4 });
         mockGetAuthorizedSiteIds.mockResolvedValue(['site-1', 'site-2']);
         mockVerifySameOrigin.mockReturnValue(true);
         mockVerifyCsrf.mockResolvedValue(true);
@@ -128,6 +128,8 @@ describe('POST /oauth/authorize/decision', () => {
             clientId: 'pwu_client_1',
             userId: 'user-1',
             siteIds: ['site-1'],
+            // The version the approving session was validated at, not whatever the DB holds at insert time.
+            sessionVersion: 4,
         }));
     });
 
@@ -147,6 +149,13 @@ describe('POST /oauth/authorize/decision', () => {
             redirect_uri: 'https://evil.example/cb',
         }));
         expect(res.status).toBe(400);
+        expect(res.headers.get('location')).toBeNull();
+    });
+
+    it('answers 401 without redirecting when the session was signed out everywhere mid-request', async () => {
+        mockCreateAuthCode.mockResolvedValueOnce(null);
+        const res = await POST(makeRequest(validBase));
+        expect(res.status).toBe(401);
         expect(res.headers.get('location')).toBeNull();
     });
 });

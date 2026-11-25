@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server';
-import { getAuthorizedSiteIds, getCurrentUser } from '@/lib/auth-checks';
+import { getAuthorizedSiteIds, getCurrentSession } from '@/lib/auth-checks';
 import { resolveOAuthClient } from '@/lib/oauth/client-resolver';
 import { isSameOriginPost, verifyOAuthCsrfToken } from '@/lib/oauth/csrf';
 import { createAuthCode } from '@/lib/oauth/oauth-repo';
@@ -29,7 +29,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
         return NextResponse.json({ error: 'Cross-origin request rejected' }, { status: 403 });
     }
 
-    const user = await getCurrentUser();
+    const user = await getCurrentSession();
     if (!user) {
         return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
@@ -101,7 +101,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
         return NextResponse.json({ error: 'Selected home is not authorized' }, { status: 400 });
     }
 
-    const { code } = await createAuthCode({
+    const issued = await createAuthCode({
         clientId: client.clientId,
         clientName: client.clientName,
         clientUri: client.clientUri,
@@ -111,7 +111,13 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
         resource: resource as string,
         scopes: parsedScopes.scopes,
         siteIds: submittedSiteIds,
+        sessionVersion: user.sessionVersion,
     });
+    if (!issued) {
+        // Signed out everywhere (or deactivated) after this request's session check.
+        return NextResponse.json({ error: 'Your session ended. Sign in again to connect this app.' }, { status: 401 });
+    }
+    const { code } = issued;
 
     // Non-blocking warm-up for newly provisioned sites so initial MCP tool calls have fresh data.
     const warmup = () => Promise.all(

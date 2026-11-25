@@ -16,6 +16,8 @@ interface ResolvedAuth {
      * Absent for legacy tokens, whose claimed IDs may name deleted sites.
      */
     sites?: SiteSummary[];
+    /** The session_version this session was validated at (DB-checked tokens only). */
+    sessionVersion?: number;
 }
 
 /**
@@ -64,7 +66,8 @@ const resolveAuth = cache(async (): Promise<ResolvedAuth | null> => {
         userId: decoded.sub,
         roles: authState.roles,
         siteIds: sites.map(s => s.id),
-        sites
+        sites,
+        sessionVersion: decoded.sv ?? 0,
     };
 });
 
@@ -92,6 +95,18 @@ export const getCurrentUser = cache(async (): Promise<{ id: string, email?: stri
     const auth = await resolveAuth();
     if (!auth || !auth.userId) return null;
     return { id: auth.userId };
+});
+
+/**
+ * The signed-in user plus the session_version their session was validated at.
+ * For actions that must not outlive the session that approved them (OAuth
+ * consent): bind the result to this version, not to whatever the database
+ * holds when the write lands, so a concurrent "Sign out everywhere" wins.
+ */
+export const getCurrentSession = cache(async (): Promise<{ id: string; sessionVersion: number } | null> => {
+    const auth = await resolveAuth();
+    if (!auth?.userId || auth.sessionVersion === undefined) return null;
+    return { id: auth.userId, sessionVersion: auth.sessionVersion };
 });
 
 export const verifySiteAccess = cache(async (siteId: string): Promise<boolean> => {

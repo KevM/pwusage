@@ -97,18 +97,24 @@ describe('oauth-repo', () => {
             clientId: 'pwu_client_1', clientName: 'Claude', clientUri: null, userId: 'user-1',
             redirectUri: 'https://claude.ai/cb', codeChallenge: 'c'.repeat(43),
             resource: 'https://pwusage.fm.rodeo/api/mcp', scopes: ['billing:read'], siteIds: ['site-1'],
+            sessionVersion: 4,
         });
-        const sql = String(mockQuery.mock.calls[0][0]);
+        const [sql0, params] = mockQuery.mock.calls[0];
+        // Inserted only while the approving session's version is still the user's.
+        expect(String(sql0)).toMatch(/u\.session_version\s*=\s*\$12/);
+        expect(params[11]).toBe(4);
+        const sql = String(sql0);
         expect(sql).toMatch(/session_version/);
         expect(sql).toMatch(/FROM "User" u/);
         expect(sql).toMatch(/u\.is_active\s*=\s*true/);
 
         mockQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
-        await expect(createAuthCode({
+        expect(await createAuthCode({
             clientId: 'pwu_client_1', clientName: 'Claude', clientUri: null, userId: 'gone',
             redirectUri: 'https://claude.ai/cb', codeChallenge: 'c'.repeat(43),
             resource: 'https://pwusage.fm.rodeo/api/mcp', scopes: ['billing:read'], siteIds: ['site-1'],
-        })).rejects.toThrow(/inactive/i);
+            sessionVersion: 0,
+        })).toBeNull();
     });
 
     it('exchangeAuthCode revokes grant when a consumed code is replayed', async () => {

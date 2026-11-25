@@ -26,6 +26,8 @@ export interface CreateAuthCodeInput {
     resource: string;
     scopes: OAuthScope[];
     siteIds: string[];
+    /** The session_version the approving session was validated at. */
+    sessionVersion: number;
 }
 
 export type TokenExchangeResult =
@@ -200,11 +202,13 @@ export async function getDcrClient(clientId: string): Promise<OAuthClientMetadat
 
 export async function createAuthCode(
     input: CreateAuthCodeInput,
-): Promise<{ code: string; expiresAt: Date }> {
+): Promise<{ code: string; expiresAt: Date } | null> {
     const code = generateOpaqueToken();
     const expiresAt = new Date(Date.now() + AUTH_CODE_TTL_SECONDS * 1000);
-    // Stamp the user's current session_version (as mobile login handoffs do) and
-    // refuse an inactive account, in the same statement.
+    // Stamp the approving session's session_version and insert only while it is
+    // still the user's (and the user is active), in one statement: a "Sign out
+    // everywhere" that lands after the decision's session check refuses the code
+    // instead of it inheriting the new version.
     const res = await pool.query(
         `INSERT INTO "OAuthAuthCode" (
             code_hash, client_id, client_name, client_uri, user_id,
@@ -212,7 +216,7 @@ export async function createAuthCode(
          )
          SELECT $1::bytea, $2, $3, $4, u.id, $6, $7, $8, $9::text[], $10::text[], $11::timestamptz, u.session_version
          FROM "User" u
-         WHERE u.id = $5 AND u.is_active = true`,
+         WHERE u.id = $5 AND u.is_active = true AND u.session_version = $12`,
         [
             sha256Buffer(code),
             input.clientId,
@@ -225,11 +229,11 @@ export async function createAuthCode(
             input.scopes,
             input.siteIds,
             expiresAt,
+            input.sessionVersion,
         ],
     );
-    if (res.rowCount !== 1) {
-        throw new Error('Cannot issue an authorization code for an inactive or missing user');
-    }
+    // Null: the user is inactive or missing, or the approving session was signed out everywhere.
+    if (res.rowCount !== 1) return null;
     return { code, expiresAt };
 }
 
