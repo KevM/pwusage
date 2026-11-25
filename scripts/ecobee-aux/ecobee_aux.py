@@ -10,19 +10,16 @@ import os
 import re
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-ECOBEE = "https://api.ecobee.com"
 AUX = "auxHeatOnly"
 HEATING_MODES = ("heat", "auto")
-KNOWN_MODES = (*HEATING_MODES, AUX, "cool", "off")
 RUN_ID = os.urandom(6).hex()
 
 
@@ -209,108 +206,71 @@ def read_bank(payload, config, now):
     return BankReading("on-peak", bank, **context)
 
 
-class Ecobee:
-    def __init__(self, api_key, thermostat_id, state, save):
-        self.api_key = api_key
-        self.thermostat_id = thermostat_id
-        self.state = state
-        self.save = save
+class HomeAssistant:
+    def __init__(self):
+        url = urlsplit(required("HA_URL"))
+        if (url.scheme not in ("http", "https") or not url.hostname or url.username or url.password
+                or url.query or url.fragment or url.path not in ("", "/")):
+            raise ScriptError("HA_URL must be a Home Assistant HTTP or HTTPS origin.")
+        self.url = f"{url.scheme}://{url.netloc}"
+        self.token = required("HA_TOKEN")
+        self.climate = self.entity("HA_CLIMATE_ENTITY", "climate")
+        self.aux_switch = self.entity("HA_AUX_SWITCH", "switch")
 
-    def exchange(self, **params):
-        query = urlencode({"client_id": self.api_key, **params})
-        status, result, _ = fetch_service("ecobee", f"{ECOBEE}/token?{query}", method="POST")
-        tokens = as_object(result)
+    @staticmethod
+    def entity(variable, domain):
+        value = required(variable)
+        if not re.fullmatch(rf"{domain}\.[a-z0-9_]+", value):
+            raise ScriptError(f"{variable} must be a {domain} entity ID.")
+        return value
+
+    @property
+    def thermostat_id(self):
+        return [self.url, self.climate, self.aux_switch]
+
+    def request(self, path, **kwargs):
+        status, payload, _ = fetch_service("Home Assistant", self.url + path, token=self.token, **kwargs)
         if status != 200:
-            return False
-        if not all(isinstance(tokens.get(key), str) and tokens[key] for key in ("access_token", "refresh_token")):
-            raise ScriptError("ecobee returned incomplete OAuth credentials.")
-        expires = tokens.get("expires_in")
-        if not finite_number(expires) or expires <= 0:
-            raise ScriptError("ecobee returned an invalid token expiry.")
-        self.state["ecobee"] = {
-            "access": tokens["access_token"], "refresh": tokens["refresh_token"],
-            "expires_at": time.time() + expires,
-        }
-        self.save()
-        return True
+            raise ScriptError(f"Home Assistant rejected the request (HTTP {status}).")
+        return payload
 
-    def authorize(self):
-        query = urlencode({"response_type": "ecobeePin", "client_id": self.api_key, "scope": "smartWrite"})
-        status, result, _ = fetch_service("ecobee", f"{ECOBEE}/authorize?{query}")
-        if status != 200 or not isinstance(result, dict) or not result.get("ecobeePin") or not result.get("code"):
-            raise ScriptError("ecobee did not issue a PIN. Check the existing API key.")
-        print(f"Enter PIN {result['ecobeePin']} in ecobee's My Apps portal.")
-        input("Press Enter here after registering the PIN. ")
-        if not self.exchange(grant_type="ecobeePin", code=result["code"]):
-            raise ScriptError("ecobee did not accept the PIN. Run --authorize to try again.")
-        log_event("ecobee_authorized")
-
-    def access_token(self, refresh=False):
-        tokens = self.state.get("ecobee", {})
-        if not refresh and tokens.get("access") and tokens.get("expires_at", 0) > time.time() + 60:
-            return tokens["access"]
-        refresh_token = tokens.get("refresh") or os.environ.get("ECOBEE_REFRESH_TOKEN")
-        if not refresh_token:
-            raise ScriptError("Run --authorize to connect ecobee.")
-        log_event("ecobee_token_refresh_started")
-        if not self.exchange(grant_type="refresh_token", refresh_token=refresh_token):
-            raise ScriptError("ecobee rejected the token refresh. Run --authorize to reconnect.")
-        log_event("ecobee_token_refreshed")
-        return self.state["ecobee"]["access"]
-
-    def thermostat_request(self, url, *, body=None):
-        method = "GET" if body is None else "POST"
-        token = self.access_token()
-        for attempt in range(2):
-            status, result, _ = fetch_service("ecobee", url, method=method, token=token, body=body)
-            payload = as_object(result)
-            code = as_object(payload.get("status")).get("code")
-            if status == 200 and code == 0:
-                return payload
-            if attempt == 0 and (code == 14 or (status == 401 and code is None)):
-                token = self.access_token(refresh=True)
-                continue
-            raise ScriptError(f"ecobee rejected the thermostat request (HTTP {status}, code {code if type(code) is int else 'unknown'}).")
+    def state(self, entity):
+        data = as_object(self.request(f"/api/states/{entity}"))
+        if data.get("entity_id") != entity or data.get("state") in (None, "unavailable", "unknown"):
+            raise ScriptError(f"Home Assistant could not read {entity}.")
+        return data
 
     def read(self):
-        selection = {
-            "selectionType": "thermostats", "selectionMatch": self.thermostat_id,
-            "includeSettings": True, "includeRuntime": True, "includeEquipmentStatus": True,
-        }
-        query = urlencode({"json": json.dumps({"selection": selection})})
-        result = self.thermostat_request(f"{ECOBEE}/1/thermostat?{query}")
-        thermostats = result.get("thermostatList")
-        if not isinstance(thermostats, list):
-            raise ScriptError("ecobee did not return a thermostat list.")
-        matches = [item for item in thermostats
-                   if isinstance(item, dict) and item.get("identifier") == self.thermostat_id]
-        if len(matches) != 1:
-            raise ScriptError("ecobee did not return the configured thermostat.")
-        thermostat = matches[0]
-        if as_object(thermostat.get("runtime")).get("connected") is not True:
-            raise ScriptError("The ecobee thermostat is offline.")
-        settings = as_object(thermostat.get("settings"))
-        mode = settings.get("hvacMode")
-        if mode not in KNOWN_MODES:
-            raise ScriptError("ecobee returned an unknown HVAC mode.")
-        equipment = thermostat.get("equipmentStatus")
+        aux = self.state(self.aux_switch)["state"]
+        climate = self.state(self.climate)
+        mode = climate["state"]
+        if aux not in ("on", "off") or mode not in ("heat", "heat_cool", "cool", "off"):
+            raise ScriptError("Home Assistant returned an unsupported thermostat or Aux state.")
+        if aux == "on" and mode != "heat":
+            raise ScriptError("Home Assistant's climate and Aux switch states disagree.")
+        equipment = as_object(climate.get("attributes")).get("equipment_running")
         equipment = equipment.split(",") if isinstance(equipment, str) else []
         heating = any(item.strip() in ("heatPump", "heatPump2", "heatPump3") for item in equipment)
-        return mode, settings.get("hasHeatPump") is True, heating
+        if aux == "on":
+            return AUX, True, heating
+        return ("auto" if mode == "heat_cool" else mode), True, heating
 
     def set_mode(self, mode):
         log_event("ecobee_mode_change_requested", target_mode=mode)
-        self.thermostat_request(f"{ECOBEE}/1/thermostat?format=json", body={
-            "selection": {"selectionType": "thermostats", "selectionMatch": self.thermostat_id},
-            "thermostat": {"settings": {"hvacMode": mode}},
-        })
-        log_event("ecobee_mode_change_accepted", target_mode=mode)
+        if mode == AUX:
+            self.request("/api/services/switch/turn_on", method="POST", body={"entity_id": self.aux_switch})
+        else:
+            self.request("/api/services/climate/set_hvac_mode", method="POST", body={
+                "entity_id": self.climate,
+                "hvac_mode": "heat_cool" if mode == "auto" else mode,
+            })
+        log_event("ecobee_mode_change_accepted", target_mode=mode, accepted_by="home_assistant")
 
 
 def reconcile(ecobee, state, save, *, condition, bank, config, apply):
     previous_mode = state.get("previous_mode")
     eligible = bank is not None and bank <= config.enter_kwh
-    restore = previous_mode and (bank is None or bank >= config.exit_kwh)
+    restore = previous_mode and (state.get("restore_pending") or bank is None or bank >= config.exit_kwh)
     if condition in ("off-peak", "scheduled restore") and apply and state.pop("manual_override", False):
         save()
 
@@ -324,14 +284,17 @@ def reconcile(ecobee, state, save, *, condition, bank, config, apply):
         if mode != AUX:
             if apply:
                 state.pop("previous_mode")
-                state["manual_override"] = condition not in ("off-peak", "scheduled restore")
+                restored = state.pop("restore_pending", False) and mode == previous_mode
+                state["manual_override"] = not restored and condition not in ("off-peak", "scheduled restore")
                 save()
+                if restored:
+                    return f"confirmed restore to {mode}"
             return f"kept existing {mode} mode"
         if restore:
             if apply:
-                ecobee.set_mode(previous_mode)
-                state.pop("previous_mode")
+                state["restore_pending"] = True
                 save()
+                ecobee.set_mode(previous_mode)
             return f"{'requested restore to' if apply else 'would restore'} {previous_mode}"
         return "kept script-managed Aux"
     if not eligible or state.get("manual_override"):
@@ -346,9 +309,6 @@ def reconcile(ecobee, state, save, *, condition, bank, config, apply):
 
 
 def run(args, state, ecobee, save):
-    if args.authorize:
-        ecobee.authorize()
-        return 0
     apply = args.apply or args.restore
     config = None if args.restore else BillingConfig.load()
     failure = None
@@ -378,15 +338,12 @@ def run(args, state, ecobee, save):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_mutually_exclusive_group()
-    commands.add_argument("--authorize", action="store_true", help="authorize the existing ecobee API key with a PIN")
     commands.add_argument("--apply", action="store_true", help="let the script set and restore HVAC mode")
     commands.add_argument("--restore", action="store_true", help="restore a script-managed mode without polling PWUsage")
     args = parser.parse_args()
     try:
-        thermostat_id = required("ECOBEE_THERMOSTAT_ID")
-        if not re.fullmatch(r"[0-9]+", thermostat_id):
-            raise ScriptError("ECOBEE_THERMOSTAT_ID must identify one thermostat.")
-        path = Path(os.environ.get("ECOBEE_AUX_STATE", "~/.local/state/pwusage-ecobee/state.json")).expanduser()
+        ecobee = HomeAssistant()
+        path = Path(os.environ.get("ECOBEE_AUX_STATE", "~/.local/state/pwusage-ecobee/ha-state.json")).expanduser()
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.umask(0o077)
         with path.with_suffix(path.suffix + ".lock").open("a") as lock:
@@ -395,17 +352,16 @@ def main():
             except BlockingIOError:
                 log_event("skipped", reason="another run holds the state lock")
                 return 0
-            state = load_state(path, thermostat_id)
+            state = load_state(path, ecobee.thermostat_id)
 
             def save():
                 save_state(path, state)
 
-            ecobee = Ecobee(required("ECOBEE_API_KEY"), thermostat_id, state, save)
             return run(args, state, ecobee, save)
     except ScriptError as error:
         log_event("failed", reason=str(error))
-    except (OSError, ValueError, EOFError) as error:
-        log_event("failed", reason="configuration, state, or authorization I/O failed", error_type=type(error).__name__)
+    except (OSError, ValueError) as error:
+        log_event("failed", reason="configuration or state I/O failed", error_type=type(error).__name__)
     return 1
 
 

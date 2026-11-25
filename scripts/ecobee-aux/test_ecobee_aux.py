@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, urlsplit
 
 import ecobee_aux as aux
 
@@ -86,24 +85,34 @@ class ControlTests(unittest.TestCase):
 
         self.reconcile(3)
         self.ecobee.set_mode.assert_called_with("heat")
+        self.assertEqual(self.state["previous_mode"], "heat")
+        self.assertTrue(self.state["restore_pending"])
+        self.reconcile(0)
+        self.ecobee.set_mode.assert_called_with("heat")
+        self.ecobee.read.return_value = ("heat", True, False)
+        self.assertEqual(self.reconcile(3), "confirmed restore to heat")
         self.assertNotIn("previous_mode", self.state)
+        self.assertNotIn("restore_pending", self.state)
 
     def test_failed_restore_leaves_previous_mode_for_next_cron_run(self):
         self.state["previous_mode"] = "auto"
         self.ecobee.read.return_value = (aux.AUX, True, False)
         self.ecobee.set_mode.side_effect = [aux.ScriptError("ecobee unavailable"), None]
-        args = argparse.Namespace(authorize=False, apply=False, restore=True)
+        args = argparse.Namespace(apply=False, restore=True)
         with patch.object(aux, "fetch_bill") as poll:
             with self.assertRaises(aux.ScriptError):
                 aux.run(args, self.state, self.ecobee, self.save)
             self.assertEqual(self.state["previous_mode"], "auto")
+            self.assertEqual(aux.run(args, self.state, self.ecobee, self.save), 0)
+            self.assertEqual(self.state["previous_mode"], "auto")
+            self.ecobee.read.return_value = ("auto", True, False)
             self.assertEqual(aux.run(args, self.state, self.ecobee, self.save), 0)
             poll.assert_not_called()
         self.ecobee.set_mode.assert_called_with("auto")
         self.assertNotIn("previous_mode", self.state)
 
     def test_off_peak_cron_with_no_override_exits_without_network_calls(self):
-        args = argparse.Namespace(authorize=False, apply=False, restore=True)
+        args = argparse.Namespace(apply=False, restore=True)
         with patch.object(aux, "fetch_bill") as poll:
             self.assertEqual(aux.run(args, self.state, self.ecobee, self.save), 0)
             poll.assert_not_called()
@@ -112,7 +121,7 @@ class ControlTests(unittest.TestCase):
     def test_restores_on_a_failed_pwusage_poll(self):
         self.state["previous_mode"] = "heat"
         self.ecobee.read.return_value = (aux.AUX, True, False)
-        args = argparse.Namespace(authorize=False, apply=True, restore=False)
+        args = argparse.Namespace(apply=True, restore=False)
         with patch.object(aux.BillingConfig, "load", return_value=CONFIG):
             with patch.object(aux, "fetch_bill", side_effect=aux.ScriptError("PWUsage unavailable")):
                 self.assertEqual(aux.run(args, self.state, self.ecobee, self.save), 1)
@@ -138,7 +147,7 @@ class ControlTests(unittest.TestCase):
 
 
     def test_logs_cached_sample_age_thresholds_and_action_without_secrets(self):
-        args = argparse.Namespace(authorize=False, apply=False, restore=False)
+        args = argparse.Namespace(apply=False, restore=False)
         output = StringIO()
         with redirect_stdout(output), patch.object(aux.BillingConfig, "load", return_value=CONFIG):
             with patch.object(aux, "fetch_bill", return_value=(bill(), 304)):
@@ -157,37 +166,55 @@ class ControlTests(unittest.TestCase):
         self.assertNotIn(CONFIG.token, output.getvalue())
 
 
-class EcobeeApiTests(unittest.TestCase):
-    @patch.object(aux, "fetch_service")
-    def test_refreshes_once_then_sends_only_a_mode_change_for_the_selected_thermostat(self, fetch):
-        state = {"ecobee": {"access": "old-access", "refresh": "old-refresh", "expires_at": float("inf")}}
-        save = Mock()
-        fetch.side_effect = [
-            (500, {"status": {"code": 14}}, None),
-            (200, {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}, None),
-            (200, {"status": {"code": 0}}, None),
-        ]
-        aux.Ecobee("test-key", "123", state, save).set_mode(aux.AUX)
-        refresh_query = parse_qs(urlsplit(fetch.call_args_list[1].args[1]).query)
-        self.assertEqual(refresh_query["refresh_token"], ["old-refresh"])
-        self.assertEqual(state["ecobee"]["refresh"], "new-refresh")
-        save.assert_called_once()
-        self.assertEqual(fetch.call_args.kwargs["token"], "new-access")
-        self.assertEqual(fetch.call_args.kwargs["body"], {
-            "selection": {"selectionType": "thermostats", "selectionMatch": "123"},
-            "thermostat": {"settings": {"hvacMode": "auxHeatOnly"}},
-        })
+class HomeAssistantApiTests(unittest.TestCase):
+    def setUp(self):
+        env = {
+            "HA_URL": "http://127.0.0.1:8123", "HA_TOKEN": "test-ha-token",
+            "HA_CLIMATE_ENTITY": "climate.ecobee", "HA_AUX_SWITCH": "switch.ecobee_aux",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            self.thermostat = aux.HomeAssistant()
 
-    def test_failed_ecobee_command_logs_the_attempt_without_claiming_success(self):
+    @patch.object(aux, "fetch_service")
+    def test_requires_both_entities_and_distinguishes_aux_from_normal_heat(self, fetch):
+        climate = {"entity_id": "climate.ecobee", "state": "heat",
+                   "attributes": {"equipment_running": "fan,heatPump"}}
+        fetch.side_effect = [
+            (200, {"entity_id": "switch.ecobee_aux", "state": "on"}, None),
+            (200, climate, None),
+            (200, {"entity_id": "switch.ecobee_aux", "state": "off"}, None),
+            (200, {**climate, "state": "heat_cool"}, None),
+            (200, {"entity_id": "switch.ecobee_aux", "state": "unavailable"}, None),
+        ]
+        self.assertEqual(self.thermostat.read(), (aux.AUX, True, True))
+        self.assertEqual(self.thermostat.read(), ("auto", True, True))
+        with self.assertRaisesRegex(aux.ScriptError, "could not read"):
+            self.thermostat.read()
+        self.assertEqual(fetch.call_args_list[0].args[1], "http://127.0.0.1:8123/api/states/switch.ecobee_aux")
+        self.assertEqual(fetch.call_args_list[1].args[1], "http://127.0.0.1:8123/api/states/climate.ecobee")
+
+    @patch.object(aux, "fetch_service")
+    def test_enables_aux_and_restores_the_saved_mode_explicitly(self, fetch):
+        fetch.return_value = (200, [], None)
+        self.thermostat.set_mode(aux.AUX)
+        self.thermostat.set_mode("auto")
+        request_aux, request_restore = fetch.call_args_list
+        self.assertEqual(request_aux.args[1], "http://127.0.0.1:8123/api/services/switch/turn_on")
+        self.assertEqual(request_aux.kwargs, {
+            "token": "test-ha-token", "method": "POST", "body": {"entity_id": "switch.ecobee_aux"},
+        })
+        self.assertEqual(request_restore.args[1], "http://127.0.0.1:8123/api/services/climate/set_hvac_mode")
+        self.assertEqual(request_restore.kwargs["body"], {"entity_id": "climate.ecobee", "hvac_mode": "heat_cool"})
+
+    def test_failed_home_assistant_command_logs_the_attempt_without_claiming_success(self):
         output = StringIO()
-        with redirect_stdout(output), patch.object(aux.Ecobee, "thermostat_request",
-                                                     side_effect=aux.ScriptError("ecobee offline")):
-            ecobee = aux.Ecobee("test-key", "123", {}, Mock())
-            with self.assertRaises(aux.ScriptError):
-                ecobee.set_mode("heat")
+        with redirect_stdout(output), patch.object(aux, "fetch_service", return_value=(503, None, None)):
+            with self.assertRaisesRegex(aux.ScriptError, "HTTP 503"):
+                self.thermostat.set_mode("heat")
         [event] = list(map(json.loads, output.getvalue().splitlines()))
         self.assertEqual(event["event"], "ecobee_mode_change_requested")
         self.assertEqual(event["target_mode"], "heat")
+        self.assertNotIn("test-ha-token", output.getvalue())
 
     def test_private_state_persists_across_runs(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,7 +1,7 @@
 # Use the On-Peak bank to manage ecobee Aux
 
 Run this on Ubuntu with Python 3.10 or later. It uses a PWUsage billing
-integration token and an existing ecobee developer API key. The thermostat
+integration token and Home Assistant's ecobee integration. The thermostat
 must already be configured for fuel-fired auxiliary heat.
 
 The script reads the active rate period and its billing-cycle bank in kWh.
@@ -13,7 +13,16 @@ A thermostat in Auto is eligible when ecobee reports the heat pump is heating.
 
 ## Set up and test
 
-Create a billing integration token in **Site Settings → Billing Integrations**.
+1. In Home Assistant 2026.3 or later, add the **ecobee** integration under
+   **Settings → Devices & services**. Leave the developer key blank and sign in
+   with your ecobee account. Home Assistant handles its connection to ecobee.
+   [Home Assistant ecobee setup](https://www.home-assistant.io/integrations/ecobee/)
+2. Find the entity IDs of the thermostat and its **Auxiliary heat only**
+   switch. Use the two entities from the same device. Create a long-lived
+   access token in your Home Assistant user profile.
+   [Home Assistant REST authentication](https://developers.home-assistant.io/docs/api/rest/)
+3. Create a PWUsage billing integration token in **Site Settings → Billing Integrations**.
+
 On Ubuntu, put the following in a private file at
 `$HOME/.config/pwusage-ecobee/env`. Restrict it to your user with `chmod 600`.
 
@@ -23,8 +32,10 @@ export PWUSAGE_TOKEN='your PWUsage integration token'
 export PWUSAGE_ON_PEAK_PERIOD='On-Peak'
 export AUX_ENTER_KWH=1
 export AUX_EXIT_KWH=3
-export ECOBEE_API_KEY='your existing ecobee developer API key'
-export ECOBEE_THERMOSTAT_ID='your ecobee thermostat identifier'
+export HA_URL=http://127.0.0.1:8123
+export HA_TOKEN='your Home Assistant access token'
+export HA_CLIMATE_ENTITY=climate.example
+export HA_AUX_SWITCH=switch.example_auxiliary_heat_only
 ```
 
 Use your actual rate period name and thresholds. Positive kWh is a bank of
@@ -33,17 +44,12 @@ starts using Aux at 1 kWh or less and returns to normal at 3 kWh or more. The
 default sample age limit is 60 minutes. You can set `PWUSAGE_MAX_AGE_MINUTES`
 to use a different limit.
 
-Load the file and authorize once. Enter the displayed PIN in **My Apps** in the
-ecobee portal, then return to the terminal and press Enter. The script saves
-the rotating OAuth credentials and last known thermostat mode in a private
-state file. If you already have a refresh token dedicated to this script, you
-can set `ECOBEE_REFRESH_TOKEN` in place of the PIN flow. The saved rotated
-token takes precedence on subsequent requests.
-[ecobee PIN authorization](https://www.ecobee.com/home/developer/api/documentation/v1/auth/pin-api-authorization.shtml)
+The loopback URL above assumes Home Assistant is running on the same Ubuntu
+host. Use the HTTPS URL if Home Assistant is on another host. Load the file
+and run a dry check:
 
 ```sh
 . "$HOME/.config/pwusage-ecobee/env"
-python3 /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --authorize
 python3 /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py
 ```
 
@@ -56,9 +62,9 @@ script will keep your selection through the rest of On-Peak.
 
 ## Run from cron
 
-Use one cron user and state file for authorization, polling, and restoration.
+Use one cron user and state file for polling and restoration.
 The script locks its state file to avoid overlapping runs. The default is
-`$HOME/.local/state/pwusage-ecobee/state.json`. Set `ECOBEE_AUX_STATE` to a
+`$HOME/.local/state/pwusage-ecobee/ha-state.json`. Set `ECOBEE_AUX_STATE` to a
 different path if you run a second thermostat. Keep the file between runs so
 the script can restore the mode after a restart.
 
@@ -88,9 +94,10 @@ Each line is a JSON event with a UTC timestamp and a run ID. An evaluation
 records the active rate period, On-Peak bank, usable thresholds, PWUsage sample
 age, and whether the API returned a new bill (`200`) or reused the saved one
 (`304`). The subsequent events report the ecobee mode when checked, the action
-or failure, and any request to change modes. An accepted request means the
-ecobee API acknowledged it. A mode observation reports what the thermostat
-actually returned. The log leaves out credentials and response bodies.
+or failure, and any request to change modes. An accepted request means Home
+Assistant acknowledged it. The restore job keeps the saved mode until Home
+Assistant reports that Aux is off and the prior mode is back. The log leaves
+out credentials and response bodies.
 
 Follow the log while the job runs:
 
