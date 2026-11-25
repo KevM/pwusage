@@ -28,10 +28,10 @@ async function resolveOAuthCancelUrl(callback: string | undefined): Promise<{
             return { retryHref, cancelHref: null };
         }
         const client = await resolveOAuthClient(clientId);
-        if (!client || !client.redirectUris.includes(checkedUri.normalized)) {
+        if (!client || !client.redirectUris.includes(checkedUri.uri)) {
             return { retryHref, cancelHref: null };
         }
-        const cancelTarget = new URL(checkedUri.normalized);
+        const cancelTarget = new URL(checkedUri.uri);
         cancelTarget.searchParams.set('error', 'access_denied');
         if (state) cancelTarget.searchParams.set('state', state);
         return { retryHref, cancelHref: cancelTarget.href };

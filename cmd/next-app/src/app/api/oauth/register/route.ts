@@ -93,7 +93,7 @@ export const POST = observeRoute('/api/oauth/register', async (request: Request)
         if (!checked.ok) {
             return dcrError('invalid_redirect_uri', checked.error);
         }
-        redirectUris.push(checked.normalized);
+        redirectUris.push(checked.uri);
     }
 
     let clientUri: string | null = null;

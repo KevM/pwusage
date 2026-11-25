@@ -31,6 +31,14 @@ describe('oauth validation', () => {
         expect(validateRedirectUri('cursor://anysphere.cursor-mcp/oauth/callback').ok).toBe(true);
     });
 
+    it('keeps a valid redirect_uri exactly as sent (OAuth 2.1 exact string matching)', () => {
+        // URL.href would append "/" here, so a code stored with the rewritten form
+        // failed the token exchange against the client's original string.
+        for (const uri of ['http://localhost:8080', 'https://claude.ai', 'cursor://anysphere.cursor-mcp/oauth/callback', 'https://claude.ai/cb?x=1']) {
+            expect(validateRedirectUri(uri)).toEqual({ ok: true, uri });
+        }
+    });
+
     it('rejects insecure http, fragments, javascript:, and data: redirect_uris', () => {
         expect(validateRedirectUri('http://evil.example/cb').ok).toBe(false);
         expect(validateRedirectUri('https://claude.ai/cb#frag').ok).toBe(false);

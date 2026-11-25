@@ -57,7 +57,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     }
 
     const client = await resolveOAuthClient(clientId);
-    if (!client || !client.redirectUris.includes(checkedUri.normalized)) {
+    if (!client || !client.redirectUris.includes(checkedUri.uri)) {
         return NextResponse.json({ error: 'Unrecognized client or redirect_uri' }, { status: 400 });
     }
 
@@ -67,7 +67,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
             outcome: 'denied',
         });
         return NextResponse.redirect(
-            buildRedirectLocation(checkedUri.normalized, { error: 'access_denied', state }),
+            buildRedirectLocation(checkedUri.uri, { error: 'access_denied', state }),
             303,
         );
     }
@@ -104,7 +104,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
         clientName: client.clientName,
         clientUri: client.clientUri,
         userId: user.id,
-        redirectUri: checkedUri.normalized,
+        redirectUri: checkedUri.uri,
         codeChallenge,
         resource: resource as string,
         scopes: parsedScopes.scopes,
@@ -128,7 +128,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     });
 
     return NextResponse.redirect(
-        buildRedirectLocation(checkedUri.normalized, { code, state }),
+        buildRedirectLocation(checkedUri.uri, { code, state }),
         303,
     );
 });

@@ -229,7 +229,7 @@ function validateCimdDocument(clientId: string, raw: unknown): OAuthClientMetada
         if (typeof uri !== 'string') return null;
         const checked = validateRedirectUri(uri);
         if (!checked.ok) return null;
-        redirectUris.push(checked.normalized);
+        redirectUris.push(checked.uri);
     }
 
     let clientUri: string | null = null;

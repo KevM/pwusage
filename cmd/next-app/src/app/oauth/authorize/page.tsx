@@ -104,16 +104,16 @@ export default async function OAuthAuthorizePage({
     }
 
     const client = await resolveOAuthClient(clientId);
-    if (!client || !client.redirectUris.includes(checkedUri.normalized)) {
+    if (!client || !client.redirectUris.includes(checkedUri.uri)) {
         return renderInvalidRequest('Unrecognized app or redirect URI.');
     }
 
-    const identity = describeClientIdentity(client, checkedUri.normalized);
+    const identity = describeClientIdentity(client, checkedUri.uri);
 
     const authorizePath = buildAuthorizePath({
         response_type: responseType,
         client_id: clientId,
-        redirect_uri: checkedUri.normalized,
+        redirect_uri: checkedUri.uri,
         state,
         code_challenge: codeChallenge,
         code_challenge_method: codeChallengeMethod,
@@ -166,7 +166,7 @@ export default async function OAuthAuthorizePage({
                         <ClientIdentityNotice identity={identity} />
                         <input type="hidden" name="csrf_token" value={csrfToken} />
                         <input type="hidden" name="client_id" value={client.clientId} />
-                        <input type="hidden" name="redirect_uri" value={checkedUri.normalized} />
+                        <input type="hidden" name="redirect_uri" value={checkedUri.uri} />
                         {state && <input type="hidden" name="state" value={state} />}
                         <input type="hidden" name="code_challenge" value={codeChallenge} />
                         <input type="hidden" name="code_challenge_method" value="S256" />

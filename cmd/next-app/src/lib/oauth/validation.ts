@@ -18,7 +18,12 @@ export function verifyPkceS256(verifier: string, challenge: string): boolean {
     return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function validateRedirectUri(raw: string): { ok: true; normalized: string } | { ok: false; error: string } {
+/**
+ * Checks a redirect_uri and returns it unchanged. OAuth 2.1 compares redirect
+ * URIs as exact strings, so the value is never rewritten (URL.href would, for
+ * example, turn http://localhost:8080 into http://localhost:8080/).
+ */
+export function validateRedirectUri(raw: string): { ok: true; uri: string } | { ok: false; error: string } {
     if (!raw || raw.length > 2048) return { ok: false, error: 'Invalid redirect_uri length' };
     let parsed: URL;
     try {
@@ -29,17 +34,17 @@ export function validateRedirectUri(raw: string): { ok: true; normalized: string
     if (parsed.hash) return { ok: false, error: 'redirect_uri must not contain a fragment' };
     if (FORBIDDEN_SCHEMES.has(parsed.protocol)) return { ok: false, error: 'Forbidden redirect_uri scheme' };
     if (parsed.protocol === 'https:') {
-        return parsed.hostname ? { ok: true, normalized: parsed.href } : { ok: false, error: 'Missing host' };
+        return parsed.hostname ? { ok: true, uri: raw } : { ok: false, error: 'Missing host' };
     }
     if (parsed.protocol === 'http:') {
         const isLoopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '[::1]';
         return isLoopback
-            ? { ok: true, normalized: parsed.href }
+            ? { ok: true, uri: raw }
             : { ok: false, error: 'Non-loopback http redirect_uri is not allowed' };
     }
     // Custom native app schemes (e.g. cursor://, vscode://)
     if (/^[a-z][a-z0-9+.-]*:$/.test(parsed.protocol)) {
-        return { ok: true, normalized: parsed.href };
+        return { ok: true, uri: raw };
     }
     return { ok: false, error: 'Unsupported redirect_uri scheme' };
 }
