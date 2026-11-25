@@ -1,5 +1,7 @@
 import dns from 'node:dns';
-import net from 'node:net';
+import https from 'node:https';
+import net, { type LookupFunction } from 'node:net';
+import { Readable } from 'node:stream';
 import type { OAuthClientMetadata } from './types';
 import { validateRedirectUri } from './validation';
 
@@ -17,7 +19,8 @@ const cimdCache = new Map<string, CachedCimdEntry>();
 
 export interface ClientResolverDeps {
     lookupIps?: (hostname: string) => Promise<string[]>;
-    fetchFn?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+    /** GET the CIMD document, connecting only to `pinnedIps` (already checked against the blocklist). */
+    fetchFn?: (url: string, pinnedIps: string[]) => Promise<Response>;
     getDcrClient?: (clientId: string) => Promise<OAuthClientMetadata | null>;
 }
 
@@ -59,7 +62,12 @@ function isBlockedIpv4(ip: string): boolean {
         [0x7f000000, 0xff000000], // 127.0.0.0/8 (loopback)
         [0xa9fe0000, 0xffff0000], // 169.254.0.0/16 (link-local / metadata)
         [0xac100000, 0xfff00000], // 172.16.0.0/12
+        [0xc0000000, 0xffffff00], // 192.0.0.0/24 (IETF protocol assignments)
+        [0xc0000200, 0xffffff00], // 192.0.2.0/24 (TEST-NET-1)
         [0xc0a80000, 0xffff0000], // 192.168.0.0/16
+        [0xc6120000, 0xfffe0000], // 198.18.0.0/15 (benchmarking)
+        [0xc6336400, 0xffffff00], // 198.51.100.0/24 (TEST-NET-2)
+        [0xcb007100, 0xffffff00], // 203.0.113.0/24 (TEST-NET-3)
         [0xe0000000, 0xf0000000], // 224.0.0.0/4 (multicast)
         [0xf0000000, 0xf0000000], // 240.0.0.0/4 (reserved)
     ];
@@ -74,6 +82,10 @@ function isBlockedIpv6(ip: string): boolean {
         if (net.isIPv4(mapped)) return isBlockedIpv4(mapped);
         return true;
     }
+    // ::/96 (IPv4-compatible), NAT64 64:ff9b::/96, 6to4 2002::/16 and documentation
+    // 2001:db8::/32 can all carry or reach an internal IPv4 address.
+    if (normalized.startsWith('::')) return true;
+    if (normalized.startsWith('64:ff9b:') || normalized.startsWith('2002:') || normalized.startsWith('2001:db8:')) return true;
     const firstHextet = normalized.split(':')[0];
     if (firstHextet) {
         const value = Number.parseInt(firstHextet, 16);
@@ -96,6 +108,56 @@ export function isBlockedIpAddress(ip: string): boolean {
 async function defaultLookupIps(hostname: string): Promise<string[]> {
     const records = await dns.promises.lookup(hostname, { all: true });
     return records.map(record => record.address);
+}
+
+/**
+ * A DNS lookup that answers only with addresses already checked against the
+ * blocklist. Handing it to the connection closes the DNS-rebinding gap where
+ * the check sees a public address and the connect-time lookup a private one.
+ */
+export function pinnedLookup(ips: string[]): LookupFunction {
+    const entries = ips.map(address => ({ address, family: net.isIP(address) }));
+    return (_hostname, options, callback) => {
+        if (options.all) {
+            callback(null, entries);
+            return;
+        }
+        const wanted = options.family === 4 || options.family === 6 ? entries.find(e => e.family === options.family) : entries[0];
+        if (!wanted) {
+            callback(Object.assign(new Error('No validated address for the requested family'), { code: 'ENOTFOUND' }), '', 0);
+            return;
+        }
+        callback(null, wanted.address, wanted.family);
+    };
+}
+
+/**
+ * GET over HTTPS, connected to `pinnedIps` only. TLS still verifies the URL's
+ * hostname (SNI and certificate), and redirects are not followed.
+ */
+function fetchPinned(url: string, pinnedIps: string[]): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const req = https.request(url, {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+            lookup: pinnedLookup(pinnedIps),
+            // A fresh connection: a pooled keep-alive socket would skip the pinned lookup.
+            agent: false,
+            signal: AbortSignal.timeout(CIMD_FETCH_TIMEOUT_MS),
+        }, res => {
+            const status = res.statusCode ?? 502;
+            const headers = new Headers();
+            for (const [key, value] of Object.entries(res.headers)) {
+                if (Array.isArray(value)) value.forEach(v => headers.append(key, v));
+                else if (value !== undefined) headers.set(key, value);
+            }
+            const hasBody = status >= 200 && ![204, 205, 304].includes(status);
+            if (!hasBody) res.resume();
+            resolve(new Response(hasBody ? (Readable.toWeb(res) as ReadableStream<Uint8Array>) : null, { status, headers }));
+        });
+        req.on('error', reject);
+        req.end();
+    });
 }
 
 async function readBoundedText(response: Response, maxBytes: number): Promise<string | null> {
@@ -218,15 +280,10 @@ export async function resolveOAuthClient(
         return null;
     }
 
-    const fetchFn = deps?.fetchFn ?? fetch;
+    const fetchFn = deps?.fetchFn ?? fetchPinned;
     let response: Response;
     try {
-        response = await fetchFn(clientId, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-            redirect: 'error',
-            signal: AbortSignal.timeout(CIMD_FETCH_TIMEOUT_MS),
-        });
+        response = await fetchFn(clientId, ips);
     } catch {
         return null;
     }
