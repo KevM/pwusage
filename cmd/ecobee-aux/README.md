@@ -18,7 +18,7 @@ Integrations**. Install the pinned Python package in a virtual environment:
 
 ```sh
 python3 -m venv "$HOME/.local/share/pwusage-ecobee/venv"
-"$HOME/.local/share/pwusage-ecobee/venv/bin/python" -m pip install -r /path/to/pwusage/scripts/ecobee-aux/requirements.txt
+"$HOME/.local/share/pwusage-ecobee/venv/bin/python" -m pip install -r /path/to/pwusage/cmd/ecobee-aux/requirements.txt
 ```
 
 On Ubuntu, put the following in a private file at
@@ -47,8 +47,8 @@ for later cron runs. Run `--authorize` again if ecobee revokes them.
 
 ```sh
 . "$HOME/.config/pwusage-ecobee/env"
-"$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --authorize
-"$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py
+"$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/cmd/ecobee-aux/ecobee_aux.py --authorize
+"$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/cmd/ecobee-aux/ecobee_aux.py
 ```
 
 With no flag, the script logs its decision and the thermostat mode in dry-run
@@ -78,8 +78,8 @@ log before installing the entries:
 ```
 
 ```cron
-*/5 8-19 * * 1-5 . "$HOME/.config/pwusage-ecobee/env" && "$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --apply >> "$HOME/.local/state/pwusage-ecobee/cron.jsonl" 2>&1
-*/5 0-7,20-23 * * * . "$HOME/.config/pwusage-ecobee/env" && "$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --restore >> "$HOME/.local/state/pwusage-ecobee/cron.jsonl" 2>&1
+*/5 8-19 * * 1-5 . "$HOME/.config/pwusage-ecobee/env" && "$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/cmd/ecobee-aux/ecobee_aux.py --apply >> "$HOME/.local/state/pwusage-ecobee/cron.jsonl" 2>&1
+*/5 0-7,20-23 * * * . "$HOME/.config/pwusage-ecobee/env" && "$HOME/.local/share/pwusage-ecobee/venv/bin/python" /path/to/pwusage/cmd/ecobee-aux/ecobee_aux.py --restore >> "$HOME/.local/state/pwusage-ecobee/cron.jsonl" 2>&1
 ```
 
 Keep the restore job even if the main job stops at the On-Peak boundary. If
