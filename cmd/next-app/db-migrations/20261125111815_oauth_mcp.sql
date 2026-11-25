@@ -21,8 +21,14 @@ CREATE TABLE IF NOT EXISTS "OAuthGrant" (
     created_at timestamptz NOT NULL DEFAULT now(),
     last_used_at timestamptz,
     max_expires_at timestamptz NOT NULL,
-    revoked_at timestamptz
+    revoked_at timestamptz,
+    -- The user's session_version at consent. Tokens work only while it still
+    -- matches, so "Sign out everywhere" ends even a grant committed by a code
+    -- exchange that raced the sign-out.
+    session_version integer NOT NULL
 );
+-- Databases that ran an earlier draft of this migration (the table already existed).
+ALTER TABLE "OAuthGrant" ADD COLUMN IF NOT EXISTS session_version integer;
 
 CREATE INDEX IF NOT EXISTS oauth_grant_user_active_idx
     ON "OAuthGrant" (user_id, created_at DESC) WHERE revoked_at IS NULL;

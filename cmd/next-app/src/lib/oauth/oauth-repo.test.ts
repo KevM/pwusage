@@ -55,6 +55,7 @@ describe('oauth-repo', () => {
                     resource: 'https://pwusage.fm.rodeo/api/mcp',
                     scopes: ['billing:read', 'usage:read'],
                     site_ids: ['site-1', 'site-2'],
+                    session_version: 3,
                 }],
             }) // UPDATE OAuthAuthCode
             .mockResolvedValueOnce({ rows: [] }) // INSERT OAuthGrant
@@ -81,6 +82,10 @@ describe('oauth-repo', () => {
         }
         expect(mockClientRelease).toHaveBeenCalledTimes(1);
         // The code is redeemable only while its user is active and has not signed out everywhere since it was issued.
+        // The grant carries the consent's session_version, so a sign-out that races this exchange still kills it.
+        const [grantSql, grantParams] = mockClientQuery.mock.calls[2];
+        expect(String(grantSql)).toMatch(/INSERT INTO "OAuthGrant"[\s\S]*session_version/);
+        expect(grantParams).toContain(3);
         const consumeSql = String(mockClientQuery.mock.calls[1][0]);
         expect(consumeSql).toMatch(/u\.is_active\s*=\s*true/);
         expect(consumeSql).toMatch(/u\.session_version\s*=\s*c\.session_version/);
@@ -150,9 +155,10 @@ describe('oauth-repo', () => {
                     scopes: ['billing:read'],
                     max_expires_at: maxExpiresAt,
                     revoked_at: null,
+                    session_version: 2,
                 }],
             }) // SELECT OAuthGrant
-            .mockResolvedValueOnce({ rows: [{ is_active: true }] }) // SELECT User
+            .mockResolvedValueOnce({ rows: [{ is_active: true, session_version: 2 }] }) // SELECT User
             .mockResolvedValueOnce({ rows: [] }) // INSERT access token
             .mockResolvedValueOnce({ rows: [] }) // INSERT refresh token
             .mockResolvedValueOnce({ rows: [] }) // UPDATE OAuthGrant last_used_at
@@ -169,6 +175,29 @@ describe('oauth-repo', () => {
             expect(result.accessToken.startsWith('pwu_oat_')).toBe(true);
             expect(result.refreshToken.startsWith('pwu_ort_')).toBe(true);
         }
+    });
+
+    it('rotateRefreshToken refuses a grant from before the user signed out everywhere', async () => {
+        mockClientQuery
+            .mockResolvedValueOnce({ rows: [] }) // BEGIN
+            .mockResolvedValueOnce({ rows: [{ grant_id: 'grant-1' }] }) // UPDATE OAuthToken used_at
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 'grant-1', user_id: 'user-1', client_id: 'pwu_client_1',
+                    resource: 'https://pwusage.fm.rodeo/api/mcp', scopes: ['billing:read'],
+                    max_expires_at: new Date(Date.now() + 86_400_000), revoked_at: null, session_version: 0,
+                }],
+            }) // SELECT OAuthGrant
+            .mockResolvedValueOnce({ rows: [{ is_active: true, session_version: 1 }] }) // SELECT User
+            .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+        const result = await rotateRefreshToken({
+            refreshToken: 'pwu_ort_valid_token',
+            clientId: 'pwu_client_1',
+            resource: 'https://pwusage.fm.rodeo/api/mcp',
+        });
+        expect(result).toMatchObject({ ok: false, error: 'invalid_grant' });
+        expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO "OAuthToken"'))).toBe(false);
     });
 
     it('rotateRefreshToken revokes entire grant on refresh token reuse', async () => {
@@ -262,5 +291,16 @@ describe('oauth-repo', () => {
         mockQuery.mockResolvedValueOnce({ rows: [row('https://claude.ai/oauth/client.json'), row('pwu_client_1')] });
         const grants = await listUserOAuthGrantsForSite('user-1', 'site-1');
         expect(grants.map(g => g.publisherHost)).toEqual(['claude.ai', null]);
+    });
+
+    it('access tokens and the Settings list ignore grants from before a sign out everywhere', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        await authenticateOAuthAccessToken('Bearer pwu_oat_x', 'https://pwusage.fm.rodeo/api/mcp');
+        expect(String(mockQuery.mock.calls[0][0])).toMatch(/g\.session_version\s*=\s*u\.session_version/);
+
+        mockQuery.mockReset();
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        await listUserOAuthGrantsForSite('user-1', 'site-1');
+        expect(String(mockQuery.mock.calls[0][0])).toMatch(/g\.session_version\s*=\s*u\.session_version/);
     });
 });

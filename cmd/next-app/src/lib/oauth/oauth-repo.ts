@@ -75,6 +75,7 @@ interface AuthCodeRow {
     resource: string;
     scopes: OAuthScope[];
     site_ids: string[];
+    session_version: number;
 }
 
 interface GrantRow {
@@ -85,6 +86,7 @@ interface GrantRow {
     scopes: OAuthScope[];
     max_expires_at: Date;
     revoked_at: Date | null;
+    session_version: number;
 }
 
 /** Unused self-registrations allowed per day (16 KB bodies: at most ~8 MB of rows). */
@@ -258,7 +260,7 @@ export async function exchangeAuthCode(input: {
                AND u.is_active = true
                AND u.session_version = c.session_version
              RETURNING c.client_id, c.client_name, c.client_uri, c.user_id, c.redirect_uri,
-                       c.code_challenge, c.resource, c.scopes, c.site_ids`,
+                       c.code_challenge, c.resource, c.scopes, c.site_ids, c.session_version`,
             [codeHash],
         );
 
@@ -293,9 +295,12 @@ export async function exchangeAuthCode(input: {
         const maxExpiresAt = new Date(Date.now() + GRANT_MAX_TTL_SECONDS * 1000);
 
         await client.query(
-            `INSERT INTO "OAuthGrant" (id, user_id, client_id, client_name, client_uri, resource, scopes, max_expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [grantId, row.user_id, row.client_id, row.client_name, row.client_uri, row.resource, row.scopes, maxExpiresAt],
+            // Stamped with the consent's session_version: if a sign-out everywhere
+            // races this exchange and misses the uncommitted grant, its tokens
+            // still fail the version check on every use.
+            `INSERT INTO "OAuthGrant" (id, user_id, client_id, client_name, client_uri, resource, scopes, max_expires_at, session_version)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [grantId, row.user_id, row.client_id, row.client_name, row.client_uri, row.resource, row.scopes, maxExpiresAt, row.session_version],
         );
 
         await client.query(
@@ -375,7 +380,7 @@ export async function rotateRefreshToken(input: {
         }
 
         const grantRes = await client.query<GrantRow>(
-            `SELECT id, user_id, client_id, resource, scopes, max_expires_at, revoked_at
+            `SELECT id, user_id, client_id, resource, scopes, max_expires_at, revoked_at, session_version
              FROM "OAuthGrant"
              WHERE id = $1`,
             [rotated.grant_id],
@@ -392,13 +397,18 @@ export async function rotateRefreshToken(input: {
             return { ok: false, error: 'invalid_grant', errorDescription: 'Refresh token grant is no longer valid' };
         }
 
-        const userRes = await client.query<{ is_active: boolean }>(
-            `SELECT is_active FROM "User" WHERE id = $1`,
+        const userRes = await client.query<{ is_active: boolean; session_version: number }>(
+            `SELECT is_active, session_version FROM "User" WHERE id = $1`,
             [grant.user_id],
         );
-        if (!userRes.rows[0]?.is_active) {
+        const owner = userRes.rows[0];
+        if (!owner?.is_active) {
             await client.query('ROLLBACK');
             return { ok: false, error: 'invalid_grant', errorDescription: 'User account is inactive' };
+        }
+        if (owner.session_version !== grant.session_version) {
+            await client.query('ROLLBACK');
+            return { ok: false, error: 'invalid_grant', errorDescription: 'The user signed out everywhere; connect the app again' };
         }
 
         const { accessToken, refreshToken } = await issueTokenPair(client, grant.id, grant.max_expires_at);
@@ -481,7 +491,8 @@ export async function authenticateOAuthAccessToken(
            AND g.revoked_at IS NULL
            AND g.max_expires_at > now()
            AND g.resource = $2
-           AND u.is_active = true`,
+           AND u.is_active = true
+           AND g.session_version = u.session_version`,
         [tokenHash, expectedResource],
     );
 
@@ -539,10 +550,12 @@ export async function listUserOAuthGrantsForSite(
                 (SELECT count(*)::text FROM "OAuthGrantSite" all_gs WHERE all_gs.grant_id = g.id) AS site_count
          FROM "OAuthGrant" g
          INNER JOIN "OAuthGrantSite" gs ON gs.grant_id = g.id
+         INNER JOIN "User" u ON u.id = g.user_id
          WHERE g.user_id = $1
            AND gs.site_id = $2
            AND g.revoked_at IS NULL
            AND g.max_expires_at > now()
+           AND g.session_version = u.session_version
          ORDER BY g.created_at DESC`,
         [userId, siteId],
     );
