@@ -66,13 +66,34 @@ For example, if your On-Peak period is weekdays from 08:00 to 20:00 and the
 Ubuntu host is in the site's time zone, use these crontab entries. Adjust the
 hours and days to your plan. The restore job retries during off-peak hours
 if ecobee is unavailable at the boundary. It exits without an API request
-when there is no script-managed mode to restore.
+when there is no script-managed mode to restore. Create the private cron
+log before installing the entries:
+
+```sh
+(umask 077; mkdir -p "$HOME/.local/state/pwusage-ecobee"; touch "$HOME/.local/state/pwusage-ecobee/cron.jsonl")
+```
 
 ```cron
-*/5 8-19 * * 1-5 . "$HOME/.config/pwusage-ecobee/env" && /usr/bin/python3 /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --apply
-*/5 0-7,20-23 * * * . "$HOME/.config/pwusage-ecobee/env" && /usr/bin/python3 /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --restore
+*/5 8-19 * * 1-5 . "$HOME/.config/pwusage-ecobee/env" && /usr/bin/python3 /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --apply >> "$HOME/.local/state/pwusage-ecobee/cron.jsonl" 2>&1
+*/5 0-7,20-23 * * * . "$HOME/.config/pwusage-ecobee/env" && /usr/bin/python3 /path/to/pwusage/scripts/ecobee-aux/ecobee_aux.py --restore >> "$HOME/.local/state/pwusage-ecobee/cron.jsonl" 2>&1
 ```
 
 Keep the restore job even if the main job stops at the On-Peak boundary. If
 the host or ecobee is offline through all restore retries, run `--restore`
 once connectivity returns, or select the usual mode at the thermostat.
+
+## Read the cron log
+
+Each line is a JSON event with a UTC timestamp and a run ID. An evaluation
+records the active rate period, On-Peak bank, usable thresholds, PWUsage sample
+age, and whether the API returned a new bill (`200`) or reused the saved one
+(`304`). The subsequent events report the ecobee mode when checked, the action
+or failure, and any request to change modes. An accepted request means the
+ecobee API acknowledged it. A mode observation reports what the thermostat
+actually returned. The log leaves out credentials and response bodies.
+
+Follow the log while the job runs:
+
+```sh
+tail -f "$HOME/.local/state/pwusage-ecobee/cron.jsonl"
+```

@@ -23,10 +23,20 @@ ECOBEE = "https://api.ecobee.com"
 AUX = "auxHeatOnly"
 HEATING_MODES = ("heat", "auto")
 KNOWN_MODES = (*HEATING_MODES, AUX, "cool", "off")
+RUN_ID = os.urandom(6).hex()
 
 
 class ScriptError(Exception):
     pass
+
+
+def log_event(event, **fields):
+    print(json.dumps({
+        "time": datetime.now(timezone.utc).isoformat(),
+        "run_id": RUN_ID,
+        "event": event,
+        **fields,
+    }), flush=True)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -156,36 +166,47 @@ def fetch_bill(config, state, save):
         cached = {}
     status, payload, etag = fetch_service("PWUsage", config.url, token=config.token, etag=cached.get("etag"))
     if status == 304 and isinstance(cached.get("payload"), dict):
-        return cached["payload"]
+        return cached["payload"], status
     if status != 200 or not isinstance(payload, dict):
         raise ScriptError(f"PWUsage did not return a bill (HTTP {status}).")
     state["billing"] = {"key": key, "etag": etag, "payload": payload}
     save()
-    return payload
+    return payload, status
+
+
+@dataclass(frozen=True)
+class BankReading:
+    condition: str
+    bank_kwh: float | None = None
+    active_period: str | None = None
+    sample_age_seconds: float | None = None
 
 
 def read_bank(payload, config, now):
+    through = timestamp(as_object(payload.get("sources")).get("energyDataThrough"))
+    age = round((now - through).total_seconds(), 1) if through is not None else None
     timing = as_object(payload.get("loadTiming"))
     prices = timing.get("pricingPeriods")
     if not isinstance(prices, list):
-        return "active rate period unavailable", None
+        return BankReading("active rate period unavailable", sample_age_seconds=age)
     active = [row for row in prices if isinstance(row, dict) and row.get("isActive") is True]
     if len(active) != 1 or not isinstance(active[0].get("name"), str):
-        return "active rate period unavailable", None
-    if period_key(active[0]["name"]) != config.peak:
+        return BankReading("active rate period unavailable", sample_age_seconds=age)
+    period = active[0]["name"]
+    context = {"active_period": period, "sample_age_seconds": age}
+    if period_key(period) != config.peak:
         if not any(isinstance(row, dict) and isinstance(row.get("name"), str)
                    and period_key(row["name"]) == config.peak for row in prices):
-            return "configured On-Peak period is unavailable", None
-        return "off-peak", None
+            return BankReading("configured On-Peak period is unavailable", **context)
+        return BankReading("off-peak", **context)
     if as_object(payload.get("currentBill")).get("status") != "complete" or timing.get("hasCycleData") is not True:
-        return "billing totals unavailable", None
-    through = timestamp(as_object(payload.get("sources")).get("energyDataThrough"))
+        return BankReading("billing totals unavailable", **context)
     if through is None or not 0 <= (now - through).total_seconds() <= config.max_age_minutes * 60:
-        return "PWUsage readings are stale or missing", None
+        return BankReading("PWUsage readings are stale or missing", **context)
     bank = active[0].get("cycleNetExportKwh")
     if not finite_number(bank):
-        return "On-Peak bank unavailable", None
-    return "on-peak", bank
+        return BankReading("On-Peak bank unavailable", **context)
+    return BankReading("on-peak", bank, **context)
 
 
 class Ecobee:
@@ -222,7 +243,7 @@ class Ecobee:
         input("Press Enter here after registering the PIN. ")
         if not self.exchange(grant_type="ecobeePin", code=result["code"]):
             raise ScriptError("ecobee did not accept the PIN. Run --authorize to try again.")
-        print("ecobee authorization saved.")
+        log_event("ecobee_authorized")
 
     def access_token(self, refresh=False):
         tokens = self.state.get("ecobee", {})
@@ -231,8 +252,10 @@ class Ecobee:
         refresh_token = tokens.get("refresh") or os.environ.get("ECOBEE_REFRESH_TOKEN")
         if not refresh_token:
             raise ScriptError("Run --authorize to connect ecobee.")
+        log_event("ecobee_token_refresh_started")
         if not self.exchange(grant_type="refresh_token", refresh_token=refresh_token):
             raise ScriptError("ecobee rejected the token refresh. Run --authorize to reconnect.")
+        log_event("ecobee_token_refreshed")
         return self.state["ecobee"]["access"]
 
     def thermostat_request(self, url, *, body=None):
@@ -276,10 +299,12 @@ class Ecobee:
         return mode, settings.get("hasHeatPump") is True, heating
 
     def set_mode(self, mode):
+        log_event("ecobee_mode_change_requested", target_mode=mode)
         self.thermostat_request(f"{ECOBEE}/1/thermostat?format=json", body={
             "selection": {"selectionType": "thermostats", "selectionMatch": self.thermostat_id},
             "thermostat": {"settings": {"hvacMode": mode}},
         })
+        log_event("ecobee_mode_change_accepted", target_mode=mode)
 
 
 def reconcile(ecobee, state, save, *, condition, bank, config, apply):
@@ -292,6 +317,8 @@ def reconcile(ecobee, state, save, *, condition, bank, config, apply):
     if apply and not previous_mode and (not eligible or state.get("manual_override")):
         return "no change"
     mode, has_heat_pump, heating = ecobee.read()
+    log_event("ecobee_mode_observed", mode=mode, has_heat_pump=has_heat_pump, heat_pump_running=heating,
+              restore_mode=previous_mode)
 
     if previous_mode:
         if mode != AUX:
@@ -305,7 +332,7 @@ def reconcile(ecobee, state, save, *, condition, bank, config, apply):
                 ecobee.set_mode(previous_mode)
                 state.pop("previous_mode")
                 save()
-            return f"{'restored' if apply else 'would restore'} {previous_mode}"
+            return f"{'requested restore to' if apply else 'would restore'} {previous_mode}"
         return "kept script-managed Aux"
     if not eligible or state.get("manual_override"):
         return f"kept existing {mode} mode"
@@ -325,20 +352,26 @@ def run(args, state, ecobee, save):
     apply = args.apply or args.restore
     config = None if args.restore else BillingConfig.load()
     failure = None
+    http_status = None
     if args.restore:
         if not state.get("previous_mode") and not state.get("manual_override"):
             return 0
-        condition, bank = "scheduled restore", None
+        reading = BankReading("scheduled restore")
     else:
         try:
-            payload = fetch_bill(config, state, save)
-            condition, bank = read_bank(payload, config, datetime.now(timezone.utc))
+            payload, http_status = fetch_bill(config, state, save)
+            reading = read_bank(payload, config, datetime.now(timezone.utc))
         except ScriptError as error:
             failure = error
-            condition, bank = str(error), None
-    action = reconcile(ecobee, state, save, condition=condition, bank=bank, config=config, apply=apply)
-    print(f"{datetime.now(timezone.utc).isoformat()} {'apply' if apply else 'dry run'}: {condition}; "
-          f"bank={bank if bank is not None else 'unknown'} kWh; {action}")
+            reading = BankReading(str(error))
+    log_event("evaluation", mode="apply" if apply else "dry_run", condition=reading.condition,
+              billing_http_status=http_status, active_period=reading.active_period, bank_kwh=reading.bank_kwh,
+              sample_age_seconds=reading.sample_age_seconds, restore_mode=state.get("previous_mode"),
+              manual_override=state.get("manual_override", False),
+              enter_kwh=config.enter_kwh if config else None, exit_kwh=config.exit_kwh if config else None)
+    action = reconcile(ecobee, state, save, condition=reading.condition, bank=reading.bank_kwh,
+                       config=config, apply=apply)
+    log_event("completed", action=action, exit_code=1 if failure else 0)
     return 1 if failure else 0
 
 
@@ -360,7 +393,7 @@ def main():
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | (0 if args.restore else fcntl.LOCK_NB))
             except BlockingIOError:
-                print("An ecobee Aux run already holds the state lock.")
+                log_event("skipped", reason="another run holds the state lock")
                 return 0
             state = load_state(path, thermostat_id)
 
@@ -370,9 +403,9 @@ def main():
             ecobee = Ecobee(required("ECOBEE_API_KEY"), thermostat_id, state, save)
             return run(args, state, ecobee, save)
     except ScriptError as error:
-        print(error, file=sys.stderr)
-    except (OSError, ValueError, EOFError):
-        print("Could not read the configuration, write the state, or complete authorization.", file=sys.stderr)
+        log_event("failed", reason=str(error))
+    except (OSError, ValueError, EOFError) as error:
+        log_event("failed", reason="configuration, state, or authorization I/O failed", error_type=type(error).__name__)
     return 1
 
 
