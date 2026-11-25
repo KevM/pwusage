@@ -5,6 +5,15 @@ import type { OAuthAccessContext, OAuthScope } from '@/lib/oauth/types';
 import { SiteRepo } from '@/lib/site-repo';
 import { refreshLiveStatus } from '@/lib/today-refresh';
 import { getAppBaseUrl } from '@/lib/url-utils';
+import type { MobileLoadTimingWithTimeline } from '@/lib/mobile-bill-summary';
+import type { z } from 'zod';
+import {
+    currentBillOutput,
+    dailyUsageOutput,
+    listHomesOutput,
+    liveStatusOutput,
+    smartShiftOutlookOutput,
+} from './output-schemas';
 
 export interface McpToolResult {
     [key: string]: unknown;
@@ -12,10 +21,17 @@ export interface McpToolResult {
     isError?: boolean;
 }
 
-function textResult(data: unknown, isError = false): McpToolResult {
+/**
+ * A successful tool result, parsed through the tool's output schema: fields the
+ * schema does not declare are dropped (clients reject them, as the published
+ * schema forbids extra properties), and a wrong type throws instead of shipping.
+ * Sent as `structuredContent` and as JSON text for clients that only read `content`.
+ */
+function structuredResult<S extends z.ZodObject>(schema: S, data: z.input<S>): McpToolResult {
+    const parsed = schema.parse(data);
     return {
-        content: [{ type: 'text', text: JSON.stringify(data) }],
-        ...(isError ? { isError: true } : {}),
+        content: [{ type: 'text', text: JSON.stringify(parsed) }],
+        structuredContent: parsed,
     };
 }
 
@@ -77,7 +93,7 @@ export async function handleListHomes(ctx: OAuthAccessContext): Promise<McpToolR
     const siteRepo = new SiteRepo();
     const loaded = await Promise.all(ctx.authorizedSiteIds.map(id => siteRepo.getSite(id)));
     const sites = loaded.filter((s): s is NonNullable<typeof s> => Boolean(s));
-    return textResult({
+    return structuredResult(listHomesOutput, {
         homes: sites.map(site => ({
             siteId: site.id,
             name: site.name,
@@ -121,9 +137,12 @@ export async function handleGetLiveStatus(
         return errorResult(`Live Powerwall status is temporarily unavailable (${live.status}).`);
     }
 
-    return textResult({
+    return structuredResult(liveStatusOutput, {
         siteId: target.siteId,
-        statusSource: live.status,
+        // A reading is returned only as fresh, cached, or the stored one after a failure.
+        statusSource: live.status === 'refreshed' || live.status === 'cached' || live.status === 'connection-required'
+            ? live.status
+            : 'error',
         fetchedAt: live.fetchedAt ? new Date(live.fetchedAt).toISOString() : null,
         solarPowerW: live.liveStatus.solar_power ?? null,
         loadPowerW: live.liveStatus.load_power ?? null,
@@ -161,7 +180,7 @@ export async function handleGetCurrentBill(
     }
 
     const setupNotice = buildSetupNotice(site, getAppBaseUrl());
-    return textResult({
+    return structuredResult(currentBillOutput, {
         siteId: target.siteId,
         siteName: billing.summary.site.name,
         timezone: billing.summary.site.timezone,
@@ -195,11 +214,12 @@ export async function handleGetSmartShiftOutlook(
     }
 
     const setupNotice = buildSetupNotice(site, getAppBaseUrl());
-    return textResult({
+    return structuredResult(smartShiftOutlookOutput, {
         siteId: target.siteId,
         siteName: billing.summary.site.name,
         timezone: billing.summary.site.timezone,
-        loadTiming: billing.summary.loadTiming,
+        // includeLoadTimingTimeline: true builds the timeline-carrying view.
+        loadTiming: (billing.summary.loadTiming as MobileLoadTimingWithTimeline | null | undefined) ?? null,
         upcomingRateTimeline: billing.summary.outlook?.tariffTimeline ?? [],
         energyDataThrough: billing.summary.sources.energyDataThrough,
         ...(setupNotice ? { setupNotice } : {}),
@@ -347,7 +367,7 @@ export async function handleGetDailyUsage(
         days.push(toDailyUsageDay(date, byDate.get(date)));
     }
 
-    return textResult({
+    return structuredResult(dailyUsageOutput, {
         siteId: target.siteId,
         fromDate,
         toDate,

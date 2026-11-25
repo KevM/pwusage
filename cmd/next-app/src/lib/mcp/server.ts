@@ -1,6 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { OAuthAccessContext } from '@/lib/oauth/types';
+import {
+    currentBillOutput,
+    dailyUsageOutput,
+    listHomesOutput,
+    liveStatusOutput,
+    smartShiftOutlookOutput,
+} from './output-schemas';
 import { logEvent } from '@/lib/observability';
 import {
     handleGetCurrentBill,
@@ -59,6 +66,7 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
         {
             description: 'List Powerwall homes authorized for this connection, including timezone, billing start day, and setup status.',
             inputSchema: {},
+            outputSchema: listHomesOutput,
             annotations: READ_ONLY_ANNOTATIONS,
         },
         () => runLoggedTool(ctx, 'list_homes', undefined, () => handleListHomes(ctx)),
@@ -71,6 +79,7 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
             inputSchema: {
                 site_id: z.string().optional().describe('Home siteId from list_homes. Optional when only one home is authorized.'),
             },
+            outputSchema: liveStatusOutput,
             annotations: READ_ONLY_ANNOTATIONS,
         },
         args => runLoggedTool(ctx, 'get_live_status', args.site_id, () => handleGetLiveStatus(ctx, args)),
@@ -83,6 +92,7 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
             inputSchema: {
                 site_id: z.string().optional().describe('Home siteId from list_homes. Optional when only one home is authorized.'),
             },
+            outputSchema: currentBillOutput,
             annotations: READ_ONLY_ANNOTATIONS,
         },
         args => runLoggedTool(ctx, 'get_current_bill', args.site_id, () => handleGetCurrentBill(ctx, args)),
@@ -95,6 +105,7 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
             inputSchema: {
                 site_id: z.string().optional().describe('Home siteId from list_homes. Optional when only one home is authorized.'),
             },
+            outputSchema: smartShiftOutlookOutput,
             annotations: READ_ONLY_ANNOTATIONS,
         },
         args => runLoggedTool(ctx, 'get_smart_shift_outlook', args.site_id, () => handleGetSmartShiftOutlook(ctx, args)),
@@ -112,6 +123,7 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
                 from_date: z.string().optional().describe('Start date in YYYY-MM-DD (defaults to 7 days ago).'),
                 to_date: z.string().optional().describe('End date in YYYY-MM-DD (defaults to today).'),
             },
+            outputSchema: dailyUsageOutput,
             annotations: READ_ONLY_ANNOTATIONS,
         },
         args => runLoggedTool(ctx, 'get_daily_usage', args.site_id, () => handleGetDailyUsage(ctx, args)),

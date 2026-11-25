@@ -178,8 +178,8 @@ describe('mcp tools', () => {
             status: 'current',
             summary: {
                 site: { id: 'site-1', name: 'Main Home', timezone: 'America/Chicago' },
-                currentBill: { status: 'complete', estimatedCost: 34.17, currency: 'USD', cycleStart: 'a', cycleEnd: 'b', periods: [] },
-                loadTiming: { hasTariff: true, periods: [] },
+                currentBill: { status: 'complete', estimatedCost: 34.17, currency: 'USD', cycleStart: '2026-11-11T06:00:00.000Z', cycleEnd: '2026-12-11T06:00:00.000Z', periods: [] },
+                loadTiming: null,
                 sources: { energyDataThrough: '2026-11-25T17:55:00Z' },
             },
         });
@@ -188,7 +188,7 @@ describe('mcp tools', () => {
         // Same read the billing integration makes (integrations/v1/billing).
         expect(mockReadCurrentBilling).toHaveBeenCalledWith('site-1', { refreshStale: true, includeLoadTimingTimeline: false });
         expect(payload.currentBill.estimatedCost).toBe(34.17);
-        expect(payload.loadTiming).toEqual({ hasTariff: true, periods: [] });
+        expect(payload.loadTiming).toBeNull();
     });
 
     it('get_current_bill and get_smart_shift_outlook include setupNotice when tariff or billing day is unconfirmed', async () => {
@@ -214,11 +214,7 @@ describe('mcp tools', () => {
                     cycleEnd: '2026-12-01T08:00:00Z',
                     periods: [],
                 },
-                loadTiming: {
-                    mode: 'neutral',
-                    cycleNetExportKwh: 12.4,
-                    headline: 'Standard rate',
-                },
+                loadTiming: null,
                 outlook: {
                     cycleNetExportKwh: 12.4,
                     tariffTimeline: [],
