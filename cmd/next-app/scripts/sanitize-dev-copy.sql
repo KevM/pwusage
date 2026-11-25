@@ -24,6 +24,20 @@ BEGIN
     IF to_regclass('public."IntegrationCredential"') IS NOT NULL THEN
         EXECUTE 'DELETE FROM public."IntegrationCredential"';
     END IF;
+    -- OAuth 2.1 / MCP clients, auth codes, grants (cascades to OAuthGrantSite), and tokens:
+    -- environment-specific credentials must never be copied from prod to dev.
+    IF to_regclass('public."OAuthToken"') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public."OAuthToken"';
+    END IF;
+    IF to_regclass('public."OAuthAuthCode"') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public."OAuthAuthCode"';
+    END IF;
+    IF to_regclass('public."OAuthGrant"') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public."OAuthGrant"';
+    END IF;
+    IF to_regclass('public."OAuthClient"') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public."OAuthClient"';
+    END IF;
     -- Stored but never used by the app.
     IF to_regclass('public."TrmnlInstallation"') IS NOT NULL THEN
         EXECUTE 'UPDATE public."TrmnlInstallation" SET refresh_token = NULL WHERE refresh_token IS NOT NULL';

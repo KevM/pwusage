@@ -441,3 +441,22 @@ describe('UserRepo Fleet API base URL', () => {
         expect(queryMock.mock.calls[1][0]).toContain('u.fleet_api_base_url');
     });
 });
+
+describe('UserRepo.signOutEverywhere', () => {
+    beforeEach(() => {
+        queryMock.mockReset();
+    });
+
+    it('bumps session_version and disconnects every connected AI app in one statement', async () => {
+        queryMock.mockResolvedValueOnce({ rows: [{ revoked_grants: 2 }] });
+        const result = await new UserRepo().signOutEverywhere('user-1');
+
+        expect(result).toEqual({ disconnectedApps: 2 });
+        expect(queryMock).toHaveBeenCalledTimes(1);
+        const [sql, params] = queryMock.mock.calls[0];
+        expect(params).toEqual(['user-1']);
+        expect(sql).toMatch(/session_version\s*=\s*session_version \+ 1/);
+        expect(sql).toMatch(/UPDATE "OAuthGrant"/);
+        expect(sql).toMatch(/UPDATE "OAuthToken"/);
+    });
+});

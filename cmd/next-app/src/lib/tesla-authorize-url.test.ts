@@ -57,4 +57,10 @@ describe('buildTeslaAuthorizeUrl', () => {
             expect(rawNonce).not.toContain('+');
         });
     });
+
+    it('uses prompt=login instead of prompt_missing_scopes when forceLogin is true', () => {
+        const url = buildTeslaAuthorizeUrl({ ...baseParams, forceLogin: true });
+        expect(url).toContain('&prompt=login');
+        expect(url).not.toContain('prompt_missing_scopes');
+    });
 });

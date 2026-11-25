@@ -5,9 +5,14 @@ export interface TeslaAuthorizeUrlParams {
   nonce: string;
   callbackUrl: string;
   clientId: string;
+  forceLogin?: boolean;
 }
 
 export function buildTeslaAuthorizeUrl(params: TeslaAuthorizeUrlParams): string {
+  const promptParam: [string, string] = params.forceLogin
+    ? ['prompt', 'login']
+    : ['prompt_missing_scopes', 'true'];
+
   const query = [
     ['locale', 'en-US'],
     ['response_type', 'code'],
@@ -20,8 +25,8 @@ export function buildTeslaAuthorizeUrl(params: TeslaAuthorizeUrlParams): string 
     ['nonce', params.nonce],
     // Purpose-built replacement for prompt=login. Tesla documents this for
     // picking up newly-granted scopes; prompt=login additionally forces a full
-    // re-authentication on every login.
-    ['prompt_missing_scopes', 'true'],
+    // re-authentication on every login (used when explicitly switching accounts).
+    promptParam,
   ]
     // encodeURIComponent rather than URLSearchParams: toString() encodes spaces as
     // "+", and production already emits %20 today with login working, so keeping

@@ -17,7 +17,8 @@ function jsonError(error: string, status: number): NextResponse {
  *
  * Bumps User.session_version, revoking every outstanding site_auth JWT on
  * every device (the caller's cookie is cleared too; re-auth issues a token
- * stamped with the new version). CSRF: the site_auth cookie is SameSite=Lax
+ * stamped with the new version), and disconnects every connected AI app
+ * (OAuth grants and their tokens). CSRF: the site_auth cookie is SameSite=Lax
  * so cross-site POSTs never carry it, and the origin check below is defense
  * in depth consistent with the mobile session exchange route.
  */
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const user = await getCurrentUser();
     if (!user) return jsonError('Unauthorized', 401);
 
-    await new UserRepo().bumpSessionVersion(user.id);
+    await new UserRepo().signOutEverywhere(user.id);
 
     const response = NextResponse.json({ ok: true }, {
         headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },

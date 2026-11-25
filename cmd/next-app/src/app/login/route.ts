@@ -21,6 +21,7 @@ async function handleGET(request: NextRequest) {
 
   const searchParams = request.nextUrl.searchParams;
   const callback = searchParams.get('callback');
+  const forceLogin = searchParams.get('switch_account') === '1';
   const mobileChallenge = searchParams.get('mobile_challenge');
   const mobileState = searchParams.get('mobile_state');
 
@@ -86,7 +87,7 @@ async function handleGET(request: NextRequest) {
 
   const redirectBaseUrl = teslaLoginBaseUrl(getAppBaseUrl(request));
   const callbackUrl = `${redirectBaseUrl}/auth/tesla-callback`;
-  redirect(buildTeslaAuthorizeUrl({ state, nonce, callbackUrl, clientId }));
+  redirect(buildTeslaAuthorizeUrl({ state, nonce, callbackUrl, clientId, ...(forceLogin ? { forceLogin: true } : {}) }));
 }
 
 export const GET = observeRoute('/login', handleGET);

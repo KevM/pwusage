@@ -9,6 +9,20 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '2mb',
     },
   },
+  async headers() {
+    return [
+      // OAuth consent: a signed-in user is one click from granting access, so no
+      // other site may frame these pages (clickjacking). X-Frame-Options covers
+      // browsers that predate CSP frame-ancestors.
+      {
+        source: '/oauth/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+        ],
+      },
+    ];
+  },
   async redirects() {
     return [
       // The TRMNL page moved from /help/trmnl; the plugin listing on trmnl.com still links there.

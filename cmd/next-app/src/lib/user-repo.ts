@@ -184,13 +184,34 @@ export class UserRepo {
 
     // === Commands ===
     /**
-     * Invalidate every outstanding site_auth JWT for the user ("sign out
-     * everywhere"). Tokens whose embedded sv trails the new value are blocked
-     * on each authenticated request and refused refresh; re-authenticating
-     * issues a token stamped with the new version.
+     * "Sign out everywhere": end every session and every connection, in one
+     * statement so nothing is left half signed out.
+     * - Bumps session_version: site_auth JWTs whose embedded sv trails it are
+     *   blocked on each request and refused refresh, and pending OAuth
+     *   authorization codes (stamped with the old version) stop redeeming.
+     * - Revokes every connected AI app (OAuth grant) and its access and
+     *   refresh tokens, so MCP calls fail at once.
+     * Re-authenticating issues a session stamped with the new version; apps
+     * must be connected again.
      */
-    async bumpSessionVersion(userId: string): Promise<void> {
-        await pool.query('UPDATE "User" SET session_version = session_version + 1 WHERE id = $1', [userId]);
+    async signOutEverywhere(userId: string): Promise<{ disconnectedApps: number }> {
+        const res = await pool.query<{ revoked_grants: number }>(`
+            WITH bumped AS (
+                UPDATE "User" SET session_version = session_version + 1
+                WHERE id = $1
+                RETURNING id
+            ), grants AS (
+                UPDATE "OAuthGrant" SET revoked_at = now()
+                WHERE user_id IN (SELECT id FROM bumped) AND revoked_at IS NULL
+                RETURNING id
+            ), tokens AS (
+                UPDATE "OAuthToken" SET revoked_at = COALESCE(revoked_at, now())
+                WHERE grant_id IN (SELECT id FROM grants)
+                RETURNING 1
+            )
+            SELECT (SELECT count(*) FROM grants)::int AS revoked_grants
+        `, [userId]);
+        return { disconnectedApps: res.rows[0]?.revoked_grants ?? 0 };
     }
 
     async updateUserEmail(userId: string, email: string): Promise<void> {

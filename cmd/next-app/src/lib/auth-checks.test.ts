@@ -33,7 +33,7 @@ vi.mock('./site-repo', () => ({
     }
 }));
 
-import { getCurrentUser, verifySiteAccess, getAuthorizedSiteIds, getAuthorizedSites, isUserAdmin, hasValidSession } from './auth-checks';
+import { getCurrentSession, getCurrentUser, verifySiteAccess, getAuthorizedSiteIds, getAuthorizedSites, isUserAdmin, hasValidSession } from './auth-checks';
 
 describe('getAuthorizedSites', () => {
     beforeEach(() => {
@@ -108,6 +108,18 @@ describe('auth-checks.ts', () => {
         mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['user'], sv: 0, orig_iat: 900 });
         expect(await getCurrentUser()).toBeNull();
         expect(mocks.logSessionRejection).toHaveBeenCalledWith('revoked-session', 'user-1');
+    });
+
+    it('getCurrentSession returns the session_version the session was validated at', async () => {
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 4, roles: ['user'] });
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['user'], sv: 4 });
+        expect(await getCurrentSession()).toEqual({ id: 'user-1', sessionVersion: 4 });
+    });
+
+    it('getCurrentSession is null for a revoked session and for a legacy token with no subject', async () => {
+        mocks.getAuthState.mockResolvedValue({ isActive: true, sessionVersion: 5, roles: ['user'] });
+        mocks.verifySiteToken.mockReturnValue({ sub: 'user-1', sites: ['site-1'], roles: ['user'], sv: 4 });
+        expect(await getCurrentSession()).toBeNull();
     });
 
     it('accepts a token minted in the same second the account was created', async () => {

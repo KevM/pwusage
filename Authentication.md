@@ -448,6 +448,10 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
   JWT on every device: each request blocks on the `sv` mismatch and the proxy
   refuses to renew the cookie. Re-authentication issues a token stamped with the
   new version. The caller's cookie is cleared in the same response.
+- In the same statement, revokes every connected AI app: all of the user's
+  `OAuthGrant` rows and their access and refresh tokens, so MCP calls fail at
+  once and each app must be connected again. Pending OAuth authorization codes
+  stop redeeming because they are stamped with the old `session_version`.
 
 ### 6. Account deletion
 Page: `/account-delete` (signed-out visitors go through `/login?callback=/account-delete`;
@@ -691,12 +695,35 @@ missing or more than an hour old, it tries the existing throttled Tesla history
 refresh during the request. If no newer sample arrives, the previous timestamp
 still describes data freshness.
 
+## Remote MCP Server & OAuth 2.1
+
+AI assistants (Claude, ChatGPT, Cursor, VS Code, Antigravity) connect to the stateless Streamable HTTP MCP endpoint at `POST /api/mcp` using **OAuth 2.1 + PKCE (`S256`)** access tokens (`pwu_oat_...`). Personal `pwu_int_` integration tokens are rejected on `/api/mcp`.
+
+- **Discovery:**
+  - `GET /.well-known/oauth-protected-resource` (RFC 9728) advertises `resource` (`<origin>/api/mcp`), `authorization_servers`, and `scopes_supported` (`billing:read`, `usage:read`).
+  - `GET /.well-known/oauth-authorization-server` (RFC 8414) advertises `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `revocation_endpoint`, `code_challenge_methods_supported: ["S256"]`, `token_endpoint_auth_methods_supported: ["none"]`, and `client_id_metadata_document_supported: true`.
+- **Client resolution:**
+  - **DCR (RFC 7591):** `POST /api/oauth/register` registers public PKCE clients (`pwu_client_...`) with strict `redirect_uris` validation, a 16 KB body cap, IP rate limiting (IPv6 keyed by /64) and a cap of 500 never-used registrations per day.
+  - **Redirect URIs** are compared as exact strings (validated, never rewritten). Allowed: `https:` (not PWUsage's own origin), loopback `http:`, and hierarchical custom schemes (`cursor://…`, `com.example.app:/…`). Refused: `pwusage:` (the iOS app's own callback), network schemes (`ws:`, `ftp:`…), opaque handlers (`mailto:`, `tel:`, `sms:`) and browser/OS schemes.
+  - **CIMD:** HTTPS URLs on the default port with a non-empty path (never PWUsage itself or an IP literal) are fetched on demand with SSRF guards: the host's addresses are checked against private/reserved IPv4 and IPv6 ranges and the connection is pinned to those checked addresses (no DNS rebinding), no redirects, 16 KB body cap, 3s timeout, strict `client_id` matching.
+- **Consent & Tesla onboarding:**
+  - `GET /oauth/authorize` validates all OAuth parameters first, prompts unauthenticated users to **Continue with Tesla** (`/login?callback=...`), and lets authenticated users choose which home(s) to share.
+  - If a Tesla account has no Powerwall, `/no-sites` offers **Try a different Tesla account** (`/login?switch_account=1`, which sends `prompt=login`) and **Cancel and return to app** (`error=access_denied`).
+  - The consent screen shows only what PWUsage can verify: the host publishing a CIMD app (only when the app also returns to that host), otherwise **Unverified app**, and always where the browser returns after Allow. A `client_uri` is shown only when it is exactly the publisher or redirect host. `/oauth/*` sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+  - `POST /oauth/authorize/decision` enforces same-origin and a CSRF token bound to the exact request shown (client, redirect URI, PKCE challenge, resource, scope) before issuing a 5-minute single-use authorization code (`OAuthAuthCode`). The code records the user's `session_version` and redeems only while the user is active and that version is unchanged, so **Sign out everywhere** voids codes in flight. Sign out everywhere also disconnects every connected AI app (below).
+- **Tokens, rotation & revocation:**
+  - `POST /api/oauth/token` exchanges auth codes (verifying PKCE `S256`, `client_id`, `redirect_uri`, and `resource`) for a 1-hour `pwu_oat_` access token and a 30-day sliding / 90-day max `pwu_ort_` refresh token (SHA-256 hashed at rest).
+  - Refresh tokens rotate on every use; presenting an already-used refresh token or replaying a consumed auth code revokes the entire `OAuthGrant` and all its tokens.
+  - `POST /api/oauth/revoke` (RFC 7009) revokes the token's grant. Users can also disconnect apps under **Site Settings → Connected AI Apps** (`GET /api/oauth/grants`, `DELETE /api/oauth/grants/[id]`).
+- **Per-request authorization:** `POST /api/mcp` validates the `pwu_oat_` token, parent `OAuthGrant`, `resource`, active `User`, and live `SiteMember` intersection on every request. It sends CORS headers (`Access-Control-Allow-Origin: *`, no credentials: access is a bearer token) so browser MCP clients can call it and read the `WWW-Authenticate` challenge.
+
 ## Authorization Decision Summary
 
 - Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
 - Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
 - Integration auth: home-scoped bearer credential with explicit grants. `/api/integrations/v1/billing` requires `billing:read`.
+- MCP OAuth 2.1 auth: opaque `pwu_oat_` access tokens bound to `OAuthGrant` + `OAuthGrantSite` and intersected with live `SiteMember` on `POST /api/mcp` (`billing:read`, `usage:read`).
 - Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
 
 ## Current Open Gaps
