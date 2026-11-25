@@ -108,6 +108,10 @@ export async function handleListHomes(ctx: OAuthAccessContext): Promise<McpToolR
     });
 }
 
+function finiteOrNull(watts: number | null | undefined, normalize: (w: number) => number): number | null {
+    return typeof watts === 'number' && Number.isFinite(watts) ? normalize(watts) : null;
+}
+
 /** One signed Tesla power reading → two non-negative named watts, e.g. gridImportW / gridExportW. */
 function splitFlow<P extends string, A extends string, B extends string>(
     prefix: P, positive: A, negative: B, watts: number | null | undefined,
@@ -144,8 +148,10 @@ export async function handleGetLiveStatus(
             ? live.status
             : 'error',
         fetchedAt: live.fetchedAt ? new Date(live.fetchedAt).toISOString() : null,
-        solarPowerW: live.liveStatus.solar_power ?? null,
-        loadPowerW: live.liveStatus.load_power ?? null,
+        // Some installs report solar as negative (the web header shows |solar| too);
+        // home use is never negative, so a stray reading floors at 0.
+        solarPowerW: finiteOrNull(live.liveStatus.solar_power, Math.abs),
+        loadPowerW: finiteOrNull(live.liveStatus.load_power, w => Math.max(w, 0)),
         // Tesla signs: grid_power > 0 imports, battery_power > 0 discharges. Split
         // into named directions so no caller has to know (stored history flips the battery sign).
         ...splitFlow('grid', 'Import', 'Export', live.liveStatus.grid_power),

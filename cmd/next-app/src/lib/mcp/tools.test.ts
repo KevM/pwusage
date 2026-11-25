@@ -169,6 +169,19 @@ describe('mcp tools', () => {
         }
     });
 
+    it('get_live_status keeps solar and home use non-negative instead of failing the call', async () => {
+        // Some installs report solar production as negative (the web header shows |solar|),
+        // and the contract promises non-negative watts.
+        mockRefreshLiveStatus.mockResolvedValueOnce({
+            status: 'refreshed',
+            fetchedAt: Date.parse('2026-11-25T18:33:45Z'),
+            liveStatus: { solar_power: -1200, load_power: -5, grid_power: 0, battery_power: 0, percentage_charged: 90, grid_status: 'Active', storm_mode_active: false },
+        });
+        const res = await handleGetLiveStatus(singleHomeCtx, {});
+        expect(res.isError).toBeFalsy();
+        expect(JSON.parse(res.content[0].text)).toMatchObject({ solarPowerW: 1200, loadPowerW: 0 });
+    });
+
     it('get_current_bill reads the bill without the outlook or the Smart Shift timeline', async () => {
         mockGetSite.mockResolvedValue({
             id: 'site-1', name: 'Main Home', timezone: 'America/Chicago',
