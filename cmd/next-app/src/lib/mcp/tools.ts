@@ -81,7 +81,7 @@ export async function handleListHomes(ctx: OAuthAccessContext): Promise<McpToolR
         homes: sites.map(site => ({
             siteId: site.id,
             name: site.name,
-            utility: site.utility ?? null,
+            utility: site.utility?.trim() || null,
             timezone: site.timezone,
             billingStartDay: site.billing_start_day ?? 1,
             setupStatus: {
@@ -90,6 +90,17 @@ export async function handleListHomes(ctx: OAuthAccessContext): Promise<McpToolR
             },
         })),
     });
+}
+
+/** One signed Tesla power reading → two non-negative named watts, e.g. gridImportW / gridExportW. */
+function splitFlow<P extends string, A extends string, B extends string>(
+    prefix: P, positive: A, negative: B, watts: number | null | undefined,
+): Record<`${P}${A}W` | `${P}${B}W`, number | null> {
+    const w = typeof watts === 'number' && Number.isFinite(watts) ? watts : null;
+    return {
+        [`${prefix}${positive}W`]: w === null ? null : Math.max(w, 0),
+        [`${prefix}${negative}W`]: w === null ? null : Math.max(-w, 0),
+    } as Record<`${P}${A}W` | `${P}${B}W`, number | null>;
 }
 
 export async function handleGetLiveStatus(
@@ -116,11 +127,12 @@ export async function handleGetLiveStatus(
         fetchedAt: live.fetchedAt ? new Date(live.fetchedAt).toISOString() : null,
         solarPowerW: live.liveStatus.solar_power ?? null,
         loadPowerW: live.liveStatus.load_power ?? null,
-        gridPowerW: live.liveStatus.grid_power ?? null,
-        batteryPowerW: live.liveStatus.battery_power ?? null,
+        // Tesla signs: grid_power > 0 imports, battery_power > 0 discharges. Split
+        // into named directions so no caller has to know (stored history flips the battery sign).
+        ...splitFlow('grid', 'Import', 'Export', live.liveStatus.grid_power),
+        ...splitFlow('battery', 'Discharging', 'Charging', live.liveStatus.battery_power),
         batterySocPercent: live.liveStatus.percentage_charged ?? null,
         gridStatus: live.liveStatus.grid_status ?? null,
-        backupCapable: live.liveStatus.backup_capable ?? null,
         stormModeActive: live.liveStatus.storm_mode_active ?? null,
     });
 }
@@ -138,10 +150,11 @@ export async function handleGetCurrentBill(
     const site = await new SiteRepo().getSite(target.siteId);
     if (!site) return errorResult('site_not_found');
 
+    // Same read as the billing integration: no outlook, no Smart Shift timeline
+    // (get_smart_shift_outlook carries those).
     const billing = await readCurrentBilling(target.siteId, {
-        includeOutlook: true,
-        includeLoadTimingTimeline: true,
         refreshStale: true,
+        includeLoadTimingTimeline: false,
     });
     if (billing.status !== 'current') {
         return errorResult('Unable to load current bill.');

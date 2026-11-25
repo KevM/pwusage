@@ -94,7 +94,7 @@ describe('mcp tools', () => {
         mockGetSite.mockResolvedValueOnce({
             id: 'site-1',
             name: 'Main Home',
-            utility: 'PG&E',
+            utility: 'PG&E ',
             timezone: 'America/Los_Angeles',
             billing_start_day: 15,
             billing_start_day_confirmed_at: null,
@@ -142,6 +142,53 @@ describe('mcp tools', () => {
             batterySocPercent: 82,
             gridStatus: 'Active',
         });
+    });
+
+    it('get_live_status names battery and grid direction instead of exposing Tesla signs', async () => {
+        // Tesla live status: battery_power > 0 discharges, grid_power > 0 imports.
+        // Stored history uses the opposite battery sign, so the tool never ships a signed value.
+        const live = (battery_power: number, grid_power: number) => ({
+            status: 'refreshed',
+            fetchedAt: Date.parse('2026-11-25T18:33:45Z'),
+            liveStatus: { solar_power: 2172, load_power: 751, grid_power, battery_power, percentage_charged: 96, grid_status: 'Active', storm_mode_active: false },
+        });
+
+        mockRefreshLiveStatus.mockResolvedValueOnce(live(-1010, -411));
+        const charging = JSON.parse((await handleGetLiveStatus(singleHomeCtx, {})).content[0].text);
+        expect(charging).toMatchObject({ batteryChargingW: 1010, batteryDischargingW: 0, gridImportW: 0, gridExportW: 411 });
+
+        mockRefreshLiveStatus.mockResolvedValueOnce(live(2500, 300));
+        const discharging = JSON.parse((await handleGetLiveStatus(singleHomeCtx, {})).content[0].text);
+        expect(discharging).toMatchObject({ batteryChargingW: 0, batteryDischargingW: 2500, gridImportW: 300, gridExportW: 0 });
+
+        for (const payload of [charging, discharging]) {
+            expect(payload).not.toHaveProperty('batteryPowerW');
+            expect(payload).not.toHaveProperty('gridPowerW');
+            // Tesla's live status never carries backup_capable, so the field was always null.
+            expect(payload).not.toHaveProperty('backupCapable');
+        }
+    });
+
+    it('get_current_bill reads the bill without the outlook or the Smart Shift timeline', async () => {
+        mockGetSite.mockResolvedValue({
+            id: 'site-1', name: 'Main Home', timezone: 'America/Chicago',
+            billing_start_day: 11, billing_start_day_confirmed_at: '2026-01-01T00:00:00Z', tariffs: [{ id: 1 }],
+        });
+        mockReadCurrentBilling.mockResolvedValue({
+            status: 'current',
+            summary: {
+                site: { id: 'site-1', name: 'Main Home', timezone: 'America/Chicago' },
+                currentBill: { status: 'complete', estimatedCost: 34.17, currency: 'USD', cycleStart: 'a', cycleEnd: 'b', periods: [] },
+                loadTiming: { hasTariff: true, periods: [] },
+                sources: { energyDataThrough: '2026-11-25T17:55:00Z' },
+            },
+        });
+
+        const payload = JSON.parse((await handleGetCurrentBill(singleHomeCtx, {})).content[0].text);
+        // Same read the billing integration makes (integrations/v1/billing).
+        expect(mockReadCurrentBilling).toHaveBeenCalledWith('site-1', { refreshStale: true, includeLoadTimingTimeline: false });
+        expect(payload.currentBill.estimatedCost).toBe(34.17);
+        expect(payload.loadTiming).toEqual({ hasTariff: true, periods: [] });
     });
 
     it('get_current_bill and get_smart_shift_outlook include setupNotice when tariff or billing day is unconfirmed', async () => {

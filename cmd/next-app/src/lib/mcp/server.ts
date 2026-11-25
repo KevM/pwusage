@@ -67,7 +67,7 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
     server.registerTool(
         'get_live_status',
         {
-            description: 'Get live solar generation, home load, grid power, battery power, and state of charge for a Powerwall home.',
+            description: 'Get live solar generation, home load, grid import/export, battery charging/discharging (all non-negative watts), and state of charge for a Powerwall home.',
             inputSchema: {
                 site_id: z.string().optional().describe('Home siteId from list_homes. Optional when only one home is authorized.'),
             },
