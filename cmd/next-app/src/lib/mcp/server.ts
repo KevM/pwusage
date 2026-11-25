@@ -103,7 +103,10 @@ export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
     server.registerTool(
         'get_daily_usage',
         {
-            description: 'Get daily solar, home load, grid import/export, and battery charge/discharge totals for up to 31 days.',
+            description: 'Get daily solar, home load, grid import/export, and battery charge/discharge totals for up to 31 days. '
+                + 'Every date up to today is listed with a status: complete (all 5-minute samples), partial (still filling in: '
+                + 'today, or a recent day awaiting gap healing), gapped (ended short; totals undercount), no_data (Tesla returned '
+                + 'no samples) or missing (not imported). kWh totals are null when a day has no samples.',
             inputSchema: {
                 site_id: z.string().optional().describe('Home siteId from list_homes. Optional when only one home is authorized.'),
                 from_date: z.string().optional().describe('Start date in YYYY-MM-DD (defaults to 7 days ago).'),

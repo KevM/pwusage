@@ -262,7 +262,8 @@ describe('mcp tools', () => {
         expect(emptyRes.isError).toBeFalsy();
         const emptyPayload = JSON.parse(emptyRes.content[0].text);
         expect(emptyPayload.syncInProgress).toBe(true);
-        expect(emptyPayload.days).toEqual([]);
+        expect(emptyPayload.days).toHaveLength(8);
+        expect(emptyPayload.days.every((d: { status: string }) => d.status === 'missing')).toBe(true);
         expect(mockPoolQuery).toHaveBeenCalledWith(
             expect.stringContaining('AT TIME ZONE $4'),
             ['site-1', '2026-11-18', '2026-11-25', 'America/Los_Angeles'],
@@ -282,7 +283,9 @@ describe('mcp tools', () => {
                 grid_export_wh: 52,
                 battery_charge_wh: 10_778,
                 battery_discharge_wh: 9_690,
+                status: 'complete',
                 sample_count: 288,
+                expected_slots: 288,
             }],
         });
 
@@ -290,17 +293,63 @@ describe('mcp tools', () => {
         const payload = JSON.parse(res.content[0].text);
         expect(payload.days).toEqual([{
             date: '2026-11-16',
+            status: 'complete',
+            sampleCount: 288,
+            expectedSamples: 288,
             loadKwh: 81.216,
             solarKwh: 20.833,
             gridImportKwh: 61.522,
             gridExportKwh: 0.052,
             batteryChargeKwh: 10.778,
             batteryDischargeKwh: 9.69,
-            sampleCount: 288,
         }]);
         // The day balances: load = solar + import - export + discharge - charge.
         const day = payload.days[0];
         expect(day.solarKwh + day.gridImportKwh - day.gridExportKwh + day.batteryDischargeKwh - day.batteryChargeKwh)
             .toBeCloseTo(day.loadKwh, 1);
+    });
+
+    it('get_daily_usage reports every requested day with its record status', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-25T18:00:00Z')); // noon in Chicago
+        try {
+            mockGetSite.mockResolvedValue({ id: 'site-1', name: 'Main Home', timezone: 'America/Chicago' });
+            const row = (day: string, status: string | null, sample_count: number, wh: number | null) => ({
+                day, status, sample_count, expected_slots: 288,
+                load_wh: wh, solar_wh: wh, grid_import_wh: wh, grid_export_wh: wh, battery_charge_wh: wh, battery_discharge_wh: wh,
+            });
+            mockPoolQuery.mockResolvedValueOnce({
+                rows: [
+                    row('2026-11-19', 'complete', 288, 1000),
+                    row('2026-11-20', 'gapped', 250, 1000),
+                    // 11-21 has no record at all.
+                    row('2026-11-22', 'empty', 0, null),
+                    row('2026-11-23', null, 288, 1000), // v1 record: no stored status
+                    row('2026-11-24', null, 200, 1000),
+                    row('2026-11-25', 'open', 144, 500),
+                ],
+            });
+
+            const res = await handleGetDailyUsage(singleHomeCtx, { from_date: '2026-11-19', to_date: '2026-11-27' });
+            const days: Array<Record<string, unknown>> = JSON.parse(res.content[0].text).days;
+
+            // Future dates are not listed; every past or current date is, record or not.
+            expect(days.map(d => [d.date, d.status, d.sampleCount, d.expectedSamples])).toEqual([
+                ['2026-11-19', 'complete', 288, 288],
+                ['2026-11-20', 'gapped', 250, 288],
+                ['2026-11-21', 'missing', 0, null],
+                ['2026-11-22', 'no_data', 0, 288],
+                ['2026-11-23', 'complete', 288, 288],
+                ['2026-11-24', 'partial', 200, 288],
+                ['2026-11-25', 'partial', 144, 288],
+            ]);
+            // Totals only where samples exist.
+            expect(days[0].loadKwh).toBe(1);
+            expect(days[2].loadKwh).toBeNull();
+            expect(days[3].loadKwh).toBeNull();
+            expect(days[6].loadKwh).toBe(0.5);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

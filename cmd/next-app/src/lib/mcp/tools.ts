@@ -217,6 +217,68 @@ function whToKwh(wh: string | number): number {
     return Math.round(Number(wh)) / 1000;
 }
 
+interface DailyUsageRow {
+    day: string;
+    status: 'open' | 'complete' | 'gapped' | 'empty' | null;
+    sample_count: number;
+    expected_slots: number;
+    load_wh: string | number | null;
+    solar_wh: string | number | null;
+    grid_import_wh: string | number | null;
+    grid_export_wh: string | number | null;
+    battery_charge_wh: string | number | null;
+    battery_discharge_wh: string | number | null;
+}
+
+/**
+ * complete: every 5-minute sample. partial: still filling in (today, or a recent
+ * day awaiting gap healing). gapped: ended short and past healing. no_data: Tesla
+ * returned no samples. missing: never imported.
+ */
+type DailyUsageStatus = 'complete' | 'partial' | 'gapped' | 'no_data' | 'missing';
+
+interface DailyUsageDay {
+    date: string;
+    status: DailyUsageStatus;
+    sampleCount: number;
+    expectedSamples: number | null;
+    loadKwh: number | null;
+    solarKwh: number | null;
+    gridImportKwh: number | null;
+    gridExportKwh: number | null;
+    batteryChargeKwh: number | null;
+    batteryDischargeKwh: number | null;
+}
+
+function dailyUsageStatus(row: DailyUsageRow): DailyUsageStatus {
+    switch (row.status) {
+        case 'complete': return 'complete';
+        case 'gapped': return 'gapped';
+        case 'empty': return 'no_data';
+        case 'open': return 'partial';
+        // v1 records carry no status: judge by their sample count.
+        default: return row.sample_count >= row.expected_slots ? 'complete' : 'partial';
+    }
+}
+
+function toDailyUsageDay(date: string, row: DailyUsageRow | undefined): DailyUsageDay {
+    const status = row ? dailyUsageStatus(row) : 'missing';
+    const hasTotals = row !== undefined && row.sample_count > 0 && row.load_wh !== null;
+    const kwh = (wh: string | number | null | undefined) => (hasTotals && wh !== null && wh !== undefined ? whToKwh(wh) : null);
+    return {
+        date,
+        status,
+        sampleCount: row?.sample_count ?? 0,
+        expectedSamples: row?.expected_slots ?? null,
+        loadKwh: kwh(row?.load_wh),
+        solarKwh: kwh(row?.solar_wh),
+        gridImportKwh: kwh(row?.grid_import_wh),
+        gridExportKwh: kwh(row?.grid_export_wh),
+        batteryChargeKwh: kwh(row?.battery_charge_wh),
+        batteryDischargeKwh: kwh(row?.battery_discharge_wh),
+    };
+}
+
 export async function handleGetDailyUsage(
     ctx: OAuthAccessContext,
     args: { site_id?: string; from_date?: string; to_date?: string },
@@ -251,52 +313,45 @@ export async function handleGetDailyUsage(
         return errorResult('Date range is capped at 31 days per request.');
     }
 
-    // Every EnergyDaySummary energy column is Wh summed over that day's samples
-    // (rollupDay), so all six convert to kWh the same way, in TypeScript.
-    const res = await pool.query<{
-        day: string;
-        load_wh: string | number;
-        solar_wh: string | number;
-        grid_import_wh: string | number;
-        grid_export_wh: string | number;
-        battery_charge_wh: string | number;
-        battery_discharge_wh: string | number;
-        sample_count: number;
-    }>(
+    // One row per day record. Every EnergyDaySummary energy column is Wh summed
+    // over that day's samples (rollupDay), so all six convert to kWh the same way.
+    // LEFT JOIN: an `empty` record has no summary rows but is still a known day.
+    const res = await pool.query<DailyUsageRow>(
         `SELECT (a.day_start AT TIME ZONE $4)::date::text AS day,
-                COALESCE(SUM(s.load_power), 0) AS load_wh,
-                COALESCE(SUM(s.solar_power), 0) AS solar_wh,
-                COALESCE(SUM(s.sample_import_wh), 0) AS grid_import_wh,
-                COALESCE(SUM(s.sample_export_wh), 0) AS grid_export_wh,
-                COALESCE(SUM(s.sample_charge_wh), 0) AS battery_charge_wh,
-                COALESCE(SUM(s.sample_discharge_wh), 0) AS battery_discharge_wh,
-                COALESCE(SUM(s.sample_count), 0)::int AS sample_count
+                a.status,
+                a.sample_count,
+                a.expected_slots,
+                SUM(s.load_power) AS load_wh,
+                SUM(s.solar_power) AS solar_wh,
+                SUM(s.sample_import_wh) AS grid_import_wh,
+                SUM(s.sample_export_wh) AS grid_export_wh,
+                SUM(s.sample_charge_wh) AS battery_charge_wh,
+                SUM(s.sample_discharge_wh) AS battery_discharge_wh
          FROM "EnergyDayArchive" a
-         INNER JOIN "EnergyDaySummary" s
+         LEFT JOIN "EnergyDaySummary" s
            ON s.site_id = a.site_id AND s.day_start = a.day_start AND s.revision = a.revision
          WHERE a.site_id = $1
            AND (a.day_start AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date
-         GROUP BY (a.day_start AT TIME ZONE $4)::date
+         GROUP BY a.day_start, a.status, a.sample_count, a.expected_slots
          ORDER BY day ASC`,
         [target.siteId, fromDate, toDate, timezone],
     );
 
-    const days = res.rows.map(row => ({
-        date: row.day,
-        loadKwh: whToKwh(row.load_wh),
-        solarKwh: whToKwh(row.solar_wh),
-        gridImportKwh: whToKwh(row.grid_import_wh),
-        gridExportKwh: whToKwh(row.grid_export_wh),
-        batteryChargeKwh: whToKwh(row.battery_charge_wh),
-        batteryDischargeKwh: whToKwh(row.battery_discharge_wh),
-        sampleCount: row.sample_count,
-    }));
+    // List every requested date up to the site's today, so a day with no record
+    // shows as `missing` instead of silently dropping out of the range.
+    const byDate = new Map(res.rows.map(row => [row.day, row]));
+    const lastDate = [toDate, getSiteTodayDateStr(timezone)].sort()[0];
+    const days: DailyUsageDay[] = [];
+    for (let ms = fromMs; formatUtcDate(new Date(ms)) <= lastDate; ms += 86_400_000) {
+        const date = formatUtcDate(new Date(ms));
+        days.push(toDailyUsageDay(date, byDate.get(date)));
+    }
 
     return textResult({
         siteId: target.siteId,
         fromDate,
         toDate,
-        syncInProgress: days.length === 0,
+        syncInProgress: res.rows.length === 0,
         days,
     });
 }
