@@ -93,11 +93,19 @@ export function expectedMcpResource(origin: string): string {
     return new URL('/api/mcp', origin).href;
 }
 
-export function isValidMcpResource(resource: string | null, origin: string): boolean {
-    if (!resource) return false;
+/**
+ * The canonical MCP resource string for a client's `resource` parameter, or
+ * null if it names something else. Missing means the MCP endpoint; equivalent
+ * spellings (an explicit :443, upper-case scheme or host) map to the one
+ * canonical string, which is what codes and grants store and what
+ * /api/mcp compares exactly, so every accepted value yields usable tokens.
+ */
+export function resolveMcpResource(raw: string | null, origin: string): string | null {
+    const canonical = expectedMcpResource(origin);
+    if (raw === null || raw.trim() === '') return canonical;
     try {
-        return new URL(resource).href === expectedMcpResource(origin);
+        return new URL(raw.trim()).href === canonical ? canonical : null;
     } catch {
-        return false;
+        return null;
     }
 }

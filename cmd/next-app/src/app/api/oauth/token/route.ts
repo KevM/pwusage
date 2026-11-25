@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { exchangeAuthCode, rotateRefreshToken } from '@/lib/oauth/oauth-repo';
-import { expectedMcpResource, isValidMcpResource } from '@/lib/oauth/validation';
+import { resolveMcpResource } from '@/lib/oauth/validation';
 import { readBoundedRequestText } from '@/lib/oauth/bounded-body';
 import { logEvent, observeRoute } from '@/lib/observability';
 import { getAppBaseUrl } from '@/lib/url-utils';
@@ -29,13 +29,13 @@ export const POST = observeRoute('/api/oauth/token', async (request: Request): P
     const grantType = form.get('grant_type');
     const clientId = form.get('client_id')?.trim() ?? '';
     const origin = getAppBaseUrl(request);
-    const rawResource = form.get('resource');
-    const resource = rawResource === null ? expectedMcpResource(origin) : rawResource;
+    // Canonical form: what the code and grant store, so the comparisons below are exact.
+    const resource = resolveMcpResource(form.get('resource'), origin);
 
     if (!clientId) {
         return tokenError('invalid_request', 'client_id is required');
     }
-    if (!isValidMcpResource(resource, origin)) {
+    if (!resource) {
         return tokenError('invalid_target', 'resource must match the canonical MCP endpoint');
     }
 

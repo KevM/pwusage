@@ -13,9 +13,8 @@ import { resolveOAuthClient } from '@/lib/oauth/client-resolver';
 import { createOAuthCsrfToken } from '@/lib/oauth/csrf';
 import type { OAuthScope } from '@/lib/oauth/types';
 import {
-    expectedMcpResource,
     isValidCodeChallenge,
-    isValidMcpResource,
+    resolveMcpResource,
     parseRequestedScopes,
     validateRedirectUri,
 } from '@/lib/oauth/validation';
@@ -90,8 +89,8 @@ export default async function OAuthAuthorizePage({
     const requestOrigin = host ? `${proto}://${host}` : undefined;
     const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || requestOrigin || getAppBaseUrl();
 
-    const resource = rawResource === null || rawResource === '' ? expectedMcpResource(origin) : rawResource;
-    if (!isValidMcpResource(resource, origin)) {
+    const resource = resolveMcpResource(rawResource, origin);
+    if (!resource) {
         return renderInvalidRequest('Invalid MCP resource parameter.');
     }
 

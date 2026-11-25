@@ -221,4 +221,17 @@ describe('oauth routes', () => {
         expect(prm.headers.get('vary')).toMatch(/host/i);
         expect(as.headers.get('vary')).toMatch(/host/i);
     });
+
+    it('stores and compares the canonical resource when a client spells it differently', async () => {
+        mockExchangeAuthCode.mockResolvedValueOnce({ ok: false, error: 'invalid_grant', errorDescription: 'x' });
+        await postToken(new Request('https://pwusage.fm.rodeo/api/oauth/token', {
+            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: 'authorization_code', client_id: 'pwu_client_1', code: 'c',
+                redirect_uri: 'https://claude.ai/cb', code_verifier: 'v'.repeat(43),
+                resource: 'https://pwusage.fm.rodeo:443/api/mcp',
+            }).toString(),
+        }));
+        expect(mockExchangeAuthCode).toHaveBeenCalledWith(expect.objectContaining({ resource: 'https://pwusage.fm.rodeo/api/mcp' }));
+    });
 });

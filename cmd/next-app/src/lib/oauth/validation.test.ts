@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     expectedMcpResource,
     isValidCodeChallenge,
-    isValidMcpResource,
     parseRequestedScopes,
     validateRedirectUri,
     verifyPkceS256,
+    resolveMcpResource,
 } from './validation';
 
 describe('oauth validation', () => {
@@ -67,6 +67,17 @@ describe('oauth validation', () => {
         }
     });
 
+    it('resolves any spelling of the MCP resource to the one canonical string, and rejects others', () => {
+        const origin = 'https://pwusage.fm.rodeo';
+        const canonical = 'https://pwusage.fm.rodeo/api/mcp';
+        for (const raw of [null, '', canonical, 'https://pwusage.fm.rodeo:443/api/mcp', 'HTTPS://PWUSAGE.fm.rodeo/api/mcp']) {
+            expect(resolveMcpResource(raw, origin), String(raw)).toBe(canonical);
+        }
+        for (const raw of ['https://pwusage.fm.rodeo/api/mcp/', 'https://evil.example/api/mcp', 'not a url']) {
+            expect(resolveMcpResource(raw, origin), raw).toBeNull();
+        }
+    });
+
     it('defaults empty scope to all v1 read scopes and rejects unknown scopes', () => {
         expect(parseRequestedScopes(null)).toEqual({ ok: true, scopes: ['billing:read', 'usage:read'] });
         expect(parseRequestedScopes('billing:read')).toEqual({ ok: true, scopes: ['billing:read'] });
@@ -75,8 +86,7 @@ describe('oauth validation', () => {
 
     it('validates RFC 8707 resource matches canonical /api/mcp URL', () => {
         expect(expectedMcpResource('https://pwusage.fm.rodeo')).toBe('https://pwusage.fm.rodeo/api/mcp');
-        expect(isValidMcpResource('https://pwusage.fm.rodeo/api/mcp', 'https://pwusage.fm.rodeo')).toBe(true);
-        expect(isValidMcpResource('https://other.example/api/mcp', 'https://pwusage.fm.rodeo')).toBe(false);
-        expect(isValidMcpResource(null, 'https://pwusage.fm.rodeo')).toBe(false);
+        expect(resolveMcpResource('https://pwusage.fm.rodeo/api/mcp', 'https://pwusage.fm.rodeo')).toBe('https://pwusage.fm.rodeo/api/mcp');
+        expect(resolveMcpResource('https://other.example/api/mcp', 'https://pwusage.fm.rodeo')).toBeNull();
     });
 });

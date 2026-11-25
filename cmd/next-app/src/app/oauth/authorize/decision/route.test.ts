@@ -158,4 +158,10 @@ describe('POST /oauth/authorize/decision', () => {
         expect(res.status).toBe(401);
         expect(res.headers.get('location')).toBeNull();
     });
+
+    it('stores the canonical resource when the client spells it differently', async () => {
+        const res = await POST(makeRequest({ ...validBase, resource: 'https://pwusage.fm.rodeo:443/api/mcp' }));
+        expect(res.status).toBe(303);
+        expect(mockCreateAuthCode).toHaveBeenCalledWith(expect.objectContaining({ resource: 'https://pwusage.fm.rodeo/api/mcp' }));
+    });
 });

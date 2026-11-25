@@ -4,9 +4,8 @@ import { resolveOAuthClient } from '@/lib/oauth/client-resolver';
 import { isSameOriginPost, verifyOAuthCsrfToken } from '@/lib/oauth/csrf';
 import { createAuthCode } from '@/lib/oauth/oauth-repo';
 import {
-    expectedMcpResource,
     isValidCodeChallenge,
-    isValidMcpResource,
+    resolveMcpResource,
     parseRequestedScopes,
     validateRedirectUri,
 } from '@/lib/oauth/validation';
@@ -45,11 +44,11 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     const decision = form.get('decision');
 
     const origin = getAppBaseUrl(request);
-    const resource = rawResource === null || rawResource === '' ? expectedMcpResource(origin) : rawResource;
+    const resource = resolveMcpResource(rawResource, origin);
 
     // The token approves only the exact request the consent screen rendered.
     const csrfToken = form.get('csrf_token') ?? '';
-    const consentRequest = { clientId, redirectUri: rawRedirectUri, codeChallenge, resource, scope: scopeParam ?? '' };
+    const consentRequest = { clientId, redirectUri: rawRedirectUri, codeChallenge, resource: resource ?? rawResource ?? '', scope: scopeParam ?? '' };
     if (!(await verifyOAuthCsrfToken(csrfToken, user.id, consentRequest))) {
         return NextResponse.json({ error: 'Invalid or expired CSRF token' }, { status: 403 });
     }
@@ -81,7 +80,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
     if (
         codeChallengeMethod !== 'S256'
         || !isValidCodeChallenge(codeChallenge)
-        || !isValidMcpResource(resource, origin)
+        || !resource
     ) {
         return NextResponse.json({ error: 'Invalid PKCE or resource parameters' }, { status: 400 });
     }
@@ -108,7 +107,7 @@ export const POST = observeRoute('/oauth/authorize/decision', async (request: Re
         userId: user.id,
         redirectUri: checkedUri.uri,
         codeChallenge,
-        resource: resource as string,
+        resource,
         scopes: parsedScopes.scopes,
         siteIds: submittedSiteIds,
         sessionVersion: user.sessionVersion,
