@@ -47,7 +47,7 @@ struct BatteryHoldActiveSection: View {
             DisclosureGroup("Info") {
                 LabeledContent("Original backup reserve", value: "\(hold.originalReserve)%")
                 if hold.mode == .auto {
-                    Text("Home usage is checked every 15 minutes.")
+                    Text("Home usage is checked every 5 minutes.")
                     Text(BatteryHoldPresentation.safetyText(hold, timeZone: timeZone))
                 }
                 if let monitoring = hold.monitoring {

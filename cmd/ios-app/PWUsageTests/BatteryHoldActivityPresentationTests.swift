@@ -165,7 +165,7 @@ struct BatteryHoldActivityPresentationTests {
         let first = state()
         #expect(first.nextCheckAt == nil)
         let activityStart = start.addingTimeInterval(120)
-        #expect(first.staleDate(activityStartedAt: activityStart) == activityStart.addingTimeInterval(25 * 60))
+        #expect(first.staleDate(activityStartedAt: activityStart) == activityStart.addingTimeInterval(15 * 60))
     }
 
     @Test("Final states never go stale")
