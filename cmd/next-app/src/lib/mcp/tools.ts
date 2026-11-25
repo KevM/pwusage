@@ -244,12 +244,12 @@ export async function handleGetDailyUsage(
         sample_count: number;
     }>(
         `SELECT (a.day_start AT TIME ZONE $4)::date::text AS day,
-                ROUND(COALESCE(SUM(s.load_power), 0) / 12000.0, 3) AS load_kwh,
-                ROUND(COALESCE(SUM(s.solar_power), 0) / 12000.0, 3) AS solar_kwh,
-                ROUND(COALESCE(SUM(s.sample_import_wh), 0) / 1000.0, 3) AS grid_import_kwh,
-                ROUND(COALESCE(SUM(s.sample_export_wh), 0) / 1000.0, 3) AS grid_export_kwh,
-                ROUND(COALESCE(SUM(s.sample_charge_wh), 0) / 1000.0, 3) AS battery_charge_kwh,
-                ROUND(COALESCE(SUM(s.sample_discharge_wh), 0) / 1000.0, 3) AS battery_discharge_kwh,
+                ROUND((COALESCE(SUM(s.load_power), 0) / 12000.0)::numeric, 3) AS load_kwh,
+                ROUND((COALESCE(SUM(s.solar_power), 0) / 12000.0)::numeric, 3) AS solar_kwh,
+                ROUND((COALESCE(SUM(s.sample_import_wh), 0) / 1000.0)::numeric, 3) AS grid_import_kwh,
+                ROUND((COALESCE(SUM(s.sample_export_wh), 0) / 1000.0)::numeric, 3) AS grid_export_kwh,
+                ROUND((COALESCE(SUM(s.sample_charge_wh), 0) / 1000.0)::numeric, 3) AS battery_charge_kwh,
+                ROUND((COALESCE(SUM(s.sample_discharge_wh), 0) / 1000.0)::numeric, 3) AS battery_discharge_kwh,
                 COALESCE(SUM(s.sample_count), 0)::int AS sample_count
          FROM "EnergyDayArchive" a
          INNER JOIN "EnergyDaySummary" s
