@@ -6,7 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageShell } from '@/components/ui/PageShell';
 import { P } from '@/components/ui/Typography';
+import { ClientIdentityNotice } from '@/components/oauth/ClientIdentityNotice';
 import { getAuthorizedSites, getCurrentUser } from '@/lib/auth-checks';
+import { describeClientIdentity } from '@/lib/oauth/client-identity';
 import { resolveOAuthClient } from '@/lib/oauth/client-resolver';
 import { createOAuthCsrfToken } from '@/lib/oauth/csrf';
 import type { OAuthScope } from '@/lib/oauth/types';
@@ -106,6 +108,8 @@ export default async function OAuthAuthorizePage({
         return renderInvalidRequest('Unrecognized app or redirect URI.');
     }
 
+    const identity = describeClientIdentity(client, checkedUri.normalized);
+
     const authorizePath = buildAuthorizePath({
         response_type: responseType,
         client_id: clientId,
@@ -125,11 +129,9 @@ export default async function OAuthAuthorizePage({
                 <Card>
                     <CardHeader>
                         <CardTitle>Sign in with your Tesla account to connect your Powerwall to {client.clientName}</CardTitle>
-                        {client.clientUri && (
-                            <CardDescription>{new URL(client.clientUri).hostname}</CardDescription>
-                        )}
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        <ClientIdentityNotice identity={identity} />
                         <P>
                             PWUsage uses your Tesla account to read your Powerwall energy data and rate plan, then lets you choose which home to share.
                         </P>
@@ -158,12 +160,10 @@ export default async function OAuthAuthorizePage({
             <Card>
                 <CardHeader>
                     <CardTitle>{client.clientName} wants read-only access</CardTitle>
-                    {client.clientUri && (
-                        <CardDescription>{new URL(client.clientUri).hostname}</CardDescription>
-                    )}
                 </CardHeader>
                 <CardContent>
                     <form method="POST" action="/oauth/authorize/decision" className="space-y-6">
+                        <ClientIdentityNotice identity={identity} />
                         <input type="hidden" name="csrf_token" value={csrfToken} />
                         <input type="hidden" name="client_id" value={client.clientId} />
                         <input type="hidden" name="redirect_uri" value={checkedUri.normalized} />
