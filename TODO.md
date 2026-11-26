@@ -6,6 +6,16 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Drop the pre-grant integration token tables (2026-11-25, PR #459)
+
+`20261125183518_integration_tokens_as_grants.sql` copied every `IntegrationCredential` into
+`OAuthGrant`/`OAuthToken` and left `IntegrationCredential` and `IntegrationGrant` in place, because
+Prod runs migrations before the new code deploys. Once #459 has been on Prod for a release, add a
+migration that drops both tables, and remove their lines from `cmd/next-app/scripts/sanitize-dev-copy.sql`,
+the `IntegrationCredential` row in `docs/dev-database-copy.md`, and
+`db-migrations/20261124073716_integration_credentials.sql` from the Postgres test's setup if it no
+longer needs it.
+
 ## Fixed comparison plans follow-ups (2026-11-22, branch `claude/fixed-comparison-rate-plans-59321e`)
 
 Spec: [docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md](docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md).

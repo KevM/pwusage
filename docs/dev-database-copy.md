@@ -66,10 +66,10 @@ does not exist.
 | Table | Rule | Why |
 |---|---|---|
 | `MobileLoginHandoff` | All rows deleted | Short-lived one-time login codes |
-| `IntegrationCredential` | All rows deleted | Integration tokens are scoped to their original environment |
-| `OAuthToken` | All rows deleted | OAuth 2.1 access and refresh tokens are scoped to their original environment |
+| `IntegrationCredential` | All rows deleted | Pre-grant copy of integration tokens, kept until its drop migration (see TODO.md) |
+| `OAuthToken` | All rows deleted | OAuth 2.1 access and refresh tokens and integration token digests are scoped to their original environment |
 | `OAuthAuthCode` | All rows deleted | Short-lived OAuth 2.1 authorization codes |
-| `OAuthGrant` | All rows deleted (cascades `OAuthGrantSite`) | OAuth 2.1 AI app grants are scoped to their original environment |
+| `OAuthGrant` | All rows deleted (cascades `OAuthGrantSite`) | AI app grants and integration tokens are scoped to their original environment |
 | `OAuthClient` | All rows deleted | Dynamic client registrations are scoped to their original environment |
 | `TrmnlInstallation` | `refresh_token` set to NULL | Stored but never used by the app |
 | `BatteryHoldActivity` | All rows deleted | Live Activity push tokens; beta must never push to copied prod registrations |

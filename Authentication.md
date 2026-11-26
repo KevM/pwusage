@@ -448,9 +448,10 @@ Sign out everywhere — Route: `POST /api/auth/sign-out-everywhere`
   JWT on every device: each request blocks on the `sv` mismatch and the proxy
   refuses to renew the cookie. Re-authentication issues a token stamped with the
   new version. The caller's cookie is cleared in the same response.
-- In the same statement, revokes every connected AI app: all of the user's
-  `OAuthGrant` rows and their access and refresh tokens, so MCP calls fail at
-  once and each app must be connected again. Pending OAuth authorization codes
+- In the same statement, revokes every connection: all of the user's
+  `OAuthGrant` rows (connected AI apps and integration tokens) and their
+  tokens, so MCP calls and integration polls fail at once. Each app must be
+  connected again and each script given a new integration token. Pending OAuth authorization codes
   stop redeeming because they are stamped with the old `session_version`.
 
 ### 6. Account deletion
@@ -668,20 +669,31 @@ fixtures; it does not apply or connect the migration. Cookie persistence across
 app launches, renewal, expiry, logout, and the custom URL callback still require
 simulator and device verification in the native app implementation.
 
-## Integration credentials
+## Integration tokens
 
-Signed-in home members can create and revoke their own tokens in the web
-app under **Site Settings → Billing Integrations**. The token is shown once.
-PWUsage stores its SHA-256 digest and checks the issuing account and home
-access on every poll. Revocation or loss of that access invalidates the token.
+Signed-in home members can create and revoke their own integration tokens in
+the web app under **Site Settings → Connections**. The token (`pwu_int_…`) is
+shown once.
 
-Each credential belongs to one home and one issuing user. The billing setup
-creates the credential and its `billing:read` grant together. Each endpoint
-requires its own explicit grant. A valid credential lacking the required
-grant receives `403`. Deleting a credential removes all of its grants.
+An integration token is an `OAuthGrant` of kind `token`, so it shares the
+store, the bearer check and the revocation path with connected AI apps (see
+[DesignDecisions.md](./DesignDecisions.md#integration-tokens-are-oauth-grants)).
+The grant belongs to one home and one issuing user, has scope `billing:read`
+and the resource `urn:pwusage:integrations:v1`, and never expires on its own.
+Its single `OAuthToken` row (kind `integration`) holds the SHA-256 digest.
+Every poll goes through `authenticateGrantToken`, which checks the token, the
+grant, the active user, the user's `session_version` and live access to the
+home. Revoking the token, **Sign out everywhere**, or losing access to the home
+invalidates it (`401`). A valid token whose grant lacks `billing:read` receives
+`403`. Integration tokens are rejected on `/api/mcp`, and MCP access tokens
+are rejected on the integration routes.
+
+`POST /api/oauth/grants` (`{ siteId, name }`, same-origin) creates a token;
+`GET /api/oauth/grants?siteId=` lists the home's connections, and
+`DELETE /api/oauth/grants/[id]` revokes one.
 
 Send `Authorization: Bearer <token>` to `GET /api/integrations/v1/billing`.
-The credential selects its home. The response includes the same
+The token selects its home. The response includes the same
 `currentBill.periods`, `loadTiming` period balances and rates, and
 `sources.energyDataThrough` as the app summary. Positive
 `loadTiming.periods[].cycleNetExportKwh` means banked exports. Negative
@@ -710,11 +722,11 @@ AI assistants (Claude, ChatGPT, Cursor, VS Code, Antigravity) connect to the sta
   - `GET /oauth/authorize` validates all OAuth parameters first, prompts unauthenticated users to **Continue with Tesla** (`/login?callback=...`), and lets authenticated users choose which home(s) to share.
   - If a Tesla account has no Powerwall, `/no-sites` offers **Try a different Tesla account** (`/login?switch_account=1`, which sends `prompt=login`) and **Cancel and return to app** (`error=access_denied`).
   - The consent screen shows only what PWUsage can verify: the host publishing a CIMD app (only when the app also returns to that host), otherwise **Unverified app**, and always where the browser returns after Allow. A `client_uri` is shown only when it is exactly the publisher or redirect host. `/oauth/*` sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
-  - `POST /oauth/authorize/decision` enforces same-origin and a CSRF token bound to the exact request shown (client, redirect URI, PKCE challenge, resource, scope) before issuing a 5-minute single-use authorization code (`OAuthAuthCode`). The code records the user's `session_version` and redeems only while the user is active and that version is unchanged, so **Sign out everywhere** voids codes in flight. Sign out everywhere also disconnects every connected AI app (below).
+  - `POST /oauth/authorize/decision` enforces same-origin and a CSRF token bound to the exact request shown (client, redirect URI, PKCE challenge, resource, scope) before issuing a 5-minute single-use authorization code (`OAuthAuthCode`). The code records the user's `session_version` and redeems only while the user is active and that version is unchanged, so **Sign out everywhere** voids codes in flight. Sign out everywhere also disconnects every connected AI app and integration token (below).
 - **Tokens, rotation & revocation:**
   - `POST /api/oauth/token` exchanges auth codes (verifying PKCE `S256`, `client_id`, `redirect_uri`, and `resource`) for a 1-hour `pwu_oat_` access token and a 30-day sliding / 90-day max `pwu_ort_` refresh token (SHA-256 hashed at rest).
   - Refresh tokens rotate on every use; presenting an already-used refresh token or replaying a consumed auth code revokes the entire `OAuthGrant` and all its tokens.
-  - `POST /api/oauth/revoke` (RFC 7009) revokes the token's grant. Users can also disconnect apps under **Site Settings → Connected AI Apps** (`GET /api/oauth/grants`, `DELETE /api/oauth/grants/[id]`).
+  - `POST /api/oauth/revoke` (RFC 7009) revokes the token's grant. Users can also disconnect apps under **Site Settings → Connections** (`GET /api/oauth/grants`, `DELETE /api/oauth/grants/[id]`).
 - **Per-request authorization:** `POST /api/mcp` validates the `pwu_oat_` token, parent `OAuthGrant`, `resource`, active `User`, and live `SiteMember` intersection on every request. It sends CORS headers (`Access-Control-Allow-Origin: *`, no credentials: access is a bearer token) so browser MCP clients can call it and read the `WWW-Authenticate` challenge.
 
 ## Authorization Decision Summary
@@ -722,7 +734,7 @@ AI assistants (Claude, ChatGPT, Cursor, VS Code, Antigravity) connect to the sta
 - Human user auth: `site_auth` JWT in cookie, verified per request against DB state (active status, `session_version`, roles, site memberships). Revocation via `POST /api/auth/sign-out-everywhere` bumps `session_version` and invalidates all outstanding JWTs.
 - Human user site-level authorization: DB site memberships and roles (or `SiteService` Tesla API fallback on specific server paths that instantiate a Tesla client).
 - Device/plugin auth: Trmnl JWT validation (`/api/trmnl/manage`) or installation bearer token (`/api/trmnl/markup`, `/api/trmnl/uninstall`).
-- Integration auth: home-scoped bearer credential with explicit grants. `/api/integrations/v1/billing` requires `billing:read`.
+- Integration auth: `pwu_int_` integration tokens, stored as `OAuthGrant` kind `token` for one home with resource `urn:pwusage:integrations:v1`. `/api/integrations/v1/billing` requires `billing:read`.
 - MCP OAuth 2.1 auth: opaque `pwu_oat_` access tokens bound to `OAuthGrant` + `OAuthGrantSite` and intersected with live `SiteMember` on `POST /api/mcp` (`billing:read`, `usage:read`).
 - Tesla backend API auth: tokens from `User` table, auto-refreshed server-side.
 
