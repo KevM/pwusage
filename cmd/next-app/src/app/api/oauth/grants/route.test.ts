@@ -2,12 +2,14 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGetCurrentUser = vi.fn();
+const mockGetCurrentSession = vi.fn();
 const mockVerifySiteAccess = vi.fn();
 const mockListGrants = vi.fn();
 const mockCreateToken = vi.fn();
 
 vi.mock('@/lib/auth-checks', () => ({
     getCurrentUser: () => mockGetCurrentUser(),
+    getCurrentSession: () => mockGetCurrentSession(),
     verifySiteAccess: (...args: unknown[]) => mockVerifySiteAccess(...args),
 }));
 vi.mock('@/lib/oauth/oauth-repo', () => ({
@@ -45,6 +47,7 @@ describe('POST /api/oauth/grants', () => {
         vi.clearAllMocks();
         mockGetCurrentUser.mockResolvedValue({ id: 'user-1' });
         mockVerifySiteAccess.mockResolvedValue(true);
+        mockGetCurrentSession.mockResolvedValue({ id: 'user-1', sessionVersion: 7 });
         mockCreateToken.mockResolvedValue({ grant: { id: 'g', kind: 'token' }, token: 'pwu_int_secret' });
     });
 
@@ -70,11 +73,18 @@ describe('POST /api/oauth/grants', () => {
         expect(res.status).toBe(201);
         expect(res.headers.get('cache-control')).toBe('private, no-store');
         expect(await res.json()).toEqual({ grant: { id: 'g', kind: 'token' }, token: 'pwu_int_secret' });
-        expect(mockCreateToken).toHaveBeenCalledWith('user-1', 'site-1', 'Script');
+        expect(mockCreateToken).toHaveBeenCalledWith('user-1', 'site-1', 'Script', 7);
+    });
+
+    it('returns 401 when the session ended before the token was written', async () => {
+        mockCreateToken.mockResolvedValue(null);
+        const res = await post({ siteId: 'site-1', name: 'Script' });
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({ error: 'Your session ended. Sign in again to create a token.' });
     });
 
     it('returns 401 when signed out', async () => {
-        mockGetCurrentUser.mockResolvedValue(null);
+        mockGetCurrentSession.mockResolvedValue(null);
         expect((await post({ siteId: 'site-1', name: 'Script' })).status).toBe(401);
     });
 });

@@ -594,27 +594,32 @@ export async function listUserOAuthGrantsForSite(
 
 /**
  * Creates an integration token: a 'token' grant for one home with scope
- * billing:read and no expiry, stamped with the user's session_version so
- * "Sign out everywhere" ends it. The raw token is returned once; only its
- * SHA-256 is stored.
+ * billing:read and no expiry. It is stamped with the session_version the
+ * caller's session was validated at, and refused (null) when the user is
+ * inactive or that version has moved on, so a concurrent "Sign out
+ * everywhere" always wins. The raw token is returned once; only its SHA-256
+ * is stored.
  */
 export async function createIntegrationToken(
     userId: string,
     siteId: string,
     name: string,
-): Promise<{ grant: UserOAuthGrantSummary; token: string }> {
+    sessionVersion: number,
+): Promise<{ grant: UserOAuthGrantSummary; token: string } | null> {
     const token = generateOpaqueToken(INTEGRATION_TOKEN_PREFIX);
     const grantId = randomUUID();
     const scopes: OAuthScope[] = ['billing:read'];
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const userRes = await client.query<{ session_version: number }>(
-            `SELECT session_version FROM "User" WHERE id = $1 FOR SHARE`,
-            [userId],
+        const userRes = await client.query(
+            `SELECT 1 FROM "User" WHERE id = $1 AND is_active AND session_version = $2 FOR SHARE`,
+            [userId, sessionVersion],
         );
-        const sessionVersion = userRes.rows[0]?.session_version;
-        if (sessionVersion === undefined) throw new Error('User not found');
+        if (userRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return null;
+        }
         const grantRes = await client.query<{ created_at: Date }>(
             `INSERT INTO "OAuthGrant"
                 (id, user_id, client_id, client_name, client_uri, resource, scopes, max_expires_at, session_version, kind)

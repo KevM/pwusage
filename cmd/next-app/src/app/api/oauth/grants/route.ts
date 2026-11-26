@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
+import { getCurrentSession, getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
 import { isSameOriginPost } from '@/lib/oauth/csrf';
 import { createIntegrationToken, listUserOAuthGrantsForSite } from '@/lib/oauth/oauth-repo';
 import { observeRoute } from '@/lib/observability';
@@ -26,7 +26,8 @@ export const POST = observeRoute('/api/oauth/grants', async (request: NextReques
     if (!isSameOriginPost(request)) {
         return NextResponse.json({ error: 'Cross-origin request rejected' }, { status: 403, headers: PRIVATE });
     }
-    const user = await getCurrentUser();
+    // Bound to the version this session was validated at, like OAuth consent.
+    const user = await getCurrentSession();
     if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: PRIVATE });
     }
@@ -41,6 +42,12 @@ export const POST = observeRoute('/api/oauth/grants', async (request: NextReques
         return NextResponse.json({ error: 'Enter a name up to 80 characters.' }, { status: 400, headers: PRIVATE });
     }
 
-    const created = await createIntegrationToken(user.id, siteId, name);
+    const created = await createIntegrationToken(user.id, siteId, name, user.sessionVersion);
+    if (!created) {
+        return NextResponse.json(
+            { error: 'Your session ended. Sign in again to create a token.' },
+            { status: 401, headers: PRIVATE },
+        );
+    }
     return NextResponse.json(created, { status: 201, headers: PRIVATE });
 });

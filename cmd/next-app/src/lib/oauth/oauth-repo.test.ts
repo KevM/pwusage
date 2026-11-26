@@ -290,7 +290,9 @@ describe('oauth-repo', () => {
             }
             return { rows: [] };
         });
-        const { grant, token } = await createIntegrationToken('user-1', 'site-1', 'ecobee aux');
+        const created = await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 4);
+        if (!created) throw new Error('expected a token');
+        const { grant, token } = created;
         expect(token).toMatch(/^pwu_int_[\w-]{43}$/);
         const inserts = mockClientQuery.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO'));
         expect(inserts.map(([sql]) => String(sql).match(/INSERT INTO "(\w+)"/)?.[1]))
@@ -306,6 +308,17 @@ describe('oauth-repo', () => {
             kind: 'token', clientName: 'ecobee aux', scopes: ['billing:read'], maxExpiresAt: null,
             publisherHost: null, siteCount: 1, createdAt: '2026-11-26T00:00:00.000Z', lastUsedAt: null,
         });
+    });
+
+    it('createIntegrationToken refuses when the session version moved', async () => {
+        mockClientQuery.mockImplementation(async () => ({ rows: [] }));
+        expect(await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 3)).toBeNull();
+        const userCall = mockClientQuery.mock.calls.find(([sql]) => String(sql).includes('FROM "User"'));
+        expect(String(userCall?.[0])).toMatch(/session_version\s*=\s*\$2/);
+        expect(String(userCall?.[0])).toMatch(/is_active/);
+        expect(userCall?.[1]).toEqual(['user-1', 3]);
+        expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO'))).toBe(false);
+        expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
     it('lists a token grant with kind token and null maxExpiresAt', async () => {
