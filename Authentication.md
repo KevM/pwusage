@@ -684,7 +684,9 @@ Its single `OAuthToken` row (kind `integration`) holds the SHA-256 digest.
 Every poll goes through `authenticateGrantToken`, which checks the token, the
 grant, the active user, the user's `session_version` and live access to the
 home. Revoking the token, **Sign out everywhere**, or losing access to the home
-invalidates it (`401`). A valid token whose grant lacks `billing:read` receives
+invalidates it (`401`). Deleting the home deletes the token outright: a
+trigger on `OAuthGrantSite` removes a `token` grant once it has no home left
+(app grants, which can cover several homes, are kept). A valid token whose grant lacks `billing:read` receives
 `403`. Integration tokens are rejected on `/api/mcp`, and MCP access tokens
 are rejected on the integration routes.
 

@@ -149,6 +149,34 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('integration tokens as
         expect(active.rows[0].n).toBe(MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE);
     });
 
+    it('deleting a home deletes its integration tokens', async () => {
+        await local.client.query(`INSERT INTO "User" (id, session_version) VALUES ('user-5', 0)`);
+        await local.client.query(`INSERT INTO "Site" (id, user_id) VALUES ('site-5', 'user-5')`);
+        const created = await createIntegrationToken('user-5', 'site-5', 'script', 0);
+        if (created.status !== 'created') throw new Error('expected a token');
+        await local.client.query(`DELETE FROM "Site" WHERE id = 'site-5'`);
+        const left = await local.client.query(`SELECT
+            (SELECT count(*) FROM "OAuthGrant" WHERE id = $1)::int AS grants,
+            (SELECT count(*) FROM "OAuthToken" WHERE grant_id = $1)::int AS tokens`, [created.grant.id]);
+        expect(left.rows[0]).toEqual({ grants: 0, tokens: 0 });
+    });
+
+    it('deleting one home keeps an app grant that still covers another', async () => {
+        const appGrantId = 'b0b0b0b0-1111-4222-8333-444455556666';
+        await local.client.query(`INSERT INTO "Site" (id, user_id) VALUES ('site-6a', 'user-5'), ('site-6b', 'user-5')`);
+        await local.client.query(`INSERT INTO "OAuthGrant"
+            (id, user_id, client_id, client_name, resource, scopes, max_expires_at, session_version, kind)
+            VALUES ($1, 'user-5', 'https://claude.ai/oauth/client.json', 'Claude', 'https://pwusage.fm.rodeo/api/mcp',
+                    ARRAY['billing:read'], now() + interval '90 days', 0, 'app')`, [appGrantId]);
+        await local.client.query(`INSERT INTO "OAuthGrantSite" (grant_id, site_id) VALUES ($1, 'site-6a'), ($1, 'site-6b')`, [appGrantId]);
+        await local.client.query(`DELETE FROM "Site" WHERE id = 'site-6a'`);
+        const sites = await local.client.query(`SELECT site_id FROM "OAuthGrantSite" WHERE grant_id = $1`, [appGrantId]);
+        expect(sites.rows).toEqual([{ site_id: 'site-6b' }]);
+        await local.client.query(`DELETE FROM "Site" WHERE id = 'site-6b'`);
+        const grants = await local.client.query(`SELECT count(*)::int AS n FROM "OAuthGrant" WHERE id = $1`, [appGrantId]);
+        expect(grants.rows[0].n).toBe(1);
+    });
+
     it('does not accept an integration token stored against an app grant', async () => {
         const grant = await local.client.query(`SELECT id FROM "OAuthGrant"
             WHERE user_id = 'user-3' AND revoked_at IS NULL LIMIT 1`);

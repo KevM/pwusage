@@ -54,3 +54,30 @@ $$;
 
 DROP TABLE IF EXISTS "IntegrationGrant";
 DROP TABLE IF EXISTS "IntegrationCredential";
+
+-- An integration token covers exactly one home, so when that home's link goes
+-- (the home is deleted) the token grant goes too, taking its token with it.
+-- App grants can cover several homes and are left alone.
+CREATE OR REPLACE FUNCTION public.oauth_grant_site_drop_orphan_token()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+    DELETE FROM "OAuthGrant" g
+    WHERE g.id = OLD.grant_id
+      AND g.kind = 'token'
+      AND NOT EXISTS (SELECT 1 FROM "OAuthGrantSite" gs WHERE gs.grant_id = g.id);
+    RETURN OLD;
+END
+$$;
+
+DROP TRIGGER IF EXISTS oauth_grant_site_drop_orphan_token ON "OAuthGrantSite";
+CREATE TRIGGER oauth_grant_site_drop_orphan_token
+    AFTER DELETE ON "OAuthGrantSite"
+    FOR EACH ROW EXECUTE FUNCTION public.oauth_grant_site_drop_orphan_token();
+
+-- Token grants already orphaned by a home deleted before this trigger existed.
+DELETE FROM "OAuthGrant" g
+WHERE g.kind = 'token'
+  AND NOT EXISTS (SELECT 1 FROM "OAuthGrantSite" gs WHERE gs.grant_id = g.id);
