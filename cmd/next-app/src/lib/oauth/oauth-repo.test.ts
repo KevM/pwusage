@@ -22,6 +22,7 @@ import {
     authenticateGrantToken,
     cleanupExpiredOAuthRecords,
     createAuthCode,
+    createIntegrationToken,
     listUserOAuthGrantsForSite,
     registerDcrClient,
     exchangeAuthCode,
@@ -279,6 +280,43 @@ describe('oauth-repo', () => {
             createHash('sha256').update(token).digest(), INTEGRATION_RESOURCE, 'integration',
         ]);
         expect(String(mockQuery.mock.calls[0][0])).toMatch(/t\.kind\s*=\s*\$3/);
+    });
+
+    it('createIntegrationToken returns a pwu_int_ token and stores only its hash', async () => {
+        mockClientQuery.mockImplementation(async (sql: string) => {
+            if (String(sql).includes('FROM "User"')) return { rows: [{ session_version: 4 }] };
+            if (String(sql).includes('INSERT INTO "OAuthGrant"')) {
+                return { rows: [{ created_at: new Date('2026-11-26T00:00:00Z') }] };
+            }
+            return { rows: [] };
+        });
+        const { grant, token } = await createIntegrationToken('user-1', 'site-1', 'ecobee aux');
+        expect(token).toMatch(/^pwu_int_[\w-]{43}$/);
+        const inserts = mockClientQuery.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO'));
+        expect(inserts.map(([sql]) => String(sql).match(/INSERT INTO "(\w+)"/)?.[1]))
+            .toEqual(['OAuthGrant', 'OAuthGrantSite', 'OAuthToken']);
+        const [grantSql, grantParams] = inserts[0];
+        expect(String(grantSql)).toMatch(/'token'/);
+        expect(grantParams).toEqual(expect.arrayContaining(['user-1', 'ecobee aux', INTEGRATION_RESOURCE, 4]));
+        const tokenParams = inserts[2][1] as unknown[];
+        expect(tokenParams).toContainEqual(createHash('sha256').update(token).digest());
+        expect(JSON.stringify(mockClientQuery.mock.calls)).not.toContain(token);
+        expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
+        expect(grant).toMatchObject({
+            kind: 'token', clientName: 'ecobee aux', scopes: ['billing:read'], maxExpiresAt: null,
+            publisherHost: null, siteCount: 1, createdAt: '2026-11-26T00:00:00.000Z', lastUsedAt: null,
+        });
+    });
+
+    it('lists a token grant with kind token and null maxExpiresAt', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{
+            id: 'g', kind: 'token', client_id: 'pwu_integration', client_name: 'ecobee aux', client_uri: null,
+            scopes: ['billing:read'], created_at: new Date('2026-11-25T00:00:00Z'), last_used_at: null,
+            max_expires_at: null, site_count: '1',
+        }] });
+        const [grant] = await listUserOAuthGrantsForSite('user-1', 'site-1');
+        expect(grant).toMatchObject({ kind: 'token', maxExpiresAt: null, publisherHost: null });
+        expect(String(mockQuery.mock.calls[0][0])).toMatch(/isfinite\(g\.max_expires_at\)/);
     });
 
     it('cleanupExpiredOAuthRecords runs all 4 cleanup deletes and returns counts', async () => {

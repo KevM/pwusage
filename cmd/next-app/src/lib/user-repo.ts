@@ -189,10 +189,11 @@ export class UserRepo {
      * - Bumps session_version: site_auth JWTs whose embedded sv trails it are
      *   blocked on each request and refused refresh, and pending OAuth
      *   authorization codes (stamped with the old version) stop redeeming.
-     * - Revokes every connected AI app (OAuth grant) and its access and
-     *   refresh tokens, so MCP calls fail at once.
+     * - Revokes every connection (OAuth grant): connected AI apps with their
+     *   access and refresh tokens, and integration tokens, so MCP calls and
+     *   integration polls fail at once.
      * Re-authenticating issues a session stamped with the new version; apps
-     * must be connected again.
+     * must be connected again and integration tokens created again.
      */
     async signOutEverywhere(userId: string): Promise<{ disconnectedApps: number }> {
         const res = await pool.query<{ revoked_grants: number }>(`
