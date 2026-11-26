@@ -321,10 +321,10 @@ describe('oauth-repo', () => {
         expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
-    it('createIntegrationToken refuses a 26th active token for the home', async () => {
+    it('createIntegrationToken refuses a 6th active token for the home', async () => {
         mockClientQuery.mockImplementation(async (sql: string) => {
             if (String(sql).includes('FROM "User"')) return { rows: [{ '?column?': 1 }] };
-            if (String(sql).includes('count(')) return { rows: [{ count: 25 }] };
+            if (String(sql).includes('count(')) return { rows: [{ count: 5 }] };
             return { rows: [] };
         });
         expect(await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 4)).toEqual({ status: 'limit' });

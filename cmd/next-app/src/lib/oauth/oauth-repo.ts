@@ -596,7 +596,7 @@ export async function listUserOAuthGrantsForSite(
 }
 
 /** Integration tokens never expire on their own, so each user keeps at most this many active per home. */
-export const MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE = 25;
+export const MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE = 5;
 
 export type CreateIntegrationTokenResult =
     | { status: 'created'; grant: UserOAuthGrantSummary; token: string }

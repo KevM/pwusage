@@ -17,7 +17,7 @@ vi.mock('@/lib/auth-checks', () => ({
 vi.mock('@/lib/oauth/oauth-repo', () => ({
     listUserOAuthGrantsForSite: (...args: unknown[]) => mockListGrants(...args),
     createIntegrationToken: (...args: unknown[]) => mockCreateToken(...args),
-    MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE: 25,
+    MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE: 5,
 }));
 vi.mock('@/lib/observability', () => ({
     observeRoute: (_route: string, fn: (req: NextRequest) => Promise<Response>) => fn,
@@ -85,7 +85,7 @@ describe('POST /api/oauth/grants', () => {
         mockCreateToken.mockResolvedValue({ status: 'limit' });
         const res = await post({ siteId: 'site-1', name: 'Script' });
         expect(res.status).toBe(409);
-        expect(await res.json()).toEqual({ error: 'This home already has 25 integration tokens. Revoke one first.' });
+        expect(await res.json()).toEqual({ error: 'This home already has 5 integration tokens. Revoke one first.' });
     });
 
     it('returns 400 for an 81-character name', async () => {

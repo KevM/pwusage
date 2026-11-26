@@ -65,9 +65,9 @@ describe('Connections', () => {
     });
 
     it('shows the server’s reason when a token can’t be created', async () => {
-        const fetchFn = vi.fn().mockResolvedValue(json({ error: 'This home already has 25 integration tokens. Revoke one first.' }, 409));
+        const fetchFn = vi.fn().mockResolvedValue(json({ error: 'This home already has 5 integration tokens. Revoke one first.' }, 409));
         await expect(requestCreateToken('home', 'Script', fetchFn))
-            .rejects.toThrow('This home already has 25 integration tokens. Revoke one first.');
+            .rejects.toThrow('This home already has 5 integration tokens. Revoke one first.');
     });
 
     it('revoking removes the row', async () => {

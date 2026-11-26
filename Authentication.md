@@ -697,7 +697,7 @@ are rejected on the integration routes.
   because the token would never authenticate.
 - Is bound to the `session_version` the caller's session was validated at, so
   a concurrent **Sign out everywhere** wins (`401`).
-- Is refused with `409` once the user has 25 active tokens for the home.
+- Is refused with `409` once the user has 5 active tokens for the home.
 
 A token that resolves to anything other than exactly one home is rejected
 (`401`). The bearer check also requires the grant kind to match the token kind
