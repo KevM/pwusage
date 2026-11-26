@@ -631,6 +631,12 @@ export async function createIntegrationToken(
             await client.query('ROLLBACK');
             return { status: 'session-ended' };
         }
+        // FOR SHARE locks don't conflict, so serialize creates for this user and
+        // home until commit; otherwise concurrent creates all see the same count.
+        await client.query(
+            `SELECT pg_advisory_xact_lock(hashtextextended('integration-token:' || $1 || ':' || $2, 0))`,
+            [userId, siteId],
+        );
         const countRes = await client.query<{ count: number }>(
             `SELECT count(*)::int AS count
              FROM "OAuthGrant" g

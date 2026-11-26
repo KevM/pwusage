@@ -5,9 +5,18 @@ import { Client } from 'pg';
 
 const { local, localPool } = vi.hoisted(() => {
     const local = { client: undefined as unknown as import('pg').Client };
-    // One connection plays the pool; a transaction "client" is that connection with a no-op release.
-    const query = (sql: string, values?: unknown[]) => local.client.query(sql, values);
-    const localPool = { query, connect: async () => ({ query, release: () => undefined }) };
+    // Like a real pool: plain queries share one connection, and each transaction
+    // gets a connection of its own, so concurrent transactions really overlap.
+    const localPool = {
+        query: (sql: string, values?: unknown[]) => local.client.query(sql, values),
+        connect: async () => {
+            const { Client: PgClient } = await import('pg');
+            const client = new PgClient({ host: process.env.COMPACT_HISTORY_TEST_SOCKET, port: 55439,
+                database: 'postgres', user: process.env.USER });
+            await client.connect();
+            return Object.assign(client, { release: () => void client.end() });
+        },
+    };
     return { local, localPool };
 });
 vi.mock('@/lib/db', async importOriginal => ({
@@ -124,6 +133,20 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('integration tokens as
         expect(await createIntegrationToken('user-3', 'site-3', 'one too many', 0)).toEqual({ status: 'limit' });
         await local.client.query(`UPDATE "OAuthGrant" SET revoked_at = now() WHERE id = $1`, [first.grant.id]);
         expect((await createIntegrationToken('user-3', 'site-3', 'replacement', 0)).status).toBe('created');
+    });
+
+    it('allows only one of several concurrent creates past the last free slot', async () => {
+        await local.client.query(`INSERT INTO "User" (id, session_version) VALUES ('user-4', 0)`);
+        await local.client.query(`INSERT INTO "Site" (id, user_id) VALUES ('site-4', 'user-4')`);
+        for (let i = 1; i < MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE; i++) {
+            expect((await createIntegrationToken('user-4', 'site-4', `script ${i}`, 0)).status).toBe('created');
+        }
+        const results = await Promise.all(Array.from({ length: 6 }, (_, i) =>
+            createIntegrationToken('user-4', 'site-4', `racer ${i}`, 0)));
+        expect(results.filter(r => r.status === 'created')).toHaveLength(1);
+        const active = await local.client.query(`SELECT count(*)::int AS n FROM "OAuthGrant"
+            WHERE user_id = 'user-4' AND kind = 'token' AND revoked_at IS NULL`);
+        expect(active.rows[0].n).toBe(MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE);
     });
 
     it('does not accept an integration token stored against an app grant', async () => {
