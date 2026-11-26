@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockAuthenticateOAuthAccessToken = vi.fn();
+const mockAuthenticateGrantToken = vi.fn();
 const mockGetSite = vi.fn();
 
 vi.mock('@/lib/oauth/oauth-repo', () => ({
-    authenticateOAuthAccessToken: (...args: unknown[]) => mockAuthenticateOAuthAccessToken(...args),
+    authenticateGrantToken: (...args: unknown[]) => mockAuthenticateGrantToken(...args),
 }));
 
 vi.mock('@/lib/site-repo', () => ({
@@ -36,7 +36,7 @@ describe('/api/mcp route', () => {
     });
 
     it('returns 401 with WWW-Authenticate resource_metadata when unauthenticated', async () => {
-        mockAuthenticateOAuthAccessToken.mockResolvedValueOnce(null);
+        mockAuthenticateGrantToken.mockResolvedValueOnce(null);
         const res = await POST(new Request('https://pwusage.fm.rodeo/api/mcp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -49,7 +49,7 @@ describe('/api/mcp route', () => {
     });
 
     it('handles tools/list and tools/call over stateless Streamable HTTP', async () => {
-        mockAuthenticateOAuthAccessToken.mockResolvedValue({
+        mockAuthenticateGrantToken.mockResolvedValue({
             grantId: 'grant-1',
             userId: 'user-1',
             clientId: 'pwu_client_1',
@@ -119,7 +119,7 @@ describe('/api/mcp route', () => {
             expect(allowed).toContain(header);
         }
 
-        mockAuthenticateOAuthAccessToken.mockResolvedValueOnce(null);
+        mockAuthenticateGrantToken.mockResolvedValueOnce(null);
         const challenge = await POST(new Request('https://pwusage.fm.rodeo/api/mcp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Origin: 'https://inspector.example' },
@@ -129,7 +129,7 @@ describe('/api/mcp route', () => {
         expect(challenge.headers.get('access-control-allow-origin')).toBe('*');
         expect((challenge.headers.get('access-control-expose-headers') ?? '').toLowerCase()).toContain('www-authenticate');
 
-        mockAuthenticateOAuthAccessToken.mockResolvedValueOnce({
+        mockAuthenticateGrantToken.mockResolvedValueOnce({
             grantId: 'grant-1', userId: 'user-1', clientId: 'pwu_client_1', clientName: 'Claude',
             scopes: ['billing:read', 'usage:read'], authorizedSiteIds: ['site-1'],
         });

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
-/** Ends every session and disconnects every connected AI app. True when the server confirmed it. */
+/** Ends every session, disconnects every connected app and revokes every integration token. True when the server confirmed it. */
 export async function requestSignOutEverywhere(fetchFn: FetchFn = fetch): Promise<boolean> {
     try {
         const res = await fetchFn('/api/auth/sign-out-everywhere', { method: 'POST' });
@@ -33,8 +33,9 @@ export function SignOutEverywherePanel({ confirming, busy, error, onStart, onCan
             {confirming ? (
                 <>
                     <p className="text-sm">
-                        This signs you out of PWUsage on every device, including this one, and disconnects every
-                        connected AI app. You’ll sign in again and reconnect the apps you still want.
+                        This signs you out of PWUsage on every device, including this one, disconnects every
+                        connected app and revokes every integration token. You’ll sign in again, then reconnect
+                        the apps and create new tokens for the scripts you still use.
                     </p>
                     <div className="flex flex-wrap gap-2">
                         <Button type="button" variant="danger" disabled={busy} onClick={onConfirm}>
@@ -48,7 +49,7 @@ export function SignOutEverywherePanel({ confirming, busy, error, onStart, onCan
             ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs text-muted-foreground">
-                        Signs you out on every device and disconnects every connected AI app.
+                        Signs you out on every device, disconnects every connected app and revokes every integration token.
                     </p>
                     <Button type="button" variant="outline" onClick={onStart}>
                         Sign out everywhere

@@ -13,8 +13,7 @@ A thermostat in Auto is eligible when ecobee reports the heat pump is heating.
 
 ## Set up and test
 
-Create a PWUsage billing integration token in **Site Settings → Billing
-Integrations**. Install the pinned Python package in a virtual environment:
+Create a PWUsage integration token in **Site Settings → Connections**. Install the pinned Python package in a virtual environment:
 
 ```sh
 python3 -m venv "$HOME/.local/share/pwusage-ecobee/venv"

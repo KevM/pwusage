@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { authorizeIntegration, BILLING_READ_SCOPE } from '@/lib/integration-credential-repo';
+import { authenticateGrantToken } from '@/lib/oauth/oauth-repo';
+import { INTEGRATION_RESOURCE } from '@/lib/oauth/types';
 import { readCurrentBilling } from '@/lib/current-billing-service';
 import { errorFields, logEvent, observeRoute, setLogContext } from '@/lib/observability';
 import { computeJsonETag, ifNoneMatchMatches } from '@/lib/tariff-etag';
@@ -21,19 +22,24 @@ function billingHeaders(etag: string) {
 async function handleGET(request: Request) {
     return withRequestContext(async () => {
         try {
-            const credential = await authorizeIntegration(request.headers.get('Authorization'), BILLING_READ_SCOPE);
-            if (!credential) {
+            const grant = await authenticateGrantToken(
+                request.headers.get('Authorization'),
+                { kind: 'integration', resource: INTEGRATION_RESOURCE },
+            );
+            // An integration token is bound to exactly one home; anything else fails closed.
+            const siteId = grant?.authorizedSiteIds.length === 1 ? grant.authorizedSiteIds[0] : undefined;
+            if (!grant || !siteId) {
                 return NextResponse.json({ error: 'Unauthorized' }, {
                     status: 401,
                     headers: { ...PRIVATE_RESPONSE, 'WWW-Authenticate': 'Bearer' },
                 });
             }
 
-            setLogContext({ siteId: credential.siteId, integrationId: credential.id });
-            if (!credential.allowed) {
+            setLogContext({ siteId, grantId: grant.grantId });
+            if (!grant.scopes.includes('billing:read')) {
                 return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: PRIVATE_RESPONSE });
             }
-            const result = await readCurrentBilling(credential.siteId, {
+            const result = await readCurrentBilling(siteId, {
                 refreshStale: true,
                 includeLoadTimingTimeline: false,
                 acceptRevision: (revision, latest) => ifNoneMatchMatches(request, revisionTag(revision, latest)),

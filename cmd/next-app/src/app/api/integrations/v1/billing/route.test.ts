@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { NextRequest } from 'next/server';
 import { IncompleteTariffAttributionError } from '@/lib/billing-availability';
 import type { Tariff } from '@/lib/db';
 import type { MobileLoadTimingWithTimeline } from '@/lib/mobile-bill-summary';
@@ -35,9 +34,6 @@ vi.mock('@/lib/observability', () => ({
 
 import { GET } from './route';
 import { GET as getMobileBill } from '@/app/api/mobile/bill-summary/route';
-import {
-    GET as listTokens, POST as createToken, DELETE as revokeToken,
-} from '@/app/api/site/[id]/billing-integrations/route';
 
 const token = 'pwu_int_' + 'a'.repeat(43);
 const id = '87ed8088-70f1-482c-86ce-c4ef67106e8d';
@@ -45,8 +41,8 @@ const now = new Date('2026-09-19T12:30:00Z');
 const current = new Date('2026-09-19T12:25:00Z');
 const stale = new Date('2026-09-19T11:25:00Z');
 const url = 'https://example.test/api/integrations/v1/billing?siteId=another-home';
-const settingsUrl = 'https://example.test/api/site/home/billing-integrations';
-const context = { params: Promise.resolve({ id: 'home' }) };
+/** What the token lookup sees: the grant's scopes and the homes it can still read. */
+const auth = { scopes: ['billing:read'], siteIds: ['home'] };
 
 function poll(etag?: string, authorization = `Bearer ${token}`) {
     const headers = new Headers({ Authorization: authorization });
@@ -68,9 +64,16 @@ beforeEach(() => {
     mocks.user.mockResolvedValue({ id: 'owner' });
     mocks.siteIds.mockResolvedValue(['home']);
     mocks.refresh.mockResolvedValue({ status: 'no-new-rows' });
-    mocks.query.mockImplementation((sql: string) => sql.includes('c.token_hash')
-        ? { rows: [{ siteId: 'home', id, allowed: true }] }
-        : mocks.config(sql));
+    auth.scopes = ['billing:read'];
+    auth.siteIds = ['home'];
+    mocks.query.mockImplementation((sql: string) => {
+        if (sql.includes('FROM "OAuthToken" t')) {
+            return { rows: [{ grant_id: id, user_id: 'owner', client_id: 'pwu_integration', client_name: 'Script', scopes: auth.scopes }] };
+        }
+        if (sql.includes('FROM "OAuthGrantSite"')) return { rows: auth.siteIds.map(site_id => ({ site_id })) };
+        if (sql.includes('UPDATE "OAuthGrant"')) return { rows: [] };
+        return mocks.config(sql);
+    });
 });
 
 afterEach(() => vi.useRealTimers());
@@ -110,9 +113,8 @@ describe('billing integration', () => {
         expect(mocks.site).toHaveBeenCalledWith('home');
         expect(mocks.site).not.toHaveBeenCalledWith('another-home');
         expect(mocks.refresh).not.toHaveBeenCalled();
-        expect(mocks.setLogContext).toHaveBeenCalledWith({ siteId: 'home', integrationId: id });
         const matchingDigest = createHash('sha256').update(token).digest();
-        expect(mocks.query.mock.calls[0][1]).toEqual([matchingDigest, 'billing:read']);
+        expect(mocks.query.mock.calls[0][1]).toEqual([matchingDigest, 'urn:pwusage:integrations:v1', 'integration', 'token']);
     });
 
     it('returns an empty 304 for a matching ETag without recalculating the bill', async () => {
@@ -166,14 +168,34 @@ describe('billing integration', () => {
         expect(mocks.refresh).toHaveBeenCalledTimes(2);
     });
 
-    it('requires the billing grant on an otherwise valid credential', async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [{ siteId: 'home', id, allowed: false }] });
-
+    it('returns 403 when the grant lacks billing:read', async () => {
+        auth.scopes = ['usage:read'];
         expect((await poll('*')).status).toBe(403);
-        expect(mocks.query.mock.calls[0][0]).toContain('FROM "IntegrationGrant"');
-        expect(mocks.query.mock.calls[0][1][1]).toBe('billing:read');
         expect(mocks.latest).not.toHaveBeenCalled();
         expect(mocks.refresh).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 for an MCP access token', async () => {
+        expect((await poll(undefined, 'Bearer pwu_oat_' + 'a'.repeat(43))).status).toBe(401);
+        expect(mocks.query).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 when the token’s home is no longer authorized', async () => {
+        auth.siteIds = [];
+        const response = await poll();
+        expect(response.status).toBe(401);
+        expect(mocks.site).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 when a token somehow reaches more than one home', async () => {
+        auth.siteIds = ['home', 'second-home'];
+        expect((await poll()).status).toBe(401);
+        expect(mocks.site).not.toHaveBeenCalled();
+    });
+
+    it('logs grantId, not integrationId', async () => {
+        await poll();
+        expect(mocks.setLogContext).toHaveBeenCalledWith({ siteId: 'home', grantId: id });
     });
 
     it('authenticates before revalidating or refreshing', async () => {
@@ -185,46 +207,5 @@ describe('billing integration', () => {
         expect(revoked.headers.get('www-authenticate')).toBe('Bearer');
         expect(mocks.latest).not.toHaveBeenCalled();
         expect(mocks.refresh).not.toHaveBeenCalled();
-    });
-});
-
-describe('billing integration settings', () => {
-    it('returns the credential once and stores only its digest', async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [{ id, name: 'Home Assistant' }] });
-        const created = await createToken(new NextRequest(settingsUrl, {
-            method: 'POST', body: JSON.stringify({ name: ' Home Assistant ', scope: 'unrequested:read' }),
-        }), context);
-        expect(created.status).toBe(201);
-        expect(created.headers.get('cache-control')).toBe('private, no-store');
-        const result: { token: string } = await created.json();
-        expect(result.token).toMatch(/^pwu_int_[\w-]{43}$/);
-        expect(mocks.query.mock.calls[0][1]).toEqual([
-            expect.any(String), 'owner', 'home', 'Home Assistant',
-            createHash('sha256').update(result.token).digest(), 'billing:read',
-        ]);
-
-        expect(mocks.query.mock.calls[0][0]).toContain('INSERT INTO "IntegrationGrant"');
-
-        mocks.query.mockResolvedValueOnce({ rows: [{ id, name: 'Home Assistant' }] });
-        const listed = await listTokens(new NextRequest(settingsUrl), context);
-        expect(await listed.json()).toEqual({ credentials: [{ id, name: 'Home Assistant' }] });
-        expect(mocks.query.mock.calls[1][0]).not.toContain('token_hash');
-    });
-
-    it('scopes revocation to the signed-in issuer and home', async () => {
-        mocks.query.mockResolvedValueOnce({ rowCount: 1 });
-        const response = await revokeToken(new NextRequest(`${settingsUrl}?id=${id}`, { method: 'DELETE' }), context);
-        expect(response.status).toBe(204);
-        expect(mocks.query.mock.calls[0][1]).toEqual(['owner', 'home', id, 'billing:read']);
-    });
-
-    it('blocks creation from a different origin or for another home', async () => {
-        const request = (origin: string) => new NextRequest(settingsUrl, {
-            method: 'POST', headers: { Origin: origin }, body: JSON.stringify({ name: 'Test' }),
-        });
-        expect((await createToken(request('https://other.test'), context)).status).toBe(403);
-        mocks.siteIds.mockResolvedValue(['other-home']);
-        expect((await createToken(request('https://example.test'), context)).status).toBe(401);
-        expect(mocks.query).not.toHaveBeenCalled();
     });
 });

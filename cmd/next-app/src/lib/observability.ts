@@ -137,12 +137,12 @@ export function logEvent(level: Level, event: string, fields: Fields = {}): void
     }
 }
 
-export function setLogContext(fields: { siteId: string; integrationId?: string } | { siteIds: string[] }): void {
+export function setLogContext(fields: { siteId: string; grantId?: string } | { siteIds: string[] }): void {
     const scope = scopes.getStore();
     if (!scope) return;
     if ('siteId' in fields) {
         scope.context.siteId = fields.siteId;
-        if (fields.integrationId) scope.context.integrationId = fields.integrationId;
+        if (fields.grantId) scope.context.grantId = fields.grantId;
     } else {
         const siteIds = [...new Set(fields.siteIds)];
         scope.context.siteIds = siteIds.slice(0, 100);

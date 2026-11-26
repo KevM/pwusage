@@ -6,6 +6,14 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
+## Remove the IntegrationCredential scrub (2026-11-26, PR #459)
+
+`20261125183518_integration_tokens_as_grants.sql` copies `IntegrationCredential` into
+`OAuthGrant`/`OAuthToken` and drops `IntegrationCredential` and `IntegrationGrant`. Until it has run on
+Prod, Dev copies still contain the table, so `cmd/next-app/scripts/sanitize-dev-copy.sql` keeps
+deleting its rows. Once #459 is on Prod, remove that block and the `IntegrationCredential` row in
+`docs/dev-database-copy.md`.
+
 ## Fixed comparison plans follow-ups (2026-11-22, branch `claude/fixed-comparison-rate-plans-59321e`)
 
 Spec: [docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md](docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md).

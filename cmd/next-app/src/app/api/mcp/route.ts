@@ -1,7 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { NextResponse } from 'next/server';
 import { createPwusageMcpServer } from '@/lib/mcp/server';
-import { authenticateOAuthAccessToken } from '@/lib/oauth/oauth-repo';
+import { authenticateGrantToken } from '@/lib/oauth/oauth-repo';
 import { expectedMcpResource } from '@/lib/oauth/validation';
 import { observeRoute } from '@/lib/observability';
 import { getAppBaseUrl } from '@/lib/url-utils';
@@ -48,9 +48,9 @@ export async function DELETE(): Promise<Response> {
 export const POST = observeRoute('/api/mcp', async (request: Request): Promise<Response> => {
     const origin = getAppBaseUrl(request);
     const resource = expectedMcpResource(origin);
-    const ctx = await authenticateOAuthAccessToken(
+    const ctx = await authenticateGrantToken(
         request.headers.get('authorization'),
-        resource,
+        { kind: 'access', resource },
     );
 
     if (!ctx) {

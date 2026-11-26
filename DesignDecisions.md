@@ -517,3 +517,20 @@ violation that the `Site` → `Tariff` cascade can otherwise hit depending on tr
 also skips sites with an unexpired `BatteryHoldStartClaim` and requires `orphaned_at` older than 30
 days, so a returning member (`orphaned_at` cleared on rejoin) is never purged. Design:
 [`docs/superpowers/specs/2026-11-10-orphaned-site-cleanup-design.md`](docs/superpowers/specs/2026-11-10-orphaned-site-cleanup-design.md).
+
+## Integration tokens are OAuth grants
+
+Scripts such as `cmd/ecobee-aux` poll the billing endpoint from cron with a static `pwu_int_`
+token. The OAuth 2.1 flow for AI apps does not suit them: every grant ends after 90 days however
+often it refreshes, refresh tokens rotate on every use (a crash before saving the new one revokes
+the grant), and its tokens are bound to the MCP resource. So scripts keep a static token, but it is
+not a second security system: an integration token is an `OAuthGrant` of kind `token` with one
+`OAuthGrantSite`, scope `billing:read`, resource `urn:pwusage:integrations:v1`, `max_expires_at`
+of `'infinity'`, and one `OAuthToken` of kind `integration` holding its digest.
+
+That gives one store, one bearer check (`authenticateGrantToken`, matching token kind and resource
+so neither kind of token works on the other surface), one revocation path (`DELETE
+/api/oauth/grants/[id]`), one Settings list (Connections), and "Sign out everywhere" covers both
+through the shared `session_version` check. Do not split integration tokens back into their own
+tables, and do not give them a non-URN resource that `resolveMcpResource` could accept. Read any
+`max_expires_at` through `CASE WHEN isfinite(...)`: node-pg does not parse `infinity` as a `Date`.

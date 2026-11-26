@@ -4,12 +4,16 @@ import { pool } from '../db';
 import { siteMembershipEnabled } from '../site-membership-flag';
 import {
     ACCESS_TOKEN_PREFIX,
+    INTEGRATION_CLIENT_ID,
+    INTEGRATION_RESOURCE,
+    INTEGRATION_TOKEN_PREFIX,
     ACCESS_TOKEN_TTL_SECONDS,
     AUTH_CODE_TTL_SECONDS,
     DCR_CLIENT_ID_PREFIX,
     GRANT_MAX_TTL_SECONDS,
     REFRESH_TOKEN_PREFIX,
     REFRESH_TOKEN_TTL_SECONDS,
+    type GrantKind,
     type OAuthAccessContext,
     type OAuthClientMetadata,
     type OAuthScope,
@@ -48,13 +52,15 @@ export type TokenExchangeResult =
 
 export interface UserOAuthGrantSummary {
     id: string;
+    kind: GrantKind;
     clientId: string;
     clientName: string;
     clientUri: string | null;
     scopes: OAuthScope[];
     createdAt: string;
     lastUsedAt: string | null;
-    maxExpiresAt: string;
+    /** Null when the grant never expires on its own (integration tokens). */
+    maxExpiresAt: string | null;
     siteCount: number;
     /** Host serving the app's CIMD document; null for a self-registered (DCR) app, whose name is unverified. */
     publisherHost: string | null;
@@ -466,15 +472,23 @@ export async function revokeOAuthToken(token: string): Promise<void> {
     }
 }
 
-export async function authenticateOAuthAccessToken(
+const BEARER_TOKEN_PREFIX = { access: ACCESS_TOKEN_PREFIX, integration: INTEGRATION_TOKEN_PREFIX } as const;
+/** Each token kind belongs to one grant kind, so an app token can never ride a token grant or the reverse. */
+const GRANT_KIND_FOR_TOKEN = { access: 'app', integration: 'token' } as const satisfies Record<string, GrantKind>;
+
+/**
+ * The one bearer check for every grant: an MCP access token (kind 'access')
+ * or an integration token (kind 'integration'), each only on its own resource.
+ */
+export async function authenticateGrantToken(
     authorization: string | null,
-    expectedResource: string,
+    expected: { kind: 'access' | 'integration'; resource: string },
 ): Promise<OAuthAccessContext | null> {
     if (!authorization) return null;
     const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
     if (!match) return null;
     const rawToken = match[1];
-    if (!rawToken || !rawToken.startsWith(ACCESS_TOKEN_PREFIX)) return null;
+    if (!rawToken || !rawToken.startsWith(BEARER_TOKEN_PREFIX[expected.kind])) return null;
 
     const tokenHash = sha256Buffer(rawToken);
     const grantRes = await pool.query<{
@@ -489,7 +503,8 @@ export async function authenticateOAuthAccessToken(
          INNER JOIN "OAuthGrant" g ON g.id = t.grant_id
          INNER JOIN "User" u ON u.id = g.user_id
          WHERE t.token_hash = $1
-           AND t.kind = 'access'
+           AND t.kind = $3
+           AND g.kind = $4
            AND t.revoked_at IS NULL
            AND t.expires_at > now()
            AND g.revoked_at IS NULL
@@ -497,7 +512,7 @@ export async function authenticateOAuthAccessToken(
            AND g.resource = $2
            AND u.is_active = true
            AND g.session_version = u.session_version`,
-        [tokenHash, expectedResource],
+        [tokenHash, expected.resource, expected.kind, GRANT_KIND_FOR_TOKEN[expected.kind]],
     );
 
     const grant = grantRes.rows[0];
@@ -540,17 +555,19 @@ export async function listUserOAuthGrantsForSite(
 ): Promise<UserOAuthGrantSummary[]> {
     const res = await pool.query<{
         id: string;
+        kind: GrantKind;
         client_id: string;
         client_name: string;
         client_uri: string | null;
         scopes: OAuthScope[];
         created_at: Date;
         last_used_at: Date | null;
-        max_expires_at: Date;
+        max_expires_at: Date | null;
         site_count: string;
     }>(
-        `SELECT g.id, g.client_id, g.client_name, g.client_uri, g.scopes,
-                g.created_at, g.last_used_at, g.max_expires_at,
+        `SELECT g.id, g.kind, g.client_id, g.client_name, g.client_uri, g.scopes,
+                g.created_at, g.last_used_at,
+                CASE WHEN isfinite(g.max_expires_at) THEN g.max_expires_at END AS max_expires_at,
                 (SELECT count(*)::text FROM "OAuthGrantSite" all_gs WHERE all_gs.grant_id = g.id) AS site_count
          FROM "OAuthGrant" g
          INNER JOIN "OAuthGrantSite" gs ON gs.grant_id = g.id
@@ -565,16 +582,112 @@ export async function listUserOAuthGrantsForSite(
     );
     return res.rows.map(row => ({
         id: row.id,
+        kind: row.kind,
         clientId: row.client_id,
         clientName: row.client_name,
         clientUri: row.client_uri,
         scopes: row.scopes,
         createdAt: row.created_at.toISOString(),
         lastUsedAt: row.last_used_at ? row.last_used_at.toISOString() : null,
-        maxExpiresAt: row.max_expires_at.toISOString(),
+        maxExpiresAt: row.max_expires_at ? row.max_expires_at.toISOString() : null,
         siteCount: Number(row.site_count),
-        publisherHost: cimdHost(row.client_id),
+        publisherHost: row.kind === 'token' ? null : cimdHost(row.client_id),
     }));
+}
+
+/** Integration tokens never expire on their own, so each user keeps at most this many active per home. */
+export const MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE = 5;
+
+export type CreateIntegrationTokenResult =
+    | { status: 'created'; grant: UserOAuthGrantSummary; token: string }
+    | { status: 'session-ended' }
+    | { status: 'limit' };
+
+/**
+ * Creates an integration token: a 'token' grant for one home with scope
+ * billing:read and no expiry. It is stamped with the session_version the
+ * caller's session was validated at, and refused ('session-ended') when the user is
+ * inactive or that version has moved on, so a concurrent "Sign out
+ * everywhere" always wins. The raw token is returned once; only its SHA-256
+ * is stored.
+ */
+export async function createIntegrationToken(
+    userId: string,
+    siteId: string,
+    name: string,
+    sessionVersion: number,
+): Promise<CreateIntegrationTokenResult> {
+    const token = generateOpaqueToken(INTEGRATION_TOKEN_PREFIX);
+    const grantId = randomUUID();
+    const scopes: OAuthScope[] = ['billing:read'];
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const userRes = await client.query(
+            `SELECT 1 FROM "User" WHERE id = $1 AND is_active AND session_version = $2 FOR SHARE`,
+            [userId, sessionVersion],
+        );
+        if (userRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return { status: 'session-ended' };
+        }
+        // FOR SHARE locks don't conflict, so serialize creates for this user and
+        // home until commit; otherwise concurrent creates all see the same count.
+        await client.query(
+            `SELECT pg_advisory_xact_lock(hashtextextended('integration-token:' || $1 || ':' || $2, 0))`,
+            [userId, siteId],
+        );
+        const countRes = await client.query<{ count: number }>(
+            `SELECT count(*)::int AS count
+             FROM "OAuthGrant" g
+             INNER JOIN "OAuthGrantSite" gs ON gs.grant_id = g.id
+             WHERE g.user_id = $1 AND gs.site_id = $2 AND g.kind = 'token' AND g.revoked_at IS NULL`,
+            [userId, siteId],
+        );
+        if ((countRes.rows[0]?.count ?? 0) >= MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE) {
+            await client.query('ROLLBACK');
+            return { status: 'limit' };
+        }
+        const grantRes = await client.query<{ created_at: Date }>(
+            `INSERT INTO "OAuthGrant"
+                (id, user_id, client_id, client_name, client_uri, resource, scopes, max_expires_at, session_version, kind)
+             VALUES ($1, $2, $3, $4, NULL, $5, $6, 'infinity', $7, 'token')
+             RETURNING created_at`,
+            [grantId, userId, INTEGRATION_CLIENT_ID, name, INTEGRATION_RESOURCE, scopes, sessionVersion],
+        );
+        await client.query(
+            `INSERT INTO "OAuthGrantSite" (grant_id, site_id) VALUES ($1, $2)`,
+            [grantId, siteId],
+        );
+        await client.query(
+            `INSERT INTO "OAuthToken" (token_hash, grant_id, kind, expires_at)
+             VALUES ($1, $2, 'integration', 'infinity')`,
+            [sha256Buffer(token), grantId],
+        );
+        await client.query('COMMIT');
+        return {
+            status: 'created',
+            token,
+            grant: {
+                id: grantId,
+                kind: 'token',
+                clientId: INTEGRATION_CLIENT_ID,
+                clientName: name,
+                clientUri: null,
+                scopes,
+                createdAt: grantRes.rows[0].created_at.toISOString(),
+                lastUsedAt: null,
+                maxExpiresAt: null,
+                siteCount: 1,
+                publisherHost: null,
+            },
+        };
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 export async function revokeUserOAuthGrant(userId: string, grantId: string): Promise<boolean> {

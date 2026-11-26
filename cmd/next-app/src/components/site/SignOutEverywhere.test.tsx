@@ -12,7 +12,7 @@ describe('SignOutEverywherePanel', () => {
         const html = render();
         expect(html).toContain('Sign out everywhere');
         expect(html).toContain('every device');
-        expect(html).toContain('disconnects every connected AI app');
+        expect(html).toContain('disconnects every connected app and revokes every integration token');
         expect(html).not.toContain('Cancel');
     });
 
