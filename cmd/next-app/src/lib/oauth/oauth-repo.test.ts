@@ -19,7 +19,7 @@ vi.mock('../site-membership-flag', () => ({
 }));
 
 import {
-    authenticateOAuthAccessToken,
+    authenticateGrantToken,
     cleanupExpiredOAuthRecords,
     createAuthCode,
     listUserOAuthGrantsForSite,
@@ -27,6 +27,7 @@ import {
     exchangeAuthCode,
     rotateRefreshToken,
 } from './oauth-repo';
+import { INTEGRATION_RESOURCE } from './types';
 
 describe('oauth-repo', () => {
     beforeEach(() => {
@@ -230,8 +231,8 @@ describe('oauth-repo', () => {
         );
     });
 
-    it('authenticateOAuthAccessToken rejects non-pwu_oat_ tokens and intersects live SiteMember', async () => {
-        expect(await authenticateOAuthAccessToken('Bearer pwu_int_wrong', 'https://pwusage.fm.rodeo/api/mcp')).toBeNull();
+    it('authenticateGrantToken rejects non-pwu_oat_ tokens and intersects live SiteMember', async () => {
+        expect(await authenticateGrantToken('Bearer pwu_int_wrong', { kind: 'access', resource: 'https://pwusage.fm.rodeo/api/mcp' })).toBeNull();
         expect(mockQuery).not.toHaveBeenCalled();
 
         mockQuery
@@ -249,7 +250,7 @@ describe('oauth-repo', () => {
             })
             .mockResolvedValueOnce({ rows: [] });
 
-        const ctx = await authenticateOAuthAccessToken('Bearer pwu_oat_valid', 'https://pwusage.fm.rodeo/api/mcp');
+        const ctx = await authenticateGrantToken('Bearer pwu_oat_valid', { kind: 'access', resource: 'https://pwusage.fm.rodeo/api/mcp' });
         expect(ctx).toEqual({
             grantId: 'grant-1',
             userId: 'user-1',
@@ -258,6 +259,26 @@ describe('oauth-repo', () => {
             scopes: ['billing:read', 'usage:read'],
             authorizedSiteIds: ['site-1'],
         });
+    });
+
+    it('rejects a pwu_int_ token when kind is access', async () => {
+        expect(await authenticateGrantToken(`Bearer pwu_int_${'a'.repeat(43)}`, { kind: 'access', resource: 'https://pwusage.fm.rodeo/api/mcp' })).toBeNull();
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('rejects a pwu_oat_ token when kind is integration', async () => {
+        expect(await authenticateGrantToken('Bearer pwu_oat_valid', { kind: 'integration', resource: INTEGRATION_RESOURCE })).toBeNull();
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('passes kind and resource to the token query', async () => {
+        const token = `pwu_int_${'a'.repeat(43)}`;
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        expect(await authenticateGrantToken(`Bearer ${token}`, { kind: 'integration', resource: INTEGRATION_RESOURCE })).toBeNull();
+        expect(mockQuery.mock.calls[0][1]).toEqual([
+            createHash('sha256').update(token).digest(), INTEGRATION_RESOURCE, 'integration',
+        ]);
+        expect(String(mockQuery.mock.calls[0][0])).toMatch(/t\.kind\s*=\s*\$3/);
     });
 
     it('cleanupExpiredOAuthRecords runs all 4 cleanup deletes and returns counts', async () => {
@@ -301,7 +322,7 @@ describe('oauth-repo', () => {
 
     it('access tokens and the Settings list ignore grants from before a sign out everywhere', async () => {
         mockQuery.mockResolvedValueOnce({ rows: [] });
-        await authenticateOAuthAccessToken('Bearer pwu_oat_x', 'https://pwusage.fm.rodeo/api/mcp');
+        await authenticateGrantToken('Bearer pwu_oat_x', { kind: 'access', resource: 'https://pwusage.fm.rodeo/api/mcp' });
         expect(String(mockQuery.mock.calls[0][0])).toMatch(/g\.session_version\s*=\s*u\.session_version/);
 
         mockQuery.mockReset();

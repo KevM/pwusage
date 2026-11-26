@@ -179,15 +179,15 @@ count-only export-failure diagnostics before assuming the account changed state.
 ## Billing integration usage
 
 Count `request.completed` events for the billing endpoint. Group authorized
-polls by `integrationId` and `siteId` to find an unusually busy credential.
+polls by `grantId` and `siteId` to find an unusually busy integration token.
 Compare `200` with `304` to see how often polls transfer a new bill. A spike
-in `401` responses shows rejected credentials, which have no credential ID.
-A `403` identifies a valid credential missing its billing grant.
+in `401` responses shows rejected tokens, which have no grant ID.
+A `403` identifies a valid token whose grant lacks `billing:read`.
 
 ```apl
 ['pwusage']
 | where route == '/api/integrations/v1/billing' and event == 'request.completed'
-| summarize count() by bin(_time, 5m), siteId, integrationId, status
+| summarize count() by bin(_time, 5m), siteId, grantId, status
 ```
 
 For costly polls, filter for `integration.billing.refresh` and group by

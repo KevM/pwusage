@@ -4,6 +4,7 @@ import { pool } from '../db';
 import { siteMembershipEnabled } from '../site-membership-flag';
 import {
     ACCESS_TOKEN_PREFIX,
+    INTEGRATION_TOKEN_PREFIX,
     ACCESS_TOKEN_TTL_SECONDS,
     AUTH_CODE_TTL_SECONDS,
     DCR_CLIENT_ID_PREFIX,
@@ -466,15 +467,21 @@ export async function revokeOAuthToken(token: string): Promise<void> {
     }
 }
 
-export async function authenticateOAuthAccessToken(
+const BEARER_TOKEN_PREFIX = { access: ACCESS_TOKEN_PREFIX, integration: INTEGRATION_TOKEN_PREFIX } as const;
+
+/**
+ * The one bearer check for every grant: an MCP access token (kind 'access')
+ * or an integration token (kind 'integration'), each only on its own resource.
+ */
+export async function authenticateGrantToken(
     authorization: string | null,
-    expectedResource: string,
+    expected: { kind: 'access' | 'integration'; resource: string },
 ): Promise<OAuthAccessContext | null> {
     if (!authorization) return null;
     const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
     if (!match) return null;
     const rawToken = match[1];
-    if (!rawToken || !rawToken.startsWith(ACCESS_TOKEN_PREFIX)) return null;
+    if (!rawToken || !rawToken.startsWith(BEARER_TOKEN_PREFIX[expected.kind])) return null;
 
     const tokenHash = sha256Buffer(rawToken);
     const grantRes = await pool.query<{
@@ -489,7 +496,7 @@ export async function authenticateOAuthAccessToken(
          INNER JOIN "OAuthGrant" g ON g.id = t.grant_id
          INNER JOIN "User" u ON u.id = g.user_id
          WHERE t.token_hash = $1
-           AND t.kind = 'access'
+           AND t.kind = $3
            AND t.revoked_at IS NULL
            AND t.expires_at > now()
            AND g.revoked_at IS NULL
@@ -497,7 +504,7 @@ export async function authenticateOAuthAccessToken(
            AND g.resource = $2
            AND u.is_active = true
            AND g.session_version = u.session_version`,
-        [tokenHash, expectedResource],
+        [tokenHash, expected.resource, expected.kind],
     );
 
     const grant = grantRes.rows[0];
