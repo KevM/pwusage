@@ -6,18 +6,13 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
-## Drop the pre-grant integration token tables (2026-11-25, PR #459)
+## Remove the IntegrationCredential scrub (2026-11-26, PR #459)
 
-`20261125183518_integration_tokens_as_grants.sql` copied every `IntegrationCredential` into
-`OAuthGrant`/`OAuthToken` and left `IntegrationCredential` and `IntegrationGrant` in place, because
-Prod runs migrations before the new code deploys. Its triggers (`integration_grant_copy_to_oauth`,
-`integration_credential_revoke_oauth`) keep tokens the old code creates or revokes in that window in
-step. Once #459 has been on Prod for a release, add a migration that drops both tables (which drops
-the triggers) and the functions `integration_credential_copy_to_grant` and
-`integration_credential_revoke_grant`, and remove their lines from `cmd/next-app/scripts/sanitize-dev-copy.sql`,
-the `IntegrationCredential` row in `docs/dev-database-copy.md`, and
-`db-migrations/20261124073716_integration_credentials.sql` from the Postgres test's setup if it no
-longer needs it.
+`20261125183518_integration_tokens_as_grants.sql` copies `IntegrationCredential` into
+`OAuthGrant`/`OAuthToken` and drops `IntegrationCredential` and `IntegrationGrant`. Until it has run on
+Prod, Dev copies still contain the table, so `cmd/next-app/scripts/sanitize-dev-copy.sql` keeps
+deleting its rows. Once #459 is on Prod, remove that block and the `IntegrationCredential` row in
+`docs/dev-database-copy.md`.
 
 ## Fixed comparison plans follow-ups (2026-11-22, branch `claude/fixed-comparison-rate-plans-59321e`)
 

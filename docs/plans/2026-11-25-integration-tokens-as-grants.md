@@ -22,7 +22,7 @@
 - Integration tokens never expire on their own: `max_expires_at` and `expires_at` are `'infinity'`. Every SQL filter `> now()` already accepts that. Any `max_expires_at` read into TypeScript must go through `CASE WHEN isfinite(...)`, because node-pg parses `infinity` as a non-Date.
 - Integration tokens are created with scope `['billing:read']` only. No scope picker.
 - The billing route response, ETag and 304 behavior are unchanged.
-- The migration is additive and idempotent: Prod runs it before the Vercel deploy, and CI runs it twice on Dev. `IntegrationCredential` and `IntegrationGrant` stay in place this PR, and a `TODO.md` entry covers dropping them.
+- The migration is additive and idempotent: Prod runs it before the Vercel deploy, and CI runs it twice on Dev. `IntegrationCredential` and `IntegrationGrant` stay in place this PR, and a `TODO.md` entry covers dropping them. *Amended 2026-11-26:* the migration now drops both tables after copying, and the deploy-window triggers were removed. The old code's integration routes fail until the deploy lands, which was accepted because the feature had a single user.
 - The copy follows `docs/voice-and-terms.md`. Keep the word "token" (the current UI's term) and use sentence case for new labels.
 - Web lint, `tsc --noEmit`, Vitest, `npm run build`, and the Postgres test in Task 1 must pass.
 

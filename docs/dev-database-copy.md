@@ -66,7 +66,7 @@ does not exist.
 | Table | Rule | Why |
 |---|---|---|
 | `MobileLoginHandoff` | All rows deleted | Short-lived one-time login codes |
-| `IntegrationCredential` | All rows deleted | Pre-grant copy of integration tokens, kept until its drop migration (see TODO.md) |
+| `IntegrationCredential` | All rows deleted | Pre-grant integration tokens; dropped by `20261125183518_integration_tokens_as_grants.sql`, so only copies taken before it reaches Prod have the table (see TODO.md) |
 | `OAuthToken` | All rows deleted | OAuth 2.1 access and refresh tokens and integration token digests are scoped to their original environment |
 | `OAuthAuthCode` | All rows deleted | Short-lived OAuth 2.1 authorization codes |
 | `OAuthGrant` | All rows deleted (cascades `OAuthGrantSite`) | AI app grants and integration tokens are scoped to their original environment |
