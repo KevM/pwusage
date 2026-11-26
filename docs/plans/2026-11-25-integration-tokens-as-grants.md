@@ -39,7 +39,7 @@
 ### Task 1: Migration — integration tokens become grants
 
 **Files:**
-- Create: `cmd/next-app/db-migrations/20261126090000_integration_tokens_as_grants.sql`
+- Create: `cmd/next-app/db-migrations/20261125183518_integration_tokens_as_grants.sql`
 - Create: `cmd/next-app/src/lib/oauth/integration-grants-postgres.test.ts`
 
 **Interfaces:**

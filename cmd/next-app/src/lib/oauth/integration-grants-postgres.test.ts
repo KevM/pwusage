@@ -20,7 +20,7 @@ import { UserRepo } from '@/lib/user-repo';
 const token = 'pwu_int_' + 'a'.repeat(43);
 const tokenHash = createHash('sha256').update(token).digest();
 const credentialId = '87ed8088-70f1-482c-86ce-c4ef67106e8d';
-const migration = 'db-migrations/20261126090000_integration_tokens_as_grants.sql';
+const migration = 'db-migrations/20261125183518_integration_tokens_as_grants.sql';
 
 // Run with npm run test:compact -- src/lib/oauth/integration-grants-postgres.test.ts.
 // The runner creates a private local cluster; no .env or production DB is used.

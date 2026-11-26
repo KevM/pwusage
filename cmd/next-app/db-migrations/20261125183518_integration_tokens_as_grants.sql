@@ -1,4 +1,6 @@
 -- Migration: integration_tokens_as_grants
+-- Created at: 2026-11-26T00:35:18.999Z
+
 -- Integration tokens become OAuth grants of kind 'token', so one store, one
 -- bearer check and one revocation path cover AI apps and scripts alike.
 -- Token hashes are copied unchanged: tokens issued before this deploy keep
