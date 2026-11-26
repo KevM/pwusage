@@ -43,8 +43,8 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('integration tokens as
         )`);
         await local.client.query('CREATE TABLE "Site" (id text PRIMARY KEY, user_id text NOT NULL)');
         await local.client.query('CREATE TABLE "SiteMember" (site_id text NOT NULL, user_id text NOT NULL)');
-        await local.client.query(`INSERT INTO "User" (id, session_version) VALUES ('user-1', 3)`);
-        await local.client.query(`INSERT INTO "Site" (id, user_id) VALUES ('site-1', 'user-1')`);
+        await local.client.query(`INSERT INTO "User" (id, session_version) VALUES ('user-1', 3), ('user-2', 0)`);
+        await local.client.query(`INSERT INTO "Site" (id, user_id) VALUES ('site-1', 'user-1'), ('site-2', 'user-2')`);
 
         await local.client.query(await readFile('db-migrations/20261124073716_integration_credentials.sql', 'utf8'));
         await local.client.query(await readFile('db-migrations/20261125111815_oauth_mcp.sql', 'utf8'));
@@ -96,6 +96,36 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('integration tokens as
     it('authenticates a copied token', async () => {
         const ctx = await authenticateGrantToken(`Bearer ${token}`, { kind: 'integration', resource: INTEGRATION_RESOURCE });
         expect(ctx).toMatchObject({ grantId: credentialId, userId: 'user-1', authorizedSiteIds: ['site-1'], scopes: ['billing:read'] });
+    });
+
+    // Prod runs the migration before the new code deploys: until then the old
+    // code still creates and revokes tokens through the old tables.
+    it('a token created through the old tables before the deploy works after it', async () => {
+        const lateToken = 'pwu_int_' + 'b'.repeat(43);
+        const lateId = 'a5c1c0de-1111-4222-8333-444455556666';
+        // The old createIntegrationCredential statement, verbatim.
+        await local.client.query(`
+            WITH credential AS (
+                INSERT INTO "IntegrationCredential" (id, user_id, site_id, name, token_hash)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, name
+            ), grant_scope AS (
+                INSERT INTO "IntegrationGrant" (credential_id, scope)
+                SELECT id, $6 FROM credential
+                RETURNING credential_id
+            )
+            SELECT c.id, c.name FROM credential c JOIN grant_scope g ON g.credential_id = c.id
+        `, [lateId, 'user-2', 'site-2', 'late script', createHash('sha256').update(lateToken).digest(), 'billing:read']);
+        const ctx = await authenticateGrantToken(`Bearer ${lateToken}`, { kind: 'integration', resource: INTEGRATION_RESOURCE });
+        expect(ctx).toMatchObject({ grantId: lateId, userId: 'user-2', authorizedSiteIds: ['site-2'], scopes: ['billing:read'] });
+    });
+
+    it('a token revoked through the old tables before the deploy stays revoked after it', async () => {
+        const lateToken = 'pwu_int_' + 'b'.repeat(43);
+        await local.client.query(`DELETE FROM "IntegrationCredential" c USING "IntegrationGrant" g
+            WHERE c.user_id = $1 AND c.site_id = $2 AND c.id = $3 AND g.credential_id = c.id AND g.scope = $4`,
+        ['user-2', 'site-2', 'a5c1c0de-1111-4222-8333-444455556666', 'billing:read']);
+        expect(await authenticateGrantToken(`Bearer ${lateToken}`, { kind: 'integration', resource: INTEGRATION_RESOURCE })).toBeNull();
     });
 
     it('sign out everywhere revokes the token', async () => {

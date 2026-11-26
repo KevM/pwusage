@@ -10,8 +10,11 @@ When starting fresh work in this repo, check this file. If a session begins some
 
 `20261125183518_integration_tokens_as_grants.sql` copied every `IntegrationCredential` into
 `OAuthGrant`/`OAuthToken` and left `IntegrationCredential` and `IntegrationGrant` in place, because
-Prod runs migrations before the new code deploys. Once #459 has been on Prod for a release, add a
-migration that drops both tables, and remove their lines from `cmd/next-app/scripts/sanitize-dev-copy.sql`,
+Prod runs migrations before the new code deploys. Its triggers (`integration_grant_copy_to_oauth`,
+`integration_credential_revoke_oauth`) keep tokens the old code creates or revokes in that window in
+step. Once #459 has been on Prod for a release, add a migration that drops both tables (which drops
+the triggers) and the functions `integration_credential_copy_to_grant` and
+`integration_credential_revoke_grant`, and remove their lines from `cmd/next-app/scripts/sanitize-dev-copy.sql`,
 the `IntegrationCredential` row in `docs/dev-database-copy.md`, and
 `db-migrations/20261124073716_integration_credentials.sql` from the Postgres test's setup if it no
 longer needs it.
