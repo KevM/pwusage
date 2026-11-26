@@ -277,7 +277,7 @@ describe('oauth-repo', () => {
         mockQuery.mockResolvedValueOnce({ rows: [] });
         expect(await authenticateGrantToken(`Bearer ${token}`, { kind: 'integration', resource: INTEGRATION_RESOURCE })).toBeNull();
         expect(mockQuery.mock.calls[0][1]).toEqual([
-            createHash('sha256').update(token).digest(), INTEGRATION_RESOURCE, 'integration',
+            createHash('sha256').update(token).digest(), INTEGRATION_RESOURCE, 'integration', 'token',
         ]);
         expect(String(mockQuery.mock.calls[0][0])).toMatch(/t\.kind\s*=\s*\$3/);
     });
@@ -291,7 +291,7 @@ describe('oauth-repo', () => {
             return { rows: [] };
         });
         const created = await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 4);
-        if (!created) throw new Error('expected a token');
+        if (created.status !== 'created') throw new Error('expected a token');
         const { grant, token } = created;
         expect(token).toMatch(/^pwu_int_[\w-]{43}$/);
         const inserts = mockClientQuery.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO'));
@@ -312,13 +312,38 @@ describe('oauth-repo', () => {
 
     it('createIntegrationToken refuses when the session version moved', async () => {
         mockClientQuery.mockImplementation(async () => ({ rows: [] }));
-        expect(await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 3)).toBeNull();
+        expect(await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 3)).toEqual({ status: 'session-ended' });
         const userCall = mockClientQuery.mock.calls.find(([sql]) => String(sql).includes('FROM "User"'));
         expect(String(userCall?.[0])).toMatch(/session_version\s*=\s*\$2/);
         expect(String(userCall?.[0])).toMatch(/is_active/);
         expect(userCall?.[1]).toEqual(['user-1', 3]);
         expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO'))).toBe(false);
         expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
+    it('createIntegrationToken refuses a 26th active token for the home', async () => {
+        mockClientQuery.mockImplementation(async (sql: string) => {
+            if (String(sql).includes('FROM "User"')) return { rows: [{ '?column?': 1 }] };
+            if (String(sql).includes('count(')) return { rows: [{ count: 25 }] };
+            return { rows: [] };
+        });
+        expect(await createIntegrationToken('user-1', 'site-1', 'ecobee aux', 4)).toEqual({ status: 'limit' });
+        const countCall = mockClientQuery.mock.calls.find(([sql]) => String(sql).includes('count('));
+        expect(String(countCall?.[0])).toMatch(/revoked_at IS NULL/);
+        expect(String(countCall?.[0])).toMatch(/kind = 'token'/);
+        expect(countCall?.[1]).toEqual(['user-1', 'site-1']);
+        expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO'))).toBe(false);
+        expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
+    it('authenticateGrantToken requires the grant kind that matches the token kind', async () => {
+        mockQuery.mockResolvedValue({ rows: [] });
+        await authenticateGrantToken(`Bearer pwu_int_${'a'.repeat(43)}`, { kind: 'integration', resource: INTEGRATION_RESOURCE });
+        expect(String(mockQuery.mock.calls[0][0])).toMatch(/g\.kind\s*=\s*\$4/);
+        expect(mockQuery.mock.calls[0][1][3]).toBe('token');
+        mockQuery.mockClear();
+        await authenticateGrantToken('Bearer pwu_oat_x', { kind: 'access', resource: 'https://pwusage.fm.rodeo/api/mcp' });
+        expect(mockQuery.mock.calls[0][1][3]).toBe('app');
     });
 
     it('lists a token grant with kind token and null maxExpiresAt', async () => {

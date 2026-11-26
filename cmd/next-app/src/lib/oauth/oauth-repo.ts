@@ -473,6 +473,8 @@ export async function revokeOAuthToken(token: string): Promise<void> {
 }
 
 const BEARER_TOKEN_PREFIX = { access: ACCESS_TOKEN_PREFIX, integration: INTEGRATION_TOKEN_PREFIX } as const;
+/** Each token kind belongs to one grant kind, so an app token can never ride a token grant or the reverse. */
+const GRANT_KIND_FOR_TOKEN = { access: 'app', integration: 'token' } as const satisfies Record<string, GrantKind>;
 
 /**
  * The one bearer check for every grant: an MCP access token (kind 'access')
@@ -502,6 +504,7 @@ export async function authenticateGrantToken(
          INNER JOIN "User" u ON u.id = g.user_id
          WHERE t.token_hash = $1
            AND t.kind = $3
+           AND g.kind = $4
            AND t.revoked_at IS NULL
            AND t.expires_at > now()
            AND g.revoked_at IS NULL
@@ -509,7 +512,7 @@ export async function authenticateGrantToken(
            AND g.resource = $2
            AND u.is_active = true
            AND g.session_version = u.session_version`,
-        [tokenHash, expected.resource, expected.kind],
+        [tokenHash, expected.resource, expected.kind, GRANT_KIND_FOR_TOKEN[expected.kind]],
     );
 
     const grant = grantRes.rows[0];
@@ -592,10 +595,18 @@ export async function listUserOAuthGrantsForSite(
     }));
 }
 
+/** Integration tokens never expire on their own, so each user keeps at most this many active per home. */
+export const MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE = 25;
+
+export type CreateIntegrationTokenResult =
+    | { status: 'created'; grant: UserOAuthGrantSummary; token: string }
+    | { status: 'session-ended' }
+    | { status: 'limit' };
+
 /**
  * Creates an integration token: a 'token' grant for one home with scope
  * billing:read and no expiry. It is stamped with the session_version the
- * caller's session was validated at, and refused (null) when the user is
+ * caller's session was validated at, and refused ('session-ended') when the user is
  * inactive or that version has moved on, so a concurrent "Sign out
  * everywhere" always wins. The raw token is returned once; only its SHA-256
  * is stored.
@@ -605,7 +616,7 @@ export async function createIntegrationToken(
     siteId: string,
     name: string,
     sessionVersion: number,
-): Promise<{ grant: UserOAuthGrantSummary; token: string } | null> {
+): Promise<CreateIntegrationTokenResult> {
     const token = generateOpaqueToken(INTEGRATION_TOKEN_PREFIX);
     const grantId = randomUUID();
     const scopes: OAuthScope[] = ['billing:read'];
@@ -618,7 +629,18 @@ export async function createIntegrationToken(
         );
         if (userRes.rows.length === 0) {
             await client.query('ROLLBACK');
-            return null;
+            return { status: 'session-ended' };
+        }
+        const countRes = await client.query<{ count: number }>(
+            `SELECT count(*)::int AS count
+             FROM "OAuthGrant" g
+             INNER JOIN "OAuthGrantSite" gs ON gs.grant_id = g.id
+             WHERE g.user_id = $1 AND gs.site_id = $2 AND g.kind = 'token' AND g.revoked_at IS NULL`,
+            [userId, siteId],
+        );
+        if ((countRes.rows[0]?.count ?? 0) >= MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE) {
+            await client.query('ROLLBACK');
+            return { status: 'limit' };
         }
         const grantRes = await client.query<{ created_at: Date }>(
             `INSERT INTO "OAuthGrant"
@@ -638,6 +660,7 @@ export async function createIntegrationToken(
         );
         await client.query('COMMIT');
         return {
+            status: 'created',
             token,
             grant: {
                 id: grantId,

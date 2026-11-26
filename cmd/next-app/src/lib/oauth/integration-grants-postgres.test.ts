@@ -3,17 +3,23 @@ import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Client } from 'pg';
 
-const local = vi.hoisted(() => ({ client: undefined as unknown as import('pg').Client }));
+const { local, localPool } = vi.hoisted(() => {
+    const local = { client: undefined as unknown as import('pg').Client };
+    // One connection plays the pool; a transaction "client" is that connection with a no-op release.
+    const query = (sql: string, values?: unknown[]) => local.client.query(sql, values);
+    const localPool = { query, connect: async () => ({ query, release: () => undefined }) };
+    return { local, localPool };
+});
 vi.mock('@/lib/db', async importOriginal => ({
     ...await importOriginal<typeof import('@/lib/db')>(),
-    pool: { query: (sql: string, values?: unknown[]) => local.client.query(sql, values) },
+    pool: localPool,
 }));
 vi.mock('../db', async importOriginal => ({
     ...await importOriginal<typeof import('../db')>(),
-    pool: { query: (sql: string, values?: unknown[]) => local.client.query(sql, values) },
+    pool: localPool,
 }));
 
-import { authenticateGrantToken } from './oauth-repo';
+import { authenticateGrantToken, createIntegrationToken, MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE } from './oauth-repo';
 import { INTEGRATION_RESOURCE } from './types';
 import { UserRepo } from '@/lib/user-repo';
 
@@ -126,6 +132,34 @@ describe.skipIf(!process.env.COMPACT_HISTORY_TEST_SOCKET)('integration tokens as
             WHERE c.user_id = $1 AND c.site_id = $2 AND c.id = $3 AND g.credential_id = c.id AND g.scope = $4`,
         ['user-2', 'site-2', 'a5c1c0de-1111-4222-8333-444455556666', 'billing:read']);
         expect(await authenticateGrantToken(`Bearer ${lateToken}`, { kind: 'integration', resource: INTEGRATION_RESOURCE })).toBeNull();
+    });
+
+    it('caps active integration tokens per home and counts only unrevoked ones', async () => {
+        await local.client.query(`INSERT INTO "User" (id, session_version) VALUES ('user-3', 0)`);
+        await local.client.query(`INSERT INTO "Site" (id, user_id) VALUES ('site-3', 'user-3')`);
+        const first = await createIntegrationToken('user-3', 'site-3', 'script 0', 0);
+        if (first.status !== 'created') throw new Error('expected a token');
+        const created = await authenticateGrantToken(`Bearer ${first.token}`, { kind: 'integration', resource: INTEGRATION_RESOURCE });
+        expect(created).toMatchObject({ grantId: first.grant.id, authorizedSiteIds: ['site-3'] });
+        for (let i = 1; i < MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE; i++) {
+            expect((await createIntegrationToken('user-3', 'site-3', `script ${i}`, 0)).status).toBe('created');
+        }
+        expect(await createIntegrationToken('user-3', 'site-3', 'one too many', 0)).toEqual({ status: 'limit' });
+        await local.client.query(`UPDATE "OAuthGrant" SET revoked_at = now() WHERE id = $1`, [first.grant.id]);
+        expect((await createIntegrationToken('user-3', 'site-3', 'replacement', 0)).status).toBe('created');
+    });
+
+    it('does not accept an integration token stored against an app grant', async () => {
+        const grant = await local.client.query(`SELECT id FROM "OAuthGrant"
+            WHERE user_id = 'user-3' AND revoked_at IS NULL LIMIT 1`);
+        const grantId = grant.rows[0].id;
+        const raw = 'pwu_int_' + 'c'.repeat(43);
+        await local.client.query(`INSERT INTO "OAuthToken" (token_hash, grant_id, kind, expires_at)
+            VALUES ($1, $2, 'integration', 'infinity')`, [createHash('sha256').update(raw).digest(), grantId]);
+        const expected = { kind: 'integration', resource: INTEGRATION_RESOURCE } as const;
+        expect(await authenticateGrantToken(`Bearer ${raw}`, expected)).toMatchObject({ grantId });
+        await local.client.query(`UPDATE "OAuthGrant" SET kind = 'app' WHERE id = $1`, [grantId]);
+        expect(await authenticateGrantToken(`Bearer ${raw}`, expected)).toBeNull();
     });
 
     it('sign out everywhere revokes the token', async () => {

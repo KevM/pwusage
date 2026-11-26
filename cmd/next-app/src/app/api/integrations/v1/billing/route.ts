@@ -26,8 +26,8 @@ async function handleGET(request: Request) {
                 request.headers.get('Authorization'),
                 { kind: 'integration', resource: INTEGRATION_RESOURCE },
             );
-            // An integration token is bound to exactly one home.
-            const siteId = grant?.authorizedSiteIds[0];
+            // An integration token is bound to exactly one home; anything else fails closed.
+            const siteId = grant?.authorizedSiteIds.length === 1 ? grant.authorizedSiteIds[0] : undefined;
             if (!grant || !siteId) {
                 return NextResponse.json({ error: 'Unauthorized' }, {
                     status: 401,

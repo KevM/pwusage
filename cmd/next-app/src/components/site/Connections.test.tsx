@@ -64,6 +64,12 @@ describe('Connections', () => {
         expect(html).toContain('value="pwu_int_secret"');
     });
 
+    it('shows the server’s reason when a token can’t be created', async () => {
+        const fetchFn = vi.fn().mockResolvedValue(json({ error: 'This home already has 25 integration tokens. Revoke one first.' }, 409));
+        await expect(requestCreateToken('home', 'Script', fetchFn))
+            .rejects.toThrow('This home already has 25 integration tokens. Revoke one first.');
+    });
+
     it('revoking removes the row', async () => {
         const fetchFn = vi.fn().mockResolvedValue(json({ error: 'Grant not found' }, 404));
         expect(await requestRevoke('token-1', fetchFn)).toBe(true);

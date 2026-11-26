@@ -114,7 +114,7 @@ describe('billing integration', () => {
         expect(mocks.site).not.toHaveBeenCalledWith('another-home');
         expect(mocks.refresh).not.toHaveBeenCalled();
         const matchingDigest = createHash('sha256').update(token).digest();
-        expect(mocks.query.mock.calls[0][1]).toEqual([matchingDigest, 'urn:pwusage:integrations:v1', 'integration']);
+        expect(mocks.query.mock.calls[0][1]).toEqual([matchingDigest, 'urn:pwusage:integrations:v1', 'integration', 'token']);
     });
 
     it('returns an empty 304 for a matching ETag without recalculating the bill', async () => {
@@ -184,6 +184,12 @@ describe('billing integration', () => {
         auth.siteIds = [];
         const response = await poll();
         expect(response.status).toBe(401);
+        expect(mocks.site).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 when a token somehow reaches more than one home', async () => {
+        auth.siteIds = ['home', 'second-home'];
+        expect((await poll()).status).toBe(401);
         expect(mocks.site).not.toHaveBeenCalled();
     });
 

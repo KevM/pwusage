@@ -688,9 +688,23 @@ invalidates it (`401`). A valid token whose grant lacks `billing:read` receives
 `403`. Integration tokens are rejected on `/api/mcp`, and MCP access tokens
 are rejected on the integration routes.
 
-`POST /api/oauth/grants` (`{ siteId, name }`, same-origin) creates a token;
+`POST /api/oauth/grants` (`{ siteId, name }`, same-origin, body capped at
+16 KB) creates a token;
 `GET /api/oauth/grants?siteId=` lists the home's connections, and
-`DELETE /api/oauth/grants/[id]` revokes one.
+`DELETE /api/oauth/grants/[id]` revokes one. Creation:
+
+- Requires membership of the home. Admin access to the home isn't enough,
+  because the token would never authenticate.
+- Is bound to the `session_version` the caller's session was validated at, so
+  a concurrent **Sign out everywhere** wins (`401`).
+- Is refused with `409` once the user has 25 active tokens for the home.
+
+A token that resolves to anything other than exactly one home is rejected
+(`401`). The bearer check also requires the grant kind to match the token kind
+(`integration` ↔ `token`, `access` ↔ `app`). `POST /api/oauth/revoke`
+intentionally ignores `pwu_int_` tokens: it serves OAuth clients revoking
+their own access and refresh tokens, and integration tokens are revoked under
+**Site Settings → Connections**.
 
 Send `Authorization: Bearer <token>` to `GET /api/integrations/v1/billing`.
 The token selects its home. The response includes the same

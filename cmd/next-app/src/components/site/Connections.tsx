@@ -25,7 +25,10 @@ export async function requestCreateToken(siteId: string, name: string, fetchFn: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ siteId, name }),
     });
-    if (!res.ok) throw new Error(`Couldn’t create the integration token (${res.status})`);
+    if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(typeof body?.error === 'string' ? body.error : 'Couldn’t create the integration token.');
+    }
     return (await res.json()) as { grant: UserOAuthGrantSummary; token: string };
 }
 
@@ -132,8 +135,8 @@ export function Connections({ siteId }: { siteId: string }) {
             setCreated({ id: result.grant.id, token: result.token });
             setCopied(false);
             setName('');
-        } catch {
-            setError('Couldn’t create the integration token.');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Couldn’t create the integration token.');
         } finally {
             setBusy(false);
         }

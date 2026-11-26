@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentSession, getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
+import { getAuthorizedSiteIds, getCurrentSession, getCurrentUser, verifySiteAccess } from '@/lib/auth-checks';
+import { readBoundedRequestText } from '@/lib/oauth/bounded-body';
 import { isSameOriginPost } from '@/lib/oauth/csrf';
-import { createIntegrationToken, listUserOAuthGrantsForSite } from '@/lib/oauth/oauth-repo';
+import {
+    createIntegrationToken,
+    listUserOAuthGrantsForSite,
+    MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE,
+} from '@/lib/oauth/oauth-repo';
 import { observeRoute } from '@/lib/observability';
 
 const PRIVATE = { 'Cache-Control': 'private, no-store' };
@@ -32,9 +37,15 @@ export const POST = observeRoute('/api/oauth/grants', async (request: NextReques
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: PRIVATE });
     }
 
-    const body: { siteId?: unknown; name?: unknown } | null = await request.json().catch(() => null);
+    const rawBody = await readBoundedRequestText(request);
+    if (rawBody === null) {
+        return NextResponse.json({ error: 'Request body too large' }, { status: 413, headers: PRIVATE });
+    }
+    const body = parseBody(rawBody);
     const siteId = typeof body?.siteId === 'string' ? body.siteId.trim() : '';
-    if (!siteId || !(await verifySiteAccess(siteId))) {
+    // Membership, not verifySiteAccess: admins pass that for any home, but a
+    // token only authenticates for a home its user is a member of.
+    if (!siteId || !(await getAuthorizedSiteIds()).includes(siteId)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: PRIVATE });
     }
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
@@ -42,12 +53,27 @@ export const POST = observeRoute('/api/oauth/grants', async (request: NextReques
         return NextResponse.json({ error: 'Enter a name up to 80 characters.' }, { status: 400, headers: PRIVATE });
     }
 
-    const created = await createIntegrationToken(user.id, siteId, name, user.sessionVersion);
-    if (!created) {
+    const result = await createIntegrationToken(user.id, siteId, name, user.sessionVersion);
+    if (result.status === 'session-ended') {
         return NextResponse.json(
             { error: 'Your session ended. Sign in again to create a token.' },
             { status: 401, headers: PRIVATE },
         );
     }
-    return NextResponse.json(created, { status: 201, headers: PRIVATE });
+    if (result.status === 'limit') {
+        return NextResponse.json(
+            { error: `This home already has ${MAX_ACTIVE_INTEGRATION_TOKENS_PER_SITE} integration tokens. Revoke one first.` },
+            { status: 409, headers: PRIVATE },
+        );
+    }
+    return NextResponse.json({ grant: result.grant, token: result.token }, { status: 201, headers: PRIVATE });
 });
+
+function parseBody(raw: string): { siteId?: unknown; name?: unknown } | null {
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+        return null;
+    }
+}
