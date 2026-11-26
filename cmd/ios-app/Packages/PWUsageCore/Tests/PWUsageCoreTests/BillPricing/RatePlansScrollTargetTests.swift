@@ -43,12 +43,30 @@ struct RatePlansScrollTargetTests {
         ]
         let data = Self.timeline(periods: Self.plans, references: covered)
         // Plan 2 is only covered until June; plan 3 has nothing.
-        #expect(RatePlansScrollTarget.firstUncovered.periodID(in: data) == 2)
+        let target = RatePlansScrollTarget.firstUncovered(within: [.init(first: "2025-07-01", last: "2026-01-01")])
+        #expect(target.periodID(in: data) == 2)
+    }
+
+    @Test func firstUncoveredSkipsGapsOutsideTheCaveatDates() {
+        let data = Self.timeline(periods: Self.plans.reversed(), references: [])
+        let target = RatePlansScrollTarget.firstUncovered(within: [.init(first: "2025-12-31", last: "2025-12-31")])
+        #expect(target.periodID(in: data) == 2)
+    }
+
+    @Test func firstUncoveredSkipsGapsBetweenDisjointCaveatRanges() {
+        let references = [Self.period(10, "2024-12-31", "2024-12-31")]
+        let data = Self.timeline(periods: Self.plans, references: references)
+        let target = RatePlansScrollTarget.firstUncovered(within: [
+            .init(first: "2024-12-31", last: "2024-12-31"),
+            .init(first: "2026-01-01", last: "2026-01-01")
+        ])
+        #expect(target.periodID(in: data) == 3)
     }
 
     @Test func firstUncoveredIsNilWhenEverythingIsCovered() {
         let all = [Self.period(10, "2024-01-01", nil)]
         let data = Self.timeline(periods: Self.plans, references: all)
-        #expect(RatePlansScrollTarget.firstUncovered.periodID(in: data) == nil)
+        let target = RatePlansScrollTarget.firstUncovered(within: [.init(first: "2025-01-01", last: "2025-01-31")])
+        #expect(target.periodID(in: data) == nil)
     }
 }

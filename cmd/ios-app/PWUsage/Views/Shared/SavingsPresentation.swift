@@ -135,7 +135,7 @@ enum SavingsPresentation {
                 text = "We don’t have your fixed comparison plan for "
                     + "\(dayRangesText(gap.ranges, days: gap.days)), so those days aren’t counted."
             }
-            result.append(SavingsCaveat(text: text, action: .openRatePlans))
+            result.append(SavingsCaveat(text: text, action: .openRatePlans(missingFixedComparison: gap.ranges)))
         }
         if let gap = figures.gap(.noRatePlan) {
             let text = "We don’t have your rate plan for \(dayRangesText(gap.ranges, days: gap.days)), "
@@ -174,7 +174,7 @@ enum SavingsPresentation {
 struct SavingsCaveat: Equatable, Sendable, Identifiable {
     enum Action: Equatable, Sendable {
         /// Opens Rate Plans, where the fixed comparison plans sit under each rate plan.
-        case openRatePlans
+        case openRatePlans(missingFixedComparison: [SavingsDayRange])
         case fixRatePlans
     }
 

@@ -120,7 +120,7 @@ struct SavingsPresentationTests {
         #expect(SavingsPresentation.caveats(figures([gap])) == [
             SavingsCaveat(
                 text: "Your fixed comparison plan starts Nov 1, 2026, so earlier days aren’t counted.",
-                action: .openRatePlans
+                action: .openRatePlans(missingFixedComparison: gap.ranges)
             )
         ])
     }
@@ -166,7 +166,7 @@ struct SavingsPresentationTests {
         let caveats = SavingsPresentation.caveats(figures([gap]))
         #expect(caveats == [SavingsCaveat(
             text: "We don’t have your fixed comparison plan for Mar 2 to Jun 30, 2024, so those days aren’t counted.",
-            action: .openRatePlans
+            action: .openRatePlans(missingFixedComparison: gap.ranges)
         )])
         #expect(caveats.first?.actionTitle == "Edit Rate Plans")
         #expect(caveats.first?.id == "fixed")
