@@ -83,7 +83,7 @@ console.log(await response.text());`;
                             {value === 'curl' ? 'Copy Command' : 'Copy Example'}
                         </Button>
                     </div>
-                    <pre className="overflow-x-auto rounded-md bg-bg-muted p-3"><code>{code}</code></pre>
+                    <pre className="overflow-x-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-gray-200"><code>{code}</code></pre>
                 </div>
             ))}
         </Tabs>
