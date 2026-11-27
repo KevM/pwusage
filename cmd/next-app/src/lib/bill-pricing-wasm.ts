@@ -1,12 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { WASI } from 'node:wasi';
-import { gunzip as gunzipCallback } from 'node:zlib';
 import type { UsageData } from './energy-repo';
 import { logEvent } from './observability';
-
-const gunzip = promisify(gunzipCallback);
 
 type PricingExports = WebAssembly.Exports & {
     memory: WebAssembly.Memory;
@@ -20,23 +16,16 @@ let hasPricedOnce = false;
 
 async function initializePricing(): Promise<PricingExports> {
     const start = performance.now();
-    const file = join(process.cwd(), 'wasm/bill-pricing.wasm.gz');
-    const compressed = await readFile(file);
+    const file = join(process.cwd(), 'wasm/bill-pricing.wasm');
+    const bytes = await readFile(file);
     const readMs = performance.now() - start;
-    const bytes = await gunzip(compressed);
-    const gunzipMs = performance.now() - start - readMs;
     const compiled = await WebAssembly.compile(bytes);
-    const compileMs = performance.now() - start - readMs - gunzipMs;
+    const compileMs = performance.now() - start - readMs;
     const wasi = new WASI({ version: 'preview1', args: ['BillPricingWasm'] });
     const instance = await WebAssembly.instantiate(compiled, wasi.getImportObject() as WebAssembly.Imports);
     wasi.initialize(instance);
     logEvent('info', 'bill-pricing.wasm.initialized', {
-        compressedBytes: compressed.length,
-        bytes: bytes.length,
-        readMs,
-        gunzipMs,
-        compileMs,
-        instantiateMs: performance.now() - start - readMs - gunzipMs - compileMs,
+        bytes: bytes.length, readMs, compileMs, instantiateMs: performance.now() - start - readMs - compileMs,
     });
     return instance.exports as PricingExports;
 }

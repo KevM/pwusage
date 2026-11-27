@@ -27,15 +27,12 @@ build_args=(--package-path "$build_dir" -c release --swift-sdk "$sdk"
 swift build "${build_args[@]}"
 binary_dir="$(swift build "${build_args[@]}" --show-bin-path)"
 wasm_in="$binary_dir/BillPricingWasm.wasm"
-wasm_ready="$build_dir/bill-pricing.wasm"
-wasm_gz="$app_dir/wasm/bill-pricing.wasm.gz"
+wasm_out="$app_dir/wasm/bill-pricing.wasm"
 if command -v wasm-opt >/dev/null 2>&1; then
-    wasm-opt -Os --all-features --strip-debug --strip-producers "$wasm_in" -o "$wasm_ready"
+    wasm-opt -Os --all-features --strip-debug --strip-producers "$wasm_in" -o "$wasm_out"
 elif [ "${CI:-}" = "true" ]; then
     echo "error: wasm-opt (binaryen) is required in CI" >&2
     exit 1
 else
-    cp "$wasm_in" "$wasm_ready"
+    cp "$wasm_in" "$wasm_out"
 fi
-rm -f "$app_dir/wasm/bill-pricing.wasm"
-gzip -9 -c "$wasm_ready" > "$wasm_gz"
