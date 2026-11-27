@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 #if DEBUG
     import OSLog
 
@@ -136,8 +140,17 @@ public enum SolarLayoutDetector {
         samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
         timeZone: TimeZone, checkCancellation: () throws -> Void
     ) throws -> DetectedSolarLayout {
+        try detect(
+            samples: samples, latitude: latitude, longitude: longitude,
+            siteTimeZone: SiteTimeZone(timeZone), checkCancellation: checkCancellation)
+    }
+
+    public static func detect(
+        samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
+        siteTimeZone: SiteTimeZone, checkCancellation: () throws -> Void
+    ) throws -> DetectedSolarLayout {
         try detectWithStages(
-            samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone,
+            samples: samples, latitude: latitude, longitude: longitude, siteTimeZone: siteTimeZone,
             checkCancellation: checkCancellation).result
     }
 
@@ -158,9 +171,19 @@ public enum SolarLayoutDetector {
         samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
         timeZone: TimeZone, checkCancellation: () throws -> Void
     ) throws -> SolarLayoutDetectorOutcome {
+        try detectWithStages(
+            samples: samples, latitude: latitude, longitude: longitude,
+            siteTimeZone: SiteTimeZone(timeZone), checkCancellation: checkCancellation)
+    }
+
+    static func detectWithStages(
+        samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
+        siteTimeZone: SiteTimeZone, checkCancellation: () throws -> Void
+    ) throws -> SolarLayoutDetectorOutcome {
         try checkCancellation()
         let rng = LayoutFit.seededRng(0)
-        let series = layoutSeries(samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone)
+        let series = layoutSeries(
+            samples: samples, latitude: latitude, longitude: longitude, siteTimeZone: siteTimeZone)
 
         let producingDays = producingDays(in: series)
         var stages = SolarLayoutDetectionStages(producingDays: producingDays.count)
@@ -255,6 +278,15 @@ public enum SolarLayoutDetector {
         samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
         timeZone: TimeZone, checkCancellation: () throws -> Void
     ) throws -> SolarDayClassification {
+        try classifyDays(
+            samples: samples, latitude: latitude, longitude: longitude,
+            siteTimeZone: SiteTimeZone(timeZone), checkCancellation: checkCancellation)
+    }
+
+    public static func classifyDays(
+        samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double,
+        siteTimeZone: SiteTimeZone, checkCancellation: () throws -> Void
+    ) throws -> SolarDayClassification {
         #if DEBUG
             let started = ContinuousClock.now
             let signpost = classifySignposter.beginInterval("classifyDays")
@@ -265,7 +297,8 @@ public enum SolarLayoutDetector {
             }
         #endif
         try checkCancellation()
-        let series = layoutSeries(samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone)
+        let series = layoutSeries(
+            samples: samples, latitude: latitude, longitude: longitude, siteTimeZone: siteTimeZone)
         let stored = Set(series.points.filter(\.powerKw.isFinite).map(\.localDay))
         let producing = Set(producingDays(in: series))
         var clear = Set<String>()

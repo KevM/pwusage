@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 public enum ForecastAvailability: Equatable, Sendable {
     /// This site doesn't use the automatic forecast, so there is none to add.
@@ -40,11 +44,12 @@ public struct SmartShiftEvaluationInputs {
     public let billingCycleEnd: Date
     public let currencyCode: String
     public let timeZone: String
+    public let siteTimeZone: SiteTimeZone?
 
     public init(
         now: Date, timing: LoadTiming, forecast: ForecastAvailability, intervals: [SolarForecastInterval]?,
         context: LoadTimingForecastEstimator.PlanningContext?, balanceSourceTime: Date?, billingCycleEnd: Date,
-        currencyCode: String, timeZone: String
+        currencyCode: String, timeZone: String, siteTimeZone: SiteTimeZone? = nil
     ) {
         self.now = now
         self.timing = timing
@@ -55,6 +60,7 @@ public struct SmartShiftEvaluationInputs {
         self.billingCycleEnd = billingCycleEnd
         self.currencyCode = currencyCode
         self.timeZone = timeZone
+        self.siteTimeZone = siteTimeZone
     }
 }
 
@@ -89,7 +95,7 @@ public enum SmartShiftEvaluator {
             LoadTimingForecastEstimator.plan(LoadTimingForecastEstimator.PlanRequest(
                 now: inputs.now, timing: inputs.timing, projection: projection,
                 balanceSourceTime: balanceSourceTime, billingCycleEnd: inputs.billingCycleEnd,
-                currencyCode: inputs.currencyCode))
+                currencyCode: inputs.currencyCode, siteTimeZone: inputs.siteTimeZone))
         }
         return { profile in
             var availability = inputs.forecast

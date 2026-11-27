@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// The 5% stepping rules for a car's current and target charge. An estimate doesn't need more
 /// precision, so every edit snaps to a multiple of 5 and the target never drops below current.

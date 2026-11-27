@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Clear-day selection shared by layout detection, the clear-day pass and the health pass.
 extension SolarLayoutDetector {

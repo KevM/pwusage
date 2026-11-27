@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// The hourly radiation columns of an Open-Meteo response.
 public struct OpenMeteoWeatherHourly: Decodable, Sendable {
@@ -45,6 +49,18 @@ public struct OpenMeteoWeather: Decodable, Sendable {
         window: DateInterval,
         siteTimeZone: TimeZone = .gmt
     ) throws -> [SolarForecastInterval] {
+        try intervals(
+            layout: layout, location: location, window: window, siteTimeZone: SiteTimeZone(siteTimeZone)
+        )
+    }
+
+    /// Radiation labelled h is mean W/m² during [h−1h,h), using a `SiteTimeZone`.
+    public func intervals(
+        layout: SolarLayout,
+        location: SolarHomeLocation,
+        window: DateInterval,
+        siteTimeZone: SiteTimeZone
+    ) throws -> [SolarForecastInterval] {
         let count = hourly.time.count
         let radiationFields = ["shortwave_radiation", "direct_normal_irradiance", "diffuse_radiation"]
         guard utcOffsetSeconds == 0, units["time"] == "unixtime",
@@ -52,10 +68,8 @@ public struct OpenMeteoWeather: Decodable, Sendable {
               count > 0, count <= 240,
               hourly.ghi.count == count, hourly.dni.count == count, hourly.dhi.count == count,
               window.duration > 0 else { throw OpenMeteoClientError.invalidResponse }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = siteTimeZone
         // A fresh balance just after midnight can project from the previous day.
-        let retentionStart = calendar.startOfDay(for: window.start).addingTimeInterval(-3600)
+        let retentionStart = siteTimeZone.startOfDay(for: window.start).addingTimeInterval(-3600)
         var result: [SolarForecastInterval] = []
         for index in 0 ..< count {
             let stamp = hourly.time[index]

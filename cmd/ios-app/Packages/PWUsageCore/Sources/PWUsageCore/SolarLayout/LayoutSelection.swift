@@ -1,4 +1,15 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 /// Clear-interval selection, AC clip detection and learned shading (port of the detector's
 /// `selection.ts`). Series sit on a regular 5-minute UTC grid; missing samples are NaN.
@@ -49,6 +60,13 @@ public func median(_ values: [Double]) -> Double {
 public func layoutSeries(
     samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double, timeZone: TimeZone
 ) -> LayoutSeries {
+    layoutSeries(samples: samples, latitude: latitude, longitude: longitude, siteTimeZone: SiteTimeZone(timeZone))
+}
+
+/// Regular 5-minute series using a `SiteTimeZone` (supports both native `TimeZone` and Wasm transition tables).
+public func layoutSeries(
+    samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double, siteTimeZone: SiteTimeZone
+) -> LayoutSeries {
     guard !samples.isEmpty else { return LayoutSeries(points: []) }
     var byTime: [Double: Double] = [:]
     for sample in samples {
@@ -60,8 +78,6 @@ public func layoutSeries(
     let times = byTime.keys.sorted()
     guard let first = times.first, let last = times.last else { return LayoutSeries(points: []) }
 
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = timeZone
     var rows: [SeriesRow] = []
     var slotMs = first
     while slotMs <= last {
@@ -69,8 +85,7 @@ public func layoutSeries(
         let time = Date(timeIntervalSince1970: slotMs / 1000)
         let sun = layoutSun(
             at: Date(timeIntervalSince1970: (slotMs + stepMs / 2) / 1000), latitude: latitude, longitude: longitude)
-        let parts = calendar.dateComponents([.year, .month, .day], from: time)
-        let localDay = String(format: "%04ld-%02ld-%02ld", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        let localDay = siteTimeZone.localDayString(for: time)
         rows.append(SeriesRow(time: time, powerKw: raw.isFinite ? raw : .nan, sun: sun, localDay: localDay))
         slotMs += stepMs
     }

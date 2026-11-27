@@ -1,4 +1,15 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 /// One plane of the detector's layout: orientation, tilt and effective (post-IAM, temperature
 /// adjusted) size in kW.
@@ -212,21 +223,30 @@ struct DiffuseIam: Equatable, Sendable {
 
 /// Lock-guarded tilt cache for the Marion integration, which is the expensive part of the model.
 private final class DiffuseIamCache: @unchecked Sendable {
-    private let lock = NSLock()
+    #if !os(WASI)
+        private let lock = NSLock()
+    #endif
     private var entries: [Double: DiffuseIam] = [:]
 
     func value(for key: Double, compute: () -> DiffuseIam) -> DiffuseIam {
-        lock.lock()
-        if let hit = entries[key] {
+        #if os(WASI)
+            if let hit = entries[key] { return hit }
+            let computed = compute()
+            entries[key] = computed
+            return computed
+        #else
+            lock.lock()
+            if let hit = entries[key] {
+                lock.unlock()
+                return hit
+            }
             lock.unlock()
-            return hit
-        }
-        lock.unlock()
-        let computed = compute()
-        lock.lock()
-        entries[key] = computed
-        lock.unlock()
-        return computed
+            let computed = compute()
+            lock.lock()
+            entries[key] = computed
+            lock.unlock()
+            return computed
+        #endif
     }
 }
 

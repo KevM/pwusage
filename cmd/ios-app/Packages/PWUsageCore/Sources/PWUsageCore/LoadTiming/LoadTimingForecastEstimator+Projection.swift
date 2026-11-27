@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 extension LoadTimingForecastEstimator {
     /// The estimator's name for `LoadTimingProjection`, kept so callers never see

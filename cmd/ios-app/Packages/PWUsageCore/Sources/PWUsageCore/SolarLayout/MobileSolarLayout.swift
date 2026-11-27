@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// One detected panel face. Azimuth is compass degrees (90 = east), tilt is from horizontal.
 public struct SolarLayoutPlane: Codable, Equatable, Hashable, Sendable {

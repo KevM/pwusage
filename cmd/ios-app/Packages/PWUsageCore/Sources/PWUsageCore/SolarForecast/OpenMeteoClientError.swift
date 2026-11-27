@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 public enum OpenMeteoClientError: Error, Equatable, Sendable {
     case transportFailure

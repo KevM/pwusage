@@ -1,52 +1,21 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { WASI } from 'node:wasi';
 import type { UsageData } from './energy-repo';
 import { logEvent } from './observability';
+import {
+    ensurePWUsageCoreWasm,
+    isPWUsageCoreWasmStarted,
+    warmPWUsageCoreWasm,
+    type PWUsageCoreExports,
+} from './pwusage-core-wasm';
 
-type PricingExports = WebAssembly.Exports & {
-    memory: WebAssembly.Memory;
-    bill_allocate: (bytes: number) => number;
-    bill_free: (pointer: number) => void;
-    bill_price: (input: number, inputBytes: number, output: number, outputCount: number) => number;
-};
-
-let pricingInstance: Promise<PricingExports> | undefined;
 let hasPricedOnce = false;
-
-async function initializePricing(): Promise<PricingExports> {
-    const start = performance.now();
-    const file = join(process.cwd(), 'wasm/bill-pricing.wasm');
-    const bytes = await readFile(file);
-    const readMs = performance.now() - start;
-    const compiled = await WebAssembly.compile(bytes);
-    const compileMs = performance.now() - start - readMs;
-    const wasi = new WASI({ version: 'preview1', args: ['BillPricingWasm'] });
-    const instance = await WebAssembly.instantiate(compiled, wasi.getImportObject() as WebAssembly.Imports);
-    wasi.initialize(instance);
-    logEvent('info', 'bill-pricing.wasm.initialized', {
-        bytes: bytes.length, readMs, compileMs, instantiateMs: performance.now() - start - readMs - compileMs,
-    });
-    return instance.exports as PricingExports;
-}
-
-function ensurePricingInstance(): Promise<PricingExports> {
-    pricingInstance ??= initializePricing().catch((error: unknown) => {
-        pricingInstance = undefined;
-        throw error;
-    });
-    return pricingInstance;
-}
 
 /** Start loading and compiling Wasm before DB queries finish so init overlaps with I/O. */
 export function warmPreviewBillPricing(engine?: string): void {
     if (process.env.VERCEL_ENV !== 'preview' || engine === 'typescript') return;
-    void ensurePricingInstance().catch(() => {
-        // Handled and logged when pricePreviewBill awaits initialization.
-    });
+    warmPWUsageCoreWasm();
 }
 
-function priceRows(exports: PricingExports, usage: UsageData[]): number[] {
+function priceRows(exports: PWUsageCoreExports, usage: UsageData[]): number[] {
     const payload = Buffer.from(JSON.stringify(usage.map(row => ({
         planName: row.tariff.name || 'Unknown',
         periodName: row.touName || 'Unknown',
@@ -55,7 +24,7 @@ function priceRows(exports: PricingExports, usage: UsageData[]): number[] {
         sellRate: row.sellRate ?? 0,
     }))));
     const outputOffset = Math.ceil(payload.length / 8) * 8;
-    const pointer = exports.bill_allocate(outputOffset + usage.length * 8);
+    const pointer = exports.pw_allocate(outputOffset + usage.length * 8);
     try {
         const memory = new Uint8Array(exports.memory.buffer);
         memory.set(payload, pointer);
@@ -65,7 +34,7 @@ function priceRows(exports: PricingExports, usage: UsageData[]): number[] {
         }
         return Array.from(new Float64Array(exports.memory.buffer, output, usage.length));
     } finally {
-        exports.bill_free(pointer);
+        exports.pw_free(pointer);
     }
 }
 
@@ -79,9 +48,9 @@ export async function pricePreviewBill(usage: UsageData[], engine?: string): Pro
 
     const start = performance.now();
     const cold = !hasPricedOnce;
-    const warmed = pricingInstance !== undefined;
+    const warmed = isPWUsageCoreWasmStarted();
     try {
-        const exports = await ensurePricingInstance();
+        const exports = await ensurePWUsageCoreWasm();
         const readyAt = performance.now();
         const costs = priceRows(exports, usage);
         hasPricedOnce = true;

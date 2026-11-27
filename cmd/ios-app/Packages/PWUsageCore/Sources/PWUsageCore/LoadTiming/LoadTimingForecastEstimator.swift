@@ -1,4 +1,15 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 /// Compares one load against a signed billing-cycle balance using a device-local
 /// solar forecast and the site's historical local-time household/battery profile.
@@ -132,13 +143,19 @@ public enum LoadTimingForecastEstimator {
         ]
     }
 
+    private static let zeroDecimalCurrencies: Set<String> = [
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF",
+        "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"
+    ]
+    private static let threeDecimalCurrencies: Set<String> = [
+        "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"
+    ]
+
     public static func currencyMinorUnit(_ currencyCode: String) -> Double {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currencyCode
-        let digits = min(max(formatter.maximumFractionDigits, 0), 6)
-        return pow(10, -Double(digits))
+        let code = currencyCode.uppercased()
+        if zeroDecimalCurrencies.contains(code) { return 1 }
+        if threeDecimalCurrencies.contains(code) { return 0.001 }
+        return 0.01
     }
 
     static func unavailable(_ reason: UnavailableReason) -> Result {
@@ -250,11 +267,8 @@ public enum LoadTimingForecastEstimator {
         return end ?? source
     }
 
-    static func endOfTomorrow(after date: Date, timeZone: TimeZone) -> Date? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        guard let startOfToday = calendar.dateInterval(of: .day, for: date)?.start else { return nil }
-        return calendar.date(byAdding: .day, value: 2, to: startOfToday)
+    static func endOfTomorrow(after date: Date, siteTimeZone: SiteTimeZone) -> Date? {
+        siteTimeZone.startOfDay(addingDays: 2, to: date)
     }
 
     static func firstContextGap(from start: Date, to end: Date, model: FlowModel) -> Date? {

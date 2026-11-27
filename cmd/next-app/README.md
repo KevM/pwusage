@@ -53,14 +53,16 @@ in the instance, and per-request pricing time. Compare `page.completed` for
 end-to-end page time with the same home and billing dates. Wasm's first use in
 a process and a Vercel function cold start are distinct measurements.
 
-CI builds the binary once with Swift 6.4.3 against `FoundationEssentials`,
-optimizes it with `wasm-opt -Os`, and transfers it to the web test, build, and
-preview jobs as a short-lived workflow artifact. On the Estimated Bill tab, the
-preview starts warming Wasm concurrently with the page's database reads. The
-preview upload includes the generated binary. To run the Wasm integration test
-locally, install Swift 6.4.3 and its matching full Wasm SDK (and optionally
-Binaryen for `wasm-opt`), then run `bash scripts/build-bill-pricing-wasm.sh`
-from this directory.
+CI builds the shared `PWUsageCore` Wasm binary (`wasm/pwusage-core.wasm`,
+bridging Bill Pricing, Solar Layout Detection, Solar Forecasting, and Smart
+Shift) once with Swift 6.4.3 against `FoundationEssentials`, optimizes it with
+`wasm-opt -Os`, and transfers it to the web test, build, and preview jobs as a
+short-lived workflow artifact. On the Estimated Bill tab, the preview starts
+warming Wasm concurrently with the page's database reads. The preview upload
+includes the generated binary. To run the Wasm integration tests locally,
+install Swift 6.4.3 and its matching full Wasm SDK (and optionally Binaryen for
+`wasm-opt`), then run `bash scripts/build-pwusage-core-wasm.sh` from this
+directory.
 
 ## Integration Tokens
 

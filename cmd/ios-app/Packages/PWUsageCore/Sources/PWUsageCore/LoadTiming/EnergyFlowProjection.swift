@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Shared household baseline, independent of a Smart Shift job or its pricing rules.
 public enum EnergyFlowProjection {
@@ -18,10 +22,12 @@ public enum EnergyFlowProjection {
         public let context: LoadTimingForecastEstimator.PlanningContext
         public let forecast: [SolarForecastInterval]
         public let tariffs: [LoadTimingTariffSegment]
+        public let siteTimeZone: SiteTimeZone?
 
         public init(
             start: Date, end: Date, now: Date, context: LoadTimingForecastEstimator.PlanningContext,
-            forecast: [SolarForecastInterval], tariffs: [LoadTimingTariffSegment]
+            forecast: [SolarForecastInterval], tariffs: [LoadTimingTariffSegment],
+            siteTimeZone: SiteTimeZone? = nil
         ) {
             self.start = start
             self.end = end
@@ -29,12 +35,13 @@ public enum EnergyFlowProjection {
             self.context = context
             self.forecast = forecast
             self.tariffs = tariffs
+            self.siteTimeZone = siteTimeZone
         }
     }
 
     public static func intervals(_ inputs: Inputs) -> [Interval] {
         guard inputs.start < inputs.end, inputs.end.timeIntervalSince(inputs.start) <= 32 * 86400,
-              let zone = TimeZone(identifier: inputs.context.timeZone),
+              let zone = inputs.siteTimeZone ?? TimeZone(identifier: inputs.context.timeZone).map(SiteTimeZone.init),
               inputs.context.asOf <= inputs.now.addingTimeInterval(3600),
               inputs.now.timeIntervalSince(inputs.context.asOf) <= 86400 else { return [] }
         let sorted = inputs.forecast.sorted { $0.periodStart < $1.periodStart }
@@ -42,7 +49,7 @@ public enum EnergyFlowProjection {
         let solar = solarWindow(in: sorted, from: inputs.start, now: inputs.now)
         let projection: LoadTimingForecastEstimator.Projection = solar.end > solar.start
             ? .forecast(intervals: sorted, context: inputs.context) : .history(context: inputs.context)
-        let clock = LoadTimingForecastEstimator.WallClock(timeZone: zone, from: inputs.start, to: inputs.end)
+        let clock = LoadTimingForecastEstimator.WallClock(siteTimeZone: zone, from: inputs.start, to: inputs.end)
         let model = LoadTimingForecastEstimator.FlowModel(projection: projection, clock: clock,
                                                           forecastStart: solar.start, forecastEnd: solar.end,
                                                           tariffs: inputs.tariffs)
