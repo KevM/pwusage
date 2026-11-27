@@ -19,7 +19,7 @@ const inst = (over: Record<string, unknown>) =>
 
 const render = (installations: TrmnlInstallation[]) =>
     renderToStaticMarkup(
-        <SettingsView site={site} installations={installations} memberEmails={[]} />
+        <SettingsView site={site} section="connections" installations={installations} memberEmails={[]} />
     );
 
 describe('SettingsView Trmnl devices', () => {
@@ -52,5 +52,27 @@ describe('SettingsView Trmnl devices', () => {
         expect(html).toContain('href="https://trmnl.com/plugin_settings/new?keyname=powerwall_energy_usage"');
         expect(html).toContain('Add Trmnl Plugin');
         expect(html).not.toContain('Add another device');
+    });
+});
+
+describe('Settings sections', () => {
+    it('renders only the navigation from the overview', () => {
+        const html = renderToStaticMarkup(<SettingsView site={site} section={null} installations={[]} memberEmails={[]} />);
+        for (const section of ['billing', 'display', 'people', 'connections', 'battery-saver']) {
+            expect(html).toContain(`href="/site/site-1?view=settings&amp;section=${section}"`);
+        }
+        expect(html).not.toContain('Trmnl E-Ink Display');
+        expect(html).not.toContain('Add Trmnl Plugin');
+        expect(html).not.toContain('<canvas');
+    });
+
+    it('shows a single member on the People page and skips other sections', () => {
+        const html = renderToStaticMarkup(
+            <SettingsView site={site} section="people" installations={[]} memberEmails={['person@example.com']} />,
+        );
+        expect(html).toContain('person@example.com');
+        expect(html).toContain('href="/site/site-1?view=settings"');
+        expect(html).not.toContain('Add Trmnl Plugin');
+        expect(html).not.toContain('<canvas');
     });
 });

@@ -508,7 +508,7 @@ describe('SiteService Security', () => {
                 importerCreator: vi.fn().mockReturnValue(mockImporter)
             });
 
-            const result = await service.loadSitePageData('12345', '2026-07-02', { view: 'settings' });
+            const result = await service.loadSitePageData('12345', '2026-07-02', { view: 'settings', settingsSection: 'connections' });
             expect(result.status).toBe('ready');
             if (result.status === 'ready') {
                 expect(result.currencySymbol).toBe('£');
@@ -564,8 +564,8 @@ describe('SiteService Security', () => {
                 expect(result.prevDateStr).toBeDefined();
             });
 
-            it('settings reads installations but not the bill usage', async () => {
-                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345', undefined, { view: 'settings' });
+            it('connections reads installations but not the bill usage', async () => {
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345', undefined, { view: 'settings', settingsSection: 'connections' });
                 expect(result.status).toBe('ready');
                 if (result.status !== 'ready') return;
                 expect(mockEnergyRepo.getUsageByTOU).not.toHaveBeenCalled();
@@ -582,6 +582,15 @@ describe('SiteService Security', () => {
                 const result = await serviceFor(readySiteRepo()).loadSitePageData('12345');
                 expect(result.status).toBe('ready');
                 if (result.status === 'ready') expect(result.historyRevision).toBeNull();
+            });
+
+            it('the Settings overview skips TRMNL installations', async () => {
+                const result = await serviceFor(readySiteRepo()).loadSitePageData('12345', undefined, { view: 'settings' });
+                expect(result.status).toBe('ready');
+                if (result.status === 'ready') {
+                    expect(result.installations).toBeNull();
+                }
+                expect(mockTrmnlService.getInstallationsBySiteId).not.toHaveBeenCalled();
             });
 
             it('history reads neither usage nor installations', async () => {

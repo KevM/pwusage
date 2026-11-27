@@ -60,15 +60,15 @@ function findTabs(node: ReactNode): Element | null {
     return null;
 }
 
-async function render(view?: string) {
+async function render(view?: string, section?: string) {
     loadMock.mockResolvedValue(readyResult(view === 'history' || view === 'settings' ? view : 'bill'));
     const tree = await SitePage({
         params: Promise.resolve({ id: 's1' }),
-        searchParams: Promise.resolve(view ? { view } : {}),
+        searchParams: Promise.resolve({ view, section }),
     });
     const tabs = findTabs(tree as ReactNode);
     const panel = tabs?.props.children as ReactElement | undefined;
-    return { tabs, panelName: (panel?.type as { name?: string } | undefined)?.name };
+    return { tabs, panelProps: panel?.props, panelName: (panel?.type as { name?: string } | undefined)?.name };
 }
 
 describe('site page tabs', () => {
@@ -104,11 +104,41 @@ describe('site page tabs', () => {
         expect(timelineMock).not.toHaveBeenCalled();
     });
 
-    it('settings reads member emails and the rate plan timeline', async () => {
-        const { panelName } = await render('settings');
+    it('the Settings overview skips section-specific reads', async () => {
+        const { panelName, panelProps } = await render('settings');
         expect(panelName).toBe('LazySettingsView');
-        expect(loadMock).toHaveBeenCalledWith('s1', undefined, { view: 'settings' });
-        expect(memberEmailsMock).toHaveBeenCalledTimes(1);
+        expect(panelProps).toMatchObject({ section: null });
+        expect(loadMock).toHaveBeenCalledWith('s1', undefined, { view: 'settings', settingsSection: null });
+        expect(memberEmailsMock).not.toHaveBeenCalled();
+        expect(timelineMock).not.toHaveBeenCalled();
+    });
+
+    it('People reads only member emails', async () => {
+        const { panelProps } = await render('settings', 'people');
+        expect(panelProps).toMatchObject({ section: 'people', memberEmails: ['a@example.com'] });
+        expect(memberEmailsMock).toHaveBeenCalledWith('s1');
+        expect(timelineMock).not.toHaveBeenCalled();
+    });
+
+    it('Billing reads its rate plan timeline and skips member emails', async () => {
+        const { panelProps } = await render('settings', 'billing');
+        expect(panelProps).toMatchObject({ section: 'billing' });
         expect(timelineMock).toHaveBeenCalledWith('s1', 'u1');
+        expect(memberEmailsMock).not.toHaveBeenCalled();
+    });
+
+    it('Connections requests TRMNL installations from the site service', async () => {
+        const { panelProps } = await render('settings', 'connections');
+        expect(panelProps).toMatchObject({ section: 'connections' });
+        expect(loadMock).toHaveBeenCalledWith('s1', undefined, { view: 'settings', settingsSection: 'connections' });
+        expect(memberEmailsMock).not.toHaveBeenCalled();
+        expect(timelineMock).not.toHaveBeenCalled();
+    });
+
+    it('an unknown settings section opens the overview', async () => {
+        const { panelProps } = await render('settings', 'nonsense');
+        expect(panelProps).toMatchObject({ section: null });
+        expect(memberEmailsMock).not.toHaveBeenCalled();
+        expect(timelineMock).not.toHaveBeenCalled();
     });
 });
