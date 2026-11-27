@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { priceBillUsage } from './bill-pricing';
-import { pricePreviewBill } from './bill-pricing-wasm';
+import { pricePreviewBill, warmPreviewBillPricing } from './bill-pricing-wasm';
 import type { UsageData } from './energy-repo';
 
 function usage(gridUsage: number, buyRate: number, sellRate: number, touName: string): UsageData {
@@ -31,6 +31,7 @@ describe('preview bill pricing', () => {
     it.runIf(shouldTestWasm)('uses the Swift prices on preview and preserves the other bill fields', async () => {
         vi.stubEnv('VERCEL_ENV', 'preview');
         try {
+            warmPreviewBillPricing();
             const expected = pricedRows();
             const actual = await pricePreviewBill(expected);
             expect(actual).not.toBe(expected);
@@ -67,6 +68,7 @@ describe('preview bill pricing', () => {
     it('keeps existing prices for the preview TypeScript control', async () => {
         vi.stubEnv('VERCEL_ENV', 'preview');
         try {
+            warmPreviewBillPricing('typescript');
             const expected = pricedRows();
             expect(await pricePreviewBill(expected, 'typescript')).toBe(expected);
         } finally {

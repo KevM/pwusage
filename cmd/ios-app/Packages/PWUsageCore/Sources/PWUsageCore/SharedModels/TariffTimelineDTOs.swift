@@ -1,5 +1,3 @@
-import Foundation
-
 public enum TariffSource: String, Codable, Equatable, Sendable {
     case tesla
     case manual

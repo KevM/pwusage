@@ -1,4 +1,4 @@
-import Foundation
+import FoundationEssentials
 
 private struct InputBucket: Decodable {
     let planName: String

@@ -1,5 +1,3 @@
-import Foundation
-
 public enum BillPricing {
     private struct GroupKey: Hashable {
         let planName: String

@@ -11,7 +11,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { BillSummary } from '@/components/BillSummary';
-import { pricePreviewBill } from '@/lib/bill-pricing-wasm';
+import { pricePreviewBill, warmPreviewBillPricing } from '@/lib/bill-pricing-wasm';
 import { DataSyncer } from '@/components/DataSyncer';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
@@ -47,6 +47,9 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
     const { date: queryDate, view, billPricing } = await searchParams;
     // The selected tab decides which reads run and which client code loads.
     const activeTab: SiteTabId = parseSiteTab(view);
+    if (activeTab === 'bill') {
+        warmPreviewBillPricing(billPricing);
+    }
 
     const cookieStore = await cookies();
     const siteAuthToken = cookieStore.get('site_auth')?.value;

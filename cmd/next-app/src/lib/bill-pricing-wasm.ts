@@ -12,6 +12,7 @@ type PricingExports = WebAssembly.Exports & {
 };
 
 let pricingInstance: Promise<PricingExports> | undefined;
+let hasPricedOnce = false;
 
 async function initializePricing(): Promise<PricingExports> {
     const start = performance.now();
@@ -27,6 +28,22 @@ async function initializePricing(): Promise<PricingExports> {
         bytes: bytes.length, readMs, compileMs, instantiateMs: performance.now() - start - readMs - compileMs,
     });
     return instance.exports as PricingExports;
+}
+
+function ensurePricingInstance(): Promise<PricingExports> {
+    pricingInstance ??= initializePricing().catch((error: unknown) => {
+        pricingInstance = undefined;
+        throw error;
+    });
+    return pricingInstance;
+}
+
+/** Start loading and compiling Wasm before DB queries finish so init overlaps with I/O. */
+export function warmPreviewBillPricing(engine?: string): void {
+    if (process.env.VERCEL_ENV !== 'preview' || engine === 'typescript') return;
+    void ensurePricingInstance().catch(() => {
+        // Handled and logged when pricePreviewBill awaits initialization.
+    });
 }
 
 function priceRows(exports: PricingExports, usage: UsageData[]): number[] {
@@ -61,24 +78,22 @@ export async function pricePreviewBill(usage: UsageData[], engine?: string): Pro
     }
 
     const start = performance.now();
-    const cold = pricingInstance === undefined;
+    const cold = !hasPricedOnce;
+    const warmed = pricingInstance !== undefined;
     try {
-        pricingInstance ??= initializePricing().catch((error: unknown) => {
-            pricingInstance = undefined;
-            throw error;
-        });
-        const exports = await pricingInstance;
+        const exports = await ensurePricingInstance();
         const readyAt = performance.now();
         const costs = priceRows(exports, usage);
+        hasPricedOnce = true;
         const matches = usage.every((row, index) => Math.abs(costs[index] - (row.cost ?? 0)) <= 1e-9);
         logEvent(matches ? 'info' : 'warn', 'bill-pricing.preview', {
-            engine: matches ? 'swift-wasm' : 'typescript', cold, rows: usage.length, matches,
+            engine: matches ? 'swift-wasm' : 'typescript', cold, warmed, rows: usage.length, matches,
             loadMs: readyAt - start, pricingMs: performance.now() - readyAt,
         });
         return matches ? usage.map((row, index) => ({ ...row, cost: costs[index] })) : usage;
     } catch {
         logEvent('warn', 'bill-pricing.preview', {
-            engine: 'typescript', cold, rows: usage.length, failed: true, durationMs: performance.now() - start,
+            engine: 'typescript', cold, warmed, rows: usage.length, failed: true, durationMs: performance.now() - start,
         });
         return usage;
     }

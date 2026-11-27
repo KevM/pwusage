@@ -20,9 +20,19 @@ SWIFT
 
 sdk="swift-6.4.3-RELEASE_wasm"
 build_args=(--package-path "$build_dir" -c release --swift-sdk "$sdk"
+    -Xswiftc -Osize
     -Xswiftc -Xclang-linker -Xswiftc -mexec-model=reactor
     -Xlinker --export=bill_allocate -Xlinker --export=bill_free -Xlinker --export=bill_price
     -Xlinker --strip-all)
 swift build "${build_args[@]}"
 binary_dir="$(swift build "${build_args[@]}" --show-bin-path)"
-cp "$binary_dir/BillPricingWasm.wasm" "$app_dir/wasm/bill-pricing.wasm"
+wasm_in="$binary_dir/BillPricingWasm.wasm"
+wasm_out="$app_dir/wasm/bill-pricing.wasm"
+if command -v wasm-opt >/dev/null 2>&1; then
+    wasm-opt -Os --all-features --strip-debug --strip-producers "$wasm_in" -o "$wasm_out"
+elif [ "${CI:-}" = "true" ]; then
+    echo "error: wasm-opt (binaryen) is required in CI" >&2
+    exit 1
+else
+    cp "$wasm_in" "$wasm_out"
+fi

@@ -1,5 +1,3 @@
-import Foundation
-
 /// Whether a plan was placed automatically or chosen by an owner.
 public enum TariffSelectionChoiceKind: String, Codable, Equatable, Sendable {
     case automatic
