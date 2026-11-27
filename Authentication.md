@@ -117,6 +117,9 @@ User and site provisioning:
   The never-stored Tesla grant is simply dropped; nothing else depends on it.
 - Upserts `User` row with Tesla tokens.
 - Calls Tesla `getProducts()` (once; reused from the new-account check) and ensures each energy site exists.
+  Outside production, an account listed in `ISOLATED_TEST_USER_IDS` never joins
+  an existing site by hardware ID and gets its own site instead, for rehearsing
+  a new user on beta (see `docs/dev-database-copy.md`).
 - Links each site to the user (`Site.user_id`).
 - Persists latest Tesla tokens on user.
 

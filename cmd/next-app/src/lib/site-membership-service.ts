@@ -4,6 +4,7 @@ import { createTeslaClientForUser } from './tesla-client-factory';
 import { logEvent } from './observability';
 import { SiteMembershipJoinRepo, type HardwareMember } from './site-membership-join-repo';
 import { SiteRepo } from './site-repo';
+import { isIsolatedTestAccount } from './site-membership-flag';
 
 type LoginClient = Pick<TeslaClient, 'getEnergySiteInfo'>;
 type LoginImporter = Pick<Importer, 'ensureSite'>;
@@ -41,8 +42,11 @@ export class SiteMembershipService {
                 continue;
             }
             const info = await this.client.getEnergySiteInfo(teslaId);
-            const hardwareId = typeof info.id === 'string' && info.id.trim() ? info.id : null;
-            if (!hardwareId) logEvent('warn', 'site.member.hardware-missing', { teslaId });
+            // An isolated test account never matches by hardware, so it gets a site of its own.
+            // The import still records the hardware ID, which keeps battery holds coordinated.
+            const isolated = isIsolatedTestAccount(userId);
+            const hardwareId = !isolated && typeof info.id === 'string' && info.id.trim() ? info.id : null;
+            if (!hardwareId && !isolated) logEvent('warn', 'site.member.hardware-missing', { teslaId });
             const result = await this.resolveProduct(userId, teslaId, info, hardwareId, fetchedAt);
             siteIds.add(result.siteId);
             // A retained placeholder rejoined by its first member is also unfinished until it has a tariff.
