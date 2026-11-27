@@ -12,6 +12,7 @@ import { Importer } from './importer';
 import { logSessionRejection } from './observability';
 import { Schedule } from './schedule';
 import { getCurrentCycleStart, getNextCycleStart } from './billing-cycle';
+import type { SiteSettingsSection } from './site-settings';
 import { DEFAULT_SITE_TAB, type SiteTabId } from './site-tabs';
 import { readMobileHistoryRevision } from './mobile-history-revision';
 import {
@@ -47,7 +48,7 @@ export type SitePageDataResult =
         status: 'ready';
         site: SiteWithTariffs;
         installation: TrmnlInstallation | undefined;
-        /** Read only for the Settings tab; null otherwise. */
+        /** Read only for the Connections settings page; null otherwise. */
         installations: TrmnlInstallation[] | null;
         billingDay: number;
         prevDateStr: string;
@@ -76,6 +77,7 @@ export type SitePageDataResult =
 export interface SitePageDataOptions {
     /** The selected tab. Each tab reads only what it shows; defaults to the bill. */
     view?: SiteTabId;
+    settingsSection?: SiteSettingsSection | null;
 }
 
 interface AuthorizedSitesOptions {
@@ -298,7 +300,7 @@ export class SiteService {
 
         const isCurrentPeriod = siteNow >= start && siteNow < end;
 
-        const installations = view === 'settings'
+        const installations = view === 'settings' && options.settingsSection === 'connections'
             ? await trmnlService.getInstallationsBySiteId(finalSite.id, { includeTokens: false })
             : null;
         const installation = installations?.[0];

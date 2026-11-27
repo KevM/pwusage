@@ -65,5 +65,6 @@ export async function updateSankeyRenderer(formData: FormData) {
     await repo.updateSiteSankeyRenderer(siteId, rendererId);
 
     revalidatePath(`/site/${siteId}/settings`);
+    revalidatePath(`/site/${siteId}`);
     revalidatePath(`/site/${siteId}/live`);
 }

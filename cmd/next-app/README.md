@@ -40,6 +40,13 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 - `VERCEL_PROJECT_ID`: Your Vercel Project ID.
 - `DISCORD_WEBHOOK`: Discord Webhook URL for Build/Deploy status notifications.
 
+## Site Settings
+
+Site Settings opens an overview with links to Billing and Rate Plans, Display,
+People, Connections, and Battery Saver. Each link opens a focused view of the
+same home. Connections contains the TRMNL device preview and setup alongside
+AI apps and integration tokens.
+
 ## Integration Tokens
 
 Create an integration token under **Site Settings → Connections** to read the

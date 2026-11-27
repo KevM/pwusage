@@ -167,7 +167,7 @@ export function Connections({ siteId }: { siteId: string }) {
     return (
         <Card>
             <CardHeader>
-                <CardTitle>Connections</CardTitle>
+                <CardTitle>AI apps and integration tokens</CardTitle>
                 <CardDescription>AI apps and integration tokens that can read this home’s data.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

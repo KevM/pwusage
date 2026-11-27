@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
+import { siteSettingsHref } from '@/lib/site-settings';
 import { PageBreadcrumbs } from '@/components/PageBreadcrumbs';
 import { TrmnlLivePreview } from '@/components/trmnl/TrmnlLivePreview';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/Alert';
@@ -395,7 +396,7 @@ function ManageContent() {
                     <PageBreadcrumbs items={[
                         { label: 'Manage' },
                         { label: currentSite.name, href: `/site/${currentSite.id}` },
-                        { label: 'Settings', href: `/site/${currentSite.id}/settings` },
+                        { label: 'Connections', href: siteSettingsHref(currentSite.id, 'connections') },
                         { label: 'Trmnl Connect' }
                     ]} />
                 )}

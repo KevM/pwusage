@@ -18,6 +18,7 @@ import { BillDateNav } from '@/components/BillDateNav';
 import { SiteTabs } from '@/components/site/SiteTabs';
 import { EstimatedBillView } from '@/components/site/EstimatedBillView';
 import { LazyHistoryTab, LazySettingsView } from '@/components/site/SiteTabPanels';
+import { parseSiteSettingsSection } from '@/lib/site-settings';
 import { parseSiteTab, type SiteTabId } from '@/lib/site-tabs';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -27,25 +28,21 @@ import { SectionCard } from '@/components/ui/SectionCard';
 
 export const dynamic = 'force-dynamic';
 
-/** Settings-only reads: member emails and the rate plan timeline (several sequential queries). */
-async function loadSettingsTabData(siteId: string) {
-    const [memberEmails, currentUser] = await Promise.all([
-        new UserRepo().getSiteMemberEmails(siteId),
-        getCurrentUser(),
-    ]);
-    const tariffTimeline = await new TariffTimelineRepo().getTimeline(siteId, currentUser?.id ?? null);
-    return { memberEmails, tariffTimeline };
+async function loadSettingsTariffTimeline(siteId: string) {
+    const currentUser = await getCurrentUser();
+    return new TariffTimelineRepo().getTimeline(siteId, currentUser?.id ?? null);
 }
 
 export default observePage('/site/[id]', async function SitePage({ params, searchParams }: {
     params: Promise<{ id: string }>;
-    searchParams: Promise<{ date?: string; view?: string }>;
+    searchParams: Promise<{ date?: string; view?: string; section?: string }>;
 }) {
     const { id } = await params;
     setLogContext({ siteId: id });
-    const { date: queryDate, view } = await searchParams;
+    const { date: queryDate, view, section } = await searchParams;
     // The selected tab decides which reads run and which client code loads.
     const activeTab: SiteTabId = parseSiteTab(view);
+    const settingsSection = activeTab === 'settings' ? parseSiteSettingsSection(section) : null;
 
     const cookieStore = await cookies();
     const siteAuthToken = cookieStore.get('site_auth')?.value;
@@ -55,7 +52,9 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         siteAuthToken
     });
 
-    const result = await siteService.loadSitePageData(id, queryDate, { view: activeTab });
+    const result = await siteService.loadSitePageData(id, queryDate, activeTab === 'settings'
+        ? { view: activeTab, settingsSection }
+        : { view: activeTab });
 
     if (result.status === 'unauthorized') {
         return (
@@ -130,9 +129,10 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         refDate
     } = result;
 
-    const [connection, settingsData] = await Promise.all([
+    const [connection, memberEmails, tariffTimeline] = await Promise.all([
         getSiteConnectionTokens(id),
-        activeTab === 'settings' ? loadSettingsTabData(id) : Promise.resolve(null),
+        settingsSection === 'people' ? new UserRepo().getSiteMemberEmails(id) : [],
+        settingsSection === 'billing' ? loadSettingsTariffTimeline(id) : null,
     ]);
     const reconnectRequired = !connection || requiresTeslaReconnect(connection);
 
@@ -151,9 +151,11 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
         tabContent = (
             <LazySettingsView
                 site={site}
+                section={settingsSection}
+                date={queryDate}
                 installations={installations ?? []}
-                memberEmails={settingsData?.memberEmails ?? []}
-                tariffTimeline={settingsData?.tariffTimeline ?? null}
+                memberEmails={memberEmails}
+                tariffTimeline={tariffTimeline}
             />
         );
     } else {
@@ -189,7 +191,9 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                 <AlertTitle>Reconnect Tesla to update your data.</AlertTitle>
                 <AlertDescription>Stored history is still available. Check each reading’s timestamp.</AlertDescription>
                 <Link href={`/login?callback=${encodeURIComponent(`/site/${id}`)}`} prefetch={false}>Reconnect Tesla</Link>
-            </Alert> : <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} historyRevision={historyRevision} />}
+            </Alert> : activeTab !== 'settings' && (
+                <DataSyncer siteId={id} start={start} end={end} viewDate={refDate} historyRevision={historyRevision} />
+            )}
 
             <SiteTabs activeTab={activeTab}>
                 {tabContent}
