@@ -25,7 +25,7 @@ function pricedRows(): UsageData[] {
     return rows;
 }
 
-const shouldTestWasm = Boolean(process.env.CI) || existsSync('wasm/bill-pricing.wasm');
+const shouldTestWasm = Boolean(process.env.CI) || existsSync('wasm/bill-pricing.wasm.gz');
 
 describe('preview bill pricing', () => {
     it.runIf(shouldTestWasm)('uses the Swift prices on preview and preserves the other bill fields', async () => {

@@ -43,7 +43,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: bill-pricing-wasm
-          path: cmd/next-app/wasm/bill-pricing.wasm
+          path: cmd/next-app/wasm/bill-pricing.wasm.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -422,7 +422,7 @@ jobs:
         uses: actions/setup-node@v7.0.0
         with:
           node-version: '24'
-      - run: test -s cmd/next-app/wasm/bill-pricing.wasm
+      - run: test -s cmd/next-app/wasm/bill-pricing.wasm.gz
       - name: Deploy to Vercel
         id: deploy_preview
         uses: amondnet/vercel-action@v42.3.0
