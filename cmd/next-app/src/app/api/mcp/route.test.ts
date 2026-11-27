@@ -48,6 +48,56 @@ describe('/api/mcp route', () => {
         );
     });
 
+    it('returns serverInfo icons on initialize', async () => {
+        mockAuthenticateGrantToken.mockResolvedValueOnce({
+            grantId: 'grant-1',
+            userId: 'user-1',
+            clientId: 'pwu_client_1',
+            clientName: 'Claude',
+            scopes: ['billing:read', 'usage:read'],
+            authorizedSiteIds: ['site-1'],
+        });
+
+        const initRes = await POST(new Request('https://pwusage.fm.rodeo/api/mcp', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, text/event-stream',
+                Authorization: 'Bearer pwu_oat_valid',
+            },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2025-11-25',
+                    capabilities: {},
+                    clientInfo: { name: 'test-client', version: '1.0.0' },
+                },
+            }),
+        }));
+        expect(initRes.status).toBe(200);
+        const initJson = await initRes.json();
+        expect(initJson.result.serverInfo).toEqual({
+            name: 'pwusage',
+            title: 'PWUsage',
+            version: '1.0.0',
+            websiteUrl: 'https://pwusage.fm.rodeo',
+            icons: [
+                {
+                    src: 'https://pwusage.fm.rodeo/mcp-icon.png',
+                    mimeType: 'image/png',
+                    sizes: ['256x256'],
+                },
+                {
+                    src: 'https://pwusage.fm.rodeo/icon.png',
+                    mimeType: 'image/png',
+                    sizes: ['1024x1024'],
+                },
+            ],
+        });
+    });
+
     it('handles tools/list and tools/call over stateless Streamable HTTP', async () => {
         mockAuthenticateGrantToken.mockResolvedValue({
             grantId: 'grant-1',
