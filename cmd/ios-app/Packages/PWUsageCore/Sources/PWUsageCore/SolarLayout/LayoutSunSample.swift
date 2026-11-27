@@ -1,4 +1,15 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 /// Sun position and clear-sky irradiance for the on-device layout detector (port of the
 /// detector's `sun.ts`). Geometry comes from `SolarPosition`, which matches sun.ts; this file

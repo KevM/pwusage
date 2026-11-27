@@ -1,4 +1,15 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 /// NOAA/Meeus solar geometry with SPA's atmospheric-refraction approximation.
 /// Matches the detector's geometry; pvlib SPA fixtures bound the forecast error.

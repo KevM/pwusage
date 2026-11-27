@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 extension LoadTimingForecastEstimator {
     public struct Plan {
@@ -40,10 +44,12 @@ extension LoadTimingForecastEstimator {
         public let balanceSourceTime: Date
         public let billingCycleEnd: Date
         public let currencyCode: String
+        public let siteTimeZone: SiteTimeZone?
 
         public init(
             now: Date, timing: LoadTiming, projection: Projection,
-            balanceSourceTime: Date, billingCycleEnd: Date, currencyCode: String
+            balanceSourceTime: Date, billingCycleEnd: Date, currencyCode: String,
+            siteTimeZone: SiteTimeZone? = nil
         ) {
             self.now = now
             self.timing = timing
@@ -51,6 +57,7 @@ extension LoadTimingForecastEstimator {
             self.balanceSourceTime = balanceSourceTime
             self.billingCycleEnd = billingCycleEnd
             self.currencyCode = currencyCode
+            self.siteTimeZone = siteTimeZone
         }
     }
 
@@ -58,7 +65,7 @@ extension LoadTimingForecastEstimator {
         do {
             var build = try PlanBuild.make(request)
             try build.applyForecastWindow()
-            let clock = WallClock(timeZone: build.zone, from: build.projectionStart, to: build.projectionEnd)
+            let clock = WallClock(siteTimeZone: build.zone, from: build.projectionStart, to: build.projectionEnd)
             let model = FlowModel(projection: request.projection, clock: clock,
                                   forecastStart: build.forecastStart, forecastEnd: build.forecastEnd,
                                   tariffs: build.tariffs)
@@ -93,7 +100,7 @@ extension LoadTimingForecastEstimator {
     /// and balances through each stage rather than a chain of single-use structs.
     private struct PlanBuild {
         let request: PlanRequest
-        let zone: TimeZone
+        let zone: SiteTimeZone
         let tariffs: [LoadTimingTariffSegment]
         var projectionStart: Date
         var projectionEnd: Date
@@ -126,7 +133,9 @@ extension LoadTimingForecastEstimator {
             if request.projection.projectsFlow, !request.timing.hasCycleData {
                 throw PlanFailure(reason: .incompleteBalance, beforeLoad: true)
             }
-            guard let zone = TimeZone(identifier: request.projection.timeZone) else {
+            guard let zone = request.siteTimeZone
+                ?? TimeZone(identifier: request.projection.timeZone).map(SiteTimeZone.init)
+            else {
                 throw PlanFailure(reason: .invalidInput, beforeLoad: true)
             }
             let tariffs = request.timing.tariffTimeline.sorted { $0.start < $1.start }
@@ -143,7 +152,7 @@ extension LoadTimingForecastEstimator {
             // Two horizons: starts are searched (and charted) to midnight tomorrow,
             // while balances are projected to the bill date so each start is priced
             // by what it does to the bill.
-            guard let tomorrowEnd = endOfTomorrow(after: request.now, timeZone: zone),
+            guard let tomorrowEnd = endOfTomorrow(after: request.now, siteTimeZone: zone),
                   tomorrowEnd > request.now else { throw PlanFailure(reason: .invalidInput) }
             return PlanBuild(request: request, zone: zone, tariffs: tariffs,
                              projectionStart: projectionStart, projectionEnd: request.billingCycleEnd,

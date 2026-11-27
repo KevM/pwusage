@@ -1,4 +1,15 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 /// Plane-count selection by day-blocked cross-validation, and the day bootstrap.
 extension LayoutFit {

@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 public struct LoadTimingTariffSegment: Codable, Equatable, Sendable {
     public let start: Date

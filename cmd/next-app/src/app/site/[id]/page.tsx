@@ -11,6 +11,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { BillSummary } from '@/components/BillSummary';
+import { pricePreviewBill, warmPreviewBillPricing } from '@/lib/bill-pricing-wasm';
 import { DataSyncer } from '@/components/DataSyncer';
 import { SiteSetup } from '@/components/SiteSetup';
 import { BillDateNav } from '@/components/BillDateNav';
@@ -39,13 +40,16 @@ async function loadSettingsTabData(siteId: string) {
 
 export default observePage('/site/[id]', async function SitePage({ params, searchParams }: {
     params: Promise<{ id: string }>;
-    searchParams: Promise<{ date?: string; view?: string }>;
+    searchParams: Promise<{ date?: string; view?: string; billPricing?: string }>;
 }) {
     const { id } = await params;
     setLogContext({ siteId: id });
-    const { date: queryDate, view } = await searchParams;
+    const { date: queryDate, view, billPricing } = await searchParams;
     // The selected tab decides which reads run and which client code loads.
     const activeTab: SiteTabId = parseSiteTab(view);
+    if (activeTab === 'bill') {
+        warmPreviewBillPricing(billPricing);
+    }
 
     const cookieStore = await cookies();
     const siteAuthToken = cookieStore.get('site_auth')?.value;
@@ -157,6 +161,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
             />
         );
     } else {
+        const pricedUsage = await pricePreviewBill(usage ?? [], billPricing);
         tabContent = (
             <EstimatedBillView
                 billNavSlot={
@@ -172,7 +177,7 @@ export default observePage('/site/[id]', async function SitePage({ params, searc
                     />
                 }
                 billSummarySlot={
-                    <BillSummary usage={usage ?? []} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />
+                    <BillSummary usage={pricedUsage} activeTariffId={activeTariffId} activeTouName={activeTouName} currencySymbol={currencySymbol} />
                 }
             />
         );

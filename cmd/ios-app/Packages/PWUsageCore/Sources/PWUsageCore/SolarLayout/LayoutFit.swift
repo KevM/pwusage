@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Plane fitting (port of the detector's `fit.ts`). The exhaustive azimuth x tilt grid is solved
 /// linearly through Gram matrices; the best candidates are refined continuously with a robust

@@ -40,6 +40,30 @@ These variables are set as Secrets in your GitHub repository for automated deplo
 - `VERCEL_PROJECT_ID`: Your Vercel Project ID.
 - `DISCORD_WEBHOOK`: Discord Webhook URL for Build/Deploy status notifications.
 
+## Bill summary Wasm preview experiment
+
+On a Vercel preview, open a home's **Estimated Bill** to price its rate buckets
+with the Swift code from `PWUsageCore`. Add `billPricing=typescript` to the URL
+for the control. Both paths use the same energy reads and bill display. The
+preview retains canonical TypeScript prices if Wasm fails or the results differ.
+
+Use runtime events `bill-pricing.wasm.initialized` for module read, compile and
+instantiation time, and `bill-pricing.preview` for the selected engine, first use
+in the instance, and per-request pricing time. Compare `page.completed` for
+end-to-end page time with the same home and billing dates. Wasm's first use in
+a process and a Vercel function cold start are distinct measurements.
+
+CI builds the shared `PWUsageCore` Wasm binary (`wasm/pwusage-core.wasm`,
+bridging Bill Pricing, Solar Layout Detection, Solar Forecasting, and Smart
+Shift) once with Swift 6.4.3 against `FoundationEssentials`, optimizes it with
+`wasm-opt -Os`, and transfers it to the web test, build, and preview jobs as a
+short-lived workflow artifact. On the Estimated Bill tab, the preview starts
+warming Wasm concurrently with the page's database reads. The preview upload
+includes the generated binary. To run the Wasm integration tests locally,
+install Swift 6.4.3 and its matching full Wasm SDK (and optionally Binaryen for
+`wasm-opt`), then run `bash scripts/build-pwusage-core-wasm.sh` from this
+directory.
+
 ## Integration Tokens
 
 Create an integration token under **Site Settings → Connections** to read the

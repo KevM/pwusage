@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Whether a site's solar history holds enough producing days for the detector to attempt a fit.
 /// It cannot tell whether those days are clear enough, or how confident a fit would be.
@@ -55,7 +59,14 @@ extension SolarLayoutDetector {
     public static func readiness(
         samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double, timeZone: TimeZone
     ) -> SolarLayoutReadiness {
-        let series = layoutSeries(samples: samples, latitude: latitude, longitude: longitude, timeZone: timeZone)
+        readiness(samples: samples, latitude: latitude, longitude: longitude, siteTimeZone: SiteTimeZone(timeZone))
+    }
+
+    public static func readiness(
+        samples: [(timestamp: Date, solarWh: Double)], latitude: Double, longitude: Double, siteTimeZone: SiteTimeZone
+    ) -> SolarLayoutReadiness {
+        let series = layoutSeries(
+            samples: samples, latitude: latitude, longitude: longitude, siteTimeZone: siteTimeZone)
         return SolarLayoutReadiness(producingDays: producingDays(in: series).count)
     }
 

@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Why a site's history onboarding stopped reaching back. Stored in onboarding progress by raw value.
 public enum SiteHistoryFinishReason: String, Codable, Sendable {

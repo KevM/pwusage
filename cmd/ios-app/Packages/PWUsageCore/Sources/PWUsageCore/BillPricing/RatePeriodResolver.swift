@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 public struct ResolvedRatePeriod: Equatable, Sendable {
     public let planName: String
@@ -127,7 +131,7 @@ public struct RatePeriodResolver: Sendable {
               let weekday = comps.weekday, let hour = comps.hour, let minute = comps.minute else {
             return nil
         }
-        let today = String(format: "%04d-%02d-%02d", year, month, day)
+        let today = Self.isoDayString(year: year, month: month, day: day)
         guard let period = period(on: today, strict: strict) else { return nil }
         guard let seasonIndex = period.seasons.firstIndex(where: {
             Self.seasonMatches(month: month, day: day, season: $0)
@@ -181,6 +185,14 @@ public struct RatePeriodResolver: Sendable {
             return earlier
         }
         return periods.min(by: { $0.effectiveFrom < $1.effectiveFrom })
+    }
+
+    private static func isoDayString(year: Int, month: Int, day: Int) -> String {
+        let rawYear = String(year)
+        let yearText = rawYear.count < 4 ? String(repeating: "0", count: 4 - rawYear.count) + rawYear : rawYear
+        let monthText = month < 10 ? "0\(month)" : "\(month)"
+        let dayText = day < 10 ? "0\(day)" : "\(day)"
+        return "\(yearText)-\(monthText)-\(dayText)"
     }
 
     private static func seasonMatches(month: Int, day: Int, season: TariffSeasonInput) -> Bool {

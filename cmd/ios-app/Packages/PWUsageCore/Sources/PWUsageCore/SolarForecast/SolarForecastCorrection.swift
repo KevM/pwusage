@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Scales a forecast by how it has compared with measured production, per site-local hour.
 /// Trained only on raw forecasts and complete measured hours, never on corrected output.
@@ -29,18 +33,26 @@ public struct SolarForecastCorrection: Equatable, Sendable {
         siteTimeZone: TimeZone,
         now: Date
     ) -> SolarForecastCorrection {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = siteTimeZone
-        guard let cutoff = calendar.date(byAdding: .day, value: -trainingDays, to: calendar.startOfDay(for: now)) else {
-            return .identity
-        }
+        derive(
+            pastForecastWh: pastForecastWh, actuals: actuals,
+            siteTimeZone: SiteTimeZone(siteTimeZone), now: now
+        )
+    }
+
+    public static func derive(
+        pastForecastWh: [Date: Double],
+        actuals: [MobileSolarActualsHour],
+        siteTimeZone: SiteTimeZone,
+        now: Date
+    ) -> SolarForecastCorrection {
+        let cutoff = siteTimeZone.startOfDay(addingDays: -trainingDays, to: now)
         var byHour: [Int: Ratio] = [:]
         var total = Ratio()
         for actual in actuals where actual.complete && actual.hourStart >= cutoff
             && actual.hourStart.addingTimeInterval(3600) <= now {
             guard let forecast = pastForecastWh[actual.hourStart], forecast.isFinite,
                   forecast > minimumForecastWh else { continue }
-            let hour = calendar.component(.hour, from: actual.hourStart)
+            let hour = siteTimeZone.localHour(for: actual.hourStart)
             byHour[hour, default: Ratio()].add(actual: actual.energyWh, forecast: forecast)
             total.add(actual: actual.energyWh, forecast: forecast)
         }
@@ -61,12 +73,18 @@ public struct SolarForecastCorrection: Equatable, Sendable {
         siteTimeZone: TimeZone,
         acClipKw: Double?
     ) -> [SolarForecastInterval] {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = siteTimeZone
-        return intervals.map { interval in
+        apply(to: intervals, siteTimeZone: SiteTimeZone(siteTimeZone), acClipKw: acClipKw)
+    }
+
+    public func apply(
+        to intervals: [SolarForecastInterval],
+        siteTimeZone: SiteTimeZone,
+        acClipKw: Double?
+    ) -> [SolarForecastInterval] {
+        intervals.map { interval in
             scaled(
                 interval,
-                by: factor(forLocalHour: calendar.component(.hour, from: interval.periodStart)),
+                by: factor(forLocalHour: siteTimeZone.localHour(for: interval.periodStart)),
                 clip: acClipKw
             )
         }
@@ -117,21 +135,23 @@ public struct SolarForecastCohortCorrection: Equatable, Sendable {
         siteTimeZone: TimeZone,
         acClipKw: Double?
     ) -> [SolarForecastInterval] {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = siteTimeZone
-        let fetchDay = calendar.startOfDay(for: fetchedAt)
-        return intervals.map { interval in
-            let lead = calendar.dateComponents(
-                [.day],
-                from: fetchDay,
-                to: calendar.startOfDay(for: interval.periodStart)
-            ).day
+        apply(to: intervals, fetchedAt: fetchedAt, siteTimeZone: SiteTimeZone(siteTimeZone), acClipKw: acClipKw)
+    }
+
+    public func apply(
+        to intervals: [SolarForecastInterval],
+        fetchedAt: Date,
+        siteTimeZone: SiteTimeZone,
+        acClipKw: Double?
+    ) -> [SolarForecastInterval] {
+        intervals.map { interval in
+            let lead = siteTimeZone.calendarDays(from: fetchedAt, to: interval.periodStart)
             let correction: SolarForecastCorrection = switch lead {
-            case .some(...0): sameDay
-            case .some(1): dayAhead
+            case ...0: sameDay
+            case 1: dayAhead
             default: .identity
             }
-            let hour = calendar.component(.hour, from: interval.periodStart)
+            let hour = siteTimeZone.localHour(for: interval.periodStart)
             return correction.scaled(interval, by: correction.factor(forLocalHour: hour), clip: acClipKw)
         }
     }

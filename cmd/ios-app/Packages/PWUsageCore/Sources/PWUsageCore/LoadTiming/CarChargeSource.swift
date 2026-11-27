@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 /// Where a car's charge right now comes from. Today the person sets it by hand; a later vehicle sync
 /// can supply its own value and ask the app to stop offering hand edits.

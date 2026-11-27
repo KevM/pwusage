@@ -1,9 +1,20 @@
-import Foundation
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(WASILibc)
+    import WASILibc
+#endif
 
 extension LoadTimingForecastEstimator {
     struct WallClock {
-        /// Gregorian, in the site's time zone, for instants outside the scanned range.
-        let calendar: Calendar
+        /// Site time zone for instants outside the scanned range.
+        let siteTimeZone: SiteTimeZone
         let halfHourBoundaries: [Date]
         /// The local minute-of-day each boundary starts.
         let boundaryMinutes: [Int]
@@ -13,12 +24,14 @@ extension LoadTimingForecastEstimator {
         let startSlotMinute: Int
 
         init(timeZone: TimeZone, from start: Date, to end: Date) {
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = timeZone
-            self.calendar = calendar
+            self.init(siteTimeZone: SiteTimeZone(timeZone), from: start, to: end)
+        }
+
+        init(siteTimeZone: SiteTimeZone, from start: Date, to end: Date) {
+            self.siteTimeZone = siteTimeZone
             self.start = start
             self.end = end
-            startSlotMinute = Self.slotMinute(at: start, calendar: calendar)
+            startSlotMinute = Self.slotMinute(at: start, siteTimeZone: siteTimeZone)
             // Every zone offset and DST shift is a whole quarter hour, so local
             // half-hour boundaries fall on UTC quarter hours. Scan those, reading
             // the zone's offset rather than a calendar, which is much cheaper
@@ -29,15 +42,15 @@ extension LoadTimingForecastEstimator {
             var cursor = (Int(floor(start.timeIntervalSince1970)) / step) * step + step
             if Double(cursor) <= start.timeIntervalSince1970 { cursor += step }
             // The offset only changes at a zone transition, so read it there.
-            var offset = timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(cursor)))
-            var nextTransition = timeZone.nextDaylightSavingTimeTransition(
+            var offset = siteTimeZone.offsetSeconds(at: Date(timeIntervalSince1970: Double(cursor)))
+            var nextTransition = siteTimeZone.nextTransition(
                 after: Date(timeIntervalSince1970: Double(cursor))
             )
             while Double(cursor) < end.timeIntervalSince1970 {
                 let date = Date(timeIntervalSince1970: Double(cursor))
                 if let transition = nextTransition, date >= transition {
-                    offset = timeZone.secondsFromGMT(for: date)
-                    nextTransition = timeZone.nextDaylightSavingTimeTransition(after: date)
+                    offset = siteTimeZone.offsetSeconds(at: date)
+                    nextTransition = siteTimeZone.nextTransition(after: date)
                 }
                 let local = cursor + offset
                 let secondOfDay = ((local % 86_400) + 86_400) % 86_400
@@ -61,14 +74,14 @@ extension LoadTimingForecastEstimator {
         /// The local minute-of-day starting the half-hour slot that contains `date`.
         /// Both occurrences of a repeated fall-back hour map to the same slots.
         func slotMinute(at date: Date) -> Int {
-            guard date >= start, date < end else { return Self.slotMinute(at: date, calendar: calendar) }
+            guard date >= start, date < end else { return Self.slotMinute(at: date, siteTimeZone: siteTimeZone) }
             let index = halfHourBoundaries.partitionPoint { $0 > date }
             return index == 0 ? startSlotMinute : boundaryMinutes[index - 1]
         }
 
-        static func slotMinute(at date: Date, calendar: Calendar) -> Int {
-            let components = calendar.dateComponents([.hour, .minute], from: date)
-            return ((components.hour ?? 0) * 60 + (components.minute ?? 0)) / 30 * 30
+        static func slotMinute(at date: Date, siteTimeZone: SiteTimeZone) -> Int {
+            let localTime = siteTimeZone.localHourAndMinute(for: date)
+            return (localTime.hour * 60 + localTime.minute) / 30 * 30
         }
     }
 
