@@ -71,7 +71,7 @@ export const POST = observeRoute('/api/mcp', async (request: Request): Promise<R
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
     });
-    const server = createPwusageMcpServer(ctx);
+    const server = createPwusageMcpServer(ctx, { origin });
     try {
         await server.connect(transport);
         return withCors(await transport.handleRequest(request));

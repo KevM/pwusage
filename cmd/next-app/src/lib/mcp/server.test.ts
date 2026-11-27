@@ -98,6 +98,28 @@ describe('MCP output contract', () => {
         });
     });
 
+    it('publishes serverInfo with app icons and websiteUrl', async () => {
+        const client = await connectClient();
+        expect(client.getServerVersion()).toEqual({
+            name: 'pwusage',
+            title: 'PWUsage',
+            version: '1.0.0',
+            websiteUrl: 'https://pwusage.fm.rodeo',
+            icons: [
+                {
+                    src: 'https://pwusage.fm.rodeo/mcp-icon.png',
+                    mimeType: 'image/png',
+                    sizes: ['256x256'],
+                },
+                {
+                    src: 'https://pwusage.fm.rodeo/icon.png',
+                    mimeType: 'image/png',
+                    sizes: ['1024x1024'],
+                },
+            ],
+        });
+    });
+
     it('publishes an outputSchema for every tool', async () => {
         const client = await connectClient();
         const { tools } = await client.listTools();

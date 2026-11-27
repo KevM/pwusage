@@ -9,6 +9,7 @@ import {
     smartShiftOutlookOutput,
 } from './output-schemas';
 import { logEvent } from '@/lib/observability';
+import { getAppBaseUrl } from '@/lib/url-utils';
 import {
     handleGetCurrentBill,
     handleGetDailyUsage,
@@ -55,10 +56,29 @@ async function runLoggedTool(
     }
 }
 
-export function createPwusageMcpServer(ctx: OAuthAccessContext): McpServer {
+export interface McpServerConfig {
+    origin?: string;
+}
+
+export function createPwusageMcpServer(ctx: OAuthAccessContext, config: McpServerConfig = {}): McpServer {
+    const origin = (config.origin ?? getAppBaseUrl()).replace(/\/$/, '');
     const server = new McpServer({
         name: 'pwusage',
+        title: 'PWUsage',
         version: '1.0.0',
+        websiteUrl: origin,
+        icons: [
+            {
+                src: `${origin}/mcp-icon.png`,
+                mimeType: 'image/png',
+                sizes: ['256x256'],
+            },
+            {
+                src: `${origin}/icon.png`,
+                mimeType: 'image/png',
+                sizes: ['1024x1024'],
+            },
+        ],
     });
 
     server.registerTool(
