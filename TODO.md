@@ -6,21 +6,12 @@ Cross-session work that didn't fit the current focus. Pull from this list when p
 
 When starting fresh work in this repo, check this file. If a session begins something here, leave a short note (date + branch/PR) under the item so the next session knows it's in flight. Once landed, delete the item.
 
-## Remove the IntegrationCredential scrub (2026-11-26, PR #459)
-
-`20261125183518_integration_tokens_as_grants.sql` copies `IntegrationCredential` into
-`OAuthGrant`/`OAuthToken` and drops `IntegrationCredential` and `IntegrationGrant`. Until it has run on
-Prod, Dev copies still contain the table, so `cmd/next-app/scripts/sanitize-dev-copy.sql` keeps
-deleting its rows. Once #459 is on Prod, remove that block and the `IntegrationCredential` row in
-`docs/dev-database-copy.md`.
-
 ## Fixed comparison plans follow-ups (2026-11-22, branch `claude/fixed-comparison-rate-plans-59321e`)
 
 Spec: [docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md](docs/superpowers/specs/2026-11-22-fixed-comparison-in-rate-plans-design.md).
 
 - [ ] **Savings card cost table (next project):** redesign the Bill and Solar System savings cards as a cost table: No Solar / Solar only / Solar + Powerwall, each on the fixed comparison plan and on your rate plan. This was agreed as the next project and kept out of this one. Fold in the old copy "On a fixed rate plan, your system would have…" (`SavingsPresentation.swift`), which should say "fixed comparison plan".
 - [ ] **Moving a follow before the first estimate run:** when the owner moves a followed utility plan to a later start, the earlier range is kept by re-tagging its estimated rows as owner rows. If the estimate job hasn't laid those rows yet, that range falls back to the utility default. Consider expanding the old label over that range instead.
-- [ ] **Caveat scroll target:** `.firstUncovered` scrolls to the oldest plan with any uncovered day, including days before history starts, rather than the days the `noFixedRatePlan` caveat counts.
 
 ## Sync to Tesla follow-ups (2026-11-20, branch `claude/tesla-tou-write-probe`)
 
@@ -130,7 +121,6 @@ Layout detection runs on the phone (Swift port of the detector), from a year of 
 
 Day records are the only energy history: raw `EnergyData`, the archive job, trim/restore and the v1 conversion were removed with `20261027120000_drop_energy_data` (cutover log in `docs/plans/2026-10-24-day-record-v2.md`). Before the drop, every raw day had a v2 record, no v1 record remained, and the three tokened sites with older history (268546532166, 2252435048108360, 2252472664568676) were backfilled from Tesla to install.
 
-- [ ] **Reader cleanup rollout:** deploy the v2-only reader/writer cleanup, then apply the separate schema cleanup to drop `raw_pruned` and tighten format/metadata constraints. The schema cleanup must wait until the old writer is replaced.
 - [ ] **Re-status stale `open` days:** 62 records on 15 revoked sites (days 2026-10-10 to 10-18) stay `open` because nothing refetches them. Mark open days older than the gap-heal window `gapped`, or let a re-auth refetch them.
 - [ ] **Automatic history onboarding:** include both new and existing sites with missing older history. Prioritize the latest N days for usability and forecasting, then work backward toward installation under shared request budgets and per-site progress. Use the currently configured tariff's rules at each sample date; historical effective-date tariff uploads and re-attribution come later. Honor `Site.history_backfill_from` (pre-provisioning gap) and settled empty days. About 40 tokened sites had no history at the cutover. See the [onboarding discussion](docs/plans/2026-10-27-history-onboarding-discussion.md).
 - **Existing settled gaps:** the cutover recorded 511 gapped days on revoked sites. `gapped` records stay settled on re-auth; the recovery cron repairs missing and open days, not every historical gap. Revisiting settled gaps requires an explicit repair policy.

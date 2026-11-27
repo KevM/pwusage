@@ -21,9 +21,6 @@ BEGIN
     IF to_regclass('public."TrmnlManageHandoff"') IS NOT NULL THEN
         EXECUTE 'DELETE FROM public."TrmnlManageHandoff"';
     END IF;
-    IF to_regclass('public."IntegrationCredential"') IS NOT NULL THEN
-        EXECUTE 'DELETE FROM public."IntegrationCredential"';
-    END IF;
     -- OAuth 2.1 / MCP clients, auth codes, grants (cascades to OAuthGrantSite), and tokens:
     -- environment-specific credentials must never be copied from prod to dev.
     IF to_regclass('public."OAuthToken"') IS NOT NULL THEN

@@ -178,8 +178,8 @@ struct BillView: View {
 
     private func routeCaveat(_ action: SavingsCaveat.Action) {
         switch action {
-        case .openRatePlans:
-            sheet = .ratePlans(startsAdding: false, scrollTo: .firstUncovered)
+        case let .openRatePlans(ranges):
+            sheet = .ratePlans(startsAdding: false, scrollTo: .firstUncovered(within: ranges))
         case .fixRatePlans:
             sheet = .ratePlans(startsAdding: false, scrollTo: nil)
         }

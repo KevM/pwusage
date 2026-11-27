@@ -225,7 +225,8 @@ struct SolarSystemView: View {
 
     private func routeCaveat(_ action: SavingsCaveat.Action) {
         switch action {
-        case .openRatePlans: savingsSheet = .ratePlans(startsAdding: false, scrollTo: .firstUncovered)
+        case let .openRatePlans(ranges):
+            savingsSheet = .ratePlans(startsAdding: false, scrollTo: .firstUncovered(within: ranges))
         case .fixRatePlans: savingsSheet = .ratePlans(startsAdding: false, scrollTo: nil)
         }
     }
